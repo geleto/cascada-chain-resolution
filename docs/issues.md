@@ -1,32 +1,107 @@
-Let me think about what you're actually naming, because there are two different things and they want different kinds of names.
+# Issues
 
-The **algorithm** is the specific mechanism: per-key promise mirrors with an advancing `currentValue`, FIFO-ordered resume, fork-at-copy. That wants a precise, technical name — something you'd write in a paper's title. The **project** is the language/runtime this lives in (Cascada already exists as the parent, so this might be a subsystem name). That can be more evocative.
+## Basics — do first
 
-## For the algorithm
+1. **[bug] Importing a frozen/sealed object throws.** `markImmutable` uses
+   `defineProperty` (index.js:60), which throws `TypeError: object is not extensible`
+   on frozen input — and external data is exactly where frozen objects appear. When
+   the frozen value arrives as a promise resolution, the throw happens inside a
+   detached continuation and becomes a host unhandled rejection (see 2).
+   Fix: treat non-extensibility as an immutable mark in itself — `hasImmutableMark`
+   gains `|| !Object.isExtensible(value)`, `markImmutable` returns early when not
+   extensible. Frozen ⇒ COW-on-write, semantically exactly right.
 
-The load-bearing ideas are: copy-on-write, promises resolved in program order without awaiting, and the per-key promise mirror that keeps concurrent mutations from clobbering each other. Names that capture the distinctive part:
+2. **[code] Detached continuations need a terminal handler.** Most `onResolve(...)`
+   chains are discarded (`onResolvedValue`, the walk continuation, the import rescan
+   marker). `settlePromise` handles promise *rejection*, but an exception *thrown
+   inside* a continuation rejects the discarded derived promise with no handler — a
+   host unhandled rejection instead of an Error node. Fix: `onResolve` (helpers.js:39)
+   adds a terminal rejection handler routing any escaped throw into the Error channel
+   (at minimum a deterministic report), so runtime bugs degrade to Error nodes instead
+   of leaking into the host's unhandled-rejection path.
 
-- **Promise Mirrors** / **Promise-Mirror Resolution** — foregrounds the actual novel unit (the per-key mirror over a promise-valued property). Precise, papers well.
-- **FIFO-Ordered Copy-on-Write** (FOCOW) — names the two pillars; the acronym is unfortunate, so probably a subtitle not a name.
-- **Program-Order Resolution** — captures the real guarantee (concurrent-looking ops resolve as if sequential). This is the *property*, which is often the better thing to name than the mechanism.
-- **Deferred-Value COW** — signals that values can be pending and the structure copies around that.
-- **Mirror-Advance Resolution** / **Advancing-Mirror COW** — literal description of `V → V′ → V″`.
+3. **[code] `importValue(promise)` breaks the one-layer wrapper contract.**
+   index.js:134 chains `markImmutable(value).then(...)` — three hops instead of the
+   uniform two, the single non-uniform registration site in the codebase. Safe today
+   (root mark + inherited-immutable state protect walks despite the late rescan), but
+   it violates the invariant helpers.js declares load-bearing. The fix is also a
+   simplification:
 
-My pick for the algorithm: **Promise-Mirror COW**, with **program-order resolution** as the property it guarantees. The word "mirror" is doing real work in your spec: it names the private `currentValue` plus the guarded writeback into the live object.
+   ```js
+   function importValue(value, rescan = true) {
+       if (isPromise(value)) return onResolve(value, v => importResolvedValue(v, rescan))
+       return importResolvedValue(value, rescan)
+   }
+   ```
 
-## For the project
+   (`importResolvedValue` already marks + scans, and the rejected-promise→Error path
+   still works because `isTracked` rejects Errors.)
 
-Since it's the concurrency/COW substrate under a reactive language, I'd lean toward names evoking *flow that forks and rejoins* or *ordered settling*:
+4. **[code] `assignPath(root, [], promiseValue)` returns the raw promise**, which can
+   *reject* — the spec says "a rejecting return value shall be resolved as Error."
+   A consumer awaiting the returned root directly gets a throw.
+   Fix: `return isPromise(value) ? settlePromise(value) : value` for the empty path.
 
-- **Rivulet** — small streams that branch and rejoin; fits the fork-and-diverge worlds, sits nicely under "Cascada."
-- **Delta** — river delta (branching channels) *and* "delta" as in change/COW. Double meaning, short. Risk: overloaded word.
-- **Braid** — independent strands (the forked worlds) running in parallel without tangling. Clean, memorable, not taken in this space as far as I know.
-- **Weir** — a structure that controls flow order in a river; nods to FIFO ordering. Obscure but distinctive.
-- **Confluence** — where streams merge in order; evokes the ordered-resolution guarantee.
-- **Ripple** — reactive change propagation; lighter register.
+5. **[test] Add the forked-world rejection test.** The suite tests direct mid-path
+   rejection but not rejection after a COW fork. Works today (probe-verified: the
+   Error node lands in both worlds), but it is the classic regression for the fork
+   initializer — pin it: fork a pending branch (suspended writes on both worlds),
+   reject the promise, assert an Error node lands in both the source and the copied
+   world, with no unhandled rejection.
 
-Given the Cascada lineage (cascade → water imagery) and that the algorithm's whole story is *branches that fork and evolve independently in order*, **Braid** is the one I'd push hardest — it names the exact thing that's hard (many strands, never tangled) and it isn't water-cliché. **Rivulet** is the safe on-theme second.
+6. **[doc] Spec: state the environmental pillar.** Two sentences missing from
+   initial-spec.md: (a) resume-slice atomicity — each resumed slice runs synchronously
+   to its next suspension and registers on nested promises before any later op's slice
+   runs, which is what makes FIFO compose across multi-promise paths; (b) all of this
+   rests on single-threaded microtask semantics (registration-order continuations,
+   atomic slices) and would not survive shared state across workers.
 
-If you want the pairing to read well in a sentence: *"Braid, a concurrent copy-on-write runtime using promise-mirror resolution to guarantee program-order semantics."* That's a clean one-liner for a repo description or a talk abstract.
+7. **[comment] Document the mirror-clearing asymmetry.** The sync path clears the
+   mirror on replacement (index.js:288) while the suspended path keeps it alive and
+   advances `currentValue` (index.js:277–281). Correct — a settled-and-written-back
+   mirror has no pending consumers, a suspended one does — but subtle enough that the
+   sync branch deserves the one-line comment.
 
-Want me to check whether any of these (Braid, Rivulet, the algorithm names) collide with existing PL/runtime projects before you commit? That's worth a search, since name collisions in this space are common and you'd want the npm/GitHub handle clear.
+## Next layer — normalize / hasError / CLEAN
+
+8. **[code] Implement `normalize` and `hasError`.** Absent from the exports;
+   `propagateClean` / `updateCleanCounts` are stubs (helpers.js:43–49). The main
+   remaining spec coverage gap; items 9–12 attach to this work.
+
+9. **[doc] Decide import Error semantics first.** De facto in the kernel, Error
+   objects inside imported data behave as language Error nodes (not tracked, not
+   marked, propagate from lookups, block intermediate writes). Decide in one sentence
+   whether they count as errors for CLEAN/hasError/normalize before those land.
+
+10. **[code] Termination for full-tree walks.** Kernel walks are path-bounded and the
+    import rescan has a `seen` set, but normalize/hasError/CLEAN add full-tree walks
+    where writeback-created cycles (external code resolving a promise with a language
+    object it received earlier) would not terminate. Fix: visited-gate on those walks,
+    and/or reachability check on writeback of externally-resolved values. Keep
+    independently switchable from 11 — this is a termination rule.
+
+11. **[code] Identity map for DAGs in `normalize(full)`.** Lookup-shared subtrees are
+    DAGs; without an old→new identity map, diamonds duplicate exponentially. One
+    visited/identity map may serve both 10 and 11, but state as two rules — the map
+    does double duty only if consulted *before* recurse. Add the principle line: COW
+    deliberately does not preserve internal aliasing. Give `normalize` its root
+    parameter.
+
+12. **[code] `parents` retention.** In the CLEAN machinery, `parents` as strong upward
+    refs retains every COW'd-away ancestor forever. Use WeakRefs, or prune stale edges
+    during the validation step.
+
+## Language integration
+
+13. **[code] Frames-as-nodes.** Treat scope frames as nodes with variables as keys, so
+    a pending root is an ordinary promise-valued edge and the whole mirror machinery
+    applies unchanged with path `['varName', ...path]`. Not a kernel prerequisite (the
+    `settlePromise` re-entry at the top of each op is FIFO-correct and reuses the same
+    resume protocol; composition works because the language rebinds the variable to
+    each op's return), but at language level it removes the per-op derived-promise
+    chain on pending roots.
+
+14. **[compiler] Enforce the single-owner rule.** The kernel cannot detect a raw
+    (unimported, unshared) promise assigned to two locations; the compiler must
+    guarantee it never emits that — external values enter through `import`, escapes
+    through shared-ownership `lookupPath`.
