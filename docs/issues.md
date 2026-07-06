@@ -17,7 +17,7 @@
 
    (`importResolvedValue` already marks + scans, and the rejected-promise→Error path still works because `isTracked` rejects Errors.)
 
-4. **[code] `assignPath(root, [], promiseValue)` returns the raw promise**, which can *reject* — the spec says "a rejecting return value shall be resolved as Error." A consumer awaiting the returned root directly gets a throw. Fix: `return isPromise(value) ? settlePromise(value) : value` for the empty path.
+4. **[wontfix/spec] `assignPath(root, [], promiseValue)` may return the raw promise**, including a rejecting promise. This is valid Cascada behavior: the language error value is a special immediately-rejecting thenable, and Cascada consumers are already prepared to receive rejecting thenables/promises as error values. The sandbox represents errors with JavaScript `Error` objects in many internal paths, but the spec must not require wrapping every returned rejecting promise into an `Error` object.
 
 5. **[test] Add the forked-world rejection test.** The suite tests direct mid-path rejection but not rejection after a COW fork. Works today (probe-verified: the Error node lands in both worlds), but it is the classic regression for the fork initializer — pin it: fork a pending branch (suspended writes on both worlds), reject the promise, assert an Error node lands in both the source and the copied world, with no unhandled rejection.
 
