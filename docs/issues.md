@@ -6,7 +6,7 @@
 
 2. **[test/code] Rejected promises assigned to properties must become Error values.** This is the important runtime behavior: data promises can reject, including promises that are already rejected when assigned, and the property/mirror must receive the resulting Error node through the normal writeback path. `settlePromise` is the load-bearing mechanism for this; every promise continuation must go through it, not raw `.then`. Exceptions thrown inside runtime continuation bodies are internal bugs and should be fatal; do not catch or convert them into language Error values.
 
-3. **[code] `importValue(promise)` breaks the one-layer wrapper contract.** index.js:134 chains `markImmutable(value).then(...)` — three hops instead of the uniform two, the single non-uniform registration site in the codebase. Safe today (root mark + inherited-immutable state protect walks despite the late rescan), but it violates the invariant helpers.js declares load-bearing. The fix is also a simplification:
+3. **[fixed] `importValue(promise)` breaks the one-layer wrapper contract.** `importValue(promise)` now uses `onResolve(value, v => importResolvedValue(v, rescan))`, so marking, rescanning, and rejected-promise→Error handling all go through the same promise wrapper contract as other runtime continuations.
 
    ```js
    function importValue(value, rescan = true) {

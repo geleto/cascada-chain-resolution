@@ -131,14 +131,10 @@ function clearPromiseMirror(node, key) {
 // --- import : external value enters the runtime -----------------------------
 function importValue(value, rescan = true) {
     if (isPromise(value)) {
-        return markImmutable(value).then(settledValue => {
-            if (rescan) scanImportedValue(settledValue, new Set())
-            return settledValue
-        })
+        return onResolve(value, settledValue => importResolvedValue(settledValue, rescan))
     }
 
-    importResolvedValue(value, rescan)
-    return value
+    return importResolvedValue(value, rescan)
 }
 
 function importResolvedValue(value, rescan) {
