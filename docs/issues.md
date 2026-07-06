@@ -19,7 +19,7 @@
 
 4. **[wontfix/spec] `assignPath(root, [], promiseValue)` may return the raw promise**, including a rejecting promise. This is valid Cascada behavior: the language error value is a special immediately-rejecting thenable, and Cascada consumers are already prepared to receive rejecting thenables/promises as error values. The sandbox represents errors with JavaScript `Error` objects in many internal paths, but the spec must not require wrapping every returned rejecting promise into an `Error` object.
 
-5. **[test] Add the forked-world rejection test.** The suite tests direct mid-path rejection but not rejection after a COW fork. Works today (probe-verified: the Error node lands in both worlds), but it is the classic regression for the fork initializer — pin it: fork a pending branch (suspended writes on both worlds), reject the promise, assert an Error node lands in both the source and the copied world, with no unhandled rejection.
+5. **[fixed] Added the forked-world rejection test.** The suite now pins rejection after a COW fork: fork a pending branch, suspend writes on both forked worlds, reject the promise, and assert an Error node lands in the source and copied worlds with no unhandled rejection.
 
 6. **[doc] Spec: state the environmental pillar.** Two sentences missing from initial-spec.md: (a) resume-slice atomicity — each resumed slice runs synchronously to its next suspension and registers on nested promises before any later op's slice runs, which is what makes FIFO compose across multi-promise paths; (b) all of this rests on single-threaded microtask semantics (registration-order continuations, atomic slices) and would not survive shared state across workers.
 

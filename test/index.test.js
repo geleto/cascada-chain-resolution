@@ -631,6 +631,42 @@ describe("promise mirrors and lookupPath", () => {
         expect(left.branch).not.to.be(right.branch)
     })
 
+    it("turns a rejected forked pending key into Error values in both worlds", async () => {
+        const unhandledRejections = []
+        const onUnhandledRejection = reason => {
+            unhandledRejections.push(reason)
+        }
+        process.on("unhandledRejection", onUnhandledRejection)
+
+        try {
+            const deferredBranch = deferred()
+            const root = { branch: deferredBranch.promise }
+
+            assignPath(root, ["branch", "before"], 1)
+            importValue(root)
+
+            const left = assignPath(root, ["left"], true)
+            const right = assignPath(root, ["right"], true)
+
+            assignPath(left, ["branch", "leftOnly"], 2)
+            assignPath(right, ["branch", "rightOnly"], 3)
+
+            deferredBranch.reject("fork boom")
+            await flushMicrotasks()
+            await new Promise(resolve => setImmediate(resolve))
+
+            expect(root.branch instanceof Error).to.be(true)
+            expect(root.branch.message).to.be("fork boom")
+            expect(left.branch instanceof Error).to.be(true)
+            expect(left.branch.message).to.be("fork boom")
+            expect(right.branch instanceof Error).to.be(true)
+            expect(right.branch.message).to.be("fork boom")
+            expect(unhandledRejections).to.eql([])
+        } finally {
+            process.removeListener("unhandledRejection", onUnhandledRejection)
+        }
+    })
+
     it("does not mark a final promise key replaced after a root copy", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
