@@ -685,6 +685,16 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.value.message).to.be("assigned boom")
     })
 
+    it("turns an already-rejected assigned promise into an Error value", async () => {
+        const root = {}
+
+        assignPath(root, ["value"], Promise.reject("already rejected"))
+        await flushMicrotasks()
+
+        expect(root.value instanceof Error).to.be(true)
+        expect(root.value.message).to.be("already rejected")
+    })
+
     it("stops at a rejected intermediate promise instead of autovivifying", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }

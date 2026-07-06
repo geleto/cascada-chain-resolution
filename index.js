@@ -82,13 +82,16 @@ function canUpdateMirrorToLive(node, key, mirror) {
     return PROMISE_MIRRORS.get(node)?.[key] === mirror
 }
 
-// Register the mirror's resolved-value handler. getValue runs inside the
-// onResolve continuation, so FORK reads sourceMirror.currentValue at the
-// copier's FIFO slot, not earlier. The chosen value is stored as currentValue,
-// then written to the live key only if this exact mirror still owns it.
+// Register the mirror's resolved-value handler. Rejected data promises become
+// Error values here through onResolve/settlePromise; runtime bugs thrown by
+// this continuation are intentionally not caught.
+// getValue runs inside the onResolve continuation, so FORK reads
+// sourceMirror.currentValue at the copier's FIFO slot, not earlier. The chosen
+// value is stored as currentValue, then written to the live key only if this
+// exact mirror still owns it.
 function onResolvedValue(node, key, mirror, getValue, markResolvedValueImmutable = false) {
-    onResolve(mirror.promise, settledValue => {
-        const value = getValue(settledValue)
+    onResolve(mirror.promise, settledValueOrError => {
+        const value = getValue(settledValueOrError)
         if (markResolvedValueImmutable && isTracked(value)) markImmutable(value)
         mirror.currentValue = value
 
