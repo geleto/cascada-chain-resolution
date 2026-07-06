@@ -7,7 +7,14 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha"
+  },
+  "devDependencies": {
+    "expect.js": "^0.3.1",
+    "mocha": "11.3.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.7"
   },
   "repository": {
     "type": "git",

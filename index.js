@@ -1,279 +1,355 @@
-// ─── Notation ───────────────────────────────────────────────────────────────
-//   a.k.y = 1   → assignPath(a, ['k','y'], 1)
-//   = a.k.y     → lookupPath(a, ['k','y'])
-//   delete a.k  → deletePath(a, ['k'])
-//   P(V)        → a promise P that resolves to immutable value V
+// --- Notation ---------------------------------------------------------------
+//   a.k.y = 1   -> assignPath(a, ["k", "y"], 1)
+//   = a.k.y     -> lookupPath(a, ["k", "y"])
+//   delete a.k  -> deletePath(a, ["k"])
+//   P(V)        -> a promise P that resolves to value V
 //
-// A "record" {promise, current} lives at node[PROMISES_CURRENT][key]:
-//   promise : the exact instance last placed at this edge (identity guard)
-//   current : the newest version of its resolved value, V → V′ → V″,
-//             each op reading the latest current and storing its COW back.
+// A promise mirror {promise, currentValue} lives
+// at node[PROMISE_MIRRORS][key]:
+//   promise      : the exact promise instance assigned to this key
+//   currentValue : the newest resolved value, V -> V' -> V'',
+//                  each op reading the latest currentValue and storing its COW back.
 // The FIFO order of continuations on one promise = program order, for free.
 //
-// A record is born at three points — PLACEMENT, DISCOVERY, FORK. Only the
-// first two seed `current` from the raw resolved value. A FORK (shallow copy
-// of a node whose edge holds a promise) seeds from the SOURCE record's
-// `current` at the copier's FIFO slot: the copied world branches off at
+// A promise mirror is born at three points: ASSIGN, DISCOVERY, FORK. Only the
+// first two seed currentValue from the raw resolved value. A FORK (shallow copy
+// of a node whose key holds a promise) seeds from the source mirror's
+// currentValue at the copier's FIFO slot: the copied world branches off at
 // exactly the copier's position in program order.
 
-const PROMISES_CURRENT = Symbol("promises_current")
+const {
+    isArray,
+    isError,
+    isPromise,
+    isTracked,
+    onResolve,
+    propagateClean,
+    settlePromise,
+    updateCleanCounts,
+} = require("./helpers")
 
-// ─── Assumed primitives ──────────────────────────────────────────────────────
-function isPromise(x)  { /* is x a promise */ }
-function isError(x)    { /* is x a language Error node */ }
-function isTracked(x)  { /* x is a tracked object/array (not a primitive) */ }
-function isShared(x)   { /* IMMUTABLE-marked OR (if RC) refcount > 1 */ }
-function isMissing(x)  { return x === undefined || x === null }
-function isArray(x)    { /* is x an array */ }
-function onResolve(p, fn) { /* p.then(fn); FIFO among continuations on p */ }
-function markImmutable(x) { /* set the IMMUTABLE mark on an object/array */ }
-function propagateClean(parent, key) { /* settled promise removed → clean bookkeeping */ }
-function updateCleanCounts(parent, key) { /* adjust counts for the written edge */ }
-function resetMetadata(copy) { /* fresh mark state, empty parents, recomputed counts */ }
+// Load-bearing helper contract:
+// Every continuation that depends on one promise's FIFO order must go through
+// settlePromise/onResolve, and must do so against the raw promise instance held
+// at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
+// suspended read behind a later write. settlePromise also maps rejection to the
+// language Error node, so intermediate advances stop instead of autovivifying.
+const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
+const IMMUTABLE = Symbol("IMMUTABLE")
 
-// ─── Hidden shadow map ───────────────────────────────────────────────────────
-function shadowMap(node) {
-    let map = node[PROMISES_CURRENT]
+// The immutable mark is runtime metadata: language-invisible, copied nowhere,
+// and used only to decide whether a write must copy before mutation.
+function hasImmutableMark(value) {
+    return isTracked(value) && value[IMMUTABLE] === true
+}
+
+// An unmarked object/array is owned by exactly one Cascada variable/path: object
+// literals and async assignments enter one owner, and Cascada does not assign
+// the same object into two roots directly. A value becomes immutable through
+// import, shared-ownership lookupPath escape, or COW of an immutable branch
+// when an existing child value is reused by both the old and new worlds.
+// Promise-valued children follow that same COW rule through forked mirrors.
+function markImmutable(value) {
+    // Bare promises crossing an ownership boundary resolve to immutable values.
+    // Promise keys with mirrors are different: they must mark mirror.currentValue,
+    // because currentValue may have advanced away from the raw settled value.
+    if (isPromise(value)) return settlePromise(value).then(markImmutable)
+
+    if (!isTracked(value)) return value
+
+    Object.defineProperty(value, IMMUTABLE, {
+        value: true,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+    })
+    return value
+}
+
+// --- Hidden promise mirror map ---------------------------------------------
+function getPromiseMirrorMap(node) {
+    let map = node[PROMISE_MIRRORS]
     if (map === undefined) {
         map = Object.create(null)                    // null proto: no inherited keys
-        Object.defineProperty(node, PROMISES_CURRENT, {
-            value: map, enumerable: false, writable: true, configurable: true,
+        Object.defineProperty(node, PROMISE_MIRRORS, {
+            value: map,
+            enumerable: false,
+            writable: true,
+            configurable: true,
         })
     }
     return map
 }
 
-// PLACEMENT / DISCOVERY initializer: marks the resolved value immutable, then
-// seeds `current` with it and mirrors it into the property — but only if THIS
-// record still owns the key and the property still holds the promise unchanged.
-// The mark is load-bearing: it is what makes every consumer's advance COW
-// (V → V′) instead of mutating V in place, and what keeps two edges holding
-// the same promise (a.k = P; b.m = P) from corrupting each other through the
-// shared resolved value.
-// Keyed on record identity, not promise identity: survives a.k = P … a.k = P.
-// (The FORK birth point uses its own initializer — see forkPromiseEdges.)
-function registerWriteback(node, key, rec) {
-    onResolve(rec.promise, v => {
-        if (isTracked(v)) markImmutable(v)           // BEFORE any consumer can observe it
-        rec.current = v                              // slot ← V (the initializer)
-        const map = node[PROMISES_CURRENT]
-        if (map && map[key] === rec && node[key] === rec.promise) {
-            node[key] = v
+function canUpdateMirrorToLive(node, key, mirror) {
+    return node[PROMISE_MIRRORS]?.[key] === mirror
+}
+
+// Register the mirror's resolved-value handler. getValue runs inside the
+// onResolve continuation, so FORK reads sourceMirror.currentValue at the
+// copier's FIFO slot, not earlier. The chosen value is stored as currentValue,
+// then written to the live key only if this exact mirror still owns it.
+function onResolvedValue(node, key, mirror, getValue, markResolvedValueImmutable = false) {
+    onResolve(mirror.promise, settledValue => {
+        const value = getValue(settledValue)
+        if (markResolvedValueImmutable && isTracked(value)) markImmutable(value)
+        mirror.currentValue = value
+
+        if (canUpdateMirrorToLive(node, key, mirror)) {
+            node[key] = value
             propagateClean(node, key)
         }
-        // else a later op reassigned/deleted the edge: keep current alive
-        // privately for reads that captured this record; leave the property alone.
+        // Else a later op reassigned/deleted the key: keep currentValue alive
+        // privately for reads that captured this mirror; leave the property alone.
     })
 }
 
-// BIRTH 1 — PLACEMENT: assigning a promise to an edge. Always a FRESH record,
-// overwriting any prior one — two placements of the same promise at the same
-// edge are divergent worlds and must not share a chain.
-function placePromise(node, key, promise) {
-    const rec = { promise, current: undefined }      // current overwritten before any read
-    shadowMap(node)[key] = rec
-    registerWriteback(node, key, rec)                // FIRST: the FIFO ordering invariant
-    node[key] = promise
-    return rec
-}
-
-// BIRTH 2 — DISCOVERY: find the record for a pending promise reached during a
+// BIRTH 2 - DISCOVERY: find the mirror for a pending promise reached during a
 // walk, or lazily create one for an orphan (imported data, raw literal).
-// COW-copied edges must never arrive here recordless — they are forked eagerly
-// in shallowCopy; minting one lazily here would seed from the raw resolved
+// COW-copied keys must never arrive here mirrorless; they are forked eagerly
+// in shallowCopy. Minting one lazily here would seed from the raw resolved
 // value and lose every write made by ops issued before the copy.
-function getOrCreatePlacement(node, key, promise) {
-    const map = shadowMap(node)
-    const existing = map[key]
-    if (existing !== undefined && existing.promise === promise) return existing
-    const rec = { promise, current: undefined }
-    map[key] = rec
-    registerWriteback(node, key, rec)
-    return rec
+function getOrCreatePromiseMirror(node, key, promise) {
+    const map = getPromiseMirrorMap(node)
+    if (map[key]?.promise === promise) {
+        return map[key]
+    }
+
+    const mirror = { promise, currentValue: undefined }
+    map[key] = mirror
+    onResolvedValue(node, key, mirror, value => value)
+
+    return mirror
 }
 
-function clearPlacement(node, key) {
-    const map = node[PROMISES_CURRENT]
-    if (map) delete map[key]
+function clearPromiseMirror(node, key) {
+    const map = node[PROMISE_MIRRORS]
+    if (!map) return
+    delete map[key]
 }
 
-// ─── Copy-on-write ───────────────────────────────────────────────────────────
-function cowIfShared(obj) {
-    if (!isTracked(obj)) return obj                  // primitives pass through
-    if (isShared(obj)) return shallowCopy(obj)       // immutable/shared → copy
-    return obj                                        // exclusively owned → mutate in place
+// --- import : external value enters the runtime -----------------------------
+function importValue(value, rescan = true) {
+    if (isPromise(value)) {
+        return markImmutable(value).then(settledValue => {
+            if (rescan) scanImportedValue(settledValue, new Set())
+            return settledValue
+        })
+    }
+
+    importResolvedValue(value, rescan)
+    return value
 }
 
-function shallowCopy(obj) {
-    const copy = isArray(obj) ? [...obj] : {...obj}
-    // The copy must not drag the source's shadow map along (old edges, foreign
-    // world); reset unconditionally so objects and arrays agree.
-    delete copy[PROMISES_CURRENT]
-    resetMetadata(copy)                              // fresh mark, empty parents, recomputed counts
-    forkPromiseEdges(obj, copy)                      // BIRTH 3 — eager, never minted lazily later
+function importResolvedValue(value, rescan) {
+    if (!isTracked(value)) return value
+
+    markImmutable(value)
+    if (rescan) scanImportedValue(value, new Set())
+    return value
+}
+
+function scanImportedValue(value, seen) {
+    if (!isTracked(value) || seen.has(value)) return
+    seen.add(value)
+
+    for (const key of Object.keys(value)) {
+        const child = value[key]
+
+        if (isPromise(child)) {
+            const mirror = getOrCreatePromiseMirror(value, key, child)
+            onResolve(child, () => {
+                importResolvedValue(mirror.currentValue, true)
+            })
+        } else {
+            scanImportedValue(child, seen)
+        }
+    }
+}
+
+function shallowCopy(obj, pathKey = undefined, markReusedChildrenImmutable = false) {
+    const copy = isArray(obj) ? new Array(obj.length) : {}
+    const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
+
+    // Copy only language-visible string keys; hidden metadata symbols such as
+    // PROMISE_MIRRORS and IMMUTABLE never enter the copied world.
+    // The source object keeps its own immutable mark. When a copy reuses child
+    // objects from an immutable branch, those non-path children are marked too
+    // so their shared references stay protected.
+    for (const key of Object.keys(obj)) {
+        const isPathKey = key === pathKeyString
+        const markCopiedValueImmutable = markReusedChildrenImmutable && !isPathKey
+        const value = obj[key]
+        copy[key] = value
+        if (isPromise(value)) {
+            // BIRTH 3 - FORK. For every copied key holding a promise, mint the
+            // copy's mirror NOW, at the copier's program position.
+            //
+            // Why eager: a mirror minted lazily by a later walk would seed
+            // currentValue from the RAW resolved value, stranding every advance
+            // (V -> V' -> ...) made by ops issued BEFORE this copy; their writes
+            // silently vanish from the copied world.
+            //
+            // Why seeding from the source mirror is correct: this initializer is
+            // registered at the copier's FIFO slot, so it runs after every
+            // continuation of earlier ops and before every continuation of later
+            // ops. The two worlds diverge at exactly this point in program order.
+            //
+            // Why mark non-path captured values: they are reused by two worlds,
+            // so the first advance on either side must COW. The path key itself
+            // is protected by the walk's inherited immutable state if we enter it,
+            // and may simply be replaced/deleted at the target.
+            const sourceMirror = getOrCreatePromiseMirror(obj, key, value) // DISCOVERY if source was an orphan.
+            const mirror = { promise: value, currentValue: undefined }
+            getPromiseMirrorMap(copy)[key] = mirror
+            onResolvedValue(copy, key, mirror, () => sourceMirror.currentValue, markCopiedValueImmutable)
+        } else if (markCopiedValueImmutable && isTracked(value)) {
+            markImmutable(value)
+        }
+    }
     return copy
 }
 
-// BIRTH 3 — FORK. For every copied edge holding a promise, mint the copy's
-// record NOW, at the copier's program position.
-//
-// Why eager: a record minted lazily by a later walk would seed `current` from
-// the RAW resolved value, stranding every advance (V → V′ → …) made by ops
-// issued BEFORE this copy — their writes silently vanish from the copied world.
-//
-// Why seeding from the source record is correct: this initializer is registered
-// at the copier's FIFO slot, so it runs after every continuation of earlier ops
-// (their advances are already folded into srcRec.current) and before every
-// continuation of later ops. The two worlds diverge at exactly this point in
-// program order — uniformly for pending AND settled-but-unreplaced promises.
-//
-// Why mark the captured value: it is now shared by two worlds, so the first
-// advance on either side must COW rather than mutate in place.
-//
-// Chain advances themselves go through this same shallowCopy, so nested
-// promise edges inside resolved values are forked by this same rule too.
-function forkPromiseEdges(source, copy) {
-    for (const key of Object.keys(copy)) {           // own enumerable keys / array indices
-        const p = copy[key]
-        if (!isPromise(p)) continue
-        const srcRec = getOrCreatePlacement(source, key, p)  // DISCOVERY if the source edge was an orphan;
-                                                             // registered before ours → source writeback runs first
-        const rec = { promise: p, current: undefined }
-        shadowMap(copy)[key] = rec
-        onResolve(p, () => {                         // registered at the COPIER's program position
-            const v = srcRec.current                 // chain state as of the copier's position in program order
-            if (isTracked(v)) markImmutable(v)       // shared by two worlds now
-            rec.current = v
-            const map = copy[PROMISES_CURRENT]
-            if (map && map[key] === rec && copy[key] === p) {
-                copy[key] = v                        // mirror, same guard as registerWriteback
-                propagateClean(copy, key)
-            }
+// --- assignPath :  a.k.y = 1 -----------------------------------------------
+function assignPath(root, path, value) {
+    if (path.length === 0) return value
+    if (isPromise(root)) {
+        return settlePromise(root).then(resolvedRoot => {
+            return assignPath(resolvedRoot, path, value)
         })
     }
+
+    return walkMutationPath(root, path, true, (parent, key) => {
+        if (isPromise(value)) {
+            // BIRTH 1 - ASSIGN: assigning a promise to a key. Always creates a
+            // fresh mirror. Two assignments of the same promise at the same key
+            // are divergent worlds and must not share currentValue.
+            const map = getPromiseMirrorMap(parent)
+            const mirror = { promise: value, currentValue: undefined }
+            map[key] = mirror
+            onResolvedValue(parent, key, mirror, settledValue => settledValue) // FIRST: the FIFO ordering invariant
+            parent[key] = value
+        } else {
+            clearPromiseMirror(parent, key)            // plain value ends any prior promise mirror
+            parent[key] = value
+        }
+        updateCleanCounts(parent, key)
+    })
 }
 
-// ─── assignPath :  a.k.y = 1 ─────────────────────────────────────────────────
-async function assignPath(root, path, value) {
-    root = cowIfShared(root)                          // root COW decided synchronously
-    if (isError(root)) return root                    // into an error root → no-op
-    if (isPromise(root)) return deriveRootAssign(root, path, value)  // sole async-return case
+// Walk returns the value that should live at this path level after mutation.
+// The root caller returns it; recursive callers install it into their key.
+function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
+    return walk(root, 0, false)
 
-    let parent = root
-    for (let i = 0; i < path.length - 1; i++) {
-        const key = path[i]
-        let child = parent[key]
+    function walk(value, index, inheritedImmutableBranch) {
+        if (isError(value)) return value
 
-        if (isPromise(child)) {
-            const rec = getOrCreatePlacement(parent, key, child)
-            await child                               // enqueues AFTER writeback (FIFO)
-            // resume-slice is synchronous to the next suspension; read input first:
-            const before = rec.current                // earlier ops' mutations already folded in
-            const next   = cowIfShared(before)        // V → V′  (V′ → V″ for a later op)
-            rec.current  = next
-            const map = parent[PROMISES_CURRENT]
-            if (map[key] === rec && parent[key] === before)   // record owns key AND value unchanged
-                parent[key] = next
-            parent = next
-            continue
+        let parent = value
+        let parentInsideImmutableBranch = isTracked(value) &&
+            (inheritedImmutableBranch || hasImmutableMark(value))
+
+        if (createMissingIntermediates) {
+            if (value === null || value === undefined) {
+                parent = {}
+                parentInsideImmutableBranch = false
+            } else if (!isTracked(value)) {
+                return new Error("Cannot assign into primitive value")
+            }
+        } else if (!isTracked(value)) {
+            return value
         }
 
-        if (isError(child)) return root               // no-op into an error branch
+        const key = path[index]
+        if (parentInsideImmutableBranch) {
+            parent = shallowCopy(parent, key, true)
+        }
 
-        if (isMissing(child)) child = {}              // create missing intermediate
-        else                  child = cowIfShared(child)
+        if (index === path.length - 1) {
+            onTarget(parent, key)
+            return parent
+        }
 
-        parent[key] = child                           // top-down incremental install
-        parent = child
-    }
-
-    const lastKey = path[path.length - 1]
-    if (isError(parent[lastKey])) return root
-    if (isPromise(value)) placePromise(parent, lastKey, value)
-    else {
-        clearPlacement(parent, lastKey)               // plain value ends any prior chain's ownership
-        parent[lastKey] = value
-    }
-    updateCleanCounts(parent, lastKey)
-    return root
-}
-
-// ─── lookupPath :  = a.k.y ───────────────────────────────────────────────────
-async function lookupPath(root, path) {
-    let parent = root
-    if (isPromise(parent)) parent = await deriveRoot(parent)
-
-    for (let i = 0; i < path.length - 1; i++) {
-        const key = path[i]
         const child = parent[key]
-
         if (isPromise(child)) {
-            const rec = getOrCreatePlacement(parent, key, child)
-            await child
-            parent = rec.current                      // continue through CURRENT, never raw V
-            continue
+            const mirror = getOrCreatePromiseMirror(parent, key, child)
+            onResolve(child, () => {
+                const next = walk(mirror.currentValue, index + 1, parentInsideImmutableBranch)
+                mirror.currentValue = next
+                if (canUpdateMirrorToLive(parent, key, mirror)) {
+                    parent[key] = next
+                }
+            })
+            return parent
         }
-        if (isError(child))   return child            // Error return feeds guard/recover
-        if (isMissing(child)) return undefined
-        parent = child
-    }
 
-    const lastKey = path[path.length - 1]
-    const val = parent[lastKey]
-    if (isError(val)) return val
-
-    if (isPromise(val)) {
-        const rec = getOrCreatePlacement(parent, lastKey, val)
-        // Ends AT a promise → return a DERIVED promise resolving to current at OUR
-        // resume moment: includes earlier ops' advances, excludes later ops'.
-        return resolveThenMark(val, () => rec.current)
-    }
-
-    if (isTracked(val)) markImmutable(val)            // escaping object/array → immutable
-    return val
-}
-
-// Not awaited by lookup itself — values resolve at the point of consumption.
-async function resolveThenMark(promise, readCurrent) {
-    await promise
-    const v = readCurrent()
-    if (isTracked(v)) markImmutable(v)                // resolved escaping value → immutable
-    return v
-}
-
-// ─── deletePath :  delete a.k ────────────────────────────────────────────────
-async function deletePath(root, path) {
-    root = cowIfShared(root)
-    if (isError(root))   return root
-    if (isPromise(root)) return deriveRootDelete(root, path)
-
-    let parent = root
-    for (let i = 0; i < path.length - 1; i++) {
-        const key = path[i]
-        let child = parent[key]
-
-        if (isPromise(child)) {
-            const rec = getOrCreatePlacement(parent, key, child)
-            await child
-            const before = rec.current
-            const next   = cowIfShared(before)
-            rec.current  = next
-            const map = parent[PROMISES_CURRENT]
-            if (map[key] === rec && parent[key] === before) parent[key] = next
-            parent = next
-            continue
+        const next = walk(child, index + 1, parentInsideImmutableBranch)
+        if (next !== child) {
+            clearPromiseMirror(parent, key)
+            parent[key] = next
         }
-        if (isError(child))   return root             // no-op through an error branch
-        if (isMissing(child)) return root             // nothing to delete
-        child = cowIfShared(child)
-        parent[key] = child
-        parent = child
+        return parent
+    }
+}
+
+// --- lookupPath :  = a.k.y --------------------------------------------------
+// sharedOwnership is false for a pure read or when ownership is ceded to
+// the caller, e.g. the final `return x` from an otherwise unused variable.
+function lookupPath(root, path, sharedOwnership = true) {
+    if (isPromise(root)) {
+        return settlePromise(root).then(resolvedRoot => {
+            return lookupPath(resolvedRoot, path, sharedOwnership)
+        })
     }
 
-    const lastKey = path[path.length - 1]
-    if (isError(parent[lastKey])) return root
-    clearPlacement(parent, lastKey)                   // drop shadow entry: no later writeback re-mirrors
-    delete parent[lastKey]
-    updateCleanCounts(parent, lastKey)
-    return root
+    if (path.length === 0) {
+        if (sharedOwnership) markImmutable(root)       // escaping object/array -> immutable
+        return root
+    }
+
+    // Walk lookup paths through promise mirrors. Promise-valued keys resolve
+    // before we decide whether the reached value is final or intermediate.
+    return walk(root, 0)
+
+    function walk(parent, index) {
+        if (isError(parent)) return parent
+        if (!isTracked(parent)) return undefined
+
+        const key = path[index]
+        const value = parent[key]
+        if (isPromise(value)) {
+            const mirror = getOrCreatePromiseMirror(parent, key, value)
+            return onResolve(value, () => lookupValue(mirror.currentValue, index)) // never raw V
+        }
+        return lookupValue(value, index)
+    }
+
+    function lookupValue(value, index) {
+        if (index === path.length - 1) {
+            if (sharedOwnership) markImmutable(value)  // escaping object/array -> immutable
+            return value
+        }
+        if (isError(value)) return value
+        if (!isTracked(value)) return undefined
+        return walk(value, index + 1)
+    }
 }
+
+// --- deletePath :  delete a.k ----------------------------------------------
+function deletePath(root, path) {
+    if (path.length === 0) return null
+    if (isPromise(root)) {
+        return settlePromise(root).then(resolvedRoot => {
+            return deletePath(resolvedRoot, path)
+        })
+    }
+
+    return walkMutationPath(root, path, false, (parent, key) => {
+        if (isArray(parent)) return                    // array element deletion is outside this helper
+        clearPromiseMirror(parent, key)                // no later writeback re-mirrors
+        delete parent[key]
+        updateCleanCounts(parent, key)
+    })
+}
+
+module.exports = { assignPath, deletePath, import: importValue, lookupPath }
