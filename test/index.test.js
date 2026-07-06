@@ -63,6 +63,36 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
+    it("treats frozen resolved promise roots as immutable", async () => {
+        const deferredRoot = deferred()
+        const root = Object.freeze({ branch: { x: 1 } })
+        const imported = importValue(deferredRoot.promise)
+
+        deferredRoot.resolve(root)
+        const value = await imported
+        const next = assignPath(value, ["branch", "x"], 2)
+
+        expect(value).to.be(root)
+        expect(next).not.to.be(root)
+        expect(root.branch.x).to.be(1)
+        expect(next.branch.x).to.be(2)
+    })
+
+    it("tracks promise mirrors for frozen imported objects", async () => {
+        const deferredBranch = deferred()
+        const root = Object.freeze({ branch: deferredBranch.promise })
+
+        importValue(root)
+        const next = assignPath(root, ["branch", "x"], 1)
+
+        deferredBranch.resolve({ y: 2 })
+        await flushMicrotasks()
+
+        expect(root.branch).to.be(deferredBranch.promise)
+        expect(next).not.to.be(root)
+        expect(next.branch).to.eql({ y: 2, x: 1 })
+    })
+
     it("rescans imported objects for promise keys", async () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }

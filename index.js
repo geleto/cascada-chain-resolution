@@ -4,8 +4,7 @@
 //   delete a.k  -> deletePath(a, ["k"])
 //   P(V)        -> a promise P that resolves to value V
 //
-// A promise mirror {promise, currentValue} lives
-// at node[PROMISE_MIRRORS][key]:
+// A promise mirror {promise, currentValue} lives in PROMISE_MIRRORS.get(node)[key]:
 //   promise      : the exact promise instance assigned to this key
 //   currentValue : the newest resolved value, V -> V' -> V'',
 //                  each op reading the latest currentValue and storing its COW back.
@@ -34,13 +33,15 @@ const {
 // at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
-const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
+const PROMISE_MIRRORS = new WeakMap()
 const IMMUTABLE = Symbol("IMMUTABLE")
 
 // The immutable mark is runtime metadata: language-invisible, copied nowhere,
-// and used only to decide whether a write must copy before mutation.
+// and used only to decide whether a write must copy before mutation. Frozen or
+// sealed objects act immutable without receiving our Symbol metadata.
 function hasImmutableMark(value) {
-    return isTracked(value) && value[IMMUTABLE] === true
+    return isTracked(value) &&
+        (value[IMMUTABLE] === true || !Object.isExtensible(value))
 }
 
 // An unmarked object/array is owned by exactly one Cascada variable/path: object
@@ -56,6 +57,7 @@ function markImmutable(value) {
     if (isPromise(value)) return settlePromise(value).then(markImmutable)
 
     if (!isTracked(value)) return value
+    if (!Object.isExtensible(value)) return value
 
     Object.defineProperty(value, IMMUTABLE, {
         value: true,
@@ -66,23 +68,18 @@ function markImmutable(value) {
     return value
 }
 
-// --- Hidden promise mirror map ---------------------------------------------
+// --- Promise mirror map -----------------------------------------------------
 function getPromiseMirrorMap(node) {
-    let map = node[PROMISE_MIRRORS]
+    let map = PROMISE_MIRRORS.get(node)
     if (map === undefined) {
         map = Object.create(null)                    // null proto: no inherited keys
-        Object.defineProperty(node, PROMISE_MIRRORS, {
-            value: map,
-            enumerable: false,
-            writable: true,
-            configurable: true,
-        })
+        PROMISE_MIRRORS.set(node, map)
     }
     return map
 }
 
 function canUpdateMirrorToLive(node, key, mirror) {
-    return node[PROMISE_MIRRORS]?.[key] === mirror
+    return PROMISE_MIRRORS.get(node)?.[key] === mirror
 }
 
 // Register the mirror's resolved-value handler. getValue runs inside the
@@ -123,7 +120,7 @@ function getOrCreatePromiseMirror(node, key, promise) {
 }
 
 function clearPromiseMirror(node, key) {
-    const map = node[PROMISE_MIRRORS]
+    const map = PROMISE_MIRRORS.get(node)
     if (!map) return
     delete map[key]
 }
@@ -171,8 +168,9 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenImmutable = fal
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
 
-    // Copy only language-visible string keys; hidden metadata symbols such as
-    // PROMISE_MIRRORS and IMMUTABLE never enter the copied world.
+    // Copy only language-visible string keys; promise mirrors live in a WeakMap
+    // and the IMMUTABLE symbol is non-enumerable, so metadata never enters the
+    // copied world.
     // The source object keeps its own immutable mark. When a copy reuses child
     // objects from an immutable branch, those non-path children are marked too
     // so their shared references stay protected.
@@ -245,18 +243,21 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
     function walk(value, index, inheritedImmutableBranch) {
         if (isError(value)) return value
 
+        const valueIsTracked = isTracked(value)
         let parent = value
-        let parentInsideImmutableBranch = isTracked(value) &&
-            (inheritedImmutableBranch || hasImmutableMark(value))
+        let parentInsideImmutableBranch = valueIsTracked && inheritedImmutableBranch
+        if (!parentInsideImmutableBranch) {
+            parentInsideImmutableBranch = hasImmutableMark(value)
+        }
 
         if (createMissingIntermediates) {
             if (value === null || value === undefined) {
                 parent = {}
                 parentInsideImmutableBranch = false
-            } else if (!isTracked(value)) {
+            } else if (!valueIsTracked) {
                 return new Error("Cannot assign into primitive value")
             }
-        } else if (!isTracked(value)) {
+        } else if (!valueIsTracked) {
             return value
         }
 
