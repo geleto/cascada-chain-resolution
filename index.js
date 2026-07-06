@@ -4,7 +4,7 @@
 //   delete a.k  -> deletePath(a, ["k"])
 //   P(V)        -> a promise P that resolves to value V
 //
-// A promise mirror {promise, currentValue} lives in PROMISE_MIRRORS.get(node)[key]:
+// A promise mirror {promise, currentValue} lives in node[PROMISE_MIRRORS][key]:
 //   promise      : the exact promise instance assigned to this key
 //   currentValue : the newest resolved value, V -> V' -> V'',
 //                  each op reading the latest currentValue and storing its COW back.
@@ -33,7 +33,7 @@ const {
 // at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
-const PROMISE_MIRRORS = new WeakMap()
+const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
 const IMMUTABLE = Symbol("IMMUTABLE")
 
 // The immutable mark is runtime metadata: language-invisible, copied nowhere,
@@ -70,16 +70,21 @@ function markImmutable(value) {
 
 // --- Promise mirror map -----------------------------------------------------
 function getPromiseMirrorMap(node) {
-    let map = PROMISE_MIRRORS.get(node)
+    let map = node[PROMISE_MIRRORS]
     if (map === undefined) {
         map = Object.create(null)                    // null proto: no inherited keys
-        PROMISE_MIRRORS.set(node, map)
+        Object.defineProperty(node, PROMISE_MIRRORS, {
+            value: map,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
     }
     return map
 }
 
 function canUpdateMirrorToLive(node, key, mirror) {
-    return PROMISE_MIRRORS.get(node)?.[key] === mirror
+    return node[PROMISE_MIRRORS]?.[key] === mirror
 }
 
 // Register the mirror's resolved-value handler. Rejected data promises become
@@ -123,7 +128,7 @@ function getOrCreatePromiseMirror(node, key, promise) {
 }
 
 function clearPromiseMirror(node, key) {
-    const map = PROMISE_MIRRORS.get(node)
+    const map = node[PROMISE_MIRRORS]
     if (!map) return
     delete map[key]
 }
@@ -167,9 +172,8 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenImmutable = fal
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
 
-    // Copy only language-visible string keys; promise mirrors live in a WeakMap
-    // and the IMMUTABLE symbol is non-enumerable, so metadata never enters the
-    // copied world.
+    // Copy only language-visible string keys; promise mirrors and IMMUTABLE are
+    // non-enumerable Symbol metadata, so they never enter the copied world.
     // The source object keeps its own immutable mark. When a copy reuses child
     // objects from an immutable branch, those non-path children are marked too
     // so their shared references stay protected.
