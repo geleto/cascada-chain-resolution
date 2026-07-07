@@ -46,8 +46,10 @@ Layering, bottom-up, **no circular imports**:
   is internal: the Error is written at the key), `copyCounters(source, copy)`,
   `screenExternalValue(target, value)` (value in → value-or-Error out; the single
   boundary hook — validation always, plus the indexing commit when the target is
-  indexed), `whenSettled(node)` (resolves to an Error or to nothing; absorbs ALL
-  frozen handling and indexing violations), `branchHasErrors(node)` (frozen/untracked
+  indexed), `whenSettled(node)` (normalize's waiter — resolves to an Error or to
+  nothing; absorbs frozen handling and indexing violations), `probeErrors(branch)`
+  (hasError's counter-guided probe — true at the first error, false once settled
+  clean; marks nothing, creates no waiters), `branchHasErrors(node)` (frozen/untracked
   ⇒ false), `copyFull(node)`, and the test-only `verifyRefCounts`. Internals —
   `indexBranch`, `ensureIndexed`, `countsOf`, edges, settlement subscriptions — are not exported.
   It never imports index.js; its one upward need — minting a promise mirror during
@@ -55,8 +57,9 @@ Layering, bottom-up, **no circular imports**:
   `refcounts.init({ mintMirror: getOrCreatePromiseMirror })`.
 - **index.js** — the ops, mirrors, COW, the import scanner (`scanImportBoundary` —
   it mints and marks, so it belongs here), and `normalize`/`hasError` themselves:
-  language operations, ~ten lines each on top of `whenSettled`/`branchHasErrors`/
-  `copyFull` — zero frozen-awareness, zero counter arithmetic, zero settlement mechanics.
+  language operations, ~ten lines each — normalize on `whenSettled` + `copyFull`,
+  marking its target shared at call time; hasError on `probeErrors` — zero
+  frozen-awareness, zero counter arithmetic, zero settlement mechanics.
 
 The contract: **unindexed behavior ≡ base-kernel behavior** — with refcounts.js
 stubbed to passthroughs (no `init` wiring needed), every operation behaves exactly as
@@ -107,7 +110,7 @@ function createMeta() {
         settlementVerifyScheduled: false,
         // parents is added by indexBranch when counters become live:
         // undefined => not indexed; empty Map => indexed root / no indexed parents.
-        // settlementWatchers is added only by normalize/hasError while callers wait.
+        // settlementWatchers is added only by normalize while callers wait.
     }
 }
 
@@ -378,11 +381,19 @@ function indexBranch(value, backEdgeTarget = null) {
     }
 
     // ---- pass 2: commit — cannot fail; post-order so child totals exist -----
+    // ATOMIC-PER-NODE INVARIANT: a node's counters and the parent edges from its
+    // children are established together, at the single commit point below, reached
+    // only after every child is fully processed. No node is ever partially counted,
+    // and — crucially — no child points its parent edge at a not-yet-committed node.
+    // This is what makes hasError's early-exit safe (see "Early-exit indexing"): a
+    // walk abandoned at the first error commits nothing partial and leaves no dangling
+    // upward edge, so no rollback is needed.
     function commit(node) {
         if (!Object.isExtensible(node)) return          // frozen: no metadata, (0,0) by rule
         const meta = ensureMeta(node)
         if (hasCounters(node)) return                   // DAG share / already live
         let pending = 0, errors = 0
+        const trackedChildren = []
         for (const key of Object.keys(node)) {
             const child = node[key]
             if (isPromise(child)) {
@@ -395,14 +406,17 @@ function indexBranch(value, backEdgeTarget = null) {
             } else if (isError(child)) {
                 errors += 1                             // imported Errors are language errors
             } else if (isTracked(child)) {
-                commit(child)
+                commit(child)                           // may abandon upward on early-exit
                 const [cp, ce] = countsOf(child)
                 pending += cp; errors += ce
-                if (Object.isExtensible(child)) addParentEdge(child, node)
+                if (Object.isExtensible(child)) trackedChildren.push(child)
             }                                           // primitives contribute nothing
         }
+        // COMMIT POINT — atomic: before here `node` is uncounted with nothing
+        // pointing at it; after here it is fully counted with every child edge set.
         meta.pendingCount = pending
         meta.errorCount = errors
+        for (const child of trackedChildren) addParentEdge(child, node)
         meta.parents = new Map()                        // set last: counters now live
     }
 
@@ -660,27 +674,33 @@ on P now (post-settlement registration lands at the tail of P's queue). If any o
 installs a new promise, the re-check sees `pendingCount > 0` and stays armed.
 
 ```js
-// index.js. ORDERED like every other op: whenSettled's sync prefix indexes the
-// branch and registers at normalize's program position; remainders resume in FIFO.
-// Completion is branch settlement (pendingCount 0, per the spec); in-place effects of
-// later-issued ops landing before settlement are included. No call-time marking: a
-// query must not change ownership state. Frozen roots, indexing violations, watcher
-// mechanics — all hidden inside whenSettled.
+// index.js. normalize MARKS THE REACHED BRANCH SHARED AT CALL TIME — the mark pins
+// the snapshot: later-issued ops hit it and COW away into a new world, so the
+// watched branch can never gain promises from them; suspended remainders of
+// EARLIER-issued ops still land in it, because mirror advances write the promise's
+// position in place regardless of the mark. pendingCount === 0 is therefore the
+// EXACT wait-set: the promises present at the call plus, recursively, promises
+// arriving inside their resolved values. (No conflict with "a query must not change
+// ownership state" — normalize is not a pure query: its return escapes, so the mark
+// was owed; marking early is what makes "current state" true.) NO early exit on
+// errors: an earlier-issued remainder can still REPLACE an error before settlement,
+// so collapse-to-Error is decided only at zero. Frozen branches, indexing
+// violations, waiter mechanics — hidden inside whenSettled.
 function normalize(root, segments = [], full = false) {
-    const target = lookupPath(root, segments, false)   // no ownership at resolve time:
-    return settle(target)                              // the RETURN is marked instead
+    const target = lookupPath(root, segments, false)   // lookup itself marks nothing;
+    return settle(target)                              // normalize marks below
 
     function settle(value) {
         if (isPromise(value)) return onResolve(value, settle)
         if (isError(value) || !isTracked(value)) return Promise.resolve(value)
+        markShared(value)                          // AT CALL TIME — pins the snapshot
         return whenSettled(value).then(failure => {
             if (failure) return failure            // frozen/cycle violation → Error
             if (branchHasErrors(value)) {
                 return new Error("normalize: branch contains errors") // sandbox collapse
             }
-            if (full) return copyFull(value)
-            return markShared(value) // only the RETURN escapes — shared ownership;
-        })                              // marked shared at completion, never at call time
+            return full ? copyFull(value) : value  // already marked
+        })
     }
 }
 
@@ -698,14 +718,12 @@ function copyFull(value, identityMap = new Map()) {
     return copy
 }
 
+// index.js. hasError never marks (pure query — only a boolean escapes) and uses NO
+// settlement waiters: it answers for the CURRENT snapshot, counter-guided, via
+// refcounts.js's probeErrors. It indexes as it searches but ABANDONS the walk at the
+// first error, so it fully indexes a branch only when the branch has no error; a
+// bailed-out branch is left safely partially indexed (see "Early-exit indexing").
 function hasError(root, segments) {
-    // sharedOwnership=false — pure inspection: a boolean escapes, nothing else, so
-    // the SHARED ownership mark is never set. The counter metadata is a separate
-    // concern and hasError DOES build it: the first call indexes the reached branch
-    // (whenSettled → ensureIndexed) and the region is maintained from then on, so
-    // every later hasError on it is O(1) plus path resolution. Ordered like every
-    // other op: registrations at hasError's program position, FIFO resumption;
-    // completion is the reached branch's settlement (pendingCount 0).
     // Resolve to the PARENT, then inspect the final key — lookupPath alone returns
     // undefined both for a missing property (no error there → false) and for a
     // broken path (intermediate missing/primitive → true per spec); they must differ.
@@ -726,16 +744,59 @@ function hasError(root, segments) {
         if (isError(value)) return true
         if (value === undefined) return false           // property absent: no error
         if (!isTracked(value)) return false             // reached a clean primitive
-        return whenSettled(value).then(failure =>       // frozen handled inside
-            isError(failure) || branchHasErrors(value)) // violation → true
+        return probeErrors(value)                       // refcounts.js — below
     }
+}
+
+// refcounts.js — the counter-guided probe. Marks nothing, creates no waiters.
+function probeErrors(branch) {
+    if (!Object.isExtensible(branch)) {                 // frozen: no metadata —
+        return validateFrozenSubtree(branch, new Set()) !== null  // valid ⇒ no errors
+    }
+    // Index-and-search in one walk, abandoning at the first error. Returns true
+    // (error found — branch left safely partially indexed), or the fully-indexed meta
+    // (no error present). Already-indexed subtrees are skipped, so a re-probe re-walks
+    // only the still-uncounted spine down to the error.
+    const result = indexUntilError(branch)
+    if (result === true) return true
+    if (result.pendingCount === 0) return false         // fully indexed, settled, clean
+    // No error yet, promises pending. Follow ONLY pending promises (descend nodes with
+    // promiseCount > 0 — settled-clean subtrees are never entered) and probe again at
+    // each settlement, at hasError's FIFO slot AFTER the writeback committed the
+    // resolved value's counts: first error wins, zero pending → false.
+    return onNextSettlementIn(branch, () => probeErrors(branch))
 }
 ```
 
-`hasError` waits for the reached branch's settlement because program-order semantics
-demand it: a pending remainder of an earlier op may still add or remove an error, and
-any such remainder is suspended on a promise counted inside the branch (if the branch
-counts zero pending, no such remainder can exist).
+Why the two immediate answers are program-order safe: with `pendingCount === 0`,
+every earlier-issued remainder that could touch this branch has already completed
+(any such remainder rides a promise counted inside it), so `errorCount` is the
+sequential answer. And a positive `errorCount` cannot be undone by a still-suspended
+earlier op — a counted error is reachable only through fully-settled positions; a
+remainder able to remove it would have to ride a promise *on the error's path*, which
+would make the error uncounted. Versus a full settlement wait, hasError only gets
+*faster* in the true direction: it answers at the first error instead of waiting for
+the whole branch.
+
+**Early-exit indexing.** `indexUntilError` runs the indexing walk (`commit`, plus the
+frozen-rule check; the cycle-validation pass is unnecessary — cycles enter only at the
+external boundary, and hasError walks owned internal data) and returns `true` the
+moment it accounts for an Error, without counting the rest of the branch. This is safe
+*only because* of the atomic-per-node commit invariant above: a node is written as
+counted, with the parent edges from its children attached, at one point reached after
+all its children are processed. So an abandoned walk leaves exactly two kinds of node
+— fully counted, or not counted at all — and never a child whose `parents` edge points
+at an uncounted node. The clean descendants already committed become disconnected
+counted **islands**: their local counts stay exact, and since nothing above them holds
+a `parents` edge into an uncounted node, no future delta can propagate into garbage.
+No rollback is needed — bailing simply abandons the in-progress local accumulators.
+A later `normalize`, or a `hasError` after the error is removed, re-indexes from the
+top and reconnects the islands by stopping at them and registering the boundary edge
+(the existing already-indexed-subtree rule). Consequence for the "subsequent calls are
+fast" property: a branch probed to a *positive* answer is only partially indexed, so a
+re-probe re-walks the uncounted spine to the first error (fast — proportional to the
+distance to the error, not the branch size); a branch probed to a *negative* answer
+was fully indexed and every later query on it is O(1).
 
 Export both; drop the leftover stub imports.
 
@@ -784,13 +845,27 @@ Lazy, branch-level indexing:
   target (the `node === target` reachability descent) and under an indexed one (the
   ancestor closure); the tree never contains a cycle, even transiently. Same pair of
   cases for a frozen violation inside the resolved value.
-- settlement semantics: after `h = hasError(root, ["b"])`, a synchronous `assignPath`
-  adding an Error into owned `b` IS reflected (`h` → true), and a plain write after
-  `normalize` on an owned branch appears in its result — both ops observe the settled
-  branch, they do not snapshot it. Neither sets the SHARED mark at call time
-  (`hasError` never, `normalize` only on its return at completion) — while both DO
-  index: assert META is present and maintained after a first `hasError`, and that a
-  second `hasError` on the same branch performs no rescan (O(1) after settlement).
+- snapshot semantics: a write issued after `normalize` does NOT appear in its result —
+  the call-time shared mark makes the write COW away into a new world (assert the
+  result matches the call-time state plus resolutions only). A suspended write of an
+  *earlier*-issued op DOES appear (mirror advances land in the marked branch).
+- `hasError` immediacy: with `errorCount > 0` at issue time it answers true without
+  waiting for pending promises; with `pendingCount === 0` it answers false
+  immediately; with an error arriving mid-wait it answers true at that settlement
+  (early exit), not at full settlement. `hasError` never sets the SHARED mark.
+- probe pruning: a branch with one pending promise and large settled-clean siblings —
+  assert the probe's walk never enters the settled subtrees (promiseCount guidance).
+- early-exit partial indexing: `hasError` on a branch whose error sits under an early
+  key, with a large clean sibling after it — assert the walk abandons at the error and
+  the sibling is left UNcounted (no `parents`), while the clean descendants already
+  committed before the error are counted islands with NO parent edge pointing at the
+  uncounted ancestors. Then `verifyRefCounts` must pass (no partial node, no dangling
+  upward edge), a subsequent write into an island must keep its local counts exact
+  without corrupting any uncounted ancestor, and a later `normalize` on the whole
+  branch must fully index and reconnect the islands (boundary edges appear).
+- a branch `hasError` probes to a *negative* (fully clean, settled) answer is fully
+  indexed — a second query on it is O(1); a branch probed to a *positive* answer is
+  only partially indexed and a re-probe re-walks the uncounted spine to the error.
 - wrapper-only scheduling: no `queueMicrotask`/`setTimeout` anywhere in index.js
   (greppable); the zero-verification rides `onResolve` on the settling promise, so
   it runs after every consumer already registered on that promise — assert ordering
