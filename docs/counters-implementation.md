@@ -666,17 +666,22 @@ installs a new promise, the re-check sees `pendingCount > 0` and stays armed.
 // later-issued ops landing before settlement are included. No call-time marking: a
 // query must not change ownership state. Frozen roots, indexing violations, watcher
 // mechanics — all hidden inside whenSettled.
-function normalize(root, full = false) {
-    if (isPromise(root)) return onResolve(root, r => normalize(r, full))
-    if (isError(root) || !isTracked(root)) return Promise.resolve(root)
-    return whenSettled(root).then(failure => {
-        if (failure) return failure                // frozen/cycle violation → Error
-        if (branchHasErrors(root)) {
-            return new Error("normalize: branch contains errors")   // sandbox collapse
-        }
-        if (full) return copyFull(root)
-        return markImmutable(root)  // only the RETURN escapes — shared ownership;
-    })                              // marked at completion, never at call time
+function normalize(root, segments = [], full = false) {
+    const target = lookupPath(root, segments, false)   // no ownership at resolve time:
+    return settle(target)                              // the RETURN is marked instead
+
+    function settle(value) {
+        if (isPromise(value)) return onResolve(value, settle)
+        if (isError(value) || !isTracked(value)) return Promise.resolve(value)
+        return whenSettled(value).then(failure => {
+            if (failure) return failure            // frozen/cycle violation → Error
+            if (branchHasErrors(value)) {
+                return new Error("normalize: branch contains errors") // sandbox collapse
+            }
+            if (full) return copyFull(value)
+            return markImmutable(value) // only the RETURN escapes — shared ownership;
+        })                              // marked at completion, never at call time
+    }
 }
 
 // Plain data out: no META, no marks — the value leaves the runtime.
@@ -809,7 +814,9 @@ Settlement / normalize / hasError:
 - `normalize` on an already-settled branch resolves (subscribe-at-zero verify).
 - watcher re-arms when a queued earlier-op remainder installs a new promise at the
   zero-crossing (the deferred-verification race).
-- `normalize` collapse on any error; `normalize(full)` output has no META/marks, is
+- `normalize` with a path resolves to the target branch by lookupPath rules (Error
+  mid-path → Error return; promise mid-path continued through the mirror).
+- `normalize` collapse on any error; full-mode `normalize` output has no META/marks, is
   fully mutable, and preserves diamond identity (two paths to one object → one copy).
 - `hasError`: error at target or mid-path → true; broken path (intermediate
   missing/primitive) → true; missing terminal property → false; clean branch → false;
