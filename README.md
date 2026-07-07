@@ -150,37 +150,28 @@ A few notes, deliberately brief:
 
 ## Counting instead of searching
 
-`hasError` and `normalize` are questions about a **whole branch**. `hasError` asks: *does anything inside this contain an error?*
+Two commands ask about a **whole branch**: `hasError` - *is there an error anywhere inside?* - and `normalize` - *hand out its current state, fully resolved*. Answering by searching would mean walking the entire structure, again and again as promises keep landing. Instead, the runtime counts.
 
-`normalize` isn't really asking about the current state at all - everything settles eventually, so it asks ***when***: *give me a promise that resolves once every promise now inside has settled - and any new promises their results bring with them, recursively.* It waits for the work already in the branch to finish; it is **not** an end-of-everything await for the branch to stop changing forever:
-
-```js
-user.profile = fetchProfile()   // will resolve to { avatar: fetchAvatar() }
-let done = normalize(user)      // waits for fetchProfile - then fetchAvatar too
-user.stats = fetchStats()       // added after normalize - done does not wait for this
-```
-
-Like every other command, neither blocks the program - the next command runs immediately; you await `normalize`'s promise only where you actually need the finished data.
-
-Answering either by searching means walking the whole structure - and `normalize` would have to walk again and again as promises keep landing.
-
-Instead, nodes count. Each node can carry two numbers:
+Each node can carry two numbers:
 
 - `promiseCount` - how many promises are still pending anywhere inside it,
 - `errorCount` - how many error values it contains, at any depth.
 
-How do the numbers stay correct as data changes? Each counting node (not every node counts - in a moment) keeps links to its **parent nodes** - the nodes whose properties contain it. (Usually one; a node shared into two structures has two.) Whenever a node's counts change, the difference travels up those links, parent by parent, so the numbers stay exact all the way to the top. And every command knows exactly what difference it made:
+Most variables are never asked either question, so by default nobody counts anything. The first `hasError` or `normalize` on a branch walks it once and sets the counters up - a walk it would have needed anyway. From then on the branch keeps counting itself: every command knows exactly what it removed and what it added (assign a promise: +1; it resolves: −1, plus whatever its value brings along; delete: subtract what left; replace: both at once), and pushes the difference up to the **parent nodes** - each counting node keeps links to the nodes that contain it - so the numbers stay exact everywhere, without ever walking again.
 
-- assigning a promise: `promiseCount` +1, up the chain; when it resolves, −1 - plus whatever the resolved value itself contains;
-- deleting a property: subtract everything the deleted value contained;
-- replacing a property: both at once - subtract the old value's counts, add the new value's.
+With the counters in place:
 
-With the numbers always exact:
+**`normalize`** hands out the branch's current state with every promise inside resolved. Its first move is to **freeze the branch**: it marks it shared - the same mark copy-on-write uses - so it cannot change underneath it. Later writes copy and go their own way; the frozen branch can only settle. All that's left is ***when***: when has every promise now inside settled, including any new ones their results bring along? The counter answers it - `normalize` subscribes to `promiseCount` reaching zero, and the zero *is* the completion signal:
 
-- `hasError(branch)` - wait for the branch to settle (a still-pending promise could yet reject into an error), then read one number: `errorCount > 0`. No walking.
-- `normalize(branch)` - subscribe to "`promiseCount` just reached zero." No re-scanning: the counter hitting zero *is* the completion signal.
+```js
+user.profile = fetchProfile()   // will resolve to { avatar: fetchAvatar() }
+let done = normalize(user)      // waits for fetchProfile - then fetchAvatar too
+user.stats = fetchStats()       // lands in a copy - the frozen branch never sees it
+```
 
-But most variables never see either question, and paying bookkeeping on every write to speed up queries that never come would be backwards. So counting is **lazy, per branch**: the first `hasError`/`normalize` on a branch walks it once and builds the counters - a walk any approach would need anyway - and from then on ordinary writes keep them exact, making every later query O(1). Branches never queried pay nothing.
+**`hasError`** answers for the branch as it is *now*: `errorCount > 0` - `true`, immediately; `promiseCount` at `0` - `false`, immediately, nothing is in flight. Only pending promises make it wait, and it follows just the branches that hold them, stopping the moment any `errorCount` turns positive: the first error wins.
+
+Like every other command, neither blocks the program - the next command runs immediately; you await the returned promise only where you actually need the answer.
 
 ## One record per node
 
