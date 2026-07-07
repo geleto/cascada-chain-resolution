@@ -34,32 +34,32 @@ const {
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
 const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
-const IMMUTABLE = Symbol("IMMUTABLE")
+const SHARED = Symbol("SHARED")
 
-// The immutable mark is runtime metadata: language-invisible, copied nowhere,
+// The shared mark is runtime metadata: language-invisible, copied nowhere,
 // and used only to decide whether a write must copy before mutation. Frozen or
-// sealed objects act immutable without receiving our Symbol metadata.
-function hasImmutableMark(value) {
+// sealed objects act shared for COW purposes without receiving our Symbol metadata.
+function hasSharedMark(value) {
     return isTracked(value) &&
-        (value[IMMUTABLE] === true || !Object.isExtensible(value))
+        (value[SHARED] === true || !Object.isExtensible(value))
 }
 
 // An unmarked object/array is owned by exactly one Cascada variable/path: object
 // literals and async assignments enter one owner, and Cascada does not assign
-// the same object into two roots directly. A value becomes immutable through
-// import, shared-ownership lookupPath escape, or COW of an immutable branch
+// the same object into two roots directly. A value becomes shared through
+// import, shared-ownership lookupPath escape, or COW of a shared branch
 // when an existing child value is reused by both the old and new worlds.
 // Promise-valued children follow that same COW rule through forked mirrors.
-function markImmutable(value) {
-    // Bare promises crossing an ownership boundary resolve to immutable values.
+function markShared(value) {
+    // Bare promises crossing an ownership boundary resolve to shared values.
     // Promise keys with mirrors are different: they must mark mirror.currentValue,
     // because currentValue may have advanced away from the raw settled value.
-    if (isPromise(value)) return settlePromise(value).then(markImmutable)
+    if (isPromise(value)) return settlePromise(value).then(markShared)
 
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) return value
 
-    Object.defineProperty(value, IMMUTABLE, {
+    Object.defineProperty(value, SHARED, {
         value: true,
         enumerable: false,
         writable: true,
@@ -94,10 +94,10 @@ function canUpdateMirrorToLive(node, key, mirror) {
 // sourceMirror.currentValue at the copier's FIFO slot, not earlier. The chosen
 // value is stored as currentValue, then written to the live key only if this
 // exact mirror still owns it.
-function onResolvedValue(node, key, mirror, getValue, markResolvedValueImmutable = false) {
+function onResolvedValue(node, key, mirror, getValue, markResolvedValueShared = false) {
     onResolve(mirror.promise, settledValueOrError => {
         const value = getValue(settledValueOrError)
-        if (markResolvedValueImmutable && isTracked(value)) markImmutable(value)
+        if (markResolvedValueShared && isTracked(value)) markShared(value)
         mirror.currentValue = value
 
         if (canUpdateMirrorToLive(node, key, mirror)) {
@@ -145,7 +145,7 @@ function importValue(value, rescan = true) {
 function importResolvedValue(value, rescan) {
     if (!isTracked(value)) return value
 
-    markImmutable(value)
+    markShared(value)
     if (rescan) scanImportedValue(value, new Set())
     return value
 }
@@ -168,18 +168,18 @@ function scanImportedValue(value, seen) {
     }
 }
 
-function shallowCopy(obj, pathKey = undefined, markReusedChildrenImmutable = false) {
+function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false) {
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
 
-    // Copy only language-visible string keys; promise mirrors and IMMUTABLE are
+    // Copy only language-visible string keys; promise mirrors and SHARED are
     // non-enumerable Symbol metadata, so they never enter the copied world.
-    // The source object keeps its own immutable mark. When a copy reuses child
-    // objects from an immutable branch, those non-path children are marked too
+    // The source object keeps its own shared mark. When a copy reuses child
+    // objects from a shared branch, those non-path children are marked too
     // so their shared references stay protected.
     for (const key of Object.keys(obj)) {
         const isPathKey = key === pathKeyString
-        const markCopiedValueImmutable = markReusedChildrenImmutable && !isPathKey
+        const markCopiedValueShared = markReusedChildrenShared && !isPathKey
         const value = obj[key]
         copy[key] = value
         if (isPromise(value)) {
@@ -198,14 +198,14 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenImmutable = fal
             //
             // Why mark non-path captured values: they are reused by two worlds,
             // so the first advance on either side must COW. The path key itself
-            // is protected by the walk's inherited immutable state if we enter it,
+            // is protected by the walk's inherited shared state if we enter it,
             // and may simply be replaced/deleted at the target.
             const sourceMirror = getOrCreatePromiseMirror(obj, key, value) // DISCOVERY if source was an orphan.
             const mirror = { promise: value, currentValue: undefined }
             getPromiseMirrorMap(copy)[key] = mirror
-            onResolvedValue(copy, key, mirror, () => sourceMirror.currentValue, markCopiedValueImmutable)
-        } else if (markCopiedValueImmutable && isTracked(value)) {
-            markImmutable(value)
+            onResolvedValue(copy, key, mirror, () => sourceMirror.currentValue, markCopiedValueShared)
+        } else if (markCopiedValueShared && isTracked(value)) {
+            markShared(value)
         }
     }
     return copy
@@ -243,20 +243,20 @@ function assignPath(root, path, value) {
 function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
     return walk(root, 0, false)
 
-    function walk(value, index, inheritedImmutableBranch) {
+    function walk(value, index, inheritedSharedBranch) {
         if (isError(value)) return value
 
         const valueIsTracked = isTracked(value)
         let parent = value
-        let parentInsideImmutableBranch = valueIsTracked && inheritedImmutableBranch
-        if (!parentInsideImmutableBranch) {
-            parentInsideImmutableBranch = hasImmutableMark(value)
+        let parentInsideSharedBranch = valueIsTracked && inheritedSharedBranch
+        if (!parentInsideSharedBranch) {
+            parentInsideSharedBranch = hasSharedMark(value)
         }
 
         if (createMissingIntermediates) {
             if (value === null || value === undefined) {
                 parent = {}
-                parentInsideImmutableBranch = false
+                parentInsideSharedBranch = false
             } else if (!valueIsTracked) {
                 return new Error("Cannot assign into primitive value")
             }
@@ -265,7 +265,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         }
 
         const key = path[index]
-        if (parentInsideImmutableBranch) {
+        if (parentInsideSharedBranch) {
             parent = shallowCopy(parent, key, true)
         }
 
@@ -278,7 +278,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         if (isPromise(child)) {
             const mirror = getOrCreatePromiseMirror(parent, key, child)
             onResolve(child, () => {
-                const next = walk(mirror.currentValue, index + 1, parentInsideImmutableBranch)
+                const next = walk(mirror.currentValue, index + 1, parentInsideSharedBranch)
                 mirror.currentValue = next
                 if (canUpdateMirrorToLive(parent, key, mirror)) {
                     parent[key] = next
@@ -287,7 +287,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
             return parent
         }
 
-        const next = walk(child, index + 1, parentInsideImmutableBranch)
+        const next = walk(child, index + 1, parentInsideSharedBranch)
         if (next !== child) {
             clearPromiseMirror(parent, key)
             parent[key] = next
@@ -307,7 +307,7 @@ function lookupPath(root, path, sharedOwnership = true) {
     }
 
     if (path.length === 0) {
-        if (sharedOwnership) markImmutable(root)       // escaping object/array -> immutable
+        if (sharedOwnership) markShared(root)       // escaping object/array -> shared
         return root
     }
 
@@ -330,7 +330,7 @@ function lookupPath(root, path, sharedOwnership = true) {
 
     function lookupValue(value, index) {
         if (index === path.length - 1) {
-            if (sharedOwnership) markImmutable(value)  // escaping object/array -> immutable
+            if (sharedOwnership) markShared(value)  // escaping object/array -> shared
             return value
         }
         if (isError(value)) return value

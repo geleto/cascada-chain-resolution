@@ -40,7 +40,7 @@ Layering, bottom-up, **no circular imports**:
 - **helpers.js** — the promise wrapper (`settlePromise`/`onResolve` + the ambient
   settling record) and type predicates. Unchanged role.
 - **meta.js** (new, tiny) — the META symbol, `createMeta`/`metaOf`/`ensureMeta`,
-  `hasImmutableMark`/`markImmutable`. Both layers above use it; neither owns it.
+  `hasSharedMark`/`markShared`. Both layers above use it; neither owns it.
 - **refcounts.js** — hook/counter logic ONLY. Public hooks, named to hide the whole
   machinery: `setProperty`/`deleteProperty` (return nothing — index-failure handling
   is internal: the Error is written at the key), `copyCounters(source, copy)`,
@@ -82,7 +82,7 @@ one `screenExternalValue`, one `copyCounters`, and the `init` call:
 | startup | — | `refcounts.init({ mintMirror })` |
 
 One consistency rule inside index.js: every internal continuation — including the
-three root-promise re-entries and `markImmutable`'s promise branch — goes through
+three root-promise re-entries and `markShared`'s promise branch — goes through
 `onResolve`, never bare `settlePromise(...).then(...)`, so the ambient settling record
 is always accurate. Greppable: `.then(` appears only inside helpers.js.
 
@@ -90,17 +90,17 @@ is always accurate. Greppable: `.then(` appears only inside helpers.js.
 
 ## Step 1 — Unify metadata under one `META` Symbol (behavior-neutral)
 
-Fold `PROMISE_MIRRORS` and `IMMUTABLE` (index.js:37–38) into a single record, housed
+Fold `PROMISE_MIRRORS` and `SHARED` (index.js:37–38) into a single record, housed
 in the new tiny **meta.js** (see File layout) so index.js and refcounts.js both reach
 it without importing each other. Also fold in basics item 1 here (non-extensible ⇒
-immutable), since `hasImmutableMark` is being rewritten anyway.
+shared for COW), since `hasSharedMark` is being rewritten anyway.
 
 ```js
 const META = Symbol("META")
 
 function createMeta() {
     return {
-        immutable: false,   // set once, never cleared; false at birth = old "no mark"
+        shared: false,   // set once, never cleared; false at birth = old "no mark"
         mirrors: null,      // lazy Object.create(null) — the promise mirror map
         pendingCount: 0,
         errorCount: 0,
@@ -130,15 +130,15 @@ function ensureMeta(node) {                // node must be tracked AND extensibl
 Rewritten accessors — same observable behavior as today:
 
 ```js
-function hasImmutableMark(value) {
+function hasSharedMark(value) {
     return isTracked(value) &&
-        (metaOf(value)?.immutable === true || !Object.isExtensible(value))
+        (metaOf(value)?.shared === true || !Object.isExtensible(value))
 }
 
-function markImmutable(value) {
-    if (isPromise(value)) return onResolve(value, markImmutable)
-    if (!isTracked(value) || !Object.isExtensible(value)) return value  // frozen: implicit
-    ensureMeta(value).immutable = true
+function markShared(value) {
+    if (isPromise(value)) return onResolve(value, markShared)
+    if (!isTracked(value) || !Object.isExtensible(value)) return value  // frozen: implicit shared mark
+    ensureMeta(value).shared = true
     return value
 }
 
@@ -180,7 +180,7 @@ automatically. The existing structure — `walkMutationPath`, the `onTarget` cal
 is preserved; this step is a minimal, greppable substitution of the bare writes.
 Also in this step (behavior-identical today, required by step 4's ambient settling
 record): convert index.js's remaining bare `settlePromise(...).then` continuations —
-the three root-promise re-entries and `markImmutable`'s promise branch — to
+the three root-promise re-entries and `markShared`'s promise branch — to
 `onResolve`; afterwards `.then(` appears only inside helpers.js (greppable).
 
 ```js
@@ -332,7 +332,7 @@ propagate into it and retain it.
 //   validateExternalValue FIRST — transactional: a cyclic or frozen-violating import
 //   returns the Error value and leaves no metadata, mirrors, or marks behind — then
 //   mints a mirror for every promise key and registers mark-on-settle continuations
-//   (markImmutable of mirror.currentValue + recursive re-scan — the ownership
+//   (markShared of mirror.currentValue + recursive re-scan — the ownership
 //   obligation). Builds NO counters/parents: import does not index.
 //
 // indexBranch(value, backEdgeTarget = null) — refcounts.js, the counter indexer:
@@ -531,7 +531,7 @@ Why the deltas compose without double counting, in both walk shapes:
 ### 3d′. Lazy, branch-level indexing — the rules (decided)
 
 Counters/edges/META-counting exist only where `normalize`/`hasError` have been used;
-everything else pays zero bookkeeping. Mirrors and immutable marks are independent of
+everything else pays zero bookkeeping. Mirrors and shared marks are independent of
 indexing and always maintained. Cost profile: never-checked data pays nothing; the
 first check pays one O(branch) scan — unavoidable in any design, something must find
 the promises once; repeated checks are O(1) after that.
@@ -563,19 +563,19 @@ the promises once; repeated checks are O(1) after that.
 ### 3d. `shallowCopy` (sanctioned bypass, hook-only counter work)
 
 ```js
-function shallowCopy(obj, pathKey, markReusedChildrenImmutable) {
+function shallowCopy(obj, pathKey, markReusedChildrenShared) {
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
 
     for (const key of Object.keys(obj)) {
-        const markCopiedValueImmutable =
-            markReusedChildrenImmutable && key !== pathKeyString
+        const markCopiedValueShared =
+            markReusedChildrenShared && key !== pathKeyString
         const value = obj[key]
         copy[key] = value                          // bypass: copy not yet observable
         if (isPromise(value)) {
             // BIRTH 3 — FORK, exactly as today, into the copy's mirror map
         } else if (isTracked(value)) {
-            if (markCopiedValueImmutable) markImmutable(value)
+            if (markCopiedValueShared) markShared(value)
         }
     }
     copyCounters(obj, copy)                         // no-op unless obj is indexed
@@ -679,8 +679,8 @@ function normalize(root, segments = [], full = false) {
                 return new Error("normalize: branch contains errors") // sandbox collapse
             }
             if (full) return copyFull(value)
-            return markImmutable(value) // only the RETURN escapes — shared ownership;
-        })                              // marked at completion, never at call time
+            return markShared(value) // only the RETURN escapes — shared ownership;
+        })                              // marked shared at completion, never at call time
     }
 }
 
@@ -700,7 +700,7 @@ function copyFull(value, identityMap = new Map()) {
 
 function hasError(root, segments) {
     // sharedOwnership=false — pure inspection: a boolean escapes, nothing else, so
-    // the IMMUTABLE ownership mark is never set. The counter metadata is a separate
+    // the SHARED ownership mark is never set. The counter metadata is a separate
     // concern and hasError DOES build it: the first call indexes the reached branch
     // (whenSettled → ensureIndexed) and the region is maintained from then on, so
     // every later hasError on it is O(1) plus path resolution. Ordered like every
@@ -787,7 +787,7 @@ Lazy, branch-level indexing:
 - settlement semantics: after `h = hasError(root, ["b"])`, a synchronous `assignPath`
   adding an Error into owned `b` IS reflected (`h` → true), and a plain write after
   `normalize` on an owned branch appears in its result — both ops observe the settled
-  branch, they do not snapshot it. Neither sets the IMMUTABLE mark at call time
+  branch, they do not snapshot it. Neither sets the SHARED mark at call time
   (`hasError` never, `normalize` only on its return at completion) — while both DO
   index: assert META is present and maintained after a first `hasError`, and that a
   second `hasError` on the same branch performs no rescan (O(1) after settlement).

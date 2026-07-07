@@ -26,7 +26,7 @@ async function flushMicrotasks(count = 8) {
 }
 
 describe("import", () => {
-    it("marks external roots as immutable", () => {
+    it("marks external roots as shared", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos
         const oldDelta = root.delta
@@ -63,7 +63,7 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("treats frozen resolved promise roots as immutable", async () => {
+    it("treats frozen resolved promise roots as shared for COW", async () => {
         const deferredRoot = deferred()
         const root = Object.freeze({ branch: { x: 1 } })
         const imported = importValue(deferredRoot.promise)
@@ -78,7 +78,7 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("treats frozen imported objects without promises as immutable", () => {
+    it("treats frozen imported objects without promises as shared for COW", () => {
         const root = Object.freeze({ branch: { x: 1 } })
         const oldBranch = root.branch
 
@@ -227,7 +227,7 @@ describe("path assignment", () => {
         expect(root.pos.x).to.be(2)
     })
 
-    it("copies an immutable root and marks copied children as immutable", () => {
+    it("copies a shared root and marks copied children as shared", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos
         const oldDelta = root.delta
@@ -248,7 +248,7 @@ describe("path assignment", () => {
         expect(next.delta.x).to.be(5)
     })
 
-    it("tracks inherited immutable state along the mutated path", () => {
+    it("tracks inherited shared state along the mutated path", () => {
         const root = {
             b: { x: 1 },
             c: { x: 2 },
@@ -302,7 +302,7 @@ describe("path assignment", () => {
         expect(next.a.x).to.be(9)
     })
 
-    it("does not clear the mark from an assigned immutable object", () => {
+    it("does not clear the mark from an assigned shared object", () => {
         const value = importValue({ x: 1 })
         const root = {}
 
@@ -683,7 +683,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(oldBranch.x).to.be(2)
     })
 
-    it("copies through a promised path key under an immutable root", async () => {
+    it("copies through a promised path key under a shared root", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
