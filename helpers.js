@@ -39,7 +39,7 @@ function isArray(x) {
 // Rejected data promises arrive at fn as Error values. Exceptions thrown by fn
 // are runtime bugs and are intentionally not caught here.
 function onResolve(promise, fn) {
-    return settlePromise(promise).then(fn)
+    return settlePromise(promise).then(value => fn(value))
 }
 
 function propagateClean() {

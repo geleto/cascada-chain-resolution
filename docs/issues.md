@@ -1,12 +1,8 @@
 # Issues
 
-## Runtime
-
-1. **Deterministic fatal internal continuation errors.** Data-promise rejections must continue to become language Error values through `settlePromise`/`onResolve` and the normal writeback path. Exceptions thrown by runtime continuation bodies are internal bugs and must be fatal host errors, never language Error values. Make that fatal path deterministic in the single wrapper layer instead of relying on host unhandled-rejection policy.
-
 ## Subtree Counters
 
-2. **Subtree counters replace the CLEAN flag.** Every indexed node carries exact `pendingCount`/`errorCount` totals for its subtree, so `hasError` is O(1)-guided and `normalize` completes from a counter event instead of rescanning. Indexing is lazy and per branch: the first `normalize`/`hasError` on a branch indexes that branch, stopping at already-indexed sub-branches and registering the boundary edge; from then on the indexed region is maintained. Never-checked data pays zero counter bookkeeping; first check pays the one O(branch) scan; repeated checks use the counters.
+1. **Subtree counters replace the CLEAN flag.** Every indexed node carries exact `pendingCount`/`errorCount` totals for its subtree, so `hasError` is O(1)-guided and `normalize` completes from a counter event instead of rescanning. Indexing is lazy and per branch: the first `normalize`/`hasError` on a branch indexes that branch, stopping at already-indexed sub-branches and registering the boundary edge; from then on the indexed region is maintained. Never-checked data pays zero counter bookkeeping; first check pays the one O(branch) scan; repeated checks use the counters.
 
     Required rules:
 
@@ -19,7 +15,7 @@
     - Non-extensible frozen/sealed nodes are forbidden to contain promises or Error values anywhere beneath them. A frozen subtree is permanently `(0,0)` and carries no metadata: no counters, no parents, no mirrors.
     - Runtime metadata remains inline: one non-enumerable `META` Symbol record per extensible node.
 
-3. **Single META record and accessors.** Consolidate `PROMISE_MIRRORS`, `SHARED`, and the counters into one non-enumerable Symbol record that is never copied by `shallowCopy`.
+2. **Single META record and accessors.** Consolidate `PROMISE_MIRRORS`, `SHARED`, and the counters into one non-enumerable Symbol record that is never copied by `shallowCopy`.
 
     ```js
     function createMeta() {
@@ -38,7 +34,7 @@
 
     `hasSharedMark(value)` reads `metaOf(value)?.shared === true || !Object.isExtensible(value)`. `canUpdateMirrorToLive(node, key, mirror)` reads `meta.mirrors?.[key]`; no record means the guard fails. `countsOf(value)` returns `(1,0)` for pending or settled-but-unreplaced promises, `(0,1)` for Error values, `(0,0)` for non-extensible nodes and primitives, and stored totals for indexed tracked nodes, indexing first if needed. `applyCountDelta(node, dPending, dError)` updates the node and recurses through every parent edge with multiplicity; zero deltas short-circuit and settlement waiters are scheduled on zero-crossing.
 
-4. **Indexing and boundary screening walkers.** Counter indexing scans structures that become part of an indexed region: initialize counters bottom-up, register parent edges, and mint a promise mirror for every promise-valued key. Mirror minting is eager because indexed regions are not rescanned; an orphan promise with no writeback would otherwise hold `pendingCount` up forever.
+3. **Indexing and boundary screening walkers.** Counter indexing scans structures that become part of an indexed region: initialize counters bottom-up, register parent edges, and mint a promise mirror for every promise-valued key. Mirror minting is eager because indexed regions are not rescanned; an orphan promise with no writeback would otherwise hold `pendingCount` up forever.
 
     Validation and commit are separate passes. The validate pass is pure: two-color cycle check, frozen rule, and direct writeback back-edge reachability. The commit pass creates metadata, counters, mirrors, and edges and cannot fail. This avoids leaving live DAG-shared nodes with parent edges into rejected data after a late validation failure.
 
@@ -50,7 +46,7 @@
 
     The back-edge check descends the value and rejects if it reaches the write target. Traversal uses two-color marking: reaching a visiting node is a cycle; reaching a visited node is a DAG share and reuses its totals.
 
-5. **Counter bookkeeping in write helpers.** All runtime property writes/deletes go through `setProperty(parent, key, value)` and `deleteProperty(parent, key)` in `refcounts.js`. The module layers without circular imports: `helpers.js` -> `meta.js` -> `refcounts.js` -> `index.js`; mirror minting needed during indexing is injected once with `refcounts.init({ mintMirror })`.
+4. **Counter bookkeeping in write helpers.** All runtime property writes/deletes go through `setProperty(parent, key, value)` and `deleteProperty(parent, key)` in `refcounts.js`. The module layers without circular imports: `helpers.js` -> `meta.js` -> `refcounts.js` -> `index.js`; mirror minting needed during indexing is injected once with `refcounts.init({ mintMirror })`.
 
     The helpers own only counter bookkeeping. If the written parent is unindexed (`metaOf(parent)?.parents === undefined`), they perform the bare write/delete and skip bookkeeping. The gate is checked when the helper runs, so continuations registered before indexing bookkeep correctly after indexing.
 
@@ -60,7 +56,7 @@
     - Promise mirror lifecycle remains at operation sites: fresh mirror on promise assignment, guarded writeback, clear on overwrite/delete.
     - `shallowCopy` copies language keys, forks mirrors, then calls `copyCounters(source, copy)`. Indexed copies snapshot counts, receive `parents = new Map()`, and register themselves as parent on reused tracked children.
 
-6. **Settlement, `normalize`, and `hasError`.** Both ops index the reached branch on first use at the caller's program position and surface indexing violations as language values (`normalize` returns Error; `hasError` returns true). Both resume through the uniform wrapper in FIFO order and never schedule outside the wrapper.
+5. **Settlement, `normalize`, and `hasError`.** Both ops index the reached branch on first use at the caller's program position and surface indexing violations as language values (`normalize` returns Error; `hasError` returns true). Both resume through the uniform wrapper in FIFO order and never schedule outside the wrapper.
 
     `normalize(root, segments, full=false)` resolves the path, then marks the reached branch shared at call time. That mark pins the snapshot: later-issued operations COW away from it, while suspended remainders of earlier-issued operations still land through in-place mirror advances. Therefore `pendingCount === 0` is the exact wait-set: promises present at the call plus promises recursively exposed by their resolved values. Do not collapse to Error until settlement, because an earlier-issued remainder may still replace an Error before zero.
 
@@ -78,6 +74,6 @@
 
     Early-exit indexing for `hasError` requires an atomic-per-node commit rule: a node's counters and child parent edges are established together only after every child is processed. A bailed walk must leave every node either fully counted or uncounted, never partial, with no child edge pointing at an uncounted parent. `verifyRefCounts` must pass after an early-exit probe.
 
-7. **Frames as nodes.** Treat scope frames as nodes with variables as keys, so a pending root is an ordinary promise-valued edge and the mirror machinery applies with paths like `["varName", ...segments]`. This removes the language-level need for per-op derived-promise chains on pending roots.
+6. **Frames as nodes.** Treat scope frames as nodes with variables as keys, so a pending root is an ordinary promise-valued edge and the mirror machinery applies with paths like `["varName", ...segments]`. This removes the language-level need for per-op derived-promise chains on pending roots.
 
-8. **Compiler single-owner rule.** The kernel cannot detect a raw unimported/unshared promise assigned to two locations. The compiler must guarantee it never emits that; external values enter through `import`, and escaping values go through shared-ownership `lookupPath`.
+7. **Compiler single-owner rule.** The kernel cannot detect a raw unimported/unshared promise assigned to two locations. The compiler must guarantee it never emits that; external values enter through `import`, and escaping values go through shared-ownership `lookupPath`.

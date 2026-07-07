@@ -1,6 +1,7 @@
 const expect = require("expect.js")
 
 const runtime = require("../index")
+const { onResolve } = require("../helpers")
 
 const {
     assignPath,
@@ -24,6 +25,30 @@ async function flushMicrotasks(count = 8) {
         await Promise.resolve()
     }
 }
+
+describe("promise helpers", () => {
+    it("passes rejected data promises to continuations as Error values", async () => {
+        const value = await onResolve(Promise.reject("data boom"), value => value)
+
+        expect(value instanceof Error).to.be(true)
+        expect(value.message).to.be("data boom")
+    })
+
+    it("does not convert continuation throws into language Error values", async () => {
+        const fatal = new TypeError("runtime bug")
+        let caught
+
+        try {
+            await onResolve(Promise.resolve("ok"), () => {
+                throw fatal
+            })
+        } catch (error) {
+            caught = error
+        }
+
+        expect(caught).to.be(fatal)
+    })
+})
 
 describe("import", () => {
     it("marks external roots as shared", () => {
