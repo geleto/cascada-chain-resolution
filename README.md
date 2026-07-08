@@ -39,8 +39,6 @@ Cascada compiles your statements into a chain of commands per variable, issued i
 | `hasError(v, ["a"])` | is there an error anywhere inside `v.a`? |
 | `normalize(v, ["a"])` | hand out the current state of `v.a`, with every promise inside it resolved |
 
-Current sandbox status: `assignPath`, `lookupPath`, `deletePath`, `import`, and subtree counters are implemented. `hasError`, `normalize`, and the unified per-node `META` record are still planned; see [docs/issues.md](docs/issues.md).
-
 The contract is simple: **the result must be exactly what you would get by running the commands one at a time, to completion, in program order.** The interesting part is honoring that contract without paying its obvious price - waiting. No command waits for the previous one's promises to finish; every command starts immediately.
 
 ## The obvious way - and why not
