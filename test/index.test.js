@@ -8,6 +8,10 @@ const {
     getRefCounts,
     refIndexBranch,
 } = require("../src/refcounts")
+const {
+    metaOf,
+    STORE_META_IN_WEAKMAP,
+} = require("../src/meta")
 const { verifyRefCounts } = require("../src/verify-refcounts")
 
 const {
@@ -1011,19 +1015,30 @@ describe("subtree counters", () => {
         refIndexBranch(root)
 
         const rootSymbols = Object.getOwnPropertySymbols(root)
-        const rootMeta = root[rootSymbols[0]]
+        const rootMeta = metaOf(root)
 
-        expect(rootSymbols.length).to.be(1)
-        expect(Object.getOwnPropertyDescriptor(root, rootSymbols[0]).enumerable).to.be(false)
+        if (STORE_META_IN_WEAKMAP) {
+            expect(rootSymbols.length).to.be(0)
+        } else {
+            expect(rootSymbols.length).to.be(1)
+            expect(root[rootSymbols[0]]).to.be(rootMeta)
+            expect(Object.getOwnPropertyDescriptor(root, rootSymbols[0]).enumerable).to.be(false)
+        }
         expect(getRefCounter(root)).to.be(rootMeta)
         expect(rootMeta.promiseCount).to.be(1)
 
         const next = assignPath(root, ["added"], true)
+        const nextMeta = metaOf(next)
         const nextSymbols = Object.getOwnPropertySymbols(next)
 
-        expect(nextSymbols).to.eql(rootSymbols)
-        expect(next[nextSymbols[0]]).not.to.be(rootMeta)
-        expect(getRefCounter(next)).to.be(next[nextSymbols[0]])
+        if (STORE_META_IN_WEAKMAP) {
+            expect(nextSymbols.length).to.be(0)
+        } else {
+            expect(nextSymbols).to.eql(rootSymbols)
+            expect(next[nextSymbols[0]]).to.be(nextMeta)
+        }
+        expect(nextMeta).not.to.be(rootMeta)
+        expect(getRefCounter(next)).to.be(nextMeta)
         verifyRefCounts(root, next)
     })
 

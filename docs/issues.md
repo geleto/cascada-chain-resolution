@@ -16,7 +16,7 @@
     - Counter metadata, promise mirrors, and the SHARED mark share the single `META` record in `src/meta.js`.
     - `normalize`/`hasError` are still covered by issue 5; they will activate this ref-indexing at their public operation boundary.
 
-2. **Implemented: single META record and accessors.** `src/meta.js` owns the one non-enumerable Symbol record. Shared marks, promise mirrors, and subtree counters all use that record, and `shallowCopy` never copies it as language data.
+2. **Implemented: single META record and accessors.** `src/meta.js` owns the one logical metadata record. Storage is selected by `STORE_META_IN_WEAKMAP`: inline non-enumerable Symbol property by default, or WeakMap. Shared marks, promise mirrors, and subtree counters all use that record, and `shallowCopy` never copies it as language data.
 
     ```js
     function createMeta() {

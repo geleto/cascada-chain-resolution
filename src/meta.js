@@ -1,6 +1,8 @@
 const { isTracked } = require("./helpers")
 
+const STORE_META_IN_WEAKMAP = false
 const META = Symbol("META")
+const META_MAP = new WeakMap()
 
 function createMeta() {
     return {
@@ -15,19 +17,27 @@ function createMeta() {
 
 function metaOf(value) {
     if (!isTracked(value) || !Object.isExtensible(value)) return undefined
-    return value[META]
+    return STORE_META_IN_WEAKMAP ? META_MAP.get(value) : value[META]
 }
 
 function ensureMeta(value) {
+    if (!isTracked(value) || !Object.isExtensible(value)) {
+        throw new TypeError("Cannot attach metadata to this value")
+    }
+
     let meta = metaOf(value)
     if (meta === undefined) {
         meta = createMeta()
-        Object.defineProperty(value, META, {
-            value: meta,
-            enumerable: false,
-            writable: true,
-            configurable: true,
-        })
+        if (STORE_META_IN_WEAKMAP) {
+            META_MAP.set(value, meta)
+        } else {
+            Object.defineProperty(value, META, {
+                value: meta,
+                enumerable: false,
+                writable: true,
+                configurable: true,
+            })
+        }
     }
     return meta
 }
@@ -62,4 +72,5 @@ module.exports = {
     hasSharedMark,
     metaOf,
     setSharedMark,
+    STORE_META_IN_WEAKMAP,
 }
