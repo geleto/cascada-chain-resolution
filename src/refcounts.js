@@ -4,10 +4,6 @@ const {
     isTracked,
 } = require("./helpers")
 const {
-    validateNoBackEdge,
-    validateRefIndexable,
-} = require("./validate")
-const {
     ensureMeta,
     metaOf,
 } = require("./meta")
@@ -47,8 +43,7 @@ function getRefCounts(value) {
         return [0, 0]
     }
 
-    const refIndexed = refIndexBranch(value)
-    if (isError(refIndexed)) throw refIndexed
+    refIndexBranch(value)
 
     const counter = getRefCounter(value)
     return [counter.promiseCount, counter.errorCount]
@@ -56,13 +51,8 @@ function getRefCounts(value) {
 
 function refIndexBranch(value) {
     if (!isTracked(value)) return value
-    if (!Object.isExtensible(value)) {
-        return validateRefIndexable(value, isRefIndexed) ?? value
-    }
+    if (!Object.isExtensible(value)) return value
     if (isRefIndexed(value)) return value
-
-    const failure = validateRefIndexable(value, isRefIndexed)
-    if (failure) return failure
 
     if (mintPromiseMirror === null) {
         assertNoPromisesToRefIndex(value, new Set())
@@ -152,7 +142,7 @@ function refSetProperty(parent, key, value) {
 
     const oldValue = readOwnProperty(parent, key)
     const [oldPromiseCount, oldErrorCount] = getRefCounts(oldValue)
-    const refIndexedValue = refIndexNewPropertyValue(parent, value)
+    const refIndexedValue = refIndexBranch(value)
     const [newPromiseCount, newErrorCount] = getRefCounts(refIndexedValue)
 
     removeParentEdge(oldValue, parent)
@@ -178,10 +168,6 @@ function refDeleteProperty(parent, key) {
 
     removeParentEdge(oldValue, parent)
     applyCountDelta(parent, -oldPromiseCount, -oldErrorCount)
-}
-
-function refIndexNewPropertyValue(parent, value) {
-    return validateNoBackEdge(value, parent) ?? refIndexBranch(value)
 }
 
 function addParentEdge(value, parent) {

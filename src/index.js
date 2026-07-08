@@ -37,6 +37,7 @@ const {
     hasSharedMark,
     setSharedMark,
 } = require("./meta")
+const { validateImportBoundary } = require("./validate")
 
 // Load-bearing helper contract:
 // Every continuation that depends on one promise's FIFO order must go through
@@ -46,6 +47,10 @@ const {
 // language Error node, so intermediate advances stop instead of autovivifying.
 const hasOwn = Object.prototype.hasOwnProperty
 const FORBIDDEN_PATH_KEY = "__proto__"
+// import(promise) returns a derived promise for root-level use, but if that
+// promise is later assigned to a key, the key's mirror still has to run
+// target-aware screening before writeback.
+const IMPORTED_PROMISES = new WeakSet()
 
 function readOwnProperty(node, key) {
     return hasOwn.call(node, key) ? node[key] : undefined
@@ -82,13 +87,16 @@ function canUpdateMirrorToLive(node, key, mirror) {
 // Register the mirror's resolved-value handler. Rejected data promises become
 // Error values here through onResolve/settlePromise; runtime bugs thrown by
 // this continuation are intentionally not caught.
-// getValue runs inside the onResolve continuation, so FORK reads
-// sourceMirror.currentValue at the copier's FIFO slot, not earlier. The chosen
-// value is stored as currentValue, then written to the live key only if this
-// exact mirror still owns it.
-function onResolvedValue(node, key, mirror, getValue, markResolvedValueShared = false) {
+// mirror.getValue runs inside the onResolve continuation, so FORK reads
+// sourceMirror.currentValue at the copier's FIFO slot, not earlier. Imported
+// mirrors also run their screenValue hook at this slot, where the write target is
+// known and back-edges can be rejected before commit. The chosen value is stored
+// as currentValue, then written to the live key only if this exact mirror still
+// owns it.
+function onResolvedValue(node, key, mirror, markResolvedValueShared = false) {
     onResolve(mirror.promise, settledValueOrError => {
-        let value = getValue(settledValueOrError)
+        let value = mirror.getValue(settledValueOrError, node)
+        if (mirror.screenValue !== null) value = mirror.screenValue(value, node)
         if (markResolvedValueShared && isTracked(value)) markShared(value)
 
         if (canUpdateMirrorToLive(node, key, mirror)) {
@@ -111,9 +119,36 @@ function getOrCreatePromiseMirror(node, key, promise) {
         return map[key]
     }
 
-    const mirror = { promise, currentValue: undefined }
+    return createPromiseMirror(map, node, key, promise, value => value)
+}
+
+function getOrCreateImportedPromiseMirror(node, key, promise) {
+    const map = ensurePromiseMirrorMap(node)
+    if (map[key]?.promise === promise) {
+        return map[key]
+    }
+
+    return createPromiseMirror(map, node, key, promise, value => value, {
+        screenValue: screenImportBoundary,
+    })
+}
+
+function createPromiseMirror(
+    map,
+    node,
+    key,
+    promise,
+    getValue,
+    options = {},
+) {
+    const mirror = {
+        promise,
+        currentValue: undefined,
+        getValue,
+        screenValue: options.screenValue ?? null,
+    }
     map[key] = mirror
-    onResolvedValue(node, key, mirror, value => value)
+    onResolvedValue(node, key, mirror, options.markResolvedValueShared === true)
 
     return mirror
 }
@@ -138,19 +173,23 @@ function deleteProperty(parent, key) {
 }
 
 // --- import : external value enters the runtime -----------------------------
-function importValue(value, rescan = true) {
+function importValue(value) {
     if (isPromise(value)) {
-        return onResolve(value, settledValue => importResolvedValue(settledValue, rescan))
+        const imported = onResolve(value, value => screenImportBoundary(value))
+        IMPORTED_PROMISES.add(imported)
+        return imported
     }
 
-    return importResolvedValue(value, rescan)
+    return screenImportBoundary(value)
 }
 
-function importResolvedValue(value, rescan) {
+function screenImportBoundary(value, target = undefined) {
+    const failure = validateImportBoundary(value, target)
+    if (failure) return failure
     if (!isTracked(value)) return value
 
     markShared(value)
-    if (rescan) scanImportedValue(value, new Set())
+    scanImportedValue(value, new Set())
     return value
 }
 
@@ -162,10 +201,7 @@ function scanImportedValue(value, seen) {
         const child = value[key]
 
         if (isPromise(child)) {
-            const mirror = getOrCreatePromiseMirror(value, key, child)
-            onResolve(child, () => {
-                importResolvedValue(mirror.currentValue, true)
-            })
+            getOrCreateImportedPromiseMirror(value, key, child)
         } else {
             scanImportedValue(child, seen)
         }
@@ -207,9 +243,16 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
             // is protected by the walk's inherited shared state if we enter it,
             // and may simply be replaced/deleted at the target.
             const sourceMirror = getOrCreatePromiseMirror(obj, key, value) // DISCOVERY if source was an orphan.
-            const mirror = { promise: value, currentValue: undefined }
-            ensurePromiseMirrorMap(copy)[key] = mirror
-            onResolvedValue(copy, key, mirror, () => sourceMirror.currentValue, markCopiedValueShared)
+            const options = { markResolvedValueShared: markCopiedValueShared }
+            if (sourceMirror.screenValue !== null) options.screenValue = screenImportBoundary
+            createPromiseMirror(
+                ensurePromiseMirrorMap(copy),
+                copy,
+                key,
+                value,
+                () => sourceMirror.currentValue,
+                options,
+            )
         } else if (markCopiedValueShared && isTracked(value)) {
             markShared(value)
         }
@@ -235,9 +278,10 @@ function assignPath(root, path, value) {
             // fresh mirror. Two assignments of the same promise at the same key
             // are divergent worlds and must not share currentValue.
             const map = ensurePromiseMirrorMap(parent)
-            const mirror = { promise: value, currentValue: undefined }
-            map[key] = mirror
-            onResolvedValue(parent, key, mirror, settledValue => settledValue) // FIRST: the FIFO ordering invariant
+            const options = IMPORTED_PROMISES.has(value)
+                ? { screenValue: screenImportBoundary }
+                : undefined
+            createPromiseMirror(map, parent, key, value, settledValue => settledValue, options) // FIRST: the FIFO ordering invariant
             setProperty(parent, key, value)
         } else {
             clearPromiseMirror(parent, key)            // plain value ends any prior promise mirror

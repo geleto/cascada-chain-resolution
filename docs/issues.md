@@ -12,7 +12,7 @@
     - CLEAN is only derived: clean means `promiseCount === 0 && errorCount === 0`.
     - Ownership/COW stays mark-based; counters answer "what is pending/broken below me", and the SHARED mark answers "who else can see me".
     - Error values count as language errors inside ref-indexed branches.
-    - Non-extensible frozen/sealed ref-indexed subtrees are forbidden to contain promises or Error values anywhere beneath them. A frozen subtree is permanently `[0,0]` and carries no counter metadata.
+    - Import screening forbids non-extensible frozen/sealed subtrees from containing promises or Error values anywhere beneath them in the language-visible enumerable string-key graph. A frozen subtree is permanently `[0,0]` and carries no counter metadata.
     - Counter metadata, promise mirrors, and the SHARED mark share the single `META` record in `src/meta.js`.
     - `normalize`/`hasError` are still covered by issue 5; they will activate this ref-indexing at their public operation boundary.
 
@@ -41,19 +41,18 @@
     - Counter fields live directly on META. `parents === undefined` remains the ref-indexing gate; record existence alone does not mean counters are live.
     - COW copies receive no copied META object. If counters are live, `copyCounters` creates a fresh META record and snapshots counts there.
 
-3. **Ref-indexing and boundary screening walkers.** Ref-indexing scans structures that become part of a ref-indexed region: initialize counters bottom-up, register parent edges, and mint a promise mirror for every promise-valued key. Mirror minting is eager because ref-indexed regions are not rescanned; an orphan promise with no writeback would otherwise hold `promiseCount` up forever.
+3. **Implemented: ref-indexing and import boundary screening walkers.** Ref-indexing scans trusted language-owned structures that become part of a ref-indexed region: initialize counters bottom-up, register parent edges, and mint a promise mirror for every promise-valued key. Mirror minting is eager because ref-indexed regions are not rescanned; an orphan promise with no writeback would otherwise hold `promiseCount` up forever.
 
-    Validation and commit are separate passes. The validate pass is pure: two-color cycle check, frozen rule, and direct writeback back-edge reachability. The commit pass creates metadata, counters, mirrors, and edges and cannot fail. This avoids leaving live DAG-shared nodes with parent edges into rejected data after a late validation failure.
+    Boundary validation is an import concern. Language-created data is trusted; path walks, COW forks, and ref-indexing do not perform broad validation. Imported data is validated before any runtime metadata is attached, so a validation failure cannot leave live DAG-shared nodes with parent edges or mirrors into rejected data.
 
     Entry points:
 
-    - `screenExternalValue(target, value)`: every external writeback validates frozen/cycle rules before data enters; for ref-indexed targets it also performs the ref-indexing commit.
-    - `scanImportBoundary(value)`: import validates, mints mirrors, and registers mark-on-settle continuations, but builds no counters/parents.
-    - `refIndexBranch(value)`: first `normalize`/`hasError` on a branch, writes into ref-indexed parents, and ref-indexed writeback commits. Write commits run the direct back-edge check before calling it.
+    - `screenImportBoundary(value, target?)`: import validates, mints mirrors, and registers mark-on-settle continuations, but builds no counters/parents. Promise values reached by import are screened recursively when they settle. When a screened writeback has a target, validation also rejects values that can reach that target, preventing externally-created back-edge cycles.
+    - `refIndexBranch(value)`: first `normalize`/`hasError` on a branch, writes into ref-indexed parents, and ref-indexed writeback commits. It assumes valid language-owned data and performs the counter/mirror/edge commit.
 
-    Discovery sites (`lookupPath`, `assignPath`, import scans, and forked copies) must screen non-extensible nodes before minting mirrors. A frozen raw literal with a promise/Error key is invalid boundary data and must produce/commit an Error instead of throwing while trying to attach mirror metadata. Boundary screening must also reject own `__proto__` keys, since paths cannot access them and COW copies use plain property assignment. Import scanning should also dedupe mark-on-settle continuations per mirror so DAG rescans do not register duplicate import-mode continuations.
+    Import screening rejects cycles, screened writeback back-edges, frozen/sealed subtrees containing promises or Error values, and own `__proto__` keys across the language-visible enumerable string-key graph. A frozen imported object with a promise/Error key is invalid boundary data and returns an Error instead of throwing while trying to attach mirror metadata. Imported promise-valued keys use screened writebacks, so their settled values are validated before being written. Reusing an existing import mirror avoids duplicate import-mode continuations.
 
-    The back-edge check descends the value and rejects if it reaches the write target. Traversal uses two-color marking: reaching a visiting node is a cycle; reaching a visited node is a DAG share and reuses its totals.
+    Traversal uses two-color marking: reaching a visiting node is a cycle; reaching a visited node is a DAG share and reuses its validation result or totals.
 
 4. **Counter bookkeeping in write helpers.** Runtime property writes/deletes live in `src/index.js`; `src/refcounts.js` exposes `refSetProperty(parent, key, value)` and `refDeleteProperty(parent, key)` for counter-only bookkeeping. The module layers without circular imports: `src/helpers.js` -> `src/validate.js`/`src/meta.js` -> `src/refcounts.js` -> `src/index.js`; mirror minting needed during ref-indexing is injected once with `refcounts.initRef({ mintPromiseMirror })`. Discovering a promise before this hook is installed is a fatal runtime configuration error.
 
@@ -65,7 +64,7 @@
     - Promise mirror lifecycle remains at operation sites: fresh mirror on promise assignment, guarded writeback, clear on overwrite/delete.
     - `shallowCopy` copies language keys, forks mirrors, then calls `copyCounters(source, copy)`. Ref-indexed copies snapshot counts, receive `parents = new Map()`, and register themselves as parent on reused tracked children.
 
-5. **Settlement, `normalize`, and `hasError`.** Both ops ref-index the reached branch on first use at the caller's program position and surface ref-indexing violations as language values (`normalize` returns Error; `hasError` returns true). Both resume through the uniform wrapper in FIFO order and never schedule outside the wrapper.
+5. **Settlement, `normalize`, and `hasError`.** Both ops ref-index the reached branch on first use at the caller's program position. Ref-indexing trusts language-owned data; import boundary screening is responsible for cycles, frozen-rule violations, `__proto__`, and external writeback back-edges before data enters the trusted graph. Both resume through the uniform wrapper in FIFO order and never schedule outside the wrapper.
 
     `normalize(root, segments, full=false)` resolves the path, then marks the reached branch shared at call time. That mark pins the snapshot: later-issued operations COW away from it, while suspended remainders of earlier-issued operations still land through in-place mirror advances. Therefore `promiseCount === 0` is the exact wait-set: promises present at the call plus promises recursively exposed by their resolved values. Do not collapse to Error until settlement, because an earlier-issued remainder may still replace an Error before zero.
 
@@ -79,10 +78,24 @@
 
     At settlement: `errorCount > 0` returns a single Error; `full=true` returns a deep copy through an old->new identity map consulted before recursing; otherwise return the already-marked branch.
 
-    `hasError(root, segments)` is a pure query and never marks. Resolve the parent path; broken intermediate paths are true, missing terminal properties are false. At the reached branch, return true immediately if `errorCount > 0`, return false immediately if `promiseCount === 0`, otherwise follow only pending promises by descending nodes with `promiseCount > 0` and probe again at each settlement. First error wins; zero pending means false. Frozen roots/branches are validated and treated as settled `[0,0]`.
+    `hasError(root, segments)` is a pure query and never marks. Resolve the parent path; broken intermediate paths are true, missing terminal properties are false. At the reached branch, return true immediately if `errorCount > 0`, return false immediately if `promiseCount === 0`, otherwise follow only pending promises by descending nodes with `promiseCount > 0` and probe again at each settlement. First error wins; zero pending means false. Frozen roots/branches are treated as already-settled `[0,0]`.
 
     Early-exit ref-indexing for `hasError` requires an atomic-per-node commit rule: a node's counters and child parent edges are established together only after every child is processed. A bailed walk must leave every node either fully counted or uncounted, never partial, with no child edge pointing at an uncounted parent. `verifyRefCounts` must pass after an early-exit probe.
 
 6. **Frames as nodes.** Treat scope frames as nodes with variables as keys, so a pending root is an ordinary promise-valued edge and the mirror machinery applies with paths like `["varName", ...segments]`. This removes the language-level need for per-op derived-promise chains on pending roots.
 
-7. **Compiler single-owner rule.** The kernel cannot detect a raw unimported/unshared promise assigned to two locations. The compiler must guarantee it never emits that; external values enter through `import`, and escaping values go through shared-ownership `lookupPath`.
+7. **Compiler single-owner rule.** The kernel cannot detect a raw unimported/unshared promise assigned to two locations. The compiler must guarantee it never emits that; external values enter through `import`, and escaping or RHS object values go through shared-ownership `lookupPath`. This is what prevents synchronous self-reference writes from creating cycles; raw `assignPath(root, ["self"], root)` is not a valid compiler lowering.
+
+8. **Language integration.** The language layer must screen every incoming external value through `import` before that value can become part of language-owned data. This includes frozen/sealed external structures and external promises used inside language initializers. Import must happen before any path operation or ref-indexing walk can discover that external value's promise keys.
+
+    Example lowering:
+
+    ```js
+    // Cascada source
+    x = { a: getExternalPromise() }
+
+    // Runtime shape
+    x = { a: import(getExternalPromise()) }
+    ```
+
+    After this step, the kernel can trust language-created object literals, assignments, COW copies, and path walks to contain only already-screened values.

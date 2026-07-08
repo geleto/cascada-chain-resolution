@@ -6,6 +6,15 @@ we count
 pending promises and Error values reachable below each node, never references —
 ownership/COW stays mark-based. Spec reference: initial-spec.md, "Subtree counters".
 
+Current implementation note: Issue 3 now keeps import boundary validation separate
+from ref-indexing. `src/validate.js` exposes `validateImportBoundary`; there is no
+runtime `validateFrozenSubtree` helper. Ref-indexing trusts language-owned data,
+while `import` screens external values over Cascada's enumerable string-key graph
+before attaching metadata. Step-3 pseudocode below that mentions `screenExternalValue`,
+`scanImportBoundary`, ref-indexing validation, or `validateFrozenSubtree` is superseded
+by the current `issues.md` / `initial-spec.md` architecture and remains only as design
+history.
+
 Ground rules for the whole sequence:
 
 - Each step ends with the full suite green (the current suite plus the new tests
