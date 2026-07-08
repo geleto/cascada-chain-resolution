@@ -34,8 +34,8 @@ Ground rules for the whole sequence:
   3. **Acyclicity is load-bearing** — delta propagation loops forever on a cycle. All
      cycle checking lives in boundary validation/ref-indexing (two-color for in-value cycles,
      direct target-reachability for writeback back-edges) and nowhere else: internal ops cannot
-     create cycles because COW copies the target before a self-referencing set
-     (`a.property = a` installs the pre-copy `a` into the new copy).
+     create cycles when the compiler lowers RHS object values through shared-ownership lookup.
+     `a.property = a` stores a COW copy of `a` as it existed before `property` was added.
   4. **Zero is edge-triggered and verified asynchronously** — never fire a watcher
      synchronously; always re-check. The verification is scheduled through the uniform
      wrapper (`onResolve` on the settling promise), never a bare `queueMicrotask` —
@@ -329,11 +329,12 @@ drafts, which conflated them): boundary validation is EAGER — import and every
 writeback check the frozen and cycle rules the moment data enters, so the language
 invariants hold unconditionally, never "until first ref-indexing" — while counter ref-indexing
 is LAZY and branch-level (3d′). Cycles can enter solely through external data —
-internal operations cannot create them, because COW copies the target before a
-self-referencing set. (Caveat: the kernel API *called
-directly*, as tests do, can bypass compiler discipline — `assignPath(root, ["self"],
-root)` with an un-escaped root would build a cycle no guard sees, since the value is
-already in the live tree and it is not a writeback. Documented as invalid input: compiled code
+internal operations cannot create them, because RHS object values escape through
+shared-ownership lookup before the write. For `a.prop = a`, the stored value is a
+COW copy of `a` before `prop` is added. (Caveat: the kernel API *called directly*,
+as tests do, can bypass compiler discipline — `assignPath(root, ["self"], root)`
+with an un-escaped root would build a cycle no guard sees, since the value is already
+in the live tree and it is not a writeback. Documented as invalid input: compiled code
 cannot produce it, and the `verifyRefCounts` oracle catches accidents in tests.)
 
 **Ref-indexing is transactional — two passes.** The validate pass is *pure*: no metadata,
