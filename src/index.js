@@ -6,7 +6,7 @@
 //   delete a.k  -> deletePath(a, ["k"])
 //   P(V)        -> a promise P that resolves to value V
 //
-// A promise mirror {promise, currentValue} lives in node[PROMISE_MIRRORS][key]:
+// A promise mirror {promise, currentValue} lives in node's META mirror map:
 //   promise      : the exact promise instance assigned to this key
 //   currentValue : the newest resolved value, V -> V' -> V'',
 //                  each op reading the latest currentValue and storing its COW back.
@@ -31,6 +31,12 @@ const {
     refDeleteProperty,
     refSetProperty,
 } = require("./refcounts")
+const {
+    ensurePromiseMirrorMap,
+    getPromiseMirrorMap,
+    hasSharedMark,
+    setSharedMark,
+} = require("./meta")
 
 // Load-bearing helper contract:
 // Every continuation that depends on one promise's FIFO order must go through
@@ -38,8 +44,6 @@ const {
 // at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
-const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
-const SHARED = Symbol("SHARED")
 const hasOwn = Object.prototype.hasOwnProperty
 const FORBIDDEN_PATH_KEY = "__proto__"
 
@@ -56,14 +60,6 @@ function forbiddenPathError(path) {
     return null
 }
 
-// The shared mark is runtime metadata: language-invisible, copied nowhere,
-// and used only to decide whether a write must copy before mutation. Frozen or
-// sealed objects act shared for COW purposes without receiving our Symbol metadata.
-function hasSharedMark(value) {
-    return isTracked(value) &&
-        (value[SHARED] === true || !Object.isExtensible(value))
-}
-
 // An unmarked object/array is owned by exactly one Cascada variable/path: object
 // literals and async assignments enter one owner, and Cascada does not assign
 // the same object into two roots directly. A value becomes shared through
@@ -76,35 +72,11 @@ function markShared(value) {
     // because currentValue may have advanced away from the raw settled value.
     if (isPromise(value)) return onResolve(value, markShared)
 
-    if (!isTracked(value)) return value
-    if (!Object.isExtensible(value)) return value
-
-    Object.defineProperty(value, SHARED, {
-        value: true,
-        enumerable: false,
-        writable: true,
-        configurable: true,
-    })
-    return value
-}
-
-// --- Promise mirror map -----------------------------------------------------
-function getPromiseMirrorMap(node) {
-    let map = node[PROMISE_MIRRORS]
-    if (map === undefined) {
-        map = Object.create(null)                    // null proto: no inherited keys
-        Object.defineProperty(node, PROMISE_MIRRORS, {
-            value: map,
-            enumerable: false,
-            writable: true,
-            configurable: true,
-        })
-    }
-    return map
+    return setSharedMark(value)
 }
 
 function canUpdateMirrorToLive(node, key, mirror) {
-    return node[PROMISE_MIRRORS]?.[key] === mirror
+    return getPromiseMirrorMap(node)?.[key] === mirror
 }
 
 // Register the mirror's resolved-value handler. Rejected data promises become
@@ -134,7 +106,7 @@ function onResolvedValue(node, key, mirror, getValue, markResolvedValueShared = 
 // in shallowCopy. Minting one lazily here would seed from the raw resolved
 // value and lose every write made by ops issued before the copy.
 function getOrCreatePromiseMirror(node, key, promise) {
-    const map = getPromiseMirrorMap(node)
+    const map = ensurePromiseMirrorMap(node)
     if (map[key]?.promise === promise) {
         return map[key]
     }
@@ -147,7 +119,7 @@ function getOrCreatePromiseMirror(node, key, promise) {
 }
 
 function clearPromiseMirror(node, key) {
-    const map = node[PROMISE_MIRRORS]
+    const map = getPromiseMirrorMap(node)
     if (!map) return
     delete map[key]
 }
@@ -204,8 +176,8 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
 
-    // Copy only language-visible string keys; promise mirrors and SHARED are
-    // non-enumerable Symbol metadata, so they never enter the copied world.
+    // Copy only language-visible string keys; META is non-enumerable Symbol
+    // metadata, so mirrors, counters, and the shared mark never enter the copy.
     // The source object keeps its own shared mark. When a copy reuses child
     // objects from a shared branch, those non-path children are marked too
     // so their shared references stay protected.
@@ -236,7 +208,7 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
             // and may simply be replaced/deleted at the target.
             const sourceMirror = getOrCreatePromiseMirror(obj, key, value) // DISCOVERY if source was an orphan.
             const mirror = { promise: value, currentValue: undefined }
-            getPromiseMirrorMap(copy)[key] = mirror
+            ensurePromiseMirrorMap(copy)[key] = mirror
             onResolvedValue(copy, key, mirror, () => sourceMirror.currentValue, markCopiedValueShared)
         } else if (markCopiedValueShared && isTracked(value)) {
             markShared(value)
@@ -262,7 +234,7 @@ function assignPath(root, path, value) {
             // BIRTH 1 - ASSIGN: assigning a promise to a key. Always creates a
             // fresh mirror. Two assignments of the same promise at the same key
             // are divergent worlds and must not share currentValue.
-            const map = getPromiseMirrorMap(parent)
+            const map = ensurePromiseMirrorMap(parent)
             const mirror = { promise: value, currentValue: undefined }
             map[key] = mirror
             onResolvedValue(parent, key, mirror, settledValue => settledValue) // FIRST: the FIFO ordering invariant

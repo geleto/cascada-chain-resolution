@@ -1003,6 +1003,30 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
+    it("uses one fresh metadata record for shared marks, mirrors, and counters", () => {
+        const deferredValue = deferred()
+        const root = { pending: deferredValue.promise, child: { x: 1 } }
+
+        importValue(root)
+        refIndexBranch(root)
+
+        const rootSymbols = Object.getOwnPropertySymbols(root)
+        const rootMeta = root[rootSymbols[0]]
+
+        expect(rootSymbols.length).to.be(1)
+        expect(Object.getOwnPropertyDescriptor(root, rootSymbols[0]).enumerable).to.be(false)
+        expect(getRefCounter(root)).to.be(rootMeta)
+        expect(rootMeta.promiseCount).to.be(1)
+
+        const next = assignPath(root, ["added"], true)
+        const nextSymbols = Object.getOwnPropertySymbols(next)
+
+        expect(nextSymbols).to.eql(rootSymbols)
+        expect(next[nextSymbols[0]]).not.to.be(rootMeta)
+        expect(getRefCounter(next)).to.be(next[nextSymbols[0]])
+        verifyRefCounts(root, next)
+    })
+
     it("counts primitive, promise, Error, and valid frozen values", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
 

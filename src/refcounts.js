@@ -7,8 +7,11 @@ const {
     validateNoBackEdge,
     validateRefIndexable,
 } = require("./validate")
+const {
+    ensureMeta,
+    metaOf,
+} = require("./meta")
 
-const COUNTERS = Symbol("COUNTERS")
 const hasOwn = Object.prototype.hasOwnProperty
 
 let mintPromiseMirror = null
@@ -18,7 +21,8 @@ function initRef(hooks) {
 }
 
 function getRefCounter(node) {
-    return isTracked(node) && Object.isExtensible(node) ? node[COUNTERS] : undefined
+    const meta = metaOf(node)
+    return meta?.parents !== undefined ? meta : undefined
 }
 
 function readOwnProperty(node, key) {
@@ -26,28 +30,14 @@ function readOwnProperty(node, key) {
 }
 
 function ensureCounter(node) {
-    let counter = node[COUNTERS]
-    if (counter === undefined) {
-        counter = {
-            promiseCount: 0,
-            errorCount: 0,
-            parents: undefined,
-        }
-        Object.defineProperty(node, COUNTERS, {
-            value: counter,
-            enumerable: false,
-            writable: true,
-            configurable: true,
-        })
-    }
-    return counter
+    return ensureMeta(node)
 }
 
 // `parents` is both the ref-indexed marker and the exact reverse-edge multiset.
 // Undefined means counters are not live; an empty Map means a ref-indexed root
 // with no ref-indexed parents. Never delete the Map itself.
 function isRefIndexed(node) {
-    return getRefCounter(node)?.parents !== undefined
+    return metaOf(node)?.parents !== undefined
 }
 
 function getRefCounts(value) {

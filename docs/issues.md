@@ -13,10 +13,10 @@
     - Ownership/COW stays mark-based; counters answer "what is pending/broken below me", and the SHARED mark answers "who else can see me".
     - Error values count as language errors inside ref-indexed branches.
     - Non-extensible frozen/sealed ref-indexed subtrees are forbidden to contain promises or Error values anywhere beneath them. A frozen subtree is permanently `[0,0]` and carries no counter metadata.
-    - Counter metadata is isolated in `src/refcounts.js` under its own non-enumerable Symbol for now. Issue 2 will fold counters, promise mirrors, and the SHARED mark into one `META` record.
+    - Counter metadata, promise mirrors, and the SHARED mark share the single `META` record in `src/meta.js`.
     - `normalize`/`hasError` are still covered by issue 5; they will activate this ref-indexing at their public operation boundary.
 
-2. **Single META record and accessors.** Consolidate `PROMISE_MIRRORS`, `SHARED`, and the counters into one non-enumerable Symbol record that is never copied by `shallowCopy`.
+2. **Implemented: single META record and accessors.** `src/meta.js` owns the one non-enumerable Symbol record. Shared marks, promise mirrors, and subtree counters all use that record, and `shallowCopy` never copies it as language data.
 
     ```js
     function createMeta() {
@@ -33,7 +33,13 @@
     }
     ```
 
-    `hasSharedMark(value)` reads `metaOf(value)?.shared === true || !Object.isExtensible(value)`. `canUpdateMirrorToLive(node, key, mirror)` reads `meta.mirrors?.[key]`; no record means the guard fails. `getRefCounts(value)` returns `[1,0]` for pending or settled-but-unreplaced promises, `[0,1]` for Error values, `[0,0]` for non-extensible nodes and primitives, and stored totals for ref-indexed tracked nodes, ref-indexing first if needed. If that defensive ref-indexing finds invalid owned data, it throws as a fatal kernel invariant failure; write helpers convert entering-value failures to Error values before calling it. `applyCountDelta(node, dPromise, dError)` updates the node and recurses through every parent edge with multiplicity; zero deltas short-circuit and settlement waiters are scheduled on zero-crossing.
+    Implemented rules:
+
+    - `metaOf(value)` returns metadata only for extensible tracked nodes; frozen/sealed nodes carry no record.
+    - `hasSharedMark(value)` reads `metaOf(value)?.shared === true || !Object.isExtensible(value)`.
+    - Promise mirrors live in `meta.mirrors`, created lazily as `Object.create(null)`.
+    - Counter fields live directly on META. `parents === undefined` remains the ref-indexing gate; record existence alone does not mean counters are live.
+    - COW copies receive no copied META object. If counters are live, `copyCounters` creates a fresh META record and snapshots counts there.
 
 3. **Ref-indexing and boundary screening walkers.** Ref-indexing scans structures that become part of a ref-indexed region: initialize counters bottom-up, register parent edges, and mint a promise mirror for every promise-valued key. Mirror minting is eager because ref-indexed regions are not rescanned; an orphan promise with no writeback would otherwise hold `promiseCount` up forever.
 
