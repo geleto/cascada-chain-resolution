@@ -22,10 +22,13 @@ const {
     isPromise,
     isTracked,
     onResolve,
-    propagateClean,
-    settlePromise,
-    updateCleanCounts,
 } = require("./helpers")
+const {
+    copyCounters,
+    initRef,
+    refDeleteProperty,
+    refSetProperty,
+} = require("./refcounts")
 
 // Load-bearing helper contract:
 // Every continuation that depends on one promise's FIFO order must go through
@@ -54,7 +57,7 @@ function markShared(value) {
     // Bare promises crossing an ownership boundary resolve to shared values.
     // Promise keys with mirrors are different: they must mark mirror.currentValue,
     // because currentValue may have advanced away from the raw settled value.
-    if (isPromise(value)) return settlePromise(value).then(markShared)
+    if (isPromise(value)) return onResolve(value, markShared)
 
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) return value
@@ -96,14 +99,13 @@ function canUpdateMirrorToLive(node, key, mirror) {
 // exact mirror still owns it.
 function onResolvedValue(node, key, mirror, getValue, markResolvedValueShared = false) {
     onResolve(mirror.promise, settledValueOrError => {
-        const value = getValue(settledValueOrError)
+        let value = getValue(settledValueOrError)
         if (markResolvedValueShared && isTracked(value)) markShared(value)
-        mirror.currentValue = value
 
         if (canUpdateMirrorToLive(node, key, mirror)) {
-            node[key] = value
-            propagateClean(node, key)
+            value = setProperty(node, key, value)
         }
+        mirror.currentValue = value
         // Else a later op reassigned/deleted the key: keep currentValue alive
         // privately for reads that captured this mirror; leave the property alone.
     })
@@ -131,6 +133,19 @@ function clearPromiseMirror(node, key) {
     const map = node[PROMISE_MIRRORS]
     if (!map) return
     delete map[key]
+}
+
+initRef({ mintPromiseMirror: getOrCreatePromiseMirror })
+
+function setProperty(parent, key, value) {
+    const nextValue = refSetProperty(parent, key, value)
+    parent[key] = nextValue
+    return nextValue
+}
+
+function deleteProperty(parent, key) {
+    refDeleteProperty(parent, key)
+    delete parent[key]
 }
 
 // --- import : external value enters the runtime -----------------------------
@@ -181,6 +196,8 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
         const isPathKey = key === pathKeyString
         const markCopiedValueShared = markReusedChildrenShared && !isPathKey
         const value = obj[key]
+        // Sanctioned write bypass: the copy is unobservable until it is installed
+        // through setProperty, or copyCounters snapshots the already-indexed source.
         copy[key] = value
         if (isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
@@ -208,6 +225,7 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
             markShared(value)
         }
     }
+    copyCounters(obj, copy)
     return copy
 }
 
@@ -215,7 +233,7 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
 function assignPath(root, path, value) {
     if (path.length === 0) return value
     if (isPromise(root)) {
-        return settlePromise(root).then(resolvedRoot => {
+        return onResolve(root, resolvedRoot => {
             return assignPath(resolvedRoot, path, value)
         })
     }
@@ -229,12 +247,11 @@ function assignPath(root, path, value) {
             const mirror = { promise: value, currentValue: undefined }
             map[key] = mirror
             onResolvedValue(parent, key, mirror, settledValue => settledValue) // FIRST: the FIFO ordering invariant
-            parent[key] = value
+            setProperty(parent, key, value)
         } else {
             clearPromiseMirror(parent, key)            // plain value ends any prior promise mirror
-            parent[key] = value
+            setProperty(parent, key, value)
         }
-        updateCleanCounts(parent, key)
     })
 }
 
@@ -255,6 +272,8 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 
         if (createMissingIntermediates) {
             if (value === null || value === undefined) {
+                // Sanctioned write bypass: a blank intermediate is unobservable
+                // during construction; installing it into the tree goes through setProperty.
                 parent = {}
                 parentInsideSharedBranch = false
             } else if (!valueIsTracked) {
@@ -281,7 +300,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
                 const next = walk(mirror.currentValue, index + 1, parentInsideSharedBranch)
                 mirror.currentValue = next
                 if (canUpdateMirrorToLive(parent, key, mirror)) {
-                    parent[key] = next
+                    setProperty(parent, key, next)
                 }
             })
             return parent
@@ -290,7 +309,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         const next = walk(child, index + 1, parentInsideSharedBranch)
         if (next !== child) {
             clearPromiseMirror(parent, key)
-            parent[key] = next
+            setProperty(parent, key, next)
         }
         return parent
     }
@@ -301,7 +320,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // the caller, e.g. the final `return x` from an otherwise unused variable.
 function lookupPath(root, path, sharedOwnership = true) {
     if (isPromise(root)) {
-        return settlePromise(root).then(resolvedRoot => {
+        return onResolve(root, resolvedRoot => {
             return lookupPath(resolvedRoot, path, sharedOwnership)
         })
     }
@@ -343,7 +362,7 @@ function lookupPath(root, path, sharedOwnership = true) {
 function deletePath(root, path) {
     if (path.length === 0) return null
     if (isPromise(root)) {
-        return settlePromise(root).then(resolvedRoot => {
+        return onResolve(root, resolvedRoot => {
             return deletePath(resolvedRoot, path)
         })
     }
@@ -351,8 +370,7 @@ function deletePath(root, path) {
     return walkMutationPath(root, path, false, (parent, key) => {
         if (isArray(parent)) return                    // array element deletion is outside this helper
         clearPromiseMirror(parent, key)                // no later writeback re-mirrors
-        delete parent[key]
-        updateCleanCounts(parent, key)
+        deleteProperty(parent, key)
     })
 }
 

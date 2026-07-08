@@ -42,21 +42,11 @@ function onResolve(promise, fn) {
     return settlePromise(promise).then(value => fn(value))
 }
 
-function propagateClean() {
-    // CLEAN is intentionally not implemented in this testable kernel.
-}
-
-function updateCleanCounts() {
-    // CLEAN is intentionally not implemented in this testable kernel.
-}
-
 module.exports = {
     isArray,
     isError,
     isPromise,
     isTracked,
     onResolve,
-    propagateClean,
     settlePromise,
-    updateCleanCounts,
 }

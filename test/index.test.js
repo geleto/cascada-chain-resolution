@@ -1,7 +1,14 @@
 const expect = require("expect.js")
+const { spawnSync } = require("child_process")
 
 const runtime = require("../index")
 const { onResolve } = require("../helpers")
+const {
+    getRefCounter,
+    getRefCounts,
+    refIndexBranch,
+} = require("../refcounts")
+const { verifyRefCounts } = require("../verify-refcounts")
 
 const {
     assignPath,
@@ -24,6 +31,10 @@ async function flushMicrotasks(count = 8) {
     for (let i = 0; i < count; i++) {
         await Promise.resolve()
     }
+}
+
+function expectCounts(value, promiseCount, errorCount) {
+    expect(getRefCounts(value)).to.eql([promiseCount, errorCount])
 }
 
 describe("promise helpers", () => {
@@ -896,6 +907,456 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ y: 3, x: 2 })
+    })
+})
+
+describe("subtree counters", () => {
+    it("keeps non-ref-indexed writes on the normal mutation path", () => {
+        const deferredValue = deferred()
+        const root = {}
+        const cyclic = {}
+        cyclic.self = cyclic
+
+        assignPath(root, ["pending"], deferredValue.promise)
+        assignPath(root, ["nested", "error"], new Error("bad"))
+        assignPath(root, ["cycle"], cyclic)
+
+        expect(root.pending).to.be(deferredValue.promise)
+        expect(root.nested.error instanceof Error).to.be(true)
+        expect(root.cycle).to.be(cyclic)
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(root.nested)).to.be(undefined)
+        verifyRefCounts(root)
+    })
+
+    it("counts primitive, promise, Error, and valid frozen values", () => {
+        const frozen = Object.freeze({ nested: { value: 1 } })
+
+        expectCounts(7, 0, 0)
+        expectCounts(null, 0, 0)
+        expectCounts(Promise.resolve(1), 1, 0)
+        expectCounts(new Error("bad"), 0, 1)
+
+        expect(refIndexBranch(frozen)).to.be(frozen)
+        expectCounts(frozen, 0, 0)
+        verifyRefCounts(frozen)
+    })
+
+    it("throws if promise ref-indexing runs before initRef", () => {
+        const script = `
+            const { refIndexBranch } = require("./refcounts")
+            try {
+                refIndexBranch({ value: Promise.resolve("done") })
+                process.exit(1)
+            } catch (error) {
+                if (error.message !== "initRef must be called before ref-indexing promises") {
+                    process.stderr.write(error.stack)
+                    process.exit(1)
+                }
+            }
+        `
+
+        const result = spawnSync(process.execPath, ["-e", script], {
+            cwd: process.cwd(),
+            encoding: "utf8",
+        })
+
+        expect(result.status).to.be(0)
+    })
+
+    it("throws when getRefCounts finds invalid owned data", () => {
+        const cyclic = {}
+        cyclic.self = cyclic
+        let thrown
+
+        try {
+            getRefCounts(cyclic)
+        } catch (error) {
+            thrown = error
+        }
+
+        expect(thrown instanceof Error).to.be(true)
+        expect(thrown.message).to.be("Cannot ref-index cyclic value")
+    })
+
+    it("bookkeeps tracked branches after first count", () => {
+        const deferredValue = deferred()
+        const nestedPromise = deferred()
+        const root = {
+            pending: deferredValue.promise,
+            nested: { error: new Error("bad") },
+        }
+
+        expectCounts(root, 1, 1)
+        verifyRefCounts(root)
+
+        assignPath(root, ["nested", "pending"], nestedPromise.promise)
+        expectCounts(root, 2, 1)
+        verifyRefCounts(root)
+    })
+
+    it("keeps counts exact through writes, deletes, and promise settlement", async () => {
+        const first = deferred()
+        const second = deferred()
+        const root = {
+            pending: first.promise,
+            error: new Error("old"),
+            nested: {},
+        }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 1)
+        verifyRefCounts(root)
+
+        assignPath(root, ["nested", "pending"], second.promise)
+        expectCounts(root, 2, 1)
+        verifyRefCounts(root)
+
+        deletePath(root, ["error"])
+        expectCounts(root, 2, 0)
+        verifyRefCounts(root)
+
+        first.resolve({ failed: new Error("resolved") })
+        await flushMicrotasks()
+        expectCounts(root, 1, 1)
+        verifyRefCounts(root)
+
+        second.resolve(42)
+        await flushMicrotasks()
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("decrements counts when a pending promise is overwritten and ignores its later writeback", async () => {
+        const deferredValue = deferred()
+        const root = {}
+
+        refIndexBranch(root)
+        assignPath(root, ["value"], deferredValue.promise)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        assignPath(root, ["value"], 7)
+        expect(root.value).to.be(7)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve(new Error("late"))
+        await flushMicrotasks()
+
+        expect(root.value).to.be(7)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("keeps counting promises exposed by resolved promise values", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const root = { value: outer.promise }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        expectCounts(root, 1, 0)
+        expectCounts(root.value, 1, 0)
+        verifyRefCounts(root)
+
+        inner.resolve("done")
+        await flushMicrotasks()
+
+        expect(root.value.inner).to.be("done")
+        expectCounts(root, 0, 0)
+        expectCounts(root.value, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("turns rejected promises into counted Error values", async () => {
+        const deferredValue = deferred()
+        const root = { value: deferredValue.promise }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        deferredValue.reject("bad")
+        await flushMicrotasks()
+
+        expect(root.value instanceof Error).to.be(true)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("discovers already-settled promise keys during ref-indexing", async () => {
+        const root = { value: Promise.resolve("done") }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        await flushMicrotasks()
+
+        expect(root.value).to.be("done")
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("connects an already-ref-indexed child when an ancestor is ref-indexed", async () => {
+        const deferredValue = deferred()
+        const child = { pending: deferredValue.promise }
+        const root = { child }
+
+        refIndexBranch(child)
+        expectCounts(child, 1, 0)
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(child, 0, 0)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("bookkeeps continuations registered before ref-indexing when they commit after ref-indexing", async () => {
+        const branch = deferred()
+        const nested = deferred()
+        const root = { branch: branch.promise }
+
+        assignPath(root, ["branch", "nested"], nested.promise)
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        branch.resolve({})
+        await flushMicrotasks()
+
+        expectCounts(root, 1, 0)
+        expectCounts(root.branch, 1, 0)
+        verifyRefCounts(root)
+
+        nested.resolve("done")
+        await flushMicrotasks()
+
+        expect(root.branch.nested).to.be("done")
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("counts shared child references with parent-edge multiplicity", async () => {
+        const deferredValue = deferred()
+        const child = { pending: deferredValue.promise }
+        const root = { left: child, right: child }
+
+        refIndexBranch(root)
+        expectCounts(child, 1, 0)
+        expectCounts(root, 2, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(child, 0, 0)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("preserves parent-edge multiplicity across COW worlds", async () => {
+        const deferredValue = deferred()
+        const child = { pending: deferredValue.promise }
+        const root = { left: child, right: child }
+
+        refIndexBranch(root)
+        lookupPath(root, [])
+        const next = assignPath(root, ["added"], true)
+
+        expectCounts(child, 1, 0)
+        expectCounts(root, 2, 0)
+        expectCounts(next, 2, 0)
+        verifyRefCounts(root, next)
+
+        deferredValue.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(child, 0, 0)
+        expectCounts(root, 0, 0)
+        expectCounts(next, 0, 0)
+        verifyRefCounts(root, next)
+    })
+
+    it("decrements a deleted pending promise and ignores its later writeback", async () => {
+        const deferredValue = deferred()
+        const root = { value: deferredValue.promise }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        deletePath(root, ["value"])
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve(new Error("late"))
+        await flushMicrotasks()
+
+        expect(root).to.eql({})
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("keeps COW of non-ref-indexed branches countable afterward", () => {
+        const deferredValue = deferred()
+        const root = { branch: { x: 1 } }
+
+        lookupPath(root, [])
+        const next = assignPath(root, ["added"], true)
+        assignPath(next, ["branch", "pending"], deferredValue.promise)
+
+        expectCounts(root, 0, 0)
+        expectCounts(next, 1, 0)
+        verifyRefCounts(root, next)
+    })
+
+    it("copies counters for COW worlds and lets them diverge", async () => {
+        const deferredBranch = deferred()
+        const root = {
+            branch: deferredBranch.promise,
+            sibling: { error: new Error("old") },
+        }
+
+        refIndexBranch(root)
+        lookupPath(root, [])
+
+        const next = assignPath(root, ["added"], true)
+        expectCounts(root, 1, 1)
+        expectCounts(next, 1, 1)
+        verifyRefCounts(root, next)
+
+        assignPath(next, ["sibling", "error"], "fixed")
+        expectCounts(root, 1, 1)
+        expectCounts(next, 1, 0)
+        verifyRefCounts(root, next)
+
+        deferredBranch.resolve({ ok: true })
+        await flushMicrotasks()
+
+        expectCounts(root, 0, 1)
+        expectCounts(next, 0, 0)
+        verifyRefCounts(root, next)
+    })
+
+    it("rejects frozen ref-indexed subtrees that contain promises or errors", () => {
+        const frozenPromise = Object.freeze({ pending: Promise.resolve(1) })
+        const nestedFrozenPromise = Object.freeze({ nested: { pending: Promise.resolve(1) } })
+        const frozenError = Object.freeze({ error: new Error("bad") })
+        const root = {}
+
+        const promiseFailure = refIndexBranch(frozenPromise)
+        const nestedPromiseFailure = refIndexBranch(nestedFrozenPromise)
+        const errorFailure = refIndexBranch(frozenError)
+
+        expect(promiseFailure instanceof Error).to.be(true)
+        expect(nestedPromiseFailure instanceof Error).to.be(true)
+        expect(errorFailure instanceof Error).to.be(true)
+
+        refIndexBranch(root)
+        assignPath(root, ["value"], frozenPromise)
+
+        expect(root.value instanceof Error).to.be(true)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("rejects frozen promise descendants regardless of key order", () => {
+        function makeRoot(frozenFirst) {
+            const shared = { pending: Promise.resolve(1) }
+            const frozen = Object.freeze({ shared })
+            return frozenFirst ? { frozen, shared } : { shared, frozen }
+        }
+
+        const frozenFirstFailure = refIndexBranch(makeRoot(true))
+        const sharedFirstFailure = refIndexBranch(makeRoot(false))
+
+        expect(frozenFirstFailure instanceof Error).to.be(true)
+        expect(sharedFirstFailure instanceof Error).to.be(true)
+    })
+
+    it("turns frozen-violating resolved values into Error values", async () => {
+        const deferredValue = deferred()
+        const root = { value: deferredValue.promise }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve(Object.freeze({ pending: Promise.resolve(1) }))
+        await flushMicrotasks()
+
+        expect(root.value instanceof Error).to.be(true)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("turns ref-indexed writes that would create cycles into Error values", () => {
+        const root = {}
+        const cyclic = {}
+        cyclic.self = cyclic
+
+        refIndexBranch(root)
+        assignPath(root, ["self"], root)
+
+        expect(root.self instanceof Error).to.be(true)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+
+        assignPath(root, ["value"], cyclic)
+
+        expect(root.value instanceof Error).to.be(true)
+        expect(cyclic.self).to.be(cyclic)
+        expectCounts(root, 0, 2)
+        verifyRefCounts(root)
+    })
+
+    it("turns async back-edges into Error values", async () => {
+        const deferredValue = deferred()
+        const root = { value: deferredValue.promise }
+
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        deferredValue.resolve(root)
+        await flushMicrotasks()
+
+        expect(root.value instanceof Error).to.be(true)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("does not leave counter edges behind when entering-value validation fails", () => {
+        const sharedPromise = deferred()
+        const root = {}
+        const shared = { pending: sharedPromise.promise }
+        const incoming = { shared, cycle: {} }
+        incoming.cycle.back = incoming
+
+        refIndexBranch(shared)
+        refIndexBranch(root)
+        expectCounts(shared, 1, 0)
+
+        assignPath(root, ["value"], incoming)
+
+        expect(root.value instanceof Error).to.be(true)
+        expect(incoming.cycle.back).to.be(incoming)
+        expectCounts(shared, 1, 0)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root, shared)
     })
 })
 
