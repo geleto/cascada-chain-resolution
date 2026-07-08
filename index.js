@@ -1,3 +1,5 @@
+"use strict"
+
 // --- Notation ---------------------------------------------------------------
 //   a.k.y = 1   -> assignPath(a, ["k", "y"], 1)
 //   = a.k.y     -> lookupPath(a, ["k", "y"])
@@ -38,6 +40,21 @@ const {
 // language Error node, so intermediate advances stop instead of autovivifying.
 const PROMISE_MIRRORS = Symbol("PROMISE_MIRRORS")
 const SHARED = Symbol("SHARED")
+const hasOwn = Object.prototype.hasOwnProperty
+const FORBIDDEN_PATH_KEY = "__proto__"
+
+function readOwnProperty(node, key) {
+    return hasOwn.call(node, key) ? node[key] : undefined
+}
+
+function forbiddenPathError(path) {
+    for (const key of path) {
+        if (key === FORBIDDEN_PATH_KEY) {
+            return new Error("Cannot use __proto__ as a path segment")
+        }
+    }
+    return null
+}
 
 // The shared mark is runtime metadata: language-invisible, copied nowhere,
 // and used only to decide whether a write must copy before mutation. Frozen or
@@ -231,6 +248,8 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(root, path, value) {
+    const pathError = forbiddenPathError(path)
+    if (pathError) return pathError
     if (path.length === 0) return value
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
@@ -265,10 +284,8 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 
         const valueIsTracked = isTracked(value)
         let parent = value
-        let parentInsideSharedBranch = valueIsTracked && inheritedSharedBranch
-        if (!parentInsideSharedBranch) {
-            parentInsideSharedBranch = hasSharedMark(value)
-        }
+        let parentInsideSharedBranch = valueIsTracked &&
+            (inheritedSharedBranch || hasSharedMark(value))
 
         if (createMissingIntermediates) {
             if (value === null || value === undefined) {
@@ -293,13 +310,14 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
             return parent
         }
 
-        const child = parent[key]
+        const child = readOwnProperty(parent, key)
         if (isPromise(child)) {
             const mirror = getOrCreatePromiseMirror(parent, key, child)
             onResolve(child, () => {
                 const next = walk(mirror.currentValue, index + 1, parentInsideSharedBranch)
                 mirror.currentValue = next
-                if (canUpdateMirrorToLive(parent, key, mirror)) {
+                if (canUpdateMirrorToLive(parent, key, mirror) &&
+                    next !== readOwnProperty(parent, key)) {
                     setProperty(parent, key, next)
                 }
             })
@@ -319,6 +337,8 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // sharedOwnership is false for a pure read or when ownership is ceded to
 // the caller, e.g. the final `return x` from an otherwise unused variable.
 function lookupPath(root, path, sharedOwnership = true) {
+    const pathError = forbiddenPathError(path)
+    if (pathError) return pathError
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
             return lookupPath(resolvedRoot, path, sharedOwnership)
@@ -339,7 +359,7 @@ function lookupPath(root, path, sharedOwnership = true) {
         if (!isTracked(parent)) return undefined
 
         const key = path[index]
-        const value = parent[key]
+        const value = readOwnProperty(parent, key)
         if (isPromise(value)) {
             const mirror = getOrCreatePromiseMirror(parent, key, value)
             return onResolve(value, () => lookupValue(mirror.currentValue, index)) // never raw V
@@ -348,6 +368,8 @@ function lookupPath(root, path, sharedOwnership = true) {
     }
 
     function lookupValue(value, index) {
+        // `index` still names the segment that produced value; only deeper
+        // lookups advance to the next segment.
         if (index === path.length - 1) {
             if (sharedOwnership) markShared(value)  // escaping object/array -> shared
             return value
@@ -360,6 +382,8 @@ function lookupPath(root, path, sharedOwnership = true) {
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deletePath(root, path) {
+    const pathError = forbiddenPathError(path)
+    if (pathError) return pathError
     if (path.length === 0) return null
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {

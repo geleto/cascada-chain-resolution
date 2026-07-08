@@ -45,6 +45,8 @@
     - `scanImportBoundary(value)`: import validates, mints mirrors, and registers mark-on-settle continuations, but builds no counters/parents.
     - `refIndexBranch(value)`: first `normalize`/`hasError` on a branch, writes into ref-indexed parents, and ref-indexed writeback commits. Write commits run the direct back-edge check before calling it.
 
+    Discovery sites (`lookupPath`, `assignPath`, import scans, and forked copies) must screen non-extensible nodes before minting mirrors. A frozen raw literal with a promise/Error key is invalid boundary data and must produce/commit an Error instead of throwing while trying to attach mirror metadata. Boundary screening must also reject own `__proto__` keys, since paths cannot access them and COW copies use plain property assignment. Import scanning should also dedupe mark-on-settle continuations per mirror so DAG rescans do not register duplicate import-mode continuations.
+
     The back-edge check descends the value and rejects if it reaches the write target. Traversal uses two-color marking: reaching a visiting node is a cycle; reaching a visited node is a DAG share and reuses its totals.
 
 4. **Counter bookkeeping in write helpers.** Runtime property writes/deletes live in `index.js`; `refcounts.js` exposes `refSetProperty(parent, key, value)` and `refDeleteProperty(parent, key)` for counter-only bookkeeping. The module layers without circular imports: `helpers.js` -> `validate.js`/`meta.js` -> `refcounts.js` -> `index.js`; mirror minting needed during ref-indexing is injected once with `refcounts.initRef({ mintPromiseMirror })`. Discovering a promise before this hook is installed is a fatal runtime configuration error.

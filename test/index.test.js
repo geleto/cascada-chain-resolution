@@ -222,6 +222,26 @@ describe("path assignment", () => {
         expect(root.pos.x).to.be(2)
     })
 
+    it("rejects __proto__ path segments without touching prototypes", () => {
+        const root = {}
+        const nested = { safe: {} }
+
+        const assigned = assignPath(root, ["__proto__", "polluted"], true)
+        const nestedAssigned = assignPath(nested, ["safe", "__proto__", "polluted"], true)
+        const lookedUp = lookupPath(root, ["__proto__"])
+        const deleted = deletePath(root, ["__proto__"])
+
+        expect(assigned instanceof Error).to.be(true)
+        expect(nestedAssigned instanceof Error).to.be(true)
+        expect(lookedUp instanceof Error).to.be(true)
+        expect(deleted instanceof Error).to.be(true)
+        expect(assigned.message).to.be("Cannot use __proto__ as a path segment")
+        expect({}.polluted).to.be(undefined)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+        expect(Object.prototype.hasOwnProperty.call(root, "__proto__")).to.be(false)
+        expect(nested).to.eql({ safe: {} })
+    })
+
     it("copies only an escaped branch", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = lookupPath(root, ["pos"])
@@ -455,6 +475,10 @@ describe("lookupPath", () => {
         expect(lookupPath({ value: undefined }, ["value"])).to.be(undefined)
     })
 
+    it("does not read inherited object properties", () => {
+        expect(lookupPath({}, ["constructor"])).to.be(undefined)
+    })
+
     it("supports primitive roots for empty lookup paths", () => {
         expect(lookupPath(7, [])).to.be(7)
         expect(lookupPath("text", [])).to.be("text")
@@ -557,6 +581,22 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ a: 1, b: 2 })
+    })
+
+    it("orders writes through two nested pending promises", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const root = { branch: outer.promise }
+
+        assignPath(root, ["branch", "inner", "x"], 1)
+        assignPath(root, ["branch", "inner", "x"], 2)
+
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+        inner.resolve({})
+        await flushMicrotasks()
+
+        expect(root.branch.inner).to.eql({ x: 2 })
     })
 
     it("makes a suspended lookupPath observe its own program position", async () => {
@@ -843,6 +883,40 @@ describe("promise mirrors and lookupPath", () => {
         expect(firstValue).to.eql({})
         expect(root.branch).to.eql({ x: 1 })
         expect(root.branch).not.to.be(firstValue)
+    })
+
+    it("treats replacing one pending promise with another as a fresh mirror", async () => {
+        const first = deferred()
+        const second = deferred()
+        const root = {}
+
+        assignPath(root, ["branch"], first.promise)
+        assignPath(root, ["branch"], second.promise)
+
+        first.resolve({ stale: true })
+        await flushMicrotasks()
+        expect(root.branch).to.be(second.promise)
+
+        second.resolve({ fresh: true })
+        await flushMicrotasks()
+        expect(root.branch).to.eql({ fresh: true })
+    })
+
+    it("forks a settled-but-unreplaced promise key", async () => {
+        const root = {}
+        const promise = Promise.resolve({})
+
+        assignPath(root, ["branch"], promise)
+        importValue(root)
+
+        const next = assignPath(root, ["added"], true)
+        assignPath(next, ["branch", "x"], 1)
+
+        await flushMicrotasks()
+
+        expect(root.branch).to.eql({})
+        expect(next.branch).to.eql({ x: 1 })
+        expect(next.branch).not.to.be(root.branch)
     })
 
     it("does not recreate a deleted path when a suspended write resumes", async () => {
@@ -1536,6 +1610,19 @@ describe("deletePath", () => {
 
         expect(root.branch).to.be(7)
         expect(pendingRoot.branch).to.be(7)
+    })
+
+    it("is a no-op when deleting through a rejected intermediate promise", async () => {
+        const deferredBranch = deferred()
+        const root = { branch: deferredBranch.promise }
+
+        deletePath(root, ["branch", "value"])
+
+        deferredBranch.reject("delete blocked")
+        await flushMicrotasks()
+
+        expect(root.branch instanceof Error).to.be(true)
+        expect(root.branch.message).to.be("delete blocked")
     })
 
 })

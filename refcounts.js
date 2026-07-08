@@ -9,6 +9,7 @@ const {
 } = require("./validate")
 
 const COUNTERS = Symbol("COUNTERS")
+const hasOwn = Object.prototype.hasOwnProperty
 
 let mintPromiseMirror = null
 
@@ -18,6 +19,10 @@ function initRef(hooks) {
 
 function getRefCounter(node) {
     return isTracked(node) && Object.isExtensible(node) ? node[COUNTERS] : undefined
+}
+
+function readOwnProperty(node, key) {
+    return hasOwn.call(node, key) ? node[key] : undefined
 }
 
 function ensureCounter(node) {
@@ -155,7 +160,7 @@ function refSetProperty(parent, key, value) {
         return value
     }
 
-    const oldValue = parent[key]
+    const oldValue = readOwnProperty(parent, key)
     const [oldPromiseCount, oldErrorCount] = getRefCounts(oldValue)
     const refIndexedValue = refIndexNewPropertyValue(parent, value)
     const [newPromiseCount, newErrorCount] = getRefCounts(refIndexedValue)
@@ -178,7 +183,7 @@ function refDeleteProperty(parent, key) {
         return
     }
 
-    const oldValue = parent[key]
+    const oldValue = readOwnProperty(parent, key)
     const [oldPromiseCount, oldErrorCount] = getRefCounts(oldValue)
 
     removeParentEdge(oldValue, parent)
