@@ -9,6 +9,9 @@ const {
     metaOf,
 } = require("./meta")
 
+// The one upward need: committing a writeback is a language write, owned by
+// index.js's setProperty. It is injected once at startup so this module stays
+// below the operations layer.
 let writeMirrorValue = null
 
 function getPromiseMirrorMap(node) {
@@ -51,6 +54,11 @@ function createPromiseMirror(
     return mirror
 }
 
+// BIRTH 2 - DISCOVERY: find the mirror for a promise reached during a walk, or
+// lazily create one for an orphan (imported data, raw literal). COW-copied keys
+// must never arrive here mirrorless; they are forked eagerly in shallowCopy —
+// a mirror minted lazily here would seed currentValue from the raw resolved
+// value and lose every write made by ops issued before the copy.
 function getOrCreatePromiseMirror(node, key, promise, importContext = undefined) {
     const map = ensurePromiseMirrorMap(node)
     if (map[key]?.promise === promise) {
@@ -60,10 +68,14 @@ function getOrCreatePromiseMirror(node, key, promise, importContext = undefined)
     return createPromiseMirror(node, key, promise, null, false, importContext)
 }
 
+// BIRTH 1 - ASSIGN (rationale at the assignPath call site): always a fresh
+// mirror, never a map[key] reuse — two assignments of one promise are
+// divergent worlds that must not share currentValue.
 function createAssignedPromiseMirror(node, key, promise) {
     createPromiseMirror(node, key, promise)
 }
 
+// BIRTH 3 - FORK (rationale at the shallowCopy call site).
 function forkPromiseMirror(
     source,
     copy,
@@ -72,8 +84,11 @@ function forkPromiseMirror(
     markResolvedValueShared,
     importContext,
 ) {
-    // DISCOVERY if source was an orphan. Non-extensible sources cannot carry
-    // mirrors, so the copy is seeded from the raw settled value instead.
+    // DISCOVERY on the source if it was an orphan. A non-extensible source
+    // cannot carry mirrors and nothing can ever replace its key, so the raw
+    // settled value is the only version that will ever exist — seeding the
+    // copy from the promise itself is exact, and the importContext still
+    // flavors the copy's mirror (there is no source mirror to inherit from).
     const forkSourceMirror = Object.isExtensible(source)
         ? getOrCreatePromiseMirror(source, key, promise, importContext)
         : null

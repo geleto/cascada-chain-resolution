@@ -1,3 +1,7 @@
+// Test-only consistency oracle: independently recompute every ref-indexed
+// node's totals from its own keys and check that stored parent edges match the
+// live key graph in both directions. The traversal follows child keys AND
+// stored parent edges, so disconnected-but-retained COW worlds are reached too.
 const {
     isError,
     isPromise,

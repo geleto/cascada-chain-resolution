@@ -17,6 +17,9 @@ function forbiddenKeyError(importContext = undefined) {
     return validationError("Cannot use __proto__ as a key", importContext)
 }
 
+// Language data is own enumerable string keys only. Reads treat __proto__ and
+// own non-enumerable properties as missing; mutations through them throw,
+// because plain assignment could not shadow them safely.
 function assertMutationKey(key, importContext = undefined) {
     if (key === "__proto__") {
         throw forbiddenKeyError(importContext)
@@ -30,6 +33,18 @@ function assertCanMutateLanguageProperty(parent, key, importContext = undefined)
     }
 }
 
+// Everything counting requires, nothing more:
+// - back-edge: value must not reach writeTarget — a write-created cycle must
+//   pass through the written parent. With a target the descent takes no early
+//   exits, because the target may hide behind already-indexed DAG shares.
+// - cycles: two-color marking — reaching a visiting node is a cycle, reaching
+//   a visited node is a DAG share.
+// - frozen rule: a non-extensible node must not contain promises or Errors
+//   anywhere beneath it; its subtree is decreed [0,0], so the counts would lie.
+// - __proto__: own enumerable __proto__ keys are not valid language data.
+// importContext is re-derived per node from the import markers so failures
+// name the import that brought the data in. isRefIndexed is passed in by
+// refcounts.js to keep this module below it in the layering.
 function validateCountable(value, writeTarget, isRefIndexed = () => false) {
     return validateValue(
         value,
@@ -67,6 +82,11 @@ function validateValue(
     }
     if (!isTracked(value)) return null
 
+    // Two visited sets, one per strictness: a node validated leniently (plain
+    // context, promises allowed) must still be re-validated when reached under
+    // a frozen ancestor, while a frozen-validated node satisfies both. One
+    // shared set would let a frozen violation hide behind an earlier lenient
+    // visit, with the outcome depending on key order.
     const valueInsideFrozen = insideFrozen || !Object.isExtensible(value)
     if (valueInsideFrozen) {
         if (frozenVisited.has(value)) return null
@@ -74,6 +94,8 @@ function validateValue(
         return null
     }
 
+    // Already-ref-indexed subtrees are validated, acyclic, and downward-closed
+    // — skippable, but only when there is no write target to find behind them.
     if (writeTarget === undefined && Object.isExtensible(value) && isRefIndexed(value)) {
         return null
     }

@@ -39,6 +39,8 @@ function getRefCounts(value) {
     }
 
     const refIndexed = refIndexBranch(value)
+    // Everything inside a counted region was validated on entry, so a
+    // validation failure here is a kernel bug, not language data.
     if (isError(refIndexed)) throw refIndexed
 
     const counter = getRefCounter(value)
@@ -48,10 +50,15 @@ function getRefCounts(value) {
 function refIndexBranch(value) {
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) {
+        // Frozen roots are validated (no promises/Errors anywhere beneath) but
+        // receive no metadata: they are permanently [0,0] by the frozen rule.
         return validateCountable(value, undefined, isRefIndexed) ?? value
     }
     if (isRefIndexed(value)) return value
 
+    // Validate-then-commit, two passes: the validate pass is pure and the
+    // commit pass cannot fail, so a rejection leaves no partial counters,
+    // edges, or mirrors behind.
     const failure = validateCountable(value, undefined, isRefIndexed)
     if (failure) return failure
 
@@ -129,6 +136,10 @@ function refSetProperty(parent, key, value) {
     let nextPromiseCount = 0
     let nextErrorCount = 0
 
+    // An entering value pays exactly two passes: the pure validate pass
+    // (cycles, frozen rule, and the back-edge against this parent — a
+    // write-created cycle must pass through the written node) and the
+    // infallible commit pass, whose returned totals feed the delta directly.
     const failure = validateCountable(value, parent, isRefIndexed)
     if (failure) {
         nextValue = failure

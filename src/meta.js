@@ -7,20 +7,28 @@ const {
 const STORE_META_IN_WEAKMAP = false
 const META = Symbol("META")
 const META_MAP = new WeakMap()
+// Inline Symbol storage cannot attach records to non-extensible values, but
+// import attribution must survive on them (they are exactly the values most
+// likely to fail counting validation). Written only by markImported, read only
+// by nodeImportContext's non-extensible branch — never on the hasSharedMark
+// hot path. WeakMap storage needs no side table.
 const FROZEN_IMPORT_CONTEXTS = STORE_META_IN_WEAKMAP ? null : new WeakMap()
 
 function createMeta() {
     return {
-        shared: false,
-        mirrors: null,
-        promiseCount: 0,
+        shared: false,             // set once, never cleared; false at birth = "no mark"
+        mirrors: null,             // lazy promise mirror map (promise-mirrors.js)
+        promiseCount: 0,           // counter totals, meaningful only once ref-indexed
         errorCount: 0,
-        settlementVerifyScheduled: false,
-        importContext: undefined,
-        parents: undefined,
+        settlementVerifyScheduled: false,   // normalize/hasError verification latch (issue 6)
+        importContext: undefined,  // undefined = not imported; else the import's error attribution
+        parents: undefined,        // undefined = not ref-indexed; Map<parent, edgeCount> once live
     }
 }
 
+// WeakMap storage can hold records for non-extensible nodes; inline Symbol
+// storage cannot, so frozen/sealed values have no record in that mode (their
+// import attribution lives in FROZEN_IMPORT_CONTEXTS instead).
 function metaOf(value) {
     if (!isTracked(value)) return undefined
     if (STORE_META_IN_WEAKMAP) return META_MAP.get(value)
@@ -71,6 +79,11 @@ function markShared(value) {
     return setSharedMark(value)
 }
 
+// The import marker: importContext is both the "came from outside" flag and
+// the error attribution for later validation failures. First import wins, and
+// marking implies the shared mark — imported data is never owned. Frozen
+// values cannot carry the inline record; their attribution goes to the side
+// table (implicitly shared already via non-extensibility).
 function markImported(value, importContext) {
     if (isPromise(value)) {
         onResolve(value, settledValueOrError => markImported(settledValueOrError, importContext))
@@ -90,6 +103,9 @@ function markImported(value, importContext) {
     return value
 }
 
+// The context a walk should carry after touching this node: the node's own
+// marker wins, then (for frozen nodes, which carry no inline record) the side
+// table, then whatever the walk inherited from a marked ancestor.
 function nodeImportContext(node, inherited) {
     const own = metaOf(node)?.importContext
     if (own !== undefined) return own

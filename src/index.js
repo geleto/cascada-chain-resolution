@@ -12,11 +12,14 @@
 //                  each op reading the latest currentValue and storing its COW back.
 // The FIFO order of continuations on one promise = program order, for free.
 //
-// A promise mirror is born at three points: ASSIGN, DISCOVERY, FORK. Only the
-// first two seed currentValue from the raw resolved value. A FORK (shallow copy
+// A promise mirror is born at three points: ASSIGN, DISCOVERY, FORK. ASSIGN and
+// DISCOVERY seed currentValue from the raw resolved value. A FORK (shallow copy
 // of a node whose key holds a promise) seeds from the source mirror's
 // currentValue at the copier's FIFO slot: the copied world branches off at
-// exactly the copier's position in program order.
+// exactly the copier's position in program order. One exception: a fork from a
+// non-extensible source also seeds raw — no mirror can attach to a frozen
+// holder and nothing can ever replace its key, so the raw settled value is the
+// only version that will ever exist.
 
 const {
     isArray,
@@ -55,6 +58,7 @@ const {
 // at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
+
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
 // Cascada data is own enumerable keys only. `__proto__` is never language data
@@ -116,11 +120,14 @@ function shallowCopy(
         })
     }
 
-    // Copy only language-visible string keys; META is non-enumerable Symbol
-    // metadata, so mirrors, counters, and the shared mark never enter the copy.
-    // The source object keeps its own shared mark. When a copy reuses child
-    // objects from a shared branch, those non-path children are marked too
-    // so their shared references stay protected.
+    // Copy only language-visible own enumerable string keys; META lives outside
+    // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
+    // counters, and marks never enter the copy. The source keeps its own marks.
+    // Reused children from a shared branch are marked shared so their shared
+    // references stay protected — except the path key, which the walk's
+    // inherited shared state covers. Reused children of an imported node are
+    // marked imported instead, path key included: provenance is about origin,
+    // not aliasing, and imported data must COW regardless.
     for (const key of keys) {
         const isPathKey = key === pathKeyString
         const markCopiedValueShared = markReusedChildrenShared && !isPathKey
@@ -157,7 +164,9 @@ function shallowCopy(
             // Why mark non-path captured values: they are reused by two worlds,
             // so the first advance on either side must COW. The path key itself
             // is protected by the walk's inherited shared state if we enter it,
-            // and may simply be replaced/deleted at the target.
+            // and may simply be replaced/deleted at the target. Imported
+            // captures are marked imported (which implies shared) regardless of
+            // path position — provenance must survive the copy.
             forkPromiseMirror(obj, copy, key, value, markCopiedValueShared, importContext)
         } else if (importContext !== undefined && isTracked(value)) {
             markImported(value, importContext)
@@ -204,6 +213,10 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         if (isError(value)) return value
 
         const valueIsTracked = isTracked(value)
+        // Own marker only — mutation walks never need inherited context: an
+        // import marker implies the shared mark, so every level inside an
+        // imported region is COW'd, and shallowCopy stamps the copy's reused
+        // children with their own markers before the walk descends into them.
         const valueImportContext = valueIsTracked
             ? nodeImportContext(value, undefined)
             : undefined
@@ -228,6 +241,9 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         if (parentInsideSharedBranch) {
             parent = shallowCopy(parent, key, true, valueImportContext)
         }
+        // Asserted after the COW: copies carry only own enumerable keys, so
+        // this fires only on genuinely un-shadowable shapes — a non-enumerable
+        // own property on a node that was never shared away.
         assertCanMutateLanguageProperty(parent, key, valueImportContext)
 
         if (index === path.length - 1) {
@@ -265,6 +281,9 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // --- lookupPath :  = a.k.y --------------------------------------------------
 // sharedOwnership is false for a pure read or when ownership is ceded to
 // the caller, e.g. the final `return x` from an otherwise unused variable.
+// Imported values are marked on extraction even without shared ownership:
+// provenance is about origin, not aliasing, and an ownership-transferred
+// external branch is still external. (markImported implies the shared mark.)
 function lookupPath(root, path, sharedOwnership = true) {
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
@@ -297,6 +316,10 @@ function lookupPath(root, path, sharedOwnership = true) {
         const value = readLanguageProperty(parent, key)
         if (isPromise(value)) {
             if (!Object.isExtensible(parent)) {
+                // A frozen holder can carry no mirror and nothing can ever
+                // replace its key, so the raw settled value is the only version
+                // there will ever be: read it mirror-free. The context threads
+                // through because no mirror exists to mark the value on settle.
                 return onResolve(value, settledValueOrError => {
                     return lookupValue(settledValueOrError, index, importContext)
                 })
@@ -304,6 +327,9 @@ function lookupPath(root, path, sharedOwnership = true) {
 
             const mirror = getOrCreatePromiseMirror(parent, key, value, importContext)
             return onResolve(value, () => {
+                // No context here: a flavored mirror has already marked
+                // currentValue on settle, so deeper levels re-derive it from
+                // the value's own marker.
                 return lookupValue(
                     mirror.currentValue,
                     index,
