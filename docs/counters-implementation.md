@@ -14,13 +14,13 @@ Ground rules for the whole sequence:
 - Four pillars that every piece of pseudocode below serves:
   1. **Counters have no safe default** — `parents` edges are exact or the counts lie.
   2. **Two thin refcount hooks** — `refSetProperty`/`refDeleteProperty` own all counter
-     bookkeeping, while index.js performs the actual `node[key] =` / `delete node[key]`
+     bookkeeping, while src/index.js performs the actual `node[key] =` / `delete node[key]`
      commits. Promise mirrors are deliberately not
      their concern — mirror lifecycle stays at the operation sites, as in the current
      kernel. A full-recompute variant was considered and rejected for the runtime path
      (it moves complexity rather than removing it); it survives as the test-suite
      consistency oracle (step 5). All runtime counter code lives in its own module,
-     refcounts.js (see File layout): index.js only calls the hooks, and with the
+     src/refcounts.js (see File layout): src/index.js only calls the hooks, and with the
      module stubbed to passthroughs the kernel is bit-for-bit the base kernel.
   3. **Acyclicity is load-bearing** — delta propagation loops forever on a cycle. All
      cycle checking lives in boundary validation/ref-indexing (two-color for in-value cycles,
@@ -36,7 +36,7 @@ Ground rules for the whole sequence:
 
 ## File layout — plug & play
 
-Layering, bottom-up, **no circular imports**:
+Layering, bottom-up, **no circular imports**. Source files live under `src/`:
 
 - **helpers.js** — the promise wrapper (`settlePromise`/`onResolve` + the ambient
   settling record) and type predicates. Unchanged role.

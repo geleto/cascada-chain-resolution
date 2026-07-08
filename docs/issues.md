@@ -2,7 +2,7 @@
 
 ## Subtree Counters
 
-1. **Implemented: subtree counters replace the CLEAN flag.** `refcounts.js` now owns exact `promiseCount`/`errorCount` totals for ref-indexed branches. Ref-indexing is lazy and per branch; never-checked data pays zero counter bookkeeping. Existing writes/deletes go through counter-aware helpers, ref-indexed writes evaluate the bookkeeping gate at commit time, promise writebacks replace `[1,0]` with the resolved value's counts, and COW copies snapshot counters for the copied world.
+1. **Implemented: subtree counters replace the CLEAN flag.** `src/refcounts.js` now owns exact `promiseCount`/`errorCount` totals for ref-indexed branches. Ref-indexing is lazy and per branch; never-checked data pays zero counter bookkeeping. Existing writes/deletes go through counter-aware helpers, ref-indexed writes evaluate the bookkeeping gate at commit time, promise writebacks replace `[1,0]` with the resolved value's counts, and COW copies snapshot counters for the copied world.
 
     Implemented rules:
 
@@ -13,7 +13,7 @@
     - Ownership/COW stays mark-based; counters answer "what is pending/broken below me", and the SHARED mark answers "who else can see me".
     - Error values count as language errors inside ref-indexed branches.
     - Non-extensible frozen/sealed ref-indexed subtrees are forbidden to contain promises or Error values anywhere beneath them. A frozen subtree is permanently `[0,0]` and carries no counter metadata.
-    - Counter metadata is isolated in `refcounts.js` under its own non-enumerable Symbol for now. Issue 2 will fold counters, promise mirrors, and the SHARED mark into one `META` record.
+    - Counter metadata is isolated in `src/refcounts.js` under its own non-enumerable Symbol for now. Issue 2 will fold counters, promise mirrors, and the SHARED mark into one `META` record.
     - `normalize`/`hasError` are still covered by issue 5; they will activate this ref-indexing at their public operation boundary.
 
 2. **Single META record and accessors.** Consolidate `PROMISE_MIRRORS`, `SHARED`, and the counters into one non-enumerable Symbol record that is never copied by `shallowCopy`.
@@ -49,12 +49,12 @@
 
     The back-edge check descends the value and rejects if it reaches the write target. Traversal uses two-color marking: reaching a visiting node is a cycle; reaching a visited node is a DAG share and reuses its totals.
 
-4. **Counter bookkeeping in write helpers.** Runtime property writes/deletes live in `index.js`; `refcounts.js` exposes `refSetProperty(parent, key, value)` and `refDeleteProperty(parent, key)` for counter-only bookkeeping. The module layers without circular imports: `helpers.js` -> `validate.js`/`meta.js` -> `refcounts.js` -> `index.js`; mirror minting needed during ref-indexing is injected once with `refcounts.initRef({ mintPromiseMirror })`. Discovering a promise before this hook is installed is a fatal runtime configuration error.
+4. **Counter bookkeeping in write helpers.** Runtime property writes/deletes live in `src/index.js`; `src/refcounts.js` exposes `refSetProperty(parent, key, value)` and `refDeleteProperty(parent, key)` for counter-only bookkeeping. The module layers without circular imports: `src/helpers.js` -> `src/validate.js`/`src/meta.js` -> `src/refcounts.js` -> `src/index.js`; mirror minting needed during ref-indexing is injected once with `refcounts.initRef({ mintPromiseMirror })`. Discovering a promise before this hook is installed is a fatal runtime configuration error.
 
     The refcount helpers never perform the language write/delete. If the written parent is not ref-indexed (`metaOf(parent)?.parents === undefined`), they no-op and return the original value. The gate is checked when the helper runs, so continuations registered before ref-indexing bookkeep correctly after ref-indexing.
 
-    - `refSetProperty(parent, key, value)`: ref-index an entering value when needed, compute `-getRefCounts(old) + getRefCounts(new)`, swap parent edges, propagate, and return the value that `index.js` should write.
-    - `refDeleteProperty(parent, key)`: compute `-getRefCounts(old)`, remove the parent edge, and propagate before `index.js` deletes the key.
+    - `refSetProperty(parent, key, value)`: ref-index an entering value when needed, compute `-getRefCounts(old) + getRefCounts(new)`, swap parent edges, propagate, and return the value that `src/index.js` should write.
+    - `refDeleteProperty(parent, key)`: compute `-getRefCounts(old)`, remove the parent edge, and propagate before `src/index.js` deletes the key.
     - If a child's `Map<parent, edgeCount>` reaches zero for that parent, delete only that map entry; never delete the `parents` map itself.
     - Promise mirror lifecycle remains at operation sites: fresh mirror on promise assignment, guarded writeback, clear on overwrite/delete.
     - `shallowCopy` copies language keys, forks mirrors, then calls `copyCounters(source, copy)`. Ref-indexed copies snapshot counts, receive `parents = new Map()`, and register themselves as parent on reused tracked children.

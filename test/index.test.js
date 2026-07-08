@@ -1,14 +1,14 @@
 const expect = require("expect.js")
 const { spawnSync } = require("child_process")
 
-const runtime = require("../index")
-const { onResolve } = require("../helpers")
+const runtime = require("../src")
+const { onResolve } = require("../src/helpers")
 const {
     getRefCounter,
     getRefCounts,
     refIndexBranch,
-} = require("../refcounts")
-const { verifyRefCounts } = require("../verify-refcounts")
+} = require("../src/refcounts")
+const { verifyRefCounts } = require("../src/verify-refcounts")
 
 const {
     assignPath,
@@ -1018,7 +1018,7 @@ describe("subtree counters", () => {
 
     it("throws if promise ref-indexing runs before initRef", () => {
         const script = `
-            const { refIndexBranch } = require("./refcounts")
+            const { refIndexBranch } = require("./src/refcounts")
             try {
                 refIndexBranch({ value: Promise.resolve("done") })
                 process.exit(1)
