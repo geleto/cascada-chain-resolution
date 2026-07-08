@@ -6,23 +6,18 @@ const {
 const {
     ensureMeta,
     metaOf,
+    nodeImportContext,
 } = require("./meta")
+const {
+    getOrCreatePromiseMirror,
+} = require("./promise-mirrors")
+const { validateCountable } = require("./validate")
 
-const hasOwn = Object.prototype.hasOwnProperty
-
-let mintPromiseMirror = null
-
-function initRef(hooks) {
-    mintPromiseMirror = hooks.mintPromiseMirror
-}
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
 function getRefCounter(node) {
     const meta = metaOf(node)
     return meta?.parents !== undefined ? meta : undefined
-}
-
-function readOwnProperty(node, key) {
-    return hasOwn.call(node, key) ? node[key] : undefined
 }
 
 function ensureCounter(node) {
@@ -43,7 +38,8 @@ function getRefCounts(value) {
         return [0, 0]
     }
 
-    refIndexBranch(value)
+    const refIndexed = refIndexBranch(value)
+    if (isError(refIndexed)) throw refIndexed
 
     const counter = getRefCounter(value)
     return [counter.promiseCount, counter.errorCount]
@@ -51,35 +47,24 @@ function getRefCounts(value) {
 
 function refIndexBranch(value) {
     if (!isTracked(value)) return value
-    if (!Object.isExtensible(value)) return value
+    if (!Object.isExtensible(value)) {
+        return validateCountable(value, undefined, isRefIndexed) ?? value
+    }
     if (isRefIndexed(value)) return value
 
-    if (mintPromiseMirror === null) {
-        assertNoPromisesToRefIndex(value, new Set())
-    }
+    const failure = validateCountable(value, undefined, isRefIndexed)
+    if (failure) return failure
 
-    commitRefIndex(value, new Set())
+    commitRefIndex(value, new Set(), undefined)
     return value
 }
 
-function assertNoPromisesToRefIndex(value, visited) {
-    if (!isTracked(value) || !Object.isExtensible(value) || isRefIndexed(value)) return
-    if (visited.has(value)) return
-    visited.add(value)
-
-    for (const key of Object.keys(value)) {
-        const child = value[key]
-        if (isPromise(child)) {
-            throw new Error("initRef must be called before ref-indexing promises")
-        }
-        assertNoPromisesToRefIndex(child, visited)
-    }
-}
-
-function commitRefIndex(node, visited) {
+function commitRefIndex(node, visited, inheritedImportContext) {
     if (!isTracked(node) || !Object.isExtensible(node)) {
         return [0, 0]
     }
+
+    const importContext = nodeImportContext(node, inheritedImportContext)
 
     const existing = getRefCounter(node)
     if (existing?.parents !== undefined) {
@@ -102,12 +87,12 @@ function commitRefIndex(node, visited) {
         let childPromiseCount = 0
         let childErrorCount = 0
         if (isPromise(child)) {
-            mintPromiseMirror(node, key, child)
+            getOrCreatePromiseMirror(node, key, child, importContext)
             childPromiseCount = 1
         } else if (isError(child)) {
             childErrorCount = 1
         } else {
-            const childCounts = commitRefIndex(child, visited)
+            const childCounts = commitRefIndex(child, visited, importContext)
             childPromiseCount = childCounts[0]
             childErrorCount = childCounts[1]
         }
@@ -140,21 +125,33 @@ function refSetProperty(parent, key, value) {
         return value
     }
 
-    const oldValue = readOwnProperty(parent, key)
-    const [oldPromiseCount, oldErrorCount] = getRefCounts(oldValue)
-    const refIndexedValue = refIndexBranch(value)
-    const [newPromiseCount, newErrorCount] = getRefCounts(refIndexedValue)
+    let nextValue = value
+    let nextPromiseCount = 0
+    let nextErrorCount = 0
 
-    removeParentEdge(oldValue, parent)
-    addParentEdge(refIndexedValue, parent)
+    const failure = validateCountable(value, parent, isRefIndexed)
+    if (failure) {
+        nextValue = failure
+        nextErrorCount = 1
+    } else if (isPromise(value)) {
+        nextPromiseCount = 1
+    } else if (isError(value)) {
+        nextErrorCount = 1
+    } else if (isTracked(value) && Object.isExtensible(value)) {
+        const counts = commitRefIndex(value, new Set(), undefined)
+        nextPromiseCount = counts[0]
+        nextErrorCount = counts[1]
+    }
 
-    applyCountDelta(
+    updatePropertyCounts(
         parent,
-        newPromiseCount - oldPromiseCount,
-        newErrorCount - oldErrorCount,
+        key,
+        nextValue,
+        nextPromiseCount,
+        nextErrorCount,
     )
 
-    return refIndexedValue
+    return nextValue
 }
 
 function refDeleteProperty(parent, key) {
@@ -163,11 +160,21 @@ function refDeleteProperty(parent, key) {
         return
     }
 
-    const oldValue = readOwnProperty(parent, key)
+    updatePropertyCounts(parent, key, undefined, 0, 0)
+}
+
+function updatePropertyCounts(parent, key, nextValue, nextPromiseCount, nextErrorCount) {
+    const oldValue = propertyIsEnumerable.call(parent, key) ? parent[key] : undefined
     const [oldPromiseCount, oldErrorCount] = getRefCounts(oldValue)
 
     removeParentEdge(oldValue, parent)
-    applyCountDelta(parent, -oldPromiseCount, -oldErrorCount)
+    addParentEdge(nextValue, parent)
+
+    applyCountDelta(
+        parent,
+        nextPromiseCount - oldPromiseCount,
+        nextErrorCount - oldErrorCount,
+    )
 }
 
 function addParentEdge(value, parent) {
@@ -223,7 +230,6 @@ module.exports = {
     copyCounters,
     getRefCounter,
     getRefCounts,
-    initRef,
     refIndexBranch,
     refDeleteProperty,
     refSetProperty,

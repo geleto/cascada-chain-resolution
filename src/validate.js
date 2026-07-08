@@ -3,19 +3,67 @@ const {
     isPromise,
     isTracked,
 } = require("./helpers")
+const { nodeImportContext } = require("./meta")
 
 const hasOwn = Object.prototype.hasOwnProperty
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-function validateImportBoundary(value, target = undefined) {
-    return validateImportValue(value, target, false, new Set(), new Set(), new Set())
+function validationError(message, importContext = undefined) {
+    if (importContext === undefined) return new Error(message)
+    return new Error(`${message} (imported at: ${String(importContext)})`)
 }
 
-function validateImportValue(value, target, insideFrozen, visiting, plainVisited, frozenVisited) {
-    if (target !== undefined && value === target) {
-        return new Error("Imported value cannot reach its write target")
+function forbiddenKeyError(importContext = undefined) {
+    return validationError("Cannot use __proto__ as a key", importContext)
+}
+
+function assertMutationKey(key, importContext = undefined) {
+    if (key === "__proto__") {
+        throw forbiddenKeyError(importContext)
+    }
+}
+
+function assertCanMutateLanguageProperty(parent, key, importContext = undefined) {
+    assertMutationKey(key, importContext)
+    if (hasOwn.call(parent, key) && !propertyIsEnumerable.call(parent, key)) {
+        throw validationError("Cannot mutate non-enumerable property", importContext)
+    }
+}
+
+function validateCountable(value, writeTarget, isRefIndexed = () => false) {
+    return validateValue(
+        value,
+        writeTarget,
+        isRefIndexed,
+        false,
+        undefined,
+        new Set(),
+        new Set(),
+        new Set(),
+    )
+}
+
+function validateValue(
+    value,
+    writeTarget,
+    isRefIndexed,
+    insideFrozen,
+    inheritedImportContext,
+    visiting,
+    plainVisited,
+    frozenVisited,
+) {
+    const importContext = isTracked(value)
+        ? nodeImportContext(value, inheritedImportContext)
+        : inheritedImportContext
+
+    if (writeTarget !== undefined && value === writeTarget) {
+        return validationError("Value cannot reach its write target", importContext)
     }
     if (isPromise(value) || isError(value)) {
-        return insideFrozen ? new Error("Frozen objects cannot contain promises or errors") : null
+        return insideFrozen
+            ? validationError("Frozen object cannot contain promises or errors", importContext)
+            : null
     }
     if (!isTracked(value)) return null
 
@@ -26,11 +74,11 @@ function validateImportValue(value, target, insideFrozen, visiting, plainVisited
         return null
     }
 
-    if (visiting.has(value)) {
-        return new Error("Imported values cannot be cyclic")
+    if (writeTarget === undefined && Object.isExtensible(value) && isRefIndexed(value)) {
+        return null
     }
-    if (hasOwn.call(value, "__proto__")) {
-        return new Error("Imported objects cannot contain __proto__")
+    if (visiting.has(value)) {
+        return validationError("Value cannot be cyclic", importContext)
     }
 
     visiting.add(value)
@@ -38,10 +86,16 @@ function validateImportValue(value, target, insideFrozen, visiting, plainVisited
     // Cascada data is language-visible enumerable string keys; symbols and
     // non-enumerable JS properties are outside the runtime value graph.
     for (const key of Object.keys(value)) {
-        const failure = validateImportValue(
+        if (key === "__proto__") {
+            visiting.delete(value)
+            return forbiddenKeyError(importContext)
+        }
+        const failure = validateValue(
             value[key],
-            target,
+            writeTarget,
+            isRefIndexed,
             valueInsideFrozen,
+            importContext,
             visiting,
             plainVisited,
             frozenVisited,
@@ -62,5 +116,7 @@ function validateImportValue(value, target, insideFrozen, visiting, plainVisited
 }
 
 module.exports = {
-    validateImportBoundary,
+    assertCanMutateLanguageProperty,
+    assertMutationKey,
+    validateCountable,
 }

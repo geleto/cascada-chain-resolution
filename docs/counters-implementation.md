@@ -6,14 +6,14 @@ we count
 pending promises and Error values reachable below each node, never references —
 ownership/COW stays mark-based. Spec reference: initial-spec.md, "Subtree counters".
 
-Current implementation note: Issue 3 now keeps import boundary validation separate
-from ref-indexing. `src/validate.js` exposes `validateImportBoundary`; there is no
-runtime `validateFrozenSubtree` helper. Ref-indexing trusts language-owned data,
-while `import` screens external values over Cascada's enumerable string-key graph
-before attaching metadata. Step-3 pseudocode below that mentions `screenExternalValue`,
-`scanImportBoundary`, ref-indexing validation, or `validateFrozenSubtree` is superseded
-by the current `issues.md` / `initial-spec.md` architecture and remains only as design
-history.
+Current implementation note: import and validation were redesigned twice after this
+plan was written. First (issues.md item 3, now itself superseded) validation moved to
+an eager import boundary screen. Then issues.md item 4 made import lazy: `import(value,
+errorContext)` is mark-only (the marker carries error attribution), and validation
+lives solely at counting time as `validateCountable` — see `docs/lazy-import.md` for
+the authoritative design. Step-3 pseudocode below that mentions `screenExternalValue`,
+`scanImportBoundary`, `validateExternalValue`, or `validateFrozenSubtree` is superseded
+and remains only as design history.
 
 Ground rules for the whole sequence:
 
@@ -65,9 +65,8 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   clean; marks nothing, creates no waiters), `branchHasErrors(node)` (frozen/untracked
   ⇒ false), and `copyFull(node)`. Internals —
   `refIndexBranch`, `ensureRefIndexed`, `getRefCounts`, edges, settlement subscriptions — are not exported.
-  It never imports index.js; its one upward need — minting a promise mirror during
-  ref-indexing — is injected once at startup:
-  `refcounts.initRef({ mintPromiseMirror: getOrCreatePromiseMirror })`.
+  It never imports index.js; when ref-indexing discovers a promise key, it calls
+  the promise-mirrors-owned `getOrCreatePromiseMirror`.
 - **verify-refcounts.js** — test-only consistency oracle. It imports the narrow
   `getRefCounter` accessor from refcounts.js and is not used by runtime code.
 - **index.js** — the ops, language property writes/deletes, mirrors, COW, the import scanner (`scanImportBoundary` —
@@ -77,14 +76,14 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   frozen-awareness, zero counter arithmetic, zero settlement mechanics.
 
 The contract: **non-ref-indexed behavior ≡ base-kernel behavior** — with refcounts.js
-stubbed to passthroughs (no `initRef` wiring needed), every operation behaves exactly as
+stubbed to passthroughs (no promise-mirror initialization needed), every operation behaves exactly as
 today, and this is testable: the full base suite must pass against the stub.
 Bookkeeping activates per-branch, purely by the presence of counter META, checked
 inside the hooks at commit time.
 
 The complete index.js diff, site by site — every pre-existing site is the same length
 or *shorter* than today (the CLEAN stubs die); the only genuinely new logic lines are
-one `screenExternalValue`, one `copyCounters`, and the `initRef` call:
+one `screenExternalValue`, one `copyCounters`, and the promise-mirror initialization:
 
 | site | today | after |
 |---|---|---|
@@ -97,7 +96,7 @@ one `screenExternalValue`, one `copyCounters`, and the `initRef` call:
 | import scanner | `scanImportedValue` | `scanImportBoundary`: screen first, then mint + mark as today |
 | op entry points | — | **unchanged** — lazy ref-indexing needs nothing at entry |
 | exports | — | `+ normalize, hasError` (~ten lines each) |
-| startup | — | `refcounts.initRef({ mintPromiseMirror })` |
+| startup | — | `initPromiseMirrors(setProperty)` |
 
 One consistency rule inside index.js: every internal continuation — including the
 three root-promise re-entries and `markShared`'s promise branch — goes through
@@ -130,16 +129,26 @@ function createMeta() {
 }
 
 function metaOf(node) {                    // read-only peek, never creates
+    if (!isTracked(node)) return undefined
+    if (STORE_META_IN_WEAKMAP) return META_MAP.get(node)
+    if (!Object.isExtensible(node)) return undefined
     return node[META]
 }
 
-function ensureMeta(node) {                // node must be tracked AND extensible
-    let meta = node[META]
+function ensureMeta(node) {                // inline mode requires extensible; WeakMap mode does not
+    if (!isTracked(node) || (!STORE_META_IN_WEAKMAP && !Object.isExtensible(node))) {
+        throw new TypeError("Cannot attach metadata to this value")
+    }
+    let meta = metaOf(node)
     if (meta === undefined) {
         meta = createMeta()
-        Object.defineProperty(node, META, {
-            value: meta, enumerable: false, writable: true, configurable: true,
-        })
+        if (STORE_META_IN_WEAKMAP) {
+            META_MAP.set(node, meta)
+        } else {
+            Object.defineProperty(node, META, {
+                value: meta, enumerable: false, writable: true, configurable: true,
+            })
+        }
     }
     return meta
 }
@@ -160,13 +169,13 @@ function markShared(value) {
     return value
 }
 
-function getMirrors(node) {                          // replaces getPromiseMirrorMap
+function getMirrors(node) {
     const meta = ensureMeta(node)
     meta.mirrors ??= Object.create(null)
     return meta.mirrors
 }
 
-function canUpdateMirrorToLive(node, key, mirror) {
+function isLivePromiseMirror(node, key, mirror) {
     return metaOf(node)?.mirrors?.[key] === mirror   // no record ⇒ guard fails, as today
 }
 
@@ -191,9 +200,9 @@ Create the module with `refSetProperty`/`refDeleteProperty` hooks that initially
 for non-ref-indexed data, and call them from the local `setProperty`/`deleteProperty`
 wrappers in index.js. index.js still performs the language write/delete; refcounts.js
 owns **only** counter bookkeeping. This step also *proves* the plug-and-play contract
-— the full suite runs against the stub. Promise mirror lifecycle (creation,
-clearing, `canUpdateMirrorToLive` guards) stays at the operation sites in index.js
-exactly as in the current kernel. The hooks need no mirror awareness because a promise physically at the key
+— the full suite runs against the stub. Promise mirror storage, birth, clearing,
+and guard helpers live in meta.js; writeback behavior
+stays in index.js. The hooks need no mirror awareness because a promise physically at the key
 counts as [1,0] through `getRefCounts`, so assign/writeback/delete deltas come out right
 automatically. The existing structure — `walkMutationPath`, the `onTarget` callbacks —
 is preserved; this step is a minimal, greppable substitution of the bare writes.
@@ -355,10 +364,9 @@ propagate into it and retain it.
 //
 // refIndexBranch(value) — refcounts.js, the counter ref-indexer:
 //   validate, then commit counters/edges/mirrors transactionally (mirror minting via
-//   the injected mintMirror). Data violations return the value or an Error;
+//   the promise-mirrors-owned getOrCreatePromiseMirror). Data violations return the value or an Error;
 //   normalize/hasError surface that Error by language semantics (return Error / true),
-//   because ref-indexing has no parent/key to commit into. Missing initRef is a
-//   fatal runtime configuration error and throws when a promise key is discovered.
+//   because ref-indexing has no parent/key to commit into.
 // The real implementation keeps the pure validators in validate.js. They are
 // shown inline here only to document the algorithm shape.
 function refIndexBranch(value) {
@@ -402,7 +410,7 @@ function refIndexBranch(value) {
     // walk abandoned at the first error commits nothing partial and leaves no dangling
     // upward edge, so no rollback is needed.
     function commit(node) {
-        if (!Object.isExtensible(node)) return          // frozen: no metadata, [0,0] by rule
+        if (!Object.isExtensible(node)) return          // frozen: no counter metadata, [0,0] by rule
         const meta = ensureMeta(node)
         if (isRefIndexed(node)) return                     // DAG share / already live
         let promises = 0, errors = 0
@@ -411,8 +419,8 @@ function refIndexBranch(value) {
             const child = node[key]
             if (isPromise(child)) {
                 promises += 1
-                mintMirror(node, key, child)   // Discovery, EAGER — the injected
-                // index.js callback (refcounts.initRef). Nothing rescans ref-indexed
+                getOrCreatePromiseMirror(node, key, child)   // Discovery, EAGER.
+                // Nothing rescans ref-indexed
                 // regions: an orphan promise with no writeback would hold
                 // promiseCount up forever. (Import's marking continuations belong
                 // to scanImportBoundary in index.js, not to the ref-indexer.)
@@ -434,7 +442,7 @@ function refIndexBranch(value) {
     }
 
     // Non-extensible nodes may not contain promises or Errors ANYWHERE beneath
-    // (extensible descendants included). Valid frozen subtrees carry no metadata:
+    // (extensible descendants included). Valid frozen subtrees carry no counter metadata:
     // no counters, no parents, no mirrors — getRefCounts reports [0,0] by rule.
     function validateFrozenSubtree(node, seen) {
         if (seen.has(node)) return new Error("Cycle in ref-indexed data")
@@ -458,7 +466,7 @@ function refIndexBranch(value) {
 // The lazy-index entry point: called by whenSettled (a branch's FIRST
 // normalize/hasError — this is what creates a ref-indexed region) and by getRefCounts
 // inside already-ref-indexed regions. Callers guarantee node is tracked AND extensible —
-// frozen values never receive metadata and are handled explicitly by
+// frozen values never receive counter metadata and are handled explicitly by
 // normalize/hasError (step 4). Data violations do not throw: whenSettled surfaces
 // an Error by language semantics; getRefCounts, whose inputs are owned in-tree data,
 // treats an Error here as a kernel-usage bug and throws it itself (fatal, basics item 2).
@@ -490,8 +498,8 @@ Callers, by entry point (**lazy ref-indexing, eager validation** — see 3d′):
 - `scanImportBoundary` (lives in index.js) — `import` (`rescan` parameter removed —
   the marking, mirror-minting, and validation obligations cannot be skipped; delete
   the "can skip promise rescan" test). Validate-first, transactional: a cyclic or
-  frozen-violating import returns the Error value and leaves no metadata, mirrors, or
-  marks behind. Builds no counters/edges; profiling may later promote import to
+  frozen-violating import returns the Error value and leaves no counters or mirrors
+  behind. Builds no counters/edges; profiling may later promote import to
   index-while-walking, since the walk is already paid.
 
 ### 3c. Filling in the write hooks
@@ -551,7 +559,7 @@ externally-resolved values are the one place a cycle can enter:
 // ref-indexed-target counter commit all hide behind the name:
 value = screenExternalValue(node, value)
 mirror.currentValue = value
-if (canUpdateMirrorToLive(node, key, mirror)) value = setProperty(node, key, value)
+if (isLivePromiseMirror(node, key, mirror)) value = setProperty(node, key, value)
 ```
 
 Why the deltas compose without double counting, in both walk shapes:
@@ -770,7 +778,7 @@ function hasError(root, segments) {
 
 // refcounts.js — the counter-guided probe. Marks nothing, creates no waiters.
 function probeErrors(branch) {
-    if (!Object.isExtensible(branch)) {                 // frozen: no metadata —
+    if (!Object.isExtensible(branch)) {                 // frozen: no counter metadata —
         return validateFrozenSubtree(branch, new Set()) !== null  // valid ⇒ no errors
     }
     // Index-and-search in one walk, abandoning at the first error. Returns true
@@ -891,7 +899,7 @@ Lazy, branch-level ref-indexing:
   it runs after every consumer already registered on that promise — assert ordering
   against an earlier-issued suspended write that re-arms the count.
 - frozen node containing a promise or Error anywhere beneath (including via an
-  extensible descendant) → Error; valid frozen subtree stays zero-metadata.
+  extensible descendant) → Error; valid frozen subtree stays zero-counter-metadata.
 
 Consistency oracle (the rejected full-recompute design, in its right home):
 - a test-only `verifyRefCounts(...roots)` validates each ref-indexed node independently:

@@ -27,17 +27,27 @@ const {
 } = require("./helpers")
 const {
     copyCounters,
-    initRef,
     refDeleteProperty,
     refSetProperty,
 } = require("./refcounts")
 const {
-    ensurePromiseMirrorMap,
-    getPromiseMirrorMap,
+    assertCanMutateLanguageProperty,
+    assertMutationKey,
+} = require("./validate")
+const {
     hasSharedMark,
-    setSharedMark,
+    markImported,
+    markShared,
+    nodeImportContext,
 } = require("./meta")
-const { validateImportBoundary } = require("./validate")
+const {
+    clearPromiseMirror,
+    createAssignedPromiseMirror,
+    forkPromiseMirror,
+    getOrCreatePromiseMirror,
+    initPromiseMirrors,
+    isLivePromiseMirror,
+} = require("./promise-mirrors")
 
 // Load-bearing helper contract:
 // Every continuation that depends on one promise's FIFO order must go through
@@ -45,185 +55,91 @@ const { validateImportBoundary } = require("./validate")
 // at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
 // suspended read behind a later write. settlePromise also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
-const hasOwn = Object.prototype.hasOwnProperty
-const FORBIDDEN_PATH_KEY = "__proto__"
-// import(promise) returns a derived promise for root-level use, but if that
-// promise is later assigned to a key, the key's mirror still has to run
-// target-aware screening before writeback.
-const IMPORTED_PROMISES = new WeakSet()
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-function readOwnProperty(node, key) {
-    return hasOwn.call(node, key) ? node[key] : undefined
+// Cascada data is own enumerable keys only. `__proto__` is never language data
+// because plain assignment would otherwise hit JS prototype machinery.
+function readLanguageProperty(node, key) {
+    if (key === "__proto__") return undefined
+    return propertyIsEnumerable.call(node, key) ? node[key] : undefined
 }
-
-function forbiddenPathError(path) {
-    for (const key of path) {
-        if (key === FORBIDDEN_PATH_KEY) {
-            return new Error("Cannot use __proto__ as a path segment")
-        }
-    }
-    return null
-}
-
-// An unmarked object/array is owned by exactly one Cascada variable/path: object
-// literals and async assignments enter one owner, and Cascada does not assign
-// the same object into two roots directly. A value becomes shared through
-// import, shared-ownership lookupPath escape, or COW of a shared branch
-// when an existing child value is reused by both the old and new worlds.
-// Promise-valued children follow that same COW rule through forked mirrors.
-function markShared(value) {
-    // Bare promises crossing an ownership boundary resolve to shared values.
-    // Promise keys with mirrors are different: they must mark mirror.currentValue,
-    // because currentValue may have advanced away from the raw settled value.
-    if (isPromise(value)) return onResolve(value, markShared)
-
-    return setSharedMark(value)
-}
-
-function canUpdateMirrorToLive(node, key, mirror) {
-    return getPromiseMirrorMap(node)?.[key] === mirror
-}
-
-// Register the mirror's resolved-value handler. Rejected data promises become
-// Error values here through onResolve/settlePromise; runtime bugs thrown by
-// this continuation are intentionally not caught.
-// mirror.getValue runs inside the onResolve continuation, so FORK reads
-// sourceMirror.currentValue at the copier's FIFO slot, not earlier. Imported
-// mirrors also run their screenValue hook at this slot, where the write target is
-// known and back-edges can be rejected before commit. The chosen value is stored
-// as currentValue, then written to the live key only if this exact mirror still
-// owns it.
-function onResolvedValue(node, key, mirror, markResolvedValueShared = false) {
-    onResolve(mirror.promise, settledValueOrError => {
-        let value = mirror.getValue(settledValueOrError, node)
-        if (mirror.screenValue !== null) value = mirror.screenValue(value, node)
-        if (markResolvedValueShared && isTracked(value)) markShared(value)
-
-        if (canUpdateMirrorToLive(node, key, mirror)) {
-            value = setProperty(node, key, value)
-        }
-        mirror.currentValue = value
-        // Else a later op reassigned/deleted the key: keep currentValue alive
-        // privately for reads that captured this mirror; leave the property alone.
-    })
-}
-
-// BIRTH 2 - DISCOVERY: find the mirror for a pending promise reached during a
-// walk, or lazily create one for an orphan (imported data, raw literal).
-// COW-copied keys must never arrive here mirrorless; they are forked eagerly
-// in shallowCopy. Minting one lazily here would seed from the raw resolved
-// value and lose every write made by ops issued before the copy.
-function getOrCreatePromiseMirror(node, key, promise) {
-    const map = ensurePromiseMirrorMap(node)
-    if (map[key]?.promise === promise) {
-        return map[key]
-    }
-
-    return createPromiseMirror(map, node, key, promise, value => value)
-}
-
-function getOrCreateImportedPromiseMirror(node, key, promise) {
-    const map = ensurePromiseMirrorMap(node)
-    if (map[key]?.promise === promise) {
-        return map[key]
-    }
-
-    return createPromiseMirror(map, node, key, promise, value => value, {
-        screenValue: screenImportBoundary,
-    })
-}
-
-function createPromiseMirror(
-    map,
-    node,
-    key,
-    promise,
-    getValue,
-    options = {},
-) {
-    const mirror = {
-        promise,
-        currentValue: undefined,
-        getValue,
-        screenValue: options.screenValue ?? null,
-    }
-    map[key] = mirror
-    onResolvedValue(node, key, mirror, options.markResolvedValueShared === true)
-
-    return mirror
-}
-
-function clearPromiseMirror(node, key) {
-    const map = getPromiseMirrorMap(node)
-    if (!map) return
-    delete map[key]
-}
-
-initRef({ mintPromiseMirror: getOrCreatePromiseMirror })
 
 function setProperty(parent, key, value) {
+    assertCanMutateLanguageProperty(parent, key)
     const nextValue = refSetProperty(parent, key, value)
     parent[key] = nextValue
     return nextValue
 }
 
 function deleteProperty(parent, key) {
+    assertCanMutateLanguageProperty(parent, key)
     refDeleteProperty(parent, key)
     delete parent[key]
 }
 
+initPromiseMirrors(setProperty)
+
 // --- import : external value enters the runtime -----------------------------
-function importValue(value) {
+function importValue(value, importContext) {
+    if (importContext === undefined) {
+        throw new Error("import requires an error context")
+    }
     if (isPromise(value)) {
-        const imported = onResolve(value, value => screenImportBoundary(value))
-        IMPORTED_PROMISES.add(imported)
-        return imported
+        return onResolve(value, settledValueOrError => {
+            return importValue(settledValueOrError, importContext)
+        })
     }
 
-    return screenImportBoundary(value)
+    return markImported(value, importContext)
 }
 
-function screenImportBoundary(value, target = undefined) {
-    const failure = validateImportBoundary(value, target)
-    if (failure) return failure
-    if (!isTracked(value)) return value
-
-    markShared(value)
-    scanImportedValue(value, new Set())
-    return value
-}
-
-function scanImportedValue(value, seen) {
-    if (!isTracked(value) || seen.has(value)) return
-    seen.add(value)
-
-    for (const key of Object.keys(value)) {
-        const child = value[key]
-
-        if (isPromise(child)) {
-            getOrCreateImportedPromiseMirror(value, key, child)
-        } else {
-            scanImportedValue(child, seen)
-        }
-    }
-}
-
-function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false) {
+function shallowCopy(
+    obj,
+    pathKey = undefined,
+    markReusedChildrenShared = false,
+    inheritedImportContext = undefined,
+) {
     const copy = isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
+    const importContext = nodeImportContext(obj, inheritedImportContext)
+    const keys = Object.keys(obj)
+    if (keys.includes("__proto__")) {
+        // Object.keys only sees an own enumerable data key on the source, but
+        // the fresh copy would otherwise inherit Object.prototype.__proto__.
+        // Pre-create the copy's own data slot so the normal assignment loop
+        // preserves the value instead of invoking the legacy prototype setter.
+        Object.defineProperty(copy, "__proto__", {
+            value: undefined,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+    }
 
     // Copy only language-visible string keys; META is non-enumerable Symbol
     // metadata, so mirrors, counters, and the shared mark never enter the copy.
     // The source object keeps its own shared mark. When a copy reuses child
     // objects from a shared branch, those non-path children are marked too
     // so their shared references stay protected.
-    for (const key of Object.keys(obj)) {
+    for (const key of keys) {
         const isPathKey = key === pathKeyString
         const markCopiedValueShared = markReusedChildrenShared && !isPathKey
         const value = obj[key]
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or copyCounters snapshots the already-indexed source.
         copy[key] = value
+        if (key === "__proto__" && isPromise(value)) {
+            // The key was pre-created as an own data property above, so the
+            // assignment is safe. Do not mirror this promise: writeback would
+            // later go through the normal mutation guard and throw. Boundary
+            // marking is still owed for the eventual resolved value.
+            if (importContext !== undefined) {
+                markImported(value, importContext)
+            } else if (markCopiedValueShared) {
+                markShared(value)
+            }
+            continue
+        }
         if (isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
@@ -242,17 +158,9 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
             // so the first advance on either side must COW. The path key itself
             // is protected by the walk's inherited shared state if we enter it,
             // and may simply be replaced/deleted at the target.
-            const sourceMirror = getOrCreatePromiseMirror(obj, key, value) // DISCOVERY if source was an orphan.
-            const options = { markResolvedValueShared: markCopiedValueShared }
-            if (sourceMirror.screenValue !== null) options.screenValue = screenImportBoundary
-            createPromiseMirror(
-                ensurePromiseMirrorMap(copy),
-                copy,
-                key,
-                value,
-                () => sourceMirror.currentValue,
-                options,
-            )
+            forkPromiseMirror(obj, copy, key, value, markCopiedValueShared, importContext)
+        } else if (importContext !== undefined && isTracked(value)) {
+            markImported(value, importContext)
         } else if (markCopiedValueShared && isTracked(value)) {
             markShared(value)
         }
@@ -263,8 +171,9 @@ function shallowCopy(obj, pathKey = undefined, markReusedChildrenShared = false)
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(root, path, value) {
-    const pathError = forbiddenPathError(path)
-    if (pathError) return pathError
+    for (const key of path) {
+        assertMutationKey(key)
+    }
     if (path.length === 0) return value
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
@@ -277,11 +186,7 @@ function assignPath(root, path, value) {
             // BIRTH 1 - ASSIGN: assigning a promise to a key. Always creates a
             // fresh mirror. Two assignments of the same promise at the same key
             // are divergent worlds and must not share currentValue.
-            const map = ensurePromiseMirrorMap(parent)
-            const options = IMPORTED_PROMISES.has(value)
-                ? { screenValue: screenImportBoundary }
-                : undefined
-            createPromiseMirror(map, parent, key, value, settledValue => settledValue, options) // FIRST: the FIFO ordering invariant
+            createAssignedPromiseMirror(parent, key, value) // FIRST: the FIFO ordering invariant
             setProperty(parent, key, value)
         } else {
             clearPromiseMirror(parent, key)            // plain value ends any prior promise mirror
@@ -299,6 +204,9 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         if (isError(value)) return value
 
         const valueIsTracked = isTracked(value)
+        const valueImportContext = valueIsTracked
+            ? nodeImportContext(value, undefined)
+            : undefined
         let parent = value
         let parentInsideSharedBranch = valueIsTracked &&
             (inheritedSharedBranch || hasSharedMark(value))
@@ -318,22 +226,27 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 
         const key = path[index]
         if (parentInsideSharedBranch) {
-            parent = shallowCopy(parent, key, true)
+            parent = shallowCopy(parent, key, true, valueImportContext)
         }
+        assertCanMutateLanguageProperty(parent, key, valueImportContext)
 
         if (index === path.length - 1) {
             onTarget(parent, key)
             return parent
         }
 
-        const child = readOwnProperty(parent, key)
+        const child = readLanguageProperty(parent, key)
         if (isPromise(child)) {
             const mirror = getOrCreatePromiseMirror(parent, key, child)
             onResolve(child, () => {
-                const next = walk(mirror.currentValue, index + 1, parentInsideSharedBranch)
+                const next = walk(
+                    mirror.currentValue,
+                    index + 1,
+                    parentInsideSharedBranch,
+                )
                 mirror.currentValue = next
-                if (canUpdateMirrorToLive(parent, key, mirror) &&
-                    next !== readOwnProperty(parent, key)) {
+                if (isLivePromiseMirror(parent, key, mirror) &&
+                    next !== readLanguageProperty(parent, key)) {
                     setProperty(parent, key, next)
                 }
             })
@@ -353,53 +266,76 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // sharedOwnership is false for a pure read or when ownership is ceded to
 // the caller, e.g. the final `return x` from an otherwise unused variable.
 function lookupPath(root, path, sharedOwnership = true) {
-    const pathError = forbiddenPathError(path)
-    if (pathError) return pathError
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
             return lookupPath(resolvedRoot, path, sharedOwnership)
         })
     }
 
+    const rootImportContext = isTracked(root)
+        ? nodeImportContext(root, undefined)
+        : undefined
     if (path.length === 0) {
-        if (sharedOwnership) markShared(root)       // escaping object/array -> shared
+        if (rootImportContext !== undefined) {
+            markImported(root, rootImportContext)
+        } else if (sharedOwnership) {
+            markShared(root)       // escaping object/array -> shared
+        }
         return root
     }
 
     // Walk lookup paths through promise mirrors. Promise-valued keys resolve
     // before we decide whether the reached value is final or intermediate.
-    return walk(root, 0)
+    return walk(root, 0, undefined)
 
-    function walk(parent, index) {
+    function walk(parent, index, inheritedImportContext) {
         if (isError(parent)) return parent
         if (!isTracked(parent)) return undefined
 
+        const importContext = nodeImportContext(parent, inheritedImportContext)
         const key = path[index]
-        const value = readOwnProperty(parent, key)
+        const value = readLanguageProperty(parent, key)
         if (isPromise(value)) {
-            const mirror = getOrCreatePromiseMirror(parent, key, value)
-            return onResolve(value, () => lookupValue(mirror.currentValue, index)) // never raw V
+            if (!Object.isExtensible(parent)) {
+                return onResolve(value, settledValueOrError => {
+                    return lookupValue(settledValueOrError, index, importContext)
+                })
+            }
+
+            const mirror = getOrCreatePromiseMirror(parent, key, value, importContext)
+            return onResolve(value, () => {
+                return lookupValue(
+                    mirror.currentValue,
+                    index,
+                    undefined,
+                )
+            }) // never raw V
         }
-        return lookupValue(value, index)
+        return lookupValue(value, index, importContext)
     }
 
-    function lookupValue(value, index) {
+    function lookupValue(value, index, importContext) {
         // `index` still names the segment that produced value; only deeper
         // lookups advance to the next segment.
         if (index === path.length - 1) {
-            if (sharedOwnership) markShared(value)  // escaping object/array -> shared
+            if (importContext !== undefined) {
+                markImported(value, importContext)
+            } else if (sharedOwnership) {
+                markShared(value)  // escaping object/array -> shared
+            }
             return value
         }
         if (isError(value)) return value
         if (!isTracked(value)) return undefined
-        return walk(value, index + 1)
+        return walk(value, index + 1, importContext)
     }
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deletePath(root, path) {
-    const pathError = forbiddenPathError(path)
-    if (pathError) return pathError
+    for (const key of path) {
+        assertMutationKey(key)
+    }
     if (path.length === 0) return null
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {

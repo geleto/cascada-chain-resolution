@@ -1,5 +1,4 @@
 const expect = require("expect.js")
-const { spawnSync } = require("child_process")
 
 const runtime = require("../src")
 const { onResolve } = require("../src/helpers")
@@ -19,7 +18,10 @@ const {
     deletePath,
     lookupPath,
 } = runtime
-const importValue = runtime.import
+
+function importValue(value, context = "test import") {
+    return runtime.import(value, context)
+}
 
 function deferred() {
     let resolve
@@ -40,6 +42,35 @@ async function flushMicrotasks(count = 8) {
 function expectCounts(value, promiseCount, errorCount) {
     expect(getRefCounts(value)).to.eql([promiseCount, errorCount])
 }
+
+function thrownBy(fn) {
+    try {
+        fn()
+    } catch (error) {
+        return error
+    }
+    return undefined
+}
+
+const unhandledRejections = []
+
+function onUnhandledRejection(reason) {
+    unhandledRejections.push(reason)
+}
+
+before(() => {
+    process.on("unhandledRejection", onUnhandledRejection)
+})
+
+afterEach(async () => {
+    await new Promise(resolve => setImmediate(resolve))
+    const reasons = unhandledRejections.splice(0)
+    expect(reasons).to.eql([])
+})
+
+after(() => {
+    process.removeListener("unhandledRejection", onUnhandledRejection)
+})
 
 describe("promise helpers", () => {
     it("passes rejected data promises to continuations as Error values", async () => {
@@ -66,6 +97,21 @@ describe("promise helpers", () => {
 })
 
 describe("import", () => {
+    it("requires an error context", () => {
+        const root = {}
+        let caught
+
+        try {
+            runtime.import(root)
+        } catch (error) {
+            caught = error
+        }
+
+        expect(caught instanceof Error).to.be(true)
+        expect(caught.message).to.be("import requires an error context")
+        expect(metaOf(root)).to.be(undefined)
+    })
+
     it("marks external roots as shared", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos
@@ -131,85 +177,132 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("rejects cyclic imports before attaching metadata", () => {
+    it("marks only the imported root and does not scan children", async () => {
+        const deferredValue = deferred()
+        const child = { value: deferredValue.promise }
+        const root = { child }
+
+        const imported = importValue(root)
+        deferredValue.resolve({ x: 1 })
+        await flushMicrotasks()
+
+        expect(imported).to.be(root)
+        expect(metaOf(root).importContext).to.be("test import")
+        expect(metaOf(child)).to.be(undefined)
+        expect(root.child.value).to.be(deferredValue.promise)
+    })
+
+    it("accepts cyclic imports until counting needs the branch", () => {
         const root = {}
         root.self = root
 
-        const imported = importValue(root)
+        const imported = importValue(root, "cycle import")
+        const failure = refIndexBranch(root)
 
-        expect(imported instanceof Error).to.be(true)
-        expect(imported.message).to.be("Imported values cannot be cyclic")
-        expect(metaOf(root)).to.be(undefined)
+        expect(imported).to.be(root)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: cycle import)")
+        expect(getRefCounter(root)).to.be(undefined)
     })
 
-    it("rejects imported objects with own __proto__ keys", () => {
+    it("keeps the first import context", () => {
         const root = {}
-        Object.defineProperty(root, "__proto__", {
-            value: true,
-            enumerable: true,
-            writable: true,
-            configurable: true,
-        })
+        root.self = root
 
-        const imported = importValue(root)
+        importValue(root, "first import")
+        importValue(root, "second import")
+        const failure = refIndexBranch(root)
 
-        expect(imported instanceof Error).to.be(true)
-        expect(imported.message).to.be("Imported objects cannot contain __proto__")
-        expect(metaOf(root)).to.be(undefined)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: first import)")
     })
 
-    it("rejects nested imported objects with own __proto__ keys", () => {
-        const nested = {}
-        Object.defineProperty(nested, "__proto__", {
-            value: true,
-            enumerable: true,
-            writable: true,
-            configurable: true,
-        })
-
-        const imported = importValue({ nested })
-
-        expect(imported instanceof Error).to.be(true)
-        expect(imported.message).to.be("Imported objects cannot contain __proto__")
-        expect(metaOf(nested)).to.be(undefined)
-    })
-
-    it("rejects frozen imported subtrees that contain promises or errors", () => {
+    it("rejects frozen imported subtrees only when counting", () => {
         const frozenPromise = Object.freeze({ pending: Promise.resolve(1) })
         const nestedFrozenPromise = Object.freeze({ nested: { pending: Promise.resolve(1) } })
         const frozenError = Object.freeze({ error: new Error("bad") })
 
-        const promiseFailure = importValue(frozenPromise)
-        const nestedPromiseFailure = importValue(nestedFrozenPromise)
-        const errorFailure = importValue(frozenError)
+        expect(importValue(frozenPromise, "frozen promise")).to.be(frozenPromise)
+        expect(importValue(nestedFrozenPromise, "nested frozen promise")).to.be(nestedFrozenPromise)
+        expect(importValue(frozenError, "frozen error")).to.be(frozenError)
+
+        const promiseFailure = refIndexBranch(frozenPromise)
+        const nestedPromiseFailure = refIndexBranch(nestedFrozenPromise)
+        const errorFailure = refIndexBranch(frozenError)
 
         expect(promiseFailure instanceof Error).to.be(true)
         expect(nestedPromiseFailure instanceof Error).to.be(true)
         expect(errorFailure instanceof Error).to.be(true)
-        expect(promiseFailure.message).to.be("Frozen objects cannot contain promises or errors")
+        expect(promiseFailure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen promise)",
+        )
+        expect(nestedPromiseFailure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: nested frozen promise)",
+        )
+        expect(errorFailure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen error)",
+        )
         expect(metaOf(frozenPromise)).to.be(undefined)
     })
 
-    it("rejects frozen imported promise descendants regardless of key order", () => {
-        function makeRoot(frozenFirst) {
-            const shared = { pending: Promise.resolve(1) }
-            const frozen = Object.freeze({ shared })
-            return frozenFirst ? { frozen, shared } : { shared, frozen }
-        }
+    it("rejects imported own __proto__ keys when counting", () => {
+        const root = {}
+        Object.defineProperty(root, "__proto__", {
+            value: { unsafe: true },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
 
-        const frozenFirstFailure = importValue(makeRoot(true))
-        const sharedFirstFailure = importValue(makeRoot(false))
+        expect(importValue(root, "proto import")).to.be(root)
 
-        expect(frozenFirstFailure instanceof Error).to.be(true)
-        expect(sharedFirstFailure instanceof Error).to.be(true)
-        expect(frozenFirstFailure.message).to.be("Frozen objects cannot contain promises or errors")
+        const failure = refIndexBranch(root)
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Cannot use __proto__ as a key (imported at: proto import)")
     })
 
-    it("scans imported objects for promise keys", async () => {
+    it("marks extracted imported values even when ownership is ceded", () => {
+        const root = { branch: { x: 1 } }
+        const branch = root.branch
+
+        importValue(root, "extract import")
+        const extracted = lookupPath(root, ["branch"], false)
+        const next = assignPath(extracted, ["x"], 2)
+
+        expect(extracted).to.be(branch)
+        expect(metaOf(branch).importContext).to.be("extract import")
+        expect(next).not.to.be(branch)
+        expect(branch.x).to.be(1)
+        expect(next.x).to.be(2)
+    })
+
+    it("preserves import context on copied path-key children", () => {
+        const branch = {}
+        branch.self = branch
+        const root = {
+            branch,
+            sibling: { x: 1 },
+        }
+
+        importValue(root, "path child import")
+        const next = assignPath(root, ["branch", "added"], 2)
+        const failure = refIndexBranch(next.branch)
+
+        expect(next).not.to.be(root)
+        expect(next.branch).not.to.be(branch)
+        expect(next.branch.self).to.be(branch)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: path child import)")
+    })
+
+    it("discovers imported promise keys when the branch is counted", async () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }
 
-        importValue(root)
+        importValue(root, "promise key import")
+        refIndexBranch(root)
+        expectCounts(root, 1, 0)
+
         deferredValue.resolve({ x: 1 })
         await flushMicrotasks()
 
@@ -221,31 +314,57 @@ describe("import", () => {
         expect(next.value).not.to.be(oldValue)
         expect(oldValue.x).to.be(1)
         expect(next.value.x).to.be(2)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root, next)
     })
 
-    it("recursively scans imported objects for nested promise keys", async () => {
+    it("reads frozen promise keys without mirrors or writeback", async () => {
         const deferredValue = deferred()
-        const root = { nested: { value: deferredValue.promise } }
+        const root = Object.freeze({ value: deferredValue.promise })
 
-        importValue(root)
+        importValue(root, "frozen read")
+        const read = lookupPath(root, ["value"])
         deferredValue.resolve({ x: 1 })
+        const value = await read
+
+        expect(value).to.eql({ x: 1 })
+        expect(root.value).to.be(deferredValue.promise)
+
+        const next = assignPath(value, ["x"], 2)
+        expect(next).not.to.be(value)
+        expect(value.x).to.be(1)
+        expect(next.x).to.be(2)
+    })
+
+    it("copies frozen promise keys into mutable imported mirrors", async () => {
+        const deferredValue = deferred()
+        const root = Object.freeze({
+            value: deferredValue.promise,
+            sibling: { x: 1 },
+        })
+
+        importValue(root, "frozen fork")
+        const next = assignPath(root, ["sibling", "x"], 2)
+
+        deferredValue.resolve(Object.freeze({ pending: Promise.resolve(1) }))
         await flushMicrotasks()
 
-        const oldValue = root.nested.value
-        const next = assignPath(root, ["nested", "value", "x"], 2)
+        const failure = refIndexBranch(next)
 
-        expect(oldValue).to.eql({ x: 1 })
         expect(next).not.to.be(root)
-        expect(next.nested.value).not.to.be(oldValue)
-        expect(oldValue.x).to.be(1)
-        expect(next.nested.value.x).to.be(2)
+        expect(root.value).to.be(deferredValue.promise)
+        expect(typeof next.value.pending.then).to.be("function")
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen fork)",
+        )
     })
 
-    it("screens imported promise keys before writeback", async () => {
+    it("turns invalid imported promise writebacks into counted Error values", async () => {
         const deferredValue = deferred()
         const root = { nested: { value: deferredValue.promise } }
 
-        importValue(root)
+        importValue(root, "invalid writeback")
         refIndexBranch(root)
         expectCounts(root, 1, 0)
 
@@ -253,7 +372,9 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value instanceof Error).to.be(true)
-        expect(root.nested.value.message).to.be("Frozen objects cannot contain promises or errors")
+        expect(root.nested.value.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: invalid writeback)",
+        )
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -268,7 +389,7 @@ describe("import", () => {
             },
         }
 
-        importValue(root)
+        importValue(root, "writeback back-edge")
         refIndexBranch(root)
         expectCounts(root, 2, 0)
 
@@ -276,7 +397,9 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value instanceof Error).to.be(true)
-        expect(root.nested.value.message).to.be("Imported value cannot reach its write target")
+        expect(root.nested.value.message).to.be(
+            "Value cannot reach its write target (imported at: writeback back-edge)",
+        )
         expectCounts(root, 1, 1)
         verifyRefCounts(root)
 
@@ -292,93 +415,85 @@ describe("import", () => {
         const root = { nested: { value: deferredValue.promise } }
         const resolved = { target: root.nested }
 
-        importValue(root)
+        importValue(root, "containing back-edge")
         refIndexBranch(root)
 
         deferredValue.resolve(resolved)
         await flushMicrotasks()
 
         expect(root.nested.value instanceof Error).to.be(true)
-        expect(root.nested.value.message).to.be("Imported value cannot reach its write target")
-        expect(metaOf(resolved)).to.be(undefined)
+        expect(root.nested.value.message).to.be(
+            "Value cannot reach its write target (imported at: containing back-edge)",
+        )
+        expect(metaOf(resolved).importContext).to.be("containing back-edge")
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("screens imported promise assignments against their write target", async () => {
+    it("turns imported promise assignments that reach their target into Error values", async () => {
         const deferredValue = deferred()
         const root = { nested: {} }
 
         refIndexBranch(root)
-        assignPath(root, ["nested", "value"], importValue(deferredValue.promise))
+        assignPath(root, ["nested", "value"], importValue(deferredValue.promise, "assigned promise"))
         expectCounts(root, 1, 0)
 
         deferredValue.resolve(root)
         await flushMicrotasks()
 
         expect(root.nested.value instanceof Error).to.be(true)
-        expect(root.nested.value.message).to.be("Imported value cannot reach its write target")
+        expect(root.nested.value.message).to.be(
+            "Value cannot reach its write target (imported at: assigned promise)",
+        )
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("screens forked imported promise mirrors against the copied target", async () => {
+    it("lets non-ref-indexed back-edges float until counting", async () => {
         const deferredValue = deferred()
-        const root = {
-            branch: {
-                value: deferredValue.promise,
-                other: { x: 1 },
-            },
-        }
+        const root = { nested: { value: deferredValue.promise } }
 
-        importValue(root)
-        const next = assignPath(root, ["branch", "other", "x"], 2)
-
-        deferredValue.resolve(next.branch)
+        importValue(root, "floating back-edge")
+        lookupPath(root, ["nested", "value"])
+        deferredValue.resolve(root.nested)
         await flushMicrotasks()
 
-        expect(root.branch.value).to.be(next.branch)
-        expect(next.branch.value instanceof Error).to.be(true)
-        expect(next.branch.value.message).to.be("Imported value cannot reach its write target")
+        const failure = refIndexBranch(root)
+
+        expect(root.nested.value).to.be(root.nested)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: floating back-edge)")
     })
 
-    it("recursively screens promises exposed by imported promise writebacks", async () => {
+    it("lets invalid imported promise roots fail later at counting time", async () => {
         const deferredValue = deferred()
-        const deferredDeeper = deferred()
-        const cyclic = {}
-        cyclic.self = cyclic
-        const root = { value: deferredValue.promise }
-
-        importValue(root)
-        refIndexBranch(root)
-        expectCounts(root, 1, 0)
-
-        deferredValue.resolve({ deeper: deferredDeeper.promise })
-        await flushMicrotasks()
-
-        expectCounts(root, 1, 0)
-        deferredDeeper.resolve(cyclic)
-        await flushMicrotasks()
-
-        expect(root.value.deeper instanceof Error).to.be(true)
-        expect(root.value.deeper.message).to.be("Imported values cannot be cyclic")
-        expect(metaOf(cyclic)).to.be(undefined)
-        expectCounts(root, 0, 1)
-        verifyRefCounts(root)
-    })
-
-    it("turns invalid imported promise roots into Error values", async () => {
-        const deferredValue = deferred()
-        const imported = importValue(deferredValue.promise)
+        const imported = importValue(deferredValue.promise, "promise root")
         const cyclic = {}
         cyclic.self = cyclic
 
         deferredValue.resolve(cyclic)
         const value = await imported
+        const failure = refIndexBranch(value)
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("Imported values cannot be cyclic")
-        expect(metaOf(cyclic)).to.be(undefined)
+        expect(value).to.be(cyclic)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: promise root)")
+    })
+
+    it("keeps import context when promise roots resolve to frozen invalid values", async () => {
+        const deferredValue = deferred()
+        const imported = importValue(deferredValue.promise, "frozen promise root")
+        const frozen = Object.freeze({ pending: Promise.resolve(1) })
+
+        deferredValue.resolve(frozen)
+        const value = await imported
+        const failure = refIndexBranch(value)
+
+        expect(value).to.be(frozen)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen promise root)",
+        )
     })
 
     it("turns an imported rejecting promise into an Error", async () => {
@@ -424,24 +539,128 @@ describe("path assignment", () => {
         expect(root.pos.x).to.be(2)
     })
 
-    it("rejects __proto__ path segments without touching prototypes", () => {
+    it("throws on __proto__ mutation paths without touching prototypes", () => {
         const root = {}
         const nested = { safe: {} }
 
-        const assigned = assignPath(root, ["__proto__", "polluted"], true)
-        const nestedAssigned = assignPath(nested, ["safe", "__proto__", "polluted"], true)
+        const assigned = thrownBy(() => assignPath(root, ["__proto__", "polluted"], true))
+        const nestedAssigned = thrownBy(() => {
+            assignPath(nested, ["safe", "__proto__", "polluted"], true)
+        })
         const lookedUp = lookupPath(root, ["__proto__"])
-        const deleted = deletePath(root, ["__proto__"])
+        const deleted = thrownBy(() => deletePath(root, ["__proto__"]))
 
         expect(assigned instanceof Error).to.be(true)
         expect(nestedAssigned instanceof Error).to.be(true)
-        expect(lookedUp instanceof Error).to.be(true)
         expect(deleted instanceof Error).to.be(true)
-        expect(assigned.message).to.be("Cannot use __proto__ as a path segment")
+        expect(assigned.message).to.be("Cannot use __proto__ as a key")
+        expect(nestedAssigned.message).to.be("Cannot use __proto__ as a key")
+        expect(deleted.message).to.be("Cannot use __proto__ as a key")
+        expect(lookedUp).to.be(undefined)
         expect({}.polluted).to.be(undefined)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
         expect(Object.prototype.hasOwnProperty.call(root, "__proto__")).to.be(false)
         expect(nested).to.eql({ safe: {} })
+    })
+
+    it("preserves own __proto__ data during COW without touching prototypes", () => {
+        const root = { other: { x: 1 } }
+        const protoValue = { safe: true }
+        Object.defineProperty(root, "__proto__", {
+            value: protoValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+
+        importValue(root, "copy proto import")
+        const next = assignPath(root, ["other", "x"], 2)
+        const descriptor = Object.getOwnPropertyDescriptor(next, "__proto__")
+
+        expect(root.other.x).to.be(1)
+        expect(next.other.x).to.be(2)
+        expect(descriptor.enumerable).to.be(true)
+        expect(descriptor.writable).to.be(true)
+        expect(descriptor.configurable).to.be(true)
+        expect(descriptor.value).to.be(protoValue)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+        expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
+        expect(lookupPath(next, ["__proto__"])).to.be(undefined)
+        expect({}.safe).to.be(undefined)
+    })
+
+    it("preserves promise-valued __proto__ data during COW without writeback", async () => {
+        const deferredValue = deferred()
+        const root = { other: { x: 1 } }
+        Object.defineProperty(root, "__proto__", {
+            value: deferredValue.promise,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+
+        importValue(root, "copy proto promise import")
+        const next = assignPath(root, ["other", "x"], 2)
+        deferredValue.resolve({ safe: true })
+        await flushMicrotasks()
+
+        expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(deferredValue.promise)
+        expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
+        expect(lookupPath(next, ["__proto__"])).to.be(undefined)
+        expect({}.safe).to.be(undefined)
+    })
+
+    it("throws on non-enumerable mutation paths", () => {
+        const hidden = { x: 1 }
+        const root = {}
+        Object.defineProperty(root, "hidden", {
+            value: hidden,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        const assigned = thrownBy(() => assignPath(root, ["hidden"], 2))
+        const nestedAssigned = thrownBy(() => assignPath(root, ["hidden", "x"], 2))
+        const deleted = thrownBy(() => deletePath(root, ["hidden"]))
+
+        expect(assigned instanceof Error).to.be(true)
+        expect(nestedAssigned instanceof Error).to.be(true)
+        expect(deleted instanceof Error).to.be(true)
+        expect(assigned.message).to.be("Cannot mutate non-enumerable property")
+        expect(nestedAssigned.message).to.be("Cannot mutate non-enumerable property")
+        expect(deleted.message).to.be("Cannot mutate non-enumerable property")
+        expect(root.hidden).to.be(hidden)
+        expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
+    })
+
+    it("shadows non-enumerable properties after COW", () => {
+        const hidden = { x: 1 }
+        const root = {}
+        Object.defineProperty(root, "hidden", {
+            value: hidden,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        importValue(root, "hidden import")
+        const next = assignPath(root, ["hidden"], 2)
+
+        expect(next).not.to.be(root)
+        expect(root.hidden).to.be(hidden)
+        expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
+        expect(next.hidden).to.be(2)
+        expect(Object.prototype.propertyIsEnumerable.call(next, "hidden")).to.be(true)
+    })
+
+    it("can shadow inherited properties", () => {
+        const root = {}
+
+        assignPath(root, ["constructor"], 2)
+
+        expect(root.constructor).to.be(2)
+        expect(Object.prototype.propertyIsEnumerable.call(root, "constructor")).to.be(true)
     })
 
     it("copies only an escaped branch", () => {
@@ -681,6 +900,27 @@ describe("lookupPath", () => {
         expect(lookupPath({}, ["constructor"])).to.be(undefined)
     })
 
+    it("does not read __proto__ or own non-enumerable properties", () => {
+        const root = {}
+        Object.defineProperty(root, "__proto__", {
+            value: { unsafe: true },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        Object.defineProperty(root, "hidden", {
+            value: { x: 1 },
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        expect(lookupPath(root, ["__proto__"])).to.be(undefined)
+        expect(lookupPath(root, ["__proto__", "unsafe"])).to.be(undefined)
+        expect(lookupPath(root, ["hidden"])).to.be(undefined)
+        expect(lookupPath(root, ["hidden", "x"])).to.be(undefined)
+    })
+
     it("supports primitive roots for empty lookup paths", () => {
         expect(lookupPath(7, [])).to.be(7)
         expect(lookupPath("text", [])).to.be("text")
@@ -886,6 +1126,30 @@ describe("promise mirrors and lookupPath", () => {
         expect(value.x).to.be(2)
     })
 
+    it("shadows non-enumerable imported properties when a suspended mutation resumes", async () => {
+        const deferredBranch = deferred()
+        const externalBranch = {}
+        const root = {}
+        Object.defineProperty(externalBranch, "x", {
+            value: 1,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        assignPath(root, ["branch"], importValue(deferredBranch.promise, "hidden resume"))
+        assignPath(root, ["branch", "x"], 2)
+
+        deferredBranch.resolve(externalBranch)
+        await flushMicrotasks()
+
+        expect(root.branch).not.to.be(externalBranch)
+        expect(externalBranch.x).to.be(1)
+        expect(Object.prototype.propertyIsEnumerable.call(externalBranch, "x")).to.be(false)
+        expect(root.branch.x).to.be(2)
+        expect(Object.prototype.propertyIsEnumerable.call(root.branch, "x")).to.be(true)
+    })
+
     it("forks promise mirrors when a pending key is shallow-copied", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
@@ -908,39 +1172,27 @@ describe("promise mirrors and lookupPath", () => {
     })
 
     it("turns a rejected forked pending key into Error values in both worlds", async () => {
-        const unhandledRejections = []
-        const onUnhandledRejection = reason => {
-            unhandledRejections.push(reason)
-        }
-        process.on("unhandledRejection", onUnhandledRejection)
+        const deferredBranch = deferred()
+        const root = { branch: deferredBranch.promise }
 
-        try {
-            const deferredBranch = deferred()
-            const root = { branch: deferredBranch.promise }
+        assignPath(root, ["branch", "before"], 1)
+        importValue(root)
 
-            assignPath(root, ["branch", "before"], 1)
-            importValue(root)
+        const left = assignPath(root, ["left"], true)
+        const right = assignPath(root, ["right"], true)
 
-            const left = assignPath(root, ["left"], true)
-            const right = assignPath(root, ["right"], true)
+        assignPath(left, ["branch", "leftOnly"], 2)
+        assignPath(right, ["branch", "rightOnly"], 3)
 
-            assignPath(left, ["branch", "leftOnly"], 2)
-            assignPath(right, ["branch", "rightOnly"], 3)
+        deferredBranch.reject("fork boom")
+        await flushMicrotasks()
 
-            deferredBranch.reject("fork boom")
-            await flushMicrotasks()
-            await new Promise(resolve => setImmediate(resolve))
-
-            expect(root.branch instanceof Error).to.be(true)
-            expect(root.branch.message).to.be("fork boom")
-            expect(left.branch instanceof Error).to.be(true)
-            expect(left.branch.message).to.be("fork boom")
-            expect(right.branch instanceof Error).to.be(true)
-            expect(right.branch.message).to.be("fork boom")
-            expect(unhandledRejections).to.eql([])
-        } finally {
-            process.removeListener("unhandledRejection", onUnhandledRejection)
-        }
+        expect(root.branch instanceof Error).to.be(true)
+        expect(root.branch.message).to.be("fork boom")
+        expect(left.branch instanceof Error).to.be(true)
+        expect(left.branch.message).to.be("fork boom")
+        expect(right.branch instanceof Error).to.be(true)
+        expect(right.branch.message).to.be("fork boom")
     })
 
     it("does not mark a final promise key replaced after a root copy", async () => {
@@ -1251,28 +1503,6 @@ describe("subtree counters", () => {
         expect(refIndexBranch(frozen)).to.be(frozen)
         expectCounts(frozen, 0, 0)
         verifyRefCounts(frozen)
-    })
-
-    it("throws if promise ref-indexing runs before initRef", () => {
-        const script = `
-            const { refIndexBranch } = require("./src/refcounts")
-            try {
-                refIndexBranch({ value: Promise.resolve("done") })
-                process.exit(1)
-            } catch (error) {
-                if (error.message !== "initRef must be called before ref-indexing promises") {
-                    process.stderr.write(error.stack)
-                    process.exit(1)
-                }
-            }
-        `
-
-        const result = spawnSync(process.execPath, ["-e", script], {
-            cwd: process.cwd(),
-            encoding: "utf8",
-        })
-
-        expect(result.status).to.be(0)
     })
 
     it("bookkeeps tracked branches after first count", () => {
