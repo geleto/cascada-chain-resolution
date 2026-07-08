@@ -7,7 +7,7 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "mocha"
+    "test": "mocha --require ./test/setup.js \"test/**/*.test.js\""
   },
   "devDependencies": {
     "expect.js": "^0.3.1",
