@@ -95,6 +95,8 @@ Here is how the mirror produces the same answer without anyone waiting:
 
 So in the example: (3) replaces the property and detaches the entry. But (2) had already joined the line and still holds it. When the config loads, (2) completes its write on the entry's value - and rule 3 stops it there, because the property has moved on. The write lands nowhere visible. Final state: `{ port: 9999 }` - the sequential answer, with no locks and no rollback. A superseded write simply finishes quietly off to the side.
 
+Seen from above, a mirror entry is a private relay between the commands queued on one promise: each resumes at its turn, takes the newest version of the value from the entry, applies its own change, and leaves the result for the next in line.
+
 Reads use the same line:
 
 ```js
