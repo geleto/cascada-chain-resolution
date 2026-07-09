@@ -84,6 +84,19 @@ function deleteProperty(parent, key) {
     delete parent[key]
 }
 
+function defineOwnProtoSlot(copy) {
+    // Object.keys only sees an own enumerable data key on the source, but a
+    // fresh copy would otherwise inherit Object.prototype.__proto__. Pre-create
+    // an own data slot so plain assignment preserves the value instead of
+    // invoking the legacy prototype setter.
+    Object.defineProperty(copy, "__proto__", {
+        value: undefined,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+    })
+}
+
 initPromiseMirrors(setProperty)
 
 // --- import : external value enters the runtime -----------------------------
@@ -111,16 +124,7 @@ function shallowCopy(
     const importContext = nodeImportContext(obj, inheritedImportContext)
     const keys = Object.keys(obj)
     if (keys.includes("__proto__")) {
-        // Object.keys only sees an own enumerable data key on the source, but
-        // the fresh copy would otherwise inherit Object.prototype.__proto__.
-        // Pre-create the copy's own data slot so the normal assignment loop
-        // preserves the value instead of invoking the legacy prototype setter.
-        Object.defineProperty(copy, "__proto__", {
-            value: undefined,
-            enumerable: true,
-            writable: true,
-            configurable: true,
-        })
+        defineOwnProtoSlot(copy)
     }
 
     // Copy only language-visible own enumerable string keys; META lives outside
@@ -400,12 +404,7 @@ function copyToPlainValue(value, copies = new Map()) {
 
     const keys = Object.keys(value)
     if (keys.includes("__proto__")) {
-        Object.defineProperty(copy, "__proto__", {
-            value: undefined,
-            enumerable: true,
-            writable: true,
-            configurable: true,
-        })
+        defineOwnProtoSlot(copy)
     }
     for (const key of keys) {
         // Sanctioned write bypass: normalize(..., plainCopy) creates output data

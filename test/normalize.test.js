@@ -41,6 +41,17 @@ describe("normalize", () => {
         expect(root.branch.x).to.be(2)
     })
 
+    it("marks valid imported branches even when shared ownership is ceded", () => {
+        const root = { branch: { x: 1 } }
+        const branch = root.branch
+
+        importValue(root, "valid normalize import")
+        const value = normalize(root, ["branch"], false)
+
+        expect(value).to.be(branch)
+        expect(metaOf(branch).importContext).to.be("valid normalize import")
+    })
+
     it("protects fast-path results from already-issued suspended writes", async () => {
         const pendingRoot = deferred()
         const root = { branch: { x: 1 } }
@@ -215,6 +226,34 @@ describe("normalize", () => {
         verifyRefCounts(root)
     })
 
+    it("collapses to Error when a pending branch promise rejects", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        const result = normalize(root, ["branch"])
+        pending.reject(new Error("bad"))
+        const value = await result
+
+        expect(value instanceof Error).to.be(true)
+        expect(value.message).to.be("normalize: branch contains errors")
+        expect(root.branch.pending instanceof Error).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("collapses to Error when a resolved promise value contains an Error", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        const result = normalize(root, ["branch"])
+        pending.resolve({ failed: new Error("bad") })
+        const value = await result
+
+        expect(value instanceof Error).to.be(true)
+        expect(value.message).to.be("normalize: branch contains errors")
+        expect(root.branch.pending.failed instanceof Error).to.be(true)
+        verifyRefCounts(root)
+    })
+
     it("does not settle at a transient zero before same-promise continuations run", async () => {
         const outer = deferred()
         const inner = deferred()
@@ -238,6 +277,21 @@ describe("normalize", () => {
 
         expect(settled).to.be(true)
         expect(value).to.eql({ outer: { inner: "done" } })
+        verifyRefCounts(root)
+    })
+
+    it("does not collapse to Error until queued earlier operations finish", async () => {
+        const pending = deferred()
+        const root = { branch: { inner: pending.promise } }
+
+        assignPath(root, ["branch", "inner", "e"], "fixed")
+        const result = normalize(root, ["branch"])
+
+        pending.resolve({ e: new Error("transient") })
+        const value = await result
+
+        expect(value).to.be(root.branch)
+        expect(value).to.eql({ inner: { e: "fixed" } })
         verifyRefCounts(root)
     })
 
