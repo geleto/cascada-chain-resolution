@@ -151,7 +151,7 @@ sharing does not.
    imported context; ref-indexing passes the commit walk's inherited context to
    `getOrCreatePromiseMirror(node, key, promise, importContext)`.
 
-4. **Language integration (issues.md item 9)** — the compiler routes external values
+4. **Language integration (issues.md item 8)** — the compiler routes external values
    through `import(value, ctx)` and marks extracted branches
    (`var x = getExternalValue().a`), constructing the context at the call site.
 
