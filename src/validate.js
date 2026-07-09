@@ -45,13 +45,18 @@ function assertCanMutateLanguageProperty(parent, key, importContext = undefined)
 // importContext is re-derived per node from the import markers so failures
 // name the import that brought the data in. isRefIndexed is passed in by
 // refcounts.js to keep this module below it in the layering.
-function validateCountable(value, writeTarget, isRefIndexed = () => false) {
+function validateCountable(
+    value,
+    writeTarget,
+    isRefIndexed = () => false,
+    inheritedImportContext = undefined,
+) {
     return validateValue(
         value,
         writeTarget,
         isRefIndexed,
         false,
-        undefined,
+        inheritedImportContext,
         new Set(),
         new Set(),
         new Set(),

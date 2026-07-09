@@ -30,8 +30,11 @@ const {
 } = require("./helpers")
 const {
     copyCounters,
+    getRefCounter,
+    refIndexBranch,
     refDeleteProperty,
     refSetProperty,
+    waitForSettlement,
 } = require("./refcounts")
 const {
     assertCanMutateLanguageProperty,
@@ -54,9 +57,9 @@ const {
 
 // Load-bearing helper contract:
 // Every continuation that depends on one promise's FIFO order must go through
-// settlePromise/onResolve, and must do so against the raw promise instance held
-// at the key. Mixing in bare .then or wrapping a derived proxy can reorder a
-// suspended read behind a later write. settlePromise also maps rejection to the
+// onResolve, and must do so against the raw promise instance held at the key.
+// Mixing in bare .then or wrapping a derived proxy can reorder a suspended read
+// behind a later write. onResolve also maps rejection to the
 // language Error node, so intermediate advances stop instead of autovivifying.
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
@@ -285,76 +288,131 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // provenance is about origin, not aliasing, and an ownership-transferred
 // external branch is still external. (markImported implies the shared mark.)
 function lookupPath(root, path, sharedOwnership = true) {
+    return resolvePath(root, path, (value, importContext) => {
+        return markResolvedValue(value, importContext, sharedOwnership)
+    })
+}
+
+// --- normalize : settled snapshot of a branch -------------------------------
+// Returns a direct value when the answer is available in the synchronous prefix;
+// returns a promise only when path resolution or branch settlement must suspend.
+// sharedOwnership matches lookupPath for settled returns; pending branches still
+// mark to pin the snapshot while promises settle.
+function normalize(root, path, sharedOwnership = true, plainCopy = false) {
+    return resolvePath(root, path, (value, importContext) => {
+        return normalizeResolved(value, importContext, sharedOwnership, plainCopy)
+    })
+}
+
+function normalizeResolved(value, importContext, sharedOwnership, plainCopy) {
+    if (isError(value) || !isTracked(value)) return value
+
+    const indexed = refIndexBranch(value, importContext)
+    if (isError(indexed)) return indexed
+
+    if (!Object.isExtensible(value)) {
+        if (!plainCopy) markResolvedValue(value, importContext, sharedOwnership)
+        return plainCopy ? copyToPlainValue(value) : value
+    }
+
+    const counter = getRefCounter(value)
+    if (counter.promiseCount === 0) {
+        if (counter.errorCount > 0) return new Error("normalize: branch contains errors")
+        if (plainCopy) return copyToPlainValue(value)
+        markResolvedValue(value, importContext, sharedOwnership)
+        return value
+    }
+
+    markResolvedValue(value, importContext, true)     // pin regardless of sharedOwnership
+    return onResolve(waitForSettlement(value), () => {
+        if (counter.errorCount > 0) return new Error("normalize: branch contains errors")
+        return plainCopy ? copyToPlainValue(value) : value
+    })
+}
+
+function markResolvedValue(value, importContext, sharedOwnership) {
+    if (importContext !== undefined) {
+        markImported(value, importContext)
+    } else if (sharedOwnership) {
+        markShared(value)
+    }
+    return value
+}
+
+// Observational path resolution. Callers decide whether the reached value
+// escapes and therefore whether to mark it.
+function resolvePath(root, path, onResolved) {
     if (isPromise(root)) {
         return onResolve(root, resolvedRoot => {
-            return lookupPath(resolvedRoot, path, sharedOwnership)
+            return resolvePath(resolvedRoot, path, onResolved)
         })
     }
 
-    const rootImportContext = isTracked(root)
+    const importContext = isTracked(root)
         ? nodeImportContext(root, undefined)
         : undefined
     if (path.length === 0) {
-        if (rootImportContext !== undefined) {
-            markImported(root, rootImportContext)
-        } else if (sharedOwnership) {
-            markShared(root)       // escaping object/array -> shared
-        }
-        return root
+        return onResolved(root, importContext)
     }
 
-    // Walk lookup paths through promise mirrors. Promise-valued keys resolve
-    // before we decide whether the reached value is final or intermediate.
-    return walk(root, 0, undefined)
+    return resolveFromParent(root, 0, undefined)
 
-    function walk(parent, index, inheritedImportContext) {
-        if (isError(parent)) return parent
-        if (!isTracked(parent)) return undefined
+    function resolveFromParent(parent, index, inheritedImportContext) {
+        if (isError(parent)) return onResolved(parent, inheritedImportContext)
+        if (!isTracked(parent)) return onResolved(undefined, inheritedImportContext)
 
         const importContext = nodeImportContext(parent, inheritedImportContext)
         const key = path[index]
         const value = readLanguageProperty(parent, key)
         if (isPromise(value)) {
             if (!Object.isExtensible(parent)) {
-                // A frozen holder can carry no mirror and nothing can ever
-                // replace its key, so the raw settled value is the only version
-                // there will ever be: read it mirror-free. The context threads
-                // through because no mirror exists to mark the value on settle.
                 return onResolve(value, settledValueOrError => {
-                    return lookupValue(settledValueOrError, index, importContext)
+                    return resolvePathValue(settledValueOrError, index, importContext)
                 })
             }
 
             const mirror = getOrCreatePromiseMirror(parent, key, value, importContext)
             return onResolve(value, () => {
-                // No context here: a flavored mirror has already marked
-                // currentValue on settle, so deeper levels re-derive it from
-                // the value's own marker.
-                return lookupValue(
-                    mirror.currentValue,
-                    index,
-                    undefined,
-                )
-            }) // never raw V
+                return resolvePathValue(mirror.currentValue, index, undefined)
+            })
         }
-        return lookupValue(value, index, importContext)
+        return resolvePathValue(value, index, importContext)
     }
 
-    function lookupValue(value, index, importContext) {
-        // `index` still names the segment that produced value; only deeper
-        // lookups advance to the next segment.
+    function resolvePathValue(value, index, importContext) {
         if (index === path.length - 1) {
-            if (importContext !== undefined) {
-                markImported(value, importContext)
-            } else if (sharedOwnership) {
-                markShared(value)  // escaping object/array -> shared
-            }
-            return value
+            return onResolved(value, importContext)
         }
-        if (isError(value)) return value
-        if (!isTracked(value)) return undefined
-        return walk(value, index + 1, importContext)
+        if (isError(value)) return onResolved(value, importContext)
+        if (!isTracked(value)) return onResolved(undefined, importContext)
+        return resolveFromParent(value, index + 1, importContext)
     }
+}
+
+function copyToPlainValue(value, copies = new Map()) {
+    if (!isTracked(value)) return value
+
+    const existing = copies.get(value)
+    if (existing !== undefined) return existing
+
+    const copy = isArray(value) ? new Array(value.length) : {}
+    copies.set(value, copy)
+
+    const keys = Object.keys(value)
+    if (keys.includes("__proto__")) {
+        Object.defineProperty(copy, "__proto__", {
+            value: undefined,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+    }
+    for (const key of keys) {
+        // Sanctioned write bypass: normalize(..., plainCopy) creates output data
+        // outside the runtime graph, so there is no metadata to bookkeep.
+        copy[key] = copyToPlainValue(value[key], copies)
+    }
+    return copy
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------
@@ -376,4 +434,4 @@ function deletePath(root, path) {
     })
 }
 
-module.exports = { assignPath, deletePath, import: importValue, lookupPath }
+module.exports = { assignPath, deletePath, import: importValue, lookupPath, normalize }

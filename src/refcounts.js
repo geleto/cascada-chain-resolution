@@ -2,6 +2,7 @@ const {
     isError,
     isPromise,
     isTracked,
+    onResolve,
 } = require("./helpers")
 const {
     ensureMeta,
@@ -47,22 +48,22 @@ function getRefCounts(value) {
     return [counter.promiseCount, counter.errorCount]
 }
 
-function refIndexBranch(value) {
+function refIndexBranch(value, inheritedImportContext = undefined) {
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) {
         // Frozen roots are validated (no promises/Errors anywhere beneath) but
         // receive no metadata: they are permanently [0,0] by the frozen rule.
-        return validateCountable(value, undefined, isRefIndexed) ?? value
+        return validateCountable(value, undefined, isRefIndexed, inheritedImportContext) ?? value
     }
     if (isRefIndexed(value)) return value
 
     // Validate-then-commit, two passes: the validate pass is pure and the
     // commit pass cannot fail, so a rejection leaves no partial counters,
     // edges, or mirrors behind.
-    const failure = validateCountable(value, undefined, isRefIndexed)
+    const failure = validateCountable(value, undefined, isRefIndexed, inheritedImportContext)
     if (failure) return failure
 
-    commitRefIndex(value, new Set(), undefined)
+    commitRefIndex(value, new Set(), inheritedImportContext)
     return value
 }
 
@@ -215,12 +216,50 @@ function applyCountDelta(node, promiseDelta, errorDelta) {
     if (promiseDelta === 0 && errorDelta === 0) return
 
     const counter = getRefCounter(node)
+    const oldPromiseCount = counter.promiseCount
     counter.promiseCount += promiseDelta
     counter.errorCount += errorDelta
+    if (oldPromiseCount > 0 && counter.promiseCount === 0) {
+        scheduleSettlementVerify(counter)
+    }
 
     for (const [parent, multiplicity] of counter.parents) {
         applyCountDelta(parent, promiseDelta * multiplicity, errorDelta * multiplicity)
     }
+}
+
+function waitForSettlement(node) {
+    const counter = getRefCounter(node)
+
+    if (counter.settlementPromise === undefined) {
+        counter.settlementPromise = new Promise(resolve => {
+            counter.settlementResolve = resolve
+        })
+    }
+    return counter.settlementPromise
+}
+
+function scheduleSettlementVerify(counter) {
+    if (counter.settlementPromise === undefined || counter.settlementVerifyScheduled) return
+
+    counter.settlementVerifyScheduled = true
+    // Use Promise.resolve(), not a sync fast-path: same-promise FIFO jobs
+    // queued after this one may still change the count; the queued recheck
+    // runs after them. A re-arm just means the next zero-crossing re-schedules.
+    //
+    // Why a stable zero is final: earlier-issued remainders that could still
+    // land in this branch are each suspended on a promise it counts [1,0] —
+    // zero means none are left. Later-issued ops never touch this counter at
+    // all: the pin mark makes them COW away, onto a copy with its own META.
+    onResolve(Promise.resolve(), () => {
+        counter.settlementVerifyScheduled = false
+        if (counter.settlementPromise !== undefined && counter.promiseCount === 0) {
+            const resolve = counter.settlementResolve
+            counter.settlementPromise = undefined
+            counter.settlementResolve = undefined
+            resolve()
+        }
+    })
 }
 
 function copyCounters(source, copy) {
@@ -244,4 +283,5 @@ module.exports = {
     refIndexBranch,
     refDeleteProperty,
     refSetProperty,
+    waitForSettlement,
 }

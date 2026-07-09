@@ -20,7 +20,9 @@ function createMeta() {
         mirrors: null,             // lazy promise mirror map (promise-mirrors.js)
         promiseCount: 0,           // counter totals, meaningful only once ref-indexed
         errorCount: 0,
-        settlementVerifyScheduled: false,   // normalize/hasError verification latch (issue 6)
+        settlementPromise: undefined, // one pending settlement promise for normalize
+        settlementResolve: undefined,
+        settlementVerifyScheduled: false,   // normalize settlement verification latch
         importContext: undefined,  // undefined = not imported; else the import's error attribution
         parents: undefined,        // undefined = not ref-indexed; Map<parent, edgeCount> once live
     }

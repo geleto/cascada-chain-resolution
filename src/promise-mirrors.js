@@ -106,7 +106,7 @@ function isLivePromiseMirror(node, key, mirror) {
 }
 
 // Register the mirror's resolved-value handler. Rejected data promises become
-// Error values here through onResolve/settlePromise; runtime bugs thrown by
+// Error values here through onResolve; runtime bugs thrown by
 // this continuation are intentionally not caught.
 // forkSourceMirror is read inside the onResolve continuation, so FORK reads
 // forkSourceMirror.currentValue at the copier's FIFO slot, not earlier. Imported

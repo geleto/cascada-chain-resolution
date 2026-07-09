@@ -17,6 +17,7 @@ const {
     assignPath,
     deletePath,
     lookupPath,
+    normalize,
 } = runtime
 
 function importValue(value, context = "test import") {
@@ -65,6 +66,7 @@ module.exports = {
     assignPath,
     deletePath,
     lookupPath,
+    normalize,
     importValue,
     deferred,
     flushMicrotasks,

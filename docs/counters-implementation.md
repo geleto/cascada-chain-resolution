@@ -10,10 +10,9 @@ Current implementation note: import and validation were redesigned after the ori
 counter plan. The current design is lazy: `import(value, errorContext)` is mark-only
 (the marker carries error attribution), and validation lives solely at counting time
 as `validateCountable` — see `docs/lazy-import.md`. normalize/hasError details are
-aligned with issues.md items 6 and 7: there is no ambient settling record and no
-helpers.js change; verification schedules through the wrapper on a trivial settled
-instance; normalize returns synchronously when the answer is decided at issue time;
-hasError uses no watchers and rides pending promises with per-call state.
+aligned with issues.md items 6 and 7: there is no ambient settling record;
+verification schedules through the wrapper on `Promise.resolve()`; normalize returns synchronously when the answer is decided at issue time;
+hasError uses no settlement wait and rides pending promises with per-call state.
 
 Ground rules for the whole sequence:
 
@@ -36,10 +35,10 @@ Ground rules for the whole sequence:
      direct target-reachability for writeback back-edges) and nowhere else: internal ops cannot
      create cycles when the compiler lowers RHS object values through shared-ownership lookup.
      `a.property = a` stores a COW copy of `a` as it existed before `property` was added.
-  4. **Zero is edge-triggered and verified asynchronously** — never fire a watcher
+  4. **Zero is edge-triggered and verified asynchronously** — never resolve a settlement wait
      synchronously; always re-check. The verification is scheduled through the uniform
      wrapper, never a bare `queueMicrotask` — the wrapper contract covers the runtime's
-     own scheduling too. It registers on a trivial settled instance, not on the
+     own scheduling too. It registers on `Promise.resolve()`, not on the
      settling promise; there is no ambient settling record. See issues.md item 6
      for the ordering argument.
 
@@ -49,10 +48,10 @@ Ground rules for the whole sequence:
 
 Layering, bottom-up, **no circular imports**. Source files live under `src/`:
 
-- **helpers.js** — the promise wrapper (`settlePromise`/`onResolve`) and type
+- **helpers.js** — the promise wrapper (`onResolve`) and type
   predicates. It owns all `.then` usage; runtime continuations use `onResolve`.
 - **meta.js** — the META record and accessors: shared/import markers, promise mirror
-  storage, counter fields, parent edges, and optional settlement watcher fields.
+  storage, counter fields, parent edges, and optional settlement-wait fields.
 - **validate.js** — pure validation helpers: mutation-key/property checks and
   `validateCountable(value, writeTarget, isRefIndexed)`. It depends only on helpers
   and meta; counting-validation failures are Error values, not thrown fatal errors.
@@ -69,7 +68,7 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
 - **verify-refcounts.js** — test-only consistency oracle. It imports the narrow
   `getRefCounter` accessor from refcounts.js and is not used by runtime code.
 - **index.js** — the operations, language property writes/deletes, COW, import,
-  non-marking context-threading path resolution for normalize/hasError, `copyFull`,
+  observational context-threading `resolvePath` for lookup/normalize/hasError, `copyToPlainValue`,
   and the normalize/hasError operation shells. It initializes mirror writeback with
   `initPromiseMirrors(setProperty)`.
 
@@ -81,7 +80,7 @@ inside the hooks at commit time.
 
 The complete index.js diff, site by site — every pre-existing write still funnels
 through the local `setProperty`/`deleteProperty` wrappers; the only new operation
-surface is normalize/hasError and their shared non-marking resolver:
+surface is normalize/hasError and their shared observational resolver:
 
 | site | today | after |
 |---|---|---|
@@ -92,12 +91,12 @@ surface is normalize/hasError and their shared non-marking resolver:
 | walk installs (sync + suspended) | bare write (+ clear) | `refSetProperty`, then write in index.js |
 | `shallowCopy` | — | `copyCounters(obj, copy)` before `return copy` |
 | `import` | — | mark-only `import(value, errorContext)`; no walk, no validation |
-| normalize/hasError resolver | — | non-marking, context-threading path walk |
+| lookup/normalize/hasError resolver | — | observational, context-threading path walk |
 | exports | — | `+ normalize, hasError` |
 | startup | — | `initPromiseMirrors(setProperty)` |
 
 One consistency rule inside index.js: every internal continuation goes through
-`onResolve`, never bare `settlePromise(...).then(...)`. Greppable: `.then(` appears
+`onResolve`, never bare `.then(...)`. Greppable: `.then(` appears
 only inside helpers.js and test code.
 
 ---
@@ -118,10 +117,11 @@ function createMeta() {
         mirrors: null,      // lazy Object.create(null) — the promise mirror map
         promiseCount: 0,
         errorCount: 0,
+        settlementPromise: undefined,
+        settlementResolve: undefined,
         settlementVerifyScheduled: false,
         // parents is added by refIndexBranch when counters become live:
         // undefined => not ref-indexed; empty Map => ref-indexed root / no ref-indexed parents.
-        // settlementWatchers is added only by normalize while callers wait.
     }
 }
 
@@ -204,7 +204,7 @@ counts as [1,0] through `getRefCounts`, so assign/writeback/delete deltas come o
 automatically. The existing structure — `walkMutationPath`, the `onTarget` callbacks —
 is preserved; this step is a minimal, greppable substitution of the bare writes.
 Also in this step (behavior-identical today, required by normalize/hasError ordering):
-convert index.js's remaining bare `settlePromise(...).then` continuations to
+convert index.js's remaining bare promise continuations to
 `onResolve`; afterwards runtime `.then(` usage is confined to helpers.js.
 
 ```js
@@ -242,7 +242,7 @@ Three **sanctioned bypasses** (pin as comments, they are the only ones):
    unobservable during construction; their installation into the tree *does* go
    through index.js's local `setProperty` wrapper, which calls `refSetProperty`
    before writing.
-3. `copyFull` (step 4) — it constructs plain *output* data that leaves the runtime:
+3. `copyToPlainValue` (step 4) — it constructs plain *output* data that leaves the runtime:
    no META, no counts, nothing to bookkeep.
 
 Delete the `propagateClean` / `updateCleanCounts` stubs and their call sites; the write
@@ -275,9 +275,10 @@ function getRefCounts(value) {                    // [promise, error]
 function applyCountDelta(node, dPromise, dError) {
     if (dPromise === 0 && dError === 0) return
     const meta = metaOf(node)                 // node is ref-indexed: parents Map exists
+    const oldPromiseCount = meta.promiseCount
     meta.promiseCount += dPromise
     meta.errorCount += dError
-    if (meta.settlementWatchers !== undefined && meta.promiseCount === 0 && dPromise < 0) {
+    if (oldPromiseCount > 0 && meta.promiseCount === 0) {
         scheduleVerify(node)                  // step 4; zero-crossing, edge-triggered
     }
     for (const [parent, multiplicity] of meta.parents) {
@@ -581,7 +582,7 @@ the promises once; repeated checks are O(1) after that.
    ancestor branch later connects regions through the boundary edge — no special case.
 4. **Copies inherit the source's ref-indexing**: a ref-indexed source ⇒ the snapshot in 3d
    (keeps downward-closure, and a rebound COW root keeps its counts live for
-   settlement waiters); a non-ref-indexed source ⇒ no metadata work at all beyond fork mirrors.
+   settlement waits); a non-ref-indexed source ⇒ no metadata work at all beyond fork mirrors.
 5. **Validation is counting-time**: import and non-ref-indexed writeback do not walk.
    Validation runs in `refIndexBranch` and in ref-indexed write commits, exactly where
    counters need acyclicity and the frozen rule. For a ref-indexed write, the
@@ -627,24 +628,25 @@ every other writeback.
 
 ---
 
-## Step 4 - Settlement waiters, `normalize`, `hasError`
+## Step 4 - Settlement waits, `normalize`, `hasError`
 
 ### 4a. Shared resolver
 
-normalize and hasError both need a lookup-shaped path walk that **does not mark** the
-reached value. Marking is outcome-dependent for normalize, and hasError must never
-mark. The resolver still threads import context so discovered promise mirrors are
-flavored and ref-indexing failures can name the import site.
+lookup, normalize, and hasError share a lookup-shaped path walk that observes only:
+callers decide whether the reached value escapes and therefore whether to mark it.
+The resolver still threads import context so discovered promise mirrors are flavored
+and ref-indexing failures can name the import site.
 
 Path semantics match lookup: promises continue through mirrors, Error values stop the
 walk, `__proto__` and own non-enumerable keys read as missing, and primitive/missing
 intermediates are broken paths for hasError.
 
-### 4b. Settlement watchers for normalize
+### 4b. Settlement wait for normalize
 
-normalize uses optional watcher fields on the reached branch's META:
+normalize uses optional settlement fields on the reached branch's META:
 
-- `settlementWatchers` exists only while normalize callers are waiting.
+- `settlementPromise` is one shared promise generation and exists only while normalize callers are waiting.
+- `settlementResolve` holds the resolver for that generation.
 - `settlementVerifyScheduled` coalesces queued checks.
 - The only wake source is a zero-crossing in `applyCountDelta`.
 
@@ -652,36 +654,40 @@ Verification is registered through `onResolve(Promise.resolve(), verify)`, never
 bare microtask and never an ambient "settling promise". This is still ordered
 correctly: a zero-crossing happens inside one promise continuation; every consumer
 already registered on that settling promise has already been queued, and registering
-the trivial settled continuation at that point puts verification after that queued
+the settled-promise continuation at that point puts verification after that queued
 batch. On run, re-check `promiseCount === 0`; if an earlier-issued remainder re-armed
 the branch, the next zero-crossing schedules again.
 
 ```js
 function waitForSettlement(node) {
     const meta = metaOf(node)
-    return new Promise(resolve => {
-        const watchers = meta.settlementWatchers ??= []
-        watchers.push(resolve)
-    })
+
+    if (meta.settlementPromise === undefined) {
+        meta.settlementPromise = new Promise(resolve => {
+            meta.settlementResolve = resolve
+        })
+    }
+    return meta.settlementPromise
 }
 
 function scheduleSettlementVerify(node) {
     const meta = metaOf(node)
-    const watchers = meta.settlementWatchers
-    if (watchers === undefined || meta.settlementVerifyScheduled) return
+    if (meta.settlementPromise === undefined || meta.settlementVerifyScheduled) return
 
     meta.settlementVerifyScheduled = true
     onResolve(Promise.resolve(), () => {
         meta.settlementVerifyScheduled = false
-        if (meta.settlementWatchers === watchers && meta.promiseCount === 0) {
-            meta.settlementWatchers = undefined
-            for (const resolve of watchers) resolve()
+        if (meta.settlementPromise !== undefined && meta.promiseCount === 0) {
+            const resolve = meta.settlementResolve
+            meta.settlementPromise = undefined
+            meta.settlementResolve = undefined
+            resolve()
         }
     })
 }
 ```
 
-`applyCountDelta` calls `scheduleSettlementVerify(node)` only when watchers exist and
+`applyCountDelta` calls `scheduleSettlementVerify(node)` only when a settlement wait exists and
 the node reaches zero pending promises. No subscribe-at-zero path is needed:
 normalize answers synchronously when the branch is already settled.
 
@@ -691,51 +697,45 @@ normalize follows the value-or-promise convention. If the answer is decided befo
 suspension, it returns synchronously. Internal waits are consumed through `onResolve`.
 
 ```js
-function normalize(root, segments = [], full = false) {
-    const resolved = resolvePathWithoutMarking(root, segments)
-    return finish(resolved.value, resolved.importContext)
+function normalize(root, segments = [], sharedOwnership = true, plainCopy = false) {
+    return resolvePath(root, segments, (value, importContext) => {
+        return normalizeResolved(value, importContext, sharedOwnership, plainCopy)
+    })
+}
 
-    function finish(value, importContext) {
-        if (isPromise(value)) {
-            return onResolve(value, settled => finish(settled, importContext))
-        }
-        if (isError(value) || !isTracked(value)) return value
+function normalizeResolved(value, importContext, sharedOwnership, plainCopy) {
+    if (isError(value) || !isTracked(value)) return value
 
-        if (!Object.isExtensible(value)) {
-            const failure = validateCountable(value, undefined, isRefIndexed)
-            if (failure) return failure
-            return full ? copyFull(value) : value
-        }
+    const indexed = refIndexBranch(value, importContext)
+    if (isError(indexed)) return indexed
 
-        const indexed = refIndexBranch(value, importContext)
-        if (isError(indexed)) return indexed
-
-        const meta = getRefCounter(value)
-        if (meta.promiseCount === 0) {
-            if (meta.errorCount > 0) return new Error("normalize: branch contains errors")
-            if (full) return copyFull(value)
-            markForReturn(value, importContext)
-            return value
-        }
-
-        markForReturn(value, importContext)     // the pin
-        const wait = waitForSettlement(value)
-        return onResolve(wait, () => finishSettled(value))
+    if (!Object.isExtensible(value)) {
+        if (!plainCopy) markResolvedValue(value, importContext, sharedOwnership)
+        return plainCopy ? copyToPlainValue(value) : value
     }
 
-    function finishSettled(value) {
-        const meta = getRefCounter(value)
+    const meta = getRefCounter(value)
+    if (meta.promiseCount === 0) {
         if (meta.errorCount > 0) return new Error("normalize: branch contains errors")
-        return full ? copyFull(value) : value
+        if (plainCopy) return copyToPlainValue(value)
+        markResolvedValue(value, importContext, sharedOwnership)
+        return value
     }
+
+    markResolvedValue(value, importContext, true)     // the pin
+    return onResolve(waitForSettlement(value), () => {
+        if (meta.errorCount > 0) return new Error("normalize: branch contains errors")
+        return plainCopy ? copyToPlainValue(value) : value
+    })
 }
 ```
 
 Marking rule: mark exactly what escapes, plus mark to pin a wait. A settled clean
-branch returned as itself is marked; settled `full=true` returns an independent copy
-and leaves the original unmarked; settled error returns a single Error and leaves the
-branch unmarked. A pending branch is always marked before waiting, even if it later
-collapses to Error or returns a full copy, because the mark pins the wait-set.
+branch returned as itself is marked only when imported or `sharedOwnership=true`;
+settled `plainCopy=true` returns an independent copy and leaves the original
+unmarked; settled error returns a single Error and leaves the branch unmarked. A
+pending branch is always marked before waiting, even when `sharedOwnership=false`,
+because the mark pins the wait-set.
 
 The pin is what makes settlement exact: later-issued operations COW away from the
 marked branch, while earlier-issued suspended remainders still land through in-place
@@ -745,7 +745,7 @@ language-integration ownership discipline: a raw promise illegally shared betwee
 location inside and outside the pinned branch could mutate the branch outside its
 counted wait-set.
 
-`copyFull` is a sanctioned write bypass: it creates plain output data with no metadata
+`copyToPlainValue` is a sanctioned write bypass: it creates plain output data with no metadata
 to bookkeep. It uses an old->new identity map consulted before recursion, both for
 termination and to preserve DAG identity in the returned value. When copying own
 enumerable `__proto__`, pre-create the data slot before plain assignment, just like
@@ -754,7 +754,7 @@ COW copy does.
 ### 4d. hasError
 
 hasError builds on the resolver and counters from normalize, but it never marks and
-uses no settlement watchers. It adds two pieces:
+uses no shared settlement wait. It adds two pieces:
 
 - early-exit ref-indexing: find an Error and return true without counting the rest;
 - a pending rider: subscribe to pending promises at hasError's FIFO slot and probe
@@ -810,7 +810,7 @@ Lazy, branch-level ref-indexing:
   regions via the boundary edge, and a resolve inside the branch then decrements both.
 - the commit-time gate: a suspended write registered *before* a branch was ref-indexed,
   resuming *after* `normalize` ref-indexed it, must be reflected in the counts (and the
-  watcher must wait for it) — this is the "different ref-indexing attempts ride the same promise"
+  waiter must wait for it) — this is the "different ref-indexing attempts ride the same promise"
   case; also assert no duplicate writebacks fire.
 - copies: COW of a non-ref-indexed source carries no counter META; COW of a ref-indexed source
   is ref-indexed with snapshotted totals.
@@ -856,12 +856,12 @@ Consistency oracle (the rejected full-recompute design, in its right home):
   drift fails loudly at the op that caused it, with zero runtime cost.
 
 Settlement / normalize / hasError:
-- `normalize` on an already-settled branch returns synchronously; no watcher is created.
-- watcher re-arms when a queued earlier-op remainder installs a new promise at the
+- `normalize` on an already-settled branch returns synchronously; no settlement wait is created.
+- settlement verification re-arms when a queued earlier-op remainder installs a new promise at the
   zero-crossing (the deferred-verification race).
 - `normalize` with a path resolves to the target branch by lookupPath rules (Error
   mid-path → Error return; promise mid-path continued through the mirror).
-- `normalize` collapse on any error; full-mode `normalize` output has no META/marks, is
+- `normalize` collapse on any error; plain-copy `normalize` output has no META/marks, is
   fully mutable, and preserves diamond identity (two paths to one object → one copy).
 - `hasError`: error at target or mid-path → true; broken path (intermediate
   missing/primitive) → true; missing terminal property → false; clean branch → false;
