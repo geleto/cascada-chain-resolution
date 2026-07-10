@@ -1,5 +1,6 @@
 const {
     expect,
+    setFatalErrorReporter,
     assignPath,
     deletePath,
     lookupPath,
@@ -36,17 +37,33 @@ describe("path assignment", () => {
     it("throws on __proto__ mutation paths without touching prototypes", () => {
         const root = {}
         const nested = { safe: {} }
+        const reported = []
+        let assigned
+        let nestedAssigned
+        let lookedUp
+        let deleted
 
-        const assigned = thrownBy(() => assignPath(root, ["__proto__", "polluted"], true))
-        const nestedAssigned = thrownBy(() => {
-            assignPath(nested, ["safe", "__proto__", "polluted"], true)
+        setFatalErrorReporter(error => {
+            reported.push(error)
         })
-        const lookedUp = lookupPath(root, ["__proto__"])
-        const deleted = thrownBy(() => deletePath(root, ["__proto__"]))
+        try {
+            assigned = thrownBy(() => assignPath(root, ["__proto__", "polluted"], true))
+            nestedAssigned = thrownBy(() => {
+                assignPath(nested, ["safe", "__proto__", "polluted"], true)
+            })
+            lookedUp = lookupPath(root, ["__proto__"])
+            deleted = thrownBy(() => deletePath(root, ["__proto__"]))
+        } finally {
+            setFatalErrorReporter()
+        }
 
         expect(assigned instanceof Error).to.be(true)
         expect(nestedAssigned instanceof Error).to.be(true)
         expect(deleted instanceof Error).to.be(true)
+        expect(reported.length).to.be(3)
+        expect(reported[0]).to.be(assigned)
+        expect(reported[1]).to.be(nestedAssigned)
+        expect(reported[2]).to.be(deleted)
         expect(assigned.message).to.be("Cannot use __proto__ as a key")
         expect(nestedAssigned.message).to.be("Cannot use __proto__ as a key")
         expect(deleted.message).to.be("Cannot use __proto__ as a key")

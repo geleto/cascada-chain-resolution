@@ -1,7 +1,14 @@
 const expect = require("expect.js")
 
 const runtime = require("../src")
-const { onResolve } = require("../src/helpers")
+const {
+    onInternalResolve,
+    onValueResolve,
+} = require("../src/helpers")
+const {
+    reportFatalError,
+    setFatalErrorReporter,
+} = require("../src/error")
 const {
     buildRefIndex,
     getRefCounter,
@@ -57,7 +64,10 @@ function thrownBy(fn) {
 module.exports = {
     expect,
     runtime,
-    onResolve,
+    reportFatalError,
+    setFatalErrorReporter,
+    onInternalResolve,
+    onValueResolve,
     buildRefIndex,
     getRefCounter,
     getRefCounts,

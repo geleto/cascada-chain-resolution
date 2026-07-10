@@ -93,10 +93,10 @@ function importValue(value, errorContext) {
     if (errorContext === undefined) {
         // Fatal runtime configuration / compiler error — never a language Error:
         // a default here would mask the compiler bug and silently drop provenance.
-        throw new Error("import requires an error context")
+        reportFatalError(new Error("import requires an error context"))
     }
     if (isPromise(value)) {
-        return onResolve(value, settled => importValue(settled, errorContext))
+        return onValueResolve(value, settled => importValue(settled, errorContext))
     }
     return markImported(value, errorContext)  // primitives and Errors pass through
 }
@@ -258,7 +258,7 @@ its keys), so its raw settled promise values are the only versions that will eve
 exist. That makes two paths sound *without* mirrors:
 
 - **Reads** (`lookupPath` reaching a promise key on a non-extensible holder): resolve
-  mirror-free — `onResolve(value, v => lookupValue(v, index, ctx))`. No advance is
+  mirror-free — `onValueResolve(value, v => lookupValue(v, index, ctx))`. No advance is
   possible, so the raw value is program-order-correct for every reader.
 - **COW forks** (`shallowCopy` of a frozen source with a promise key): mint the
   copy's mirror seeded from the raw promise (`v => v`) instead of a source mirror —

@@ -3,33 +3,32 @@ const {
     isPromise,
     isTracked,
 } = require("./helpers")
+const {
+    forbiddenKeyError,
+    reportFatalError,
+    validationError,
+} = require("./error")
 const { nodeImportContext } = require("./meta")
 
 const hasOwn = Object.prototype.hasOwnProperty
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
-
-function validationError(message, importContext = undefined) {
-    if (importContext === undefined) return new Error(message)
-    return new Error(`${message} (imported at: ${String(importContext)})`)
-}
-
-function forbiddenKeyError(importContext = undefined) {
-    return validationError("Cannot use __proto__ as a key", importContext)
-}
 
 // Language data is own enumerable string keys only. Reads treat __proto__ and
 // own non-enumerable properties as missing; mutations through them throw,
 // because plain assignment could not shadow them safely.
 function assertMutationKey(key, importContext = undefined) {
     if (key === "__proto__") {
-        throw forbiddenKeyError(importContext)
+        reportFatalError(forbiddenKeyError(importContext))
     }
 }
 
 function assertCanMutateLanguageProperty(parent, key, importContext = undefined) {
     assertMutationKey(key, importContext)
     if (hasOwn.call(parent, key) && !propertyIsEnumerable.call(parent, key)) {
-        throw validationError("Cannot mutate non-enumerable property", importContext)
+        reportFatalError(validationError(
+            "Cannot mutate non-enumerable property",
+            importContext,
+        ))
     }
 }
 

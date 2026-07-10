@@ -7,6 +7,7 @@ const {
     isPromise,
     isTracked,
 } = require("./helpers")
+const { reportFatalError } = require("./error")
 const { getRefCounter } = require("./refcounts")
 
 function verifyRefCounts(...roots) {
@@ -27,7 +28,7 @@ function verifyRefIndexedNode(node, seen) {
     const expectedCounts = recountRefIndexedNode(node)
     if (counter.promiseCount !== expectedCounts.promiseCount ||
         counter.errorCount !== expectedCounts.errorCount) {
-        throw new Error("Counter totals are inconsistent")
+        reportFatalError(new Error("Counter totals are inconsistent"))
     }
 
     verifyStoredParentEdges(node)
@@ -54,7 +55,7 @@ function recountRefIndexedNode(node) {
         } else if (isTracked(child) && Object.isExtensible(child)) {
             const childCounter = getRefCounter(child)
             if (childCounter?.parents === undefined) {
-                throw new Error("Ref-indexed parent contains non-ref-indexed child")
+                reportFatalError(new Error("Ref-indexed parent contains non-ref-indexed child"))
             }
 
             promiseCount += childCounter.promiseCount
@@ -65,7 +66,7 @@ function recountRefIndexedNode(node) {
 
     for (const [child, count] of childEdges) {
         if (getRefCounter(child).parents.get(node) !== count) {
-            throw new Error("Parent edge count is inconsistent")
+            reportFatalError(new Error("Parent edge count is inconsistent"))
         }
     }
 
@@ -76,10 +77,10 @@ function verifyStoredParentEdges(node) {
     const counter = getRefCounter(node)
     for (const [parent, count] of counter.parents) {
         if (!isTracked(parent) || !Object.isExtensible(parent)) {
-            throw new Error("Parent edge points to untracked parent")
+            reportFatalError(new Error("Parent edge points to untracked parent"))
         }
         if (getRefCounter(parent)?.parents === undefined) {
-            throw new Error("Parent edge points to non-ref-indexed parent")
+            reportFatalError(new Error("Parent edge points to non-ref-indexed parent"))
         }
 
         let actualCount = 0
@@ -87,7 +88,7 @@ function verifyStoredParentEdges(node) {
             if (parent[key] === node) actualCount++
         }
         if (actualCount !== count) {
-            throw new Error("Parent edge count is inconsistent")
+            reportFatalError(new Error("Parent edge count is inconsistent"))
         }
     }
 }

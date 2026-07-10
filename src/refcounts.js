@@ -2,13 +2,14 @@ const {
     isError,
     isPromise,
     isTracked,
-    onResolve,
+    onValueResolve,
 } = require("./helpers")
 const {
     ensureMeta,
     metaOf,
     nodeImportContext,
 } = require("./meta")
+const { reportFatalError } = require("./error")
 const {
     getOrCreatePromiseMirror,
 } = require("./promise-mirrors")
@@ -42,7 +43,7 @@ function getRefCounts(value) {
     const refIndexed = buildRefIndex(value)
     // Everything inside a counted region was validated on entry, so a
     // validation failure here is a kernel bug, not language data.
-    if (isError(refIndexed)) throw refIndexed
+    if (isError(refIndexed)) reportFatalError(refIndexed)
 
     const counter = getRefCounter(value)
     return [counter.promiseCount, counter.errorCount]
@@ -251,7 +252,7 @@ function scheduleSettlementVerify(counter) {
     // land in this branch are each suspended on a promise it counts [1,0] —
     // zero means none are left. Later-issued ops never touch this counter at
     // all: the pin mark makes them COW away, onto a copy with its own META.
-    onResolve(Promise.resolve(), () => {
+    onValueResolve(Promise.resolve(), () => {
         counter.settlementVerifyScheduled = false
         if (counter.settlementPromise !== undefined && counter.promiseCount === 0) {
             const resolve = counter.settlementResolve

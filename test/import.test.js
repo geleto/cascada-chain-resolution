@@ -1,6 +1,7 @@
 const {
     expect,
     runtime,
+    setFatalErrorReporter,
     getRefCounter,
     buildRefIndex,
     metaOf,
@@ -16,14 +17,21 @@ const {
 describe("import", () => {
     it("requires an error context", () => {
         const root = {}
+        let reported
         let caught
 
+        setFatalErrorReporter(error => {
+            reported = error
+        })
         try {
             runtime.import(root)
         } catch (error) {
             caught = error
+        } finally {
+            setFatalErrorReporter()
         }
 
+        expect(reported).to.be(caught)
         expect(caught instanceof Error).to.be(true)
         expect(caught.message).to.be("import requires an error context")
         expect(metaOf(root)).to.be(undefined)

@@ -1,17 +1,21 @@
 const {
     expect,
-    onResolve,
+    reportFatalError,
+    setFatalErrorReporter,
+    onInternalResolve,
+    onValueResolve,
     assignPath,
     deletePath,
     lookupPath,
     importValue,
     deferred,
     flushMicrotasks,
+    thrownBy,
 } = require("./support")
 
 describe("promise helpers", () => {
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await onResolve(Promise.reject("data boom"), value => value)
+        const value = await onValueResolve(Promise.reject("data boom"), value => value)
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("data boom")
@@ -19,17 +23,113 @@ describe("promise helpers", () => {
 
     it("does not convert continuation throws into language Error values", async () => {
         const fatal = new TypeError("runtime bug")
+        let reported
         let caught
 
+        setFatalErrorReporter(error => {
+            reported = error
+        })
         try {
-            await onResolve(Promise.resolve("ok"), () => {
+            await onValueResolve(Promise.resolve("ok"), () => {
                 throw fatal
             })
         } catch (error) {
             caught = error
+        } finally {
+            setFatalErrorReporter()
         }
 
+        expect(reported).to.be(fatal)
         expect(caught).to.be(fatal)
+    })
+
+    it("reports internal promise rejections as fatal errors", async () => {
+        const fatal = new TypeError("runtime bug")
+        let reported
+        let caught
+
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            await onInternalResolve(Promise.reject(fatal), () => "ignored")
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
+    it("throws the original fatal error when the fatal reporter throws", () => {
+        const fatal = new TypeError("runtime bug")
+        const reporterBug = new Error("reporter bug")
+        let reported
+        let caught
+
+        setFatalErrorReporter(error => {
+            reported = error
+            throw reporterBug
+        })
+        try {
+            reportFatalError(fatal)
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
+    it("rejects invalid fatal reporters without installing them", () => {
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        const badReporter = thrownBy(() => setFatalErrorReporter(7))
+        const fatal = new Error("later fatal")
+        let caught
+        try {
+            reportFatalError(fatal)
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(badReporter instanceof TypeError).to.be(true)
+        expect(badReporter.message).to.be("fatal reporter must be a function")
+        expect(caught).to.be(fatal)
+        expect(reported).to.be(fatal)
+    })
+
+    it("reports losing internal race rejections after the race has settled", async () => {
+        const cleanWait = deferred()
+        const fatal = new Error("late internal failure")
+        let reported
+
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        const race = Promise.race([
+            Promise.resolve(true),
+            onInternalResolve(cleanWait.promise, () => false),
+        ])
+
+        expect(await race).to.be(true)
+        cleanWait.reject(fatal)
+        try {
+            await flushMicrotasks()
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
     })
 })
 

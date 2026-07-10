@@ -48,8 +48,9 @@ Ground rules for the whole sequence:
 
 Layering, bottom-up, **no circular imports**. Source files live under `src/`:
 
-- **helpers.js** — the promise wrapper (`onResolve`) and type
-  predicates. It owns all `.then` usage; runtime continuations use `onResolve`.
+- **helpers.js** — the promise wrappers (`onValueResolve`, `onInternalResolve`)
+  and type predicates. It owns all `.then` usage; value continuations use
+  `onValueResolve`, and internal aggregate waits use `onInternalResolve`.
 - **meta.js** — the META record and accessors: shared/import markers, promise mirror
   storage, counter fields, parent edges, and optional settlement-wait fields.
 - **validate.js** — pure validation helpers: mutation-key/property checks and
@@ -96,9 +97,9 @@ surface is normalize/hasError and their shared observational resolver:
 | exports | — | `+ normalize, hasError` |
 | startup | — | `initPromiseMirrors(setProperty)` |
 
-One consistency rule inside index.js: every internal continuation goes through
-`onResolve`, never bare `.then(...)`. Greppable: `.then(` appears
-only inside helpers.js and test code.
+One consistency rule inside index.js: every promise continuation goes through
+`onValueResolve` or `onInternalResolve`, never bare `.then(...)`. Greppable:
+`.then(` appears only inside helpers.js and test code.
 
 ---
 
@@ -135,7 +136,7 @@ function metaOf(node) {                    // read-only peek, never creates
 
 function ensureMeta(node) {                // inline mode requires extensible; WeakMap mode does not
     if (!isTracked(node) || (!STORE_META_IN_WEAKMAP && !Object.isExtensible(node))) {
-        throw new TypeError("Cannot attach metadata to this value")
+        reportFatalError(new TypeError("Cannot attach metadata to this value"))
     }
     let meta = metaOf(node)
     if (meta === undefined) {
@@ -161,7 +162,7 @@ function hasSharedMark(value) {
 }
 
 function markShared(value) {
-    if (isPromise(value)) return onResolve(value, markShared)
+    if (isPromise(value)) return onValueResolve(value, markShared)
     if (!isTracked(value) || !Object.isExtensible(value)) return value  // frozen: implicit shared mark
     ensureMeta(value).shared = true
     return value
@@ -206,7 +207,8 @@ automatically. The existing structure — `walkMutationPath`, the `onTarget` cal
 is preserved; this step is a minimal, greppable substitution of the bare writes.
 Also in this step (behavior-identical today, required by normalize/hasError ordering):
 convert index.js's remaining bare promise continuations to
-`onResolve`; afterwards runtime `.then(` usage is confined to helpers.js.
+`onValueResolve`/`onInternalResolve`; afterwards runtime `.then(` usage is confined
+to helpers.js.
 
 ```js
 function refSetProperty(parent, key, value) {
@@ -265,7 +267,7 @@ function getRefCounts(value) {                    // [promise, error]
     if (isTracked(value)) {
         if (!Object.isExtensible(value)) return [0, 0]   // frozen rule: permanent
         const meta = ensureRefIndexed(value)     // robust: ref-index-if-needed, per spec
-        if (isError(meta)) throw meta         // owned in-tree data failing validation
+        if (isError(meta)) reportFatalError(meta) // owned in-tree data failing validation
         // is a kernel-usage bug → fatal; public operations surface validation
         // failures before this point as language Error values.
         return [meta.promiseCount, meta.errorCount]
@@ -655,7 +657,7 @@ normalize uses optional settlement fields on the reached branch's META:
 - `settlementVerifyScheduled` coalesces queued checks.
 - The only wake source is a zero-crossing in `applyCountDelta`.
 
-Verification is registered through `onResolve(Promise.resolve(), verify)`, never a
+Verification is registered through `onValueResolve(Promise.resolve(), verify)`, never a
 bare microtask and never an ambient "settling promise". This is still ordered
 correctly: a zero-crossing happens inside one promise continuation; every consumer
 already registered on that settling promise has already been queued, and registering
@@ -680,7 +682,7 @@ function scheduleSettlementVerify(node) {
     if (meta.settlementPromise === undefined || meta.settlementVerifyScheduled) return
 
     meta.settlementVerifyScheduled = true
-    onResolve(Promise.resolve(), () => {
+    onValueResolve(Promise.resolve(), () => {
         meta.settlementVerifyScheduled = false
         if (meta.settlementPromise !== undefined && meta.promiseCount === 0) {
             const resolve = meta.settlementResolve
@@ -699,7 +701,8 @@ normalize answers synchronously when the branch is already settled.
 ### 4c. normalize
 
 normalize follows the value-or-promise convention. If the answer is decided before any
-suspension, it returns synchronously. Internal waits are consumed through `onResolve`.
+suspension, it returns synchronously. Internal waits are consumed through
+`onInternalResolve`.
 
 ```js
 function normalize(root, segments = [], sharedOwnership = true, plainCopy = false) {
@@ -728,7 +731,7 @@ function normalizeResolved(value, importContext, sharedOwnership, plainCopy) {
     }
 
     markResolvedValue(value, importContext, true)     // the pin
-    return onResolve(waitForSettlement(value), () => {
+    return onInternalResolve(waitForSettlement(value), () => {
         if (meta.errorCount > 0) return new Error("normalize: branch contains errors")
         return plainCopy ? copyToPlainValue(value) : value
     })
@@ -787,8 +790,8 @@ If no current Error is found but `promiseCount > 0`, the pending frontier is
 collected by descending only ref-indexed nodes whose counters still contain
 promises. Waits are registered after `buildRefIndex` has minted mirrors/writebacks:
 `probeIndexedBranchForErrors` returns `Promise.all(waitPromises)`, where each wait
-is `onResolve(childPromise, () => probeIndexedBranchForErrors(mirror.currentValue))`.
-hasError races `onResolve(cleanPromise, () => false)` against the local error
+is `onValueResolve(childPromise, () => probeIndexedBranchForErrors(mirror.currentValue))`.
+hasError races `onInternalResolve(cleanPromise, () => false)` against the local error
 promise; `Promise.all`/`race` only aggregate already-wrapped internal waits. Each
 settlement runs after writeback committed counts, then probes that already-indexed
 resolved promise branch: an Error calls the resolver, newly exposed promises
@@ -854,7 +857,7 @@ Lazy, branch-level ref-indexing:
   Error answers true from the published `errorCount`; the branch is ref-indexed,
   but no hasError wait tree is registered for its pending promises.
 - wrapper-only scheduling: no `queueMicrotask`/`setTimeout` anywhere in index.js
-  (greppable); zero-verification rides `onResolve(Promise.resolve(), ...)`, registered
+  (greppable); zero-verification rides `onValueResolve(Promise.resolve(), ...)`, registered
   at the zero-crossing, so it runs after the already-queued consumers of the settling
   promise — assert ordering against an earlier-issued suspended write that re-arms the count.
 - frozen node containing a promise or Error anywhere beneath (including via an

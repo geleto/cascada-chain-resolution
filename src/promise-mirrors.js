@@ -1,6 +1,6 @@
 const {
     isTracked,
-    onResolve,
+    onValueResolve,
 } = require("./helpers")
 const {
     ensureMeta,
@@ -106,9 +106,9 @@ function isLivePromiseMirror(node, key, mirror) {
 }
 
 // Register the mirror's resolved-value handler. Rejected data promises become
-// Error values here through onResolve; runtime bugs thrown by
+// Error values here through onValueResolve; runtime bugs thrown by
 // this continuation are intentionally not caught.
-// forkSourceMirror is read inside the onResolve continuation, so FORK reads
+// forkSourceMirror is read inside the onValueResolve continuation, so FORK reads
 // forkSourceMirror.currentValue at the copier's FIFO slot, not earlier. Imported
 // promise keys mark the chosen value with the context captured when the mirror
 // is born, before any consumer can observe it. The value is stored as
@@ -122,7 +122,7 @@ function onPromiseMirrorResolved(
     markResolvedValueShared,
     importContext,
 ) {
-    onResolve(mirror.promise, settledValueOrError => {
+    onValueResolve(mirror.promise, settledValueOrError => {
         let value = forkSourceMirror === null
             ? settledValueOrError
             : forkSourceMirror.currentValue

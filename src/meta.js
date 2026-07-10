@@ -1,8 +1,9 @@
 const {
     isPromise,
     isTracked,
-    onResolve,
+    onValueResolve,
 } = require("./helpers")
+const { reportFatalError } = require("./error")
 
 const STORE_META_IN_WEAKMAP = false
 const META = Symbol("META")
@@ -40,7 +41,7 @@ function metaOf(value) {
 
 function ensureMeta(value) {
     if (!isTracked(value) || (!STORE_META_IN_WEAKMAP && !Object.isExtensible(value))) {
-        throw new TypeError("Cannot attach metadata to this value")
+        reportFatalError(new TypeError("Cannot attach metadata to this value"))
     }
 
     let meta = metaOf(value)
@@ -76,7 +77,7 @@ function setSharedMark(value) {
 // mirror.currentValue, because currentValue may have advanced away from the raw
 // settled value.
 function markShared(value) {
-    if (isPromise(value)) return onResolve(value, markShared)
+    if (isPromise(value)) return onValueResolve(value, markShared)
 
     return setSharedMark(value)
 }
@@ -88,7 +89,7 @@ function markShared(value) {
 // table (implicitly shared already via non-extensibility).
 function markImported(value, importContext) {
     if (isPromise(value)) {
-        onResolve(value, settledValueOrError => markImported(settledValueOrError, importContext))
+        onValueResolve(value, settledValueOrError => markImported(settledValueOrError, importContext))
         return value
     }
     if (!isTracked(value)) return value

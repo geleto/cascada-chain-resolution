@@ -1,8 +1,15 @@
+const {
+    errorFromRejection,
+    reportFatalError,
+} = require("./error")
+
 // Promise registration is part of the algorithm, not a convenience wrapper:
-// - onResolve registers its handler synchronously at call time.
+// - onValueResolve registers its handler synchronously at call time.
 // - Rejection becomes the language Error node before the continuation runs.
-// - Continuation throws stay fatal; they are not converted to language Error.
-// - All runtime continuations must use this helper, never raw .then.
+// - Continuation throws go through reportFatalError; they are not converted to
+//   language Error.
+// - Runtime value continuations use onValueResolve; internal aggregate waits
+//   use onInternalResolve. Runtime code must not use raw .then.
 // - Data objects with a callable `then` are treated as promises by JS and by
 //   this kernel; ordinary language data must not rely on callable `then` keys.
 function isPromise(x) {
@@ -30,13 +37,30 @@ function isArray(x) {
     return Array.isArray(x)
 }
 
+function runFatal(fn, value) {
+    try {
+        return fn(value)
+    } catch (error) {
+        return reportFatalError(error)
+    }
+}
+
 // Rejected data promises arrive at fn as Error values. Exceptions thrown by fn
-// are runtime bugs and are intentionally not caught here.
-function onResolve(promise, fn) {
+// are runtime bugs and go through reportFatalError.
+function onValueResolve(promise, fn) {
     return Promise.resolve(promise).then(
         value => value,
-        reason => reason instanceof Error ? reason : new Error(String(reason)),
-    ).then(value => fn(value))
+        errorFromRejection,
+    ).then(value => runFatal(fn, value))
+}
+
+// Internal promises already carry runtime failures, not language data
+// rejections, so rejection is fatal instead of converted to Error.
+function onInternalResolve(promise, fn) {
+    return Promise.resolve(promise).then(
+        value => runFatal(fn, value),
+        reportFatalError,
+    )
 }
 
 module.exports = {
@@ -44,5 +68,6 @@ module.exports = {
     isError,
     isPromise,
     isTracked,
-    onResolve,
+    onInternalResolve,
+    onValueResolve,
 }
