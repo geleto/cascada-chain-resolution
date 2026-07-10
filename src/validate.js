@@ -13,17 +13,21 @@ const { nodeImportContext } = require("./meta")
 const hasOwn = Object.prototype.hasOwnProperty
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-// Language data is own enumerable string keys only. Reads treat __proto__ and
-// own non-enumerable properties as missing; mutations through them throw,
-// because plain assignment could not shadow them safely.
-function assertMutationKey(key, importContext = undefined) {
-    if (key === "__proto__") {
-        reportFatalError(forbiddenKeyError(importContext))
+function assertMutationPath(path) {
+    for (const key of path) {
+        if (key === "__proto__") {
+            reportFatalError(forbiddenKeyError())
+        }
     }
 }
 
+// Language data is own enumerable string keys only. Reads treat __proto__ and
+// own non-enumerable properties as missing; mutations through them throw,
+// because plain assignment could not shadow them safely.
 function assertCanMutateLanguageProperty(parent, key, importContext = undefined) {
-    assertMutationKey(key, importContext)
+    if (key === "__proto__") {
+        reportFatalError(forbiddenKeyError(importContext))
+    }
     if (hasOwn.call(parent, key) && !propertyIsEnumerable.call(parent, key)) {
         reportFatalError(validationError(
             "Cannot mutate non-enumerable property",
@@ -143,6 +147,6 @@ function validateValue(
 
 module.exports = {
     assertCanMutateLanguageProperty,
-    assertMutationKey,
+    assertMutationPath,
     validateCountable,
 }

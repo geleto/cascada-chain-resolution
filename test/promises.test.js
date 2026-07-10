@@ -1,4 +1,5 @@
 const {
+    Chain,
     expect,
     reportFatalError,
     setFatalErrorReporter,
@@ -138,12 +139,12 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
         deferredValue.resolve({ x: 1 })
         await flushMicrotasks()
 
         const value = root.value
-        assignPath(root, ["value", "x"], 2)
+        assignPath(new Chain(root), ["value", "x"], 2)
 
         expect(root.value).to.be(value)
         expect(value.x).to.be(2)
@@ -153,8 +154,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
-        const read = lookupPath(root, ["value"])
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
+        const read = lookupPath(new Chain(root), ["value"])
 
         expect(root.value).to.be(deferredValue.promise)
         expect(typeof read.then).to.be("function")
@@ -166,7 +167,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(value).to.eql({ x: 1 })
 
         const wrapper = { value }
-        assignPath(wrapper, ["value", "x"], 2)
+        assignPath(new Chain(wrapper), ["value", "x"], 2)
 
         expect(wrapper.value).not.to.be(value)
         expect(value.x).to.be(1)
@@ -177,13 +178,13 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
-        const read = lookupPath(root, ["value"], false)
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
+        const read = lookupPath(new Chain(root), ["value"], false)
 
         deferredValue.resolve({ x: 1 })
         const value = await read
 
-        assignPath(root, ["value", "x"], 2)
+        assignPath(new Chain(root), ["value", "x"], 2)
 
         expect(root.value).to.be(value)
         expect(value.x).to.be(2)
@@ -193,8 +194,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
-        const read = lookupPath(root, ["value"])
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
+        const read = lookupPath(new Chain(root), ["value"])
 
         deferredValue.resolve(undefined)
         const value = await read
@@ -208,8 +209,8 @@ describe("promise mirrors and lookupPath", () => {
         const root = {}
         const promise = Promise.resolve({})
 
-        assignPath(root, ["branch"], promise)
-        assignPath(root, ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch"], promise)
+        assignPath(new Chain(root), ["branch", "x"], 1)
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ x: 1 })
@@ -219,8 +220,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "a"], 1)
-        assignPath(root, ["branch", "b"], 2)
+        assignPath(new Chain(root), ["branch", "a"], 1)
+        assignPath(new Chain(root), ["branch", "b"], 2)
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -233,8 +234,8 @@ describe("promise mirrors and lookupPath", () => {
         const inner = deferred()
         const root = { branch: outer.promise }
 
-        assignPath(root, ["branch", "inner", "x"], 1)
-        assignPath(root, ["branch", "inner", "x"], 2)
+        assignPath(new Chain(root), ["branch", "inner", "x"], 1)
+        assignPath(new Chain(root), ["branch", "inner", "x"], 2)
 
         outer.resolve({ inner: inner.promise })
         await flushMicrotasks()
@@ -248,8 +249,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(root, ["branch"])
-        assignPath(root, ["branch", "x"], 1)
+        const read = lookupPath(new Chain(root), ["branch"])
+        assignPath(new Chain(root), ["branch", "x"], 1)
 
         deferredBranch.resolve({})
         const readValue = await read
@@ -264,7 +265,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(root, ["branch", "value"])
+        const read = lookupPath(new Chain(root), ["branch", "value"])
 
         deferredBranch.resolve({ value: { x: 1 } })
         const value = await read
@@ -272,7 +273,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(value).to.eql({ x: 1 })
 
         const wrapper = { value }
-        assignPath(wrapper, ["value", "x"], 2)
+        assignPath(new Chain(wrapper), ["value", "x"], 2)
 
         expect(wrapper.value).not.to.be(value)
         expect(value.x).to.be(1)
@@ -283,8 +284,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(root, ["branch", "value"])
-        assignPath(root, ["branch", "value", "x"], 2)
+        const read = lookupPath(new Chain(root), ["branch", "value"])
+        assignPath(new Chain(root), ["branch", "value", "x"], 2)
 
         deferredBranch.resolve({ value: { x: 1 } })
         const value = await read
@@ -300,8 +301,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(root, ["branch", "value"])
-        assignPath(root, ["branch", "value", "x"], 2)
+        const read = lookupPath(new Chain(root), ["branch", "value"])
+        assignPath(new Chain(root), ["branch", "value", "x"], 2)
 
         deferredBranch.resolve({ value: deferredValue.promise })
         await flushMicrotasks()
@@ -318,12 +319,12 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(root, ["branch", "value"], false)
+        const read = lookupPath(new Chain(root), ["branch", "value"], false)
 
         deferredBranch.resolve({ value: { x: 1 } })
         const value = await read
 
-        assignPath(root, ["branch", "value", "x"], 2)
+        assignPath(new Chain(root), ["branch", "value", "x"], 2)
 
         expect(root.branch.value).to.be(value)
         expect(value.x).to.be(2)
@@ -340,8 +341,8 @@ describe("promise mirrors and lookupPath", () => {
             configurable: true,
         })
 
-        assignPath(root, ["branch"], importValue(deferredBranch.promise, "hidden resume"))
-        assignPath(root, ["branch", "x"], 2)
+        assignPath(new Chain(root), ["branch"], importValue(deferredBranch.promise, "hidden resume"))
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         deferredBranch.resolve(externalBranch)
         await flushMicrotasks()
@@ -357,14 +358,14 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "before"], 1)
+        assignPath(new Chain(root), ["branch", "before"], 1)
         importValue(root)
 
-        const left = assignPath(root, ["left"], true)
-        const right = assignPath(root, ["right"], true)
+        const left = assignPath(new Chain(root), ["left"], true)
+        const right = assignPath(new Chain(root), ["right"], true)
 
-        assignPath(left, ["branch", "leftOnly"], 2)
-        assignPath(right, ["branch", "rightOnly"], 3)
+        assignPath(new Chain(left), ["branch", "leftOnly"], 2)
+        assignPath(new Chain(right), ["branch", "rightOnly"], 3)
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -378,14 +379,14 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "before"], 1)
+        assignPath(new Chain(root), ["branch", "before"], 1)
         importValue(root)
 
-        const left = assignPath(root, ["left"], true)
-        const right = assignPath(root, ["right"], true)
+        const left = assignPath(new Chain(root), ["left"], true)
+        const right = assignPath(new Chain(root), ["right"], true)
 
-        assignPath(left, ["branch", "leftOnly"], 2)
-        assignPath(right, ["branch", "rightOnly"], 3)
+        assignPath(new Chain(left), ["branch", "leftOnly"], 2)
+        assignPath(new Chain(right), ["branch", "rightOnly"], 3)
 
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
@@ -402,14 +403,14 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        lookupPath(root, [])
-        const next = assignPath(root, ["branch"], { replacement: true })
+        lookupPath(new Chain(root), [])
+        const next = assignPath(new Chain(root), ["branch"], { replacement: true })
 
         deferredBranch.resolve({ x: 1 })
         await flushMicrotasks()
 
-        const oldBranch = await lookupPath(root, ["branch"], false)
-        const mutated = assignPath(oldBranch, ["x"], 2)
+        const oldBranch = await lookupPath(new Chain(root), ["branch"], false)
+        const mutated = assignPath(new Chain(oldBranch), ["x"], 2)
 
         expect(next.branch).to.eql({ replacement: true })
         expect(mutated).to.be(oldBranch)
@@ -420,13 +421,13 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        lookupPath(root, [])
-        const next = assignPath(root, ["branch", "x"], 1)
+        lookupPath(new Chain(root), [])
+        const next = assignPath(new Chain(root), ["branch", "x"], 1)
 
         deferredBranch.resolve({ y: 2 })
         await flushMicrotasks()
 
-        const oldBranch = await lookupPath(root, ["branch"], false)
+        const oldBranch = await lookupPath(new Chain(root), ["branch"], false)
 
         expect(oldBranch).to.eql({ y: 2 })
         expect(next.branch).to.eql({ y: 2, x: 1 })
@@ -437,7 +438,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }
 
-        const read = lookupPath(root, ["value"])
+        const read = lookupPath(new Chain(root), ["value"])
         deferredValue.reject("boom")
 
         const value = await read
@@ -451,7 +452,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
         deferredValue.reject("assigned boom")
         await flushMicrotasks()
 
@@ -462,7 +463,7 @@ describe("promise mirrors and lookupPath", () => {
     it("turns an already-rejected assigned promise into an Error value", async () => {
         const root = {}
 
-        assignPath(root, ["value"], Promise.reject("already rejected"))
+        assignPath(new Chain(root), ["value"], Promise.reject("already rejected"))
         await flushMicrotasks()
 
         expect(root.value instanceof Error).to.be(true)
@@ -473,7 +474,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch", "x"], 1)
         deferredBranch.reject("nope")
         await flushMicrotasks()
 
@@ -485,7 +486,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch", "x"], 1)
         deferredBranch.resolve(7)
         await flushMicrotasks()
 
@@ -497,7 +498,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch", "x"], 1)
         deferredBranch.resolve(null)
         await flushMicrotasks()
 
@@ -512,8 +513,8 @@ describe("promise mirrors and lookupPath", () => {
             right: importedBranch,
         }
 
-        assignPath(root, ["left", "x"], 1)
-        assignPath(root, ["right", "y"], 2)
+        assignPath(new Chain(root), ["left", "x"], 1)
+        assignPath(new Chain(root), ["right", "y"], 2)
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -527,11 +528,11 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = {}
 
-        assignPath(root, ["branch"], deferredBranch.promise)
-        const firstRead = lookupPath(root, ["branch"])
+        assignPath(new Chain(root), ["branch"], deferredBranch.promise)
+        const firstRead = lookupPath(new Chain(root), ["branch"])
 
-        assignPath(root, ["branch"], deferredBranch.promise)
-        assignPath(root, ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch"], deferredBranch.promise)
+        assignPath(new Chain(root), ["branch", "x"], 1)
 
         deferredBranch.resolve({})
         const firstValue = await firstRead
@@ -547,8 +548,8 @@ describe("promise mirrors and lookupPath", () => {
         const second = deferred()
         const root = {}
 
-        assignPath(root, ["branch"], first.promise)
-        assignPath(root, ["branch"], second.promise)
+        assignPath(new Chain(root), ["branch"], first.promise)
+        assignPath(new Chain(root), ["branch"], second.promise)
 
         first.resolve({ stale: true })
         await flushMicrotasks()
@@ -563,11 +564,11 @@ describe("promise mirrors and lookupPath", () => {
         const root = {}
         const promise = Promise.resolve({})
 
-        assignPath(root, ["branch"], promise)
+        assignPath(new Chain(root), ["branch"], promise)
         importValue(root)
 
-        const next = assignPath(root, ["added"], true)
-        assignPath(next, ["branch", "x"], 1)
+        const next = assignPath(new Chain(root), ["added"], true)
+        assignPath(new Chain(next), ["branch", "x"], 1)
 
         await flushMicrotasks()
 
@@ -580,8 +581,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 1)
-        deletePath(root, ["branch"])
+        assignPath(new Chain(root), ["branch", "x"], 1)
+        deletePath(new Chain(root), ["branch"])
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -593,8 +594,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 1)
-        assignPath(root, ["branch"], { replacement: true })
+        assignPath(new Chain(root), ["branch", "x"], 1)
+        assignPath(new Chain(root), ["branch"], { replacement: true })
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -606,7 +607,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        deletePath(root, ["branch", "x"])
+        deletePath(new Chain(root), ["branch", "x"])
 
         deferredBranch.resolve({ x: 1, y: 2 })
         await flushMicrotasks()
@@ -618,8 +619,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        assignPath(root, ["branch", "x"], 2)
-        deletePath(root, ["branch", "x"])
+        assignPath(new Chain(root), ["branch", "x"], 2)
+        deletePath(new Chain(root), ["branch", "x"])
 
         deferredBranch.resolve({ x: 1, y: 3 })
         await flushMicrotasks()
@@ -631,8 +632,8 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        deletePath(root, ["branch", "x"])
-        assignPath(root, ["branch", "x"], 2)
+        deletePath(new Chain(root), ["branch", "x"])
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         deferredBranch.resolve({ x: 1, y: 3 })
         await flushMicrotasks()
@@ -642,28 +643,31 @@ describe("promise mirrors and lookupPath", () => {
 })
 
 describe("root promises", () => {
-    it("chains root-level assignments through returned promises", async () => {
+    it("chains root-level assignments through the Chain state slot", async () => {
         const deferredRoot = deferred()
-        let root = deferredRoot.promise
+        const chain = new Chain(deferredRoot.promise)
 
-        root = assignPath(root, ["a"], 1)
-        root = assignPath(root, ["b"], 2)
+        assignPath(chain, ["a"], 1)
+        assignPath(chain, ["b"], 2)
+
+        expect(chain._state.value).to.be(deferredRoot.promise)
 
         deferredRoot.resolve({})
-        const value = await root
+        await flushMicrotasks()
 
-        expect(value).to.eql({ a: 1, b: 2 })
+        expect(chain._state.value).to.eql({ a: 1, b: 2 })
     })
 
     it("looks up through a root promise with shared ownership", async () => {
         const deferredRoot = deferred()
+        const chain = new Chain(deferredRoot.promise)
         const root = { branch: { x: 1 } }
         const oldBranch = root.branch
 
-        const read = lookupPath(deferredRoot.promise, ["branch"])
+        const read = lookupPath(chain, ["branch"])
         deferredRoot.resolve(root)
         const value = await read
-        assignPath(root, ["branch", "x"], 2)
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         expect(value).to.be(oldBranch)
         expect(root.branch).not.to.be(oldBranch)
@@ -673,13 +677,14 @@ describe("root promises", () => {
 
     it("looks up through a root promise without sharing ownership", async () => {
         const deferredRoot = deferred()
+        const chain = new Chain(deferredRoot.promise)
         const root = { branch: { x: 1 } }
         const oldBranch = root.branch
 
-        const read = lookupPath(deferredRoot.promise, ["branch"], false)
+        const read = lookupPath(chain, ["branch"], false)
         deferredRoot.resolve(root)
         const value = await read
-        assignPath(root, ["branch", "x"], 2)
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         expect(value).to.be(oldBranch)
         expect(root.branch).to.be(oldBranch)
@@ -688,31 +693,36 @@ describe("root promises", () => {
 
     it("deletes through a root promise", async () => {
         const deferredRoot = deferred()
+        const chain = new Chain(deferredRoot.promise)
 
-        const result = deletePath(deferredRoot.promise, ["remove"])
+        deletePath(chain, ["remove"])
         deferredRoot.resolve({ keep: true, remove: true })
-        const value = await result
+        await flushMicrotasks()
 
-        expect(value).to.eql({ keep: true })
+        expect(chain._state.value).to.eql({ keep: true })
     })
 
     it("turns rejected root promises into Error results", async () => {
         const assignRoot = deferred()
         const lookupRoot = deferred()
         const deleteRoot = deferred()
+        const assignChain = new Chain(assignRoot.promise)
+        const lookupChain = new Chain(lookupRoot.promise)
+        const deleteChain = new Chain(deleteRoot.promise)
 
-        const assigned = assignPath(assignRoot.promise, ["value"], 1)
-        const lookedUp = lookupPath(lookupRoot.promise, ["value"])
-        const deleted = deletePath(deleteRoot.promise, ["value"])
+        assignPath(assignChain, ["value"], 1)
+        const lookedUp = lookupPath(lookupChain, ["value"])
+        deletePath(deleteChain, ["value"])
 
         assignRoot.reject("assign root")
         lookupRoot.reject("lookup root")
         deleteRoot.reject("delete root")
 
-        const assignedValue = await assigned
         const lookedUpValue = await lookedUp
-        const deletedValue = await deleted
+        await flushMicrotasks()
 
+        const assignedValue = assignChain._state.value
+        const deletedValue = deleteChain._state.value
         expect(assignedValue instanceof Error).to.be(true)
         expect(assignedValue.message).to.be("assign root")
         expect(lookedUpValue instanceof Error).to.be(true)

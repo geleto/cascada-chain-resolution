@@ -1,4 +1,5 @@
 const {
+    Chain,
     expect,
     getRefCounter,
     verifyRefCounts,
@@ -20,15 +21,15 @@ describe("hasError", () => {
             },
         }
 
-        expect(hasError(root, [])).to.be(true)
-        expect(hasError(root, ["branch"])).to.be(true)
-        expect(hasError(root, ["branch", "bad"])).to.be(true)
-        expect(hasError(root, ["branch", "clean"])).to.be(false)
-        expect(hasError(root, ["branch", "missing"])).to.be(false)
-        expect(hasError(root, ["missing", "x"])).to.be(true)
-        expect(hasError(new Error("root"), [])).to.be(true)
-        expect(hasError(7, [])).to.be(false)
-        expect(hasError(7, ["x"])).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(hasError(new Chain(root), ["branch"])).to.be(true)
+        expect(hasError(new Chain(root), ["branch", "bad"])).to.be(true)
+        expect(hasError(new Chain(root), ["branch", "clean"])).to.be(false)
+        expect(hasError(new Chain(root), ["branch", "missing"])).to.be(false)
+        expect(hasError(new Chain(root), ["missing", "x"])).to.be(true)
+        expect(hasError(new Chain(new Error("root")), [])).to.be(true)
+        expect(hasError(new Chain(7), [])).to.be(false)
+        expect(hasError(new Chain(7), ["x"])).to.be(true)
     })
 
     it("treats __proto__ and non-enumerable lookups as missing", () => {
@@ -46,18 +47,18 @@ describe("hasError", () => {
             configurable: true,
         })
 
-        expect(hasError(root, ["__proto__"])).to.be(false)
-        expect(hasError(root, ["hidden"])).to.be(false)
-        expect(hasError(root, ["__proto__", "x"])).to.be(true)
-        expect(hasError(root, ["hidden", "x"])).to.be(true)
+        expect(hasError(new Chain(root), ["__proto__"])).to.be(false)
+        expect(hasError(new Chain(root), ["hidden"])).to.be(false)
+        expect(hasError(new Chain(root), ["__proto__", "x"])).to.be(true)
+        expect(hasError(new Chain(root), ["hidden", "x"])).to.be(true)
     })
 
     it("does not mark clean queried branches as shared", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
-        expect(hasError(root, ["branch"])).to.be(false)
-        assignPath(root, ["branch", "x"], 2)
+        expect(hasError(new Chain(root), ["branch"])).to.be(false)
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         expect(root.branch).to.be(branch)
         expect(branch.x).to.be(2)
@@ -71,7 +72,7 @@ describe("hasError", () => {
 
         importValue(root, "hasError import")
 
-        expect(hasError(root, ["branch"])).to.be(true)
+        expect(hasError(new Chain(root), ["branch"])).to.be(true)
         expect(getRefCounter(branch)).to.be(undefined)
     })
 
@@ -80,9 +81,9 @@ describe("hasError", () => {
         const pending = Object.preventExtensions({ pending: Promise.resolve(1) })
         const bad = Object.freeze({ nested: { bad: new Error("bad") } })
 
-        expect(hasError(clean, [])).to.be(false)
-        expect(hasError(pending, [])).to.be(true)
-        expect(hasError(bad, [])).to.be(true)
+        expect(hasError(new Chain(clean), [])).to.be(false)
+        expect(hasError(new Chain(pending), [])).to.be(true)
+        expect(hasError(new Chain(bad), [])).to.be(true)
 
         expect(getRefCounter(clean)).to.be(undefined)
         expect(getRefCounter(clean.nested)).to.be(undefined)
@@ -100,7 +101,7 @@ describe("hasError", () => {
             after,
         }
 
-        expect(hasError(root, [])).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(true)
 
         expect(getRefCounter(root).promiseCount).to.be(0)
         expect(getRefCounter(root).errorCount).to.be(1)
@@ -116,7 +117,7 @@ describe("hasError", () => {
             bad: new Error("bad"),
         }
 
-        expect(hasError(root, [])).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(true)
         expect(getRefCounter(root).promiseCount).to.be(1)
         expect(getRefCounter(root).errorCount).to.be(1)
 
@@ -133,7 +134,7 @@ describe("hasError", () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
 
         expect(typeof result.then).to.be("function")
 
@@ -154,7 +155,7 @@ describe("hasError", () => {
             },
         }
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
 
         bad.reject("bad")
 
@@ -167,7 +168,7 @@ describe("hasError", () => {
         const inner = deferred()
         const root = { branch: { outer: outer.promise } }
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
 
         outer.resolve({
             nested: { bad: new Error("bad") },
@@ -191,7 +192,7 @@ describe("hasError", () => {
         const slow = deferred()
         const root = { branch: { outer: outer.promise, slow: slow.promise } }
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
 
         // First barrier exposes only a deeper pending; the next generation waits it.
         outer.resolve({ inner: inner.promise })
@@ -215,11 +216,11 @@ describe("hasError", () => {
             },
         }
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
         first.resolve("done")
         await flushMicrotasks()
 
-        assignPath(root, ["branch", "second", "again"], first.promise)
+        assignPath(new Chain(root), ["branch", "second", "again"], first.promise)
         second.resolve({})
 
         const outcome = await Promise.race([
@@ -237,7 +238,7 @@ describe("hasError", () => {
         const root = { branch: { outer: outer.promise } }
         let settled = false
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
@@ -264,12 +265,12 @@ describe("hasError", () => {
         }
         let settled = false
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
 
-        assignPath(root, ["branch", "clean", "later"], later.promise)
+        assignPath(new Chain(root), ["branch", "clean", "later"], later.promise)
         await flushMicrotasks()
 
         expect(settled).to.be(false)
@@ -297,7 +298,7 @@ describe("hasError", () => {
         const pending = deferred()
         const root = { branch: pending.promise }
 
-        const result = hasError(root, ["branch", "bad"])
+        const result = hasError(new Chain(root), ["branch", "bad"])
 
         pending.resolve({ bad: new Error("bad") })
 
@@ -312,8 +313,8 @@ describe("hasError", () => {
         // Issued before hasError, suspended on the same promise: its remainder
         // runs first at settlement (FIFO), installs the Error into the counted
         // resolved value, and hasError's wait continuation must observe it.
-        assignPath(root, ["branch", "pending", "bad"], new Error("bad"))
-        const result = hasError(root, ["branch"])
+        assignPath(new Chain(root), ["branch", "pending", "bad"], new Error("bad"))
+        const result = hasError(new Chain(root), ["branch"])
 
         pending.resolve({})
 
@@ -327,11 +328,11 @@ describe("hasError", () => {
         const root = { branch: { bad: bad.promise, slow: slow.promise } }
         let normalized = false
 
-        const normalizedBranch = normalize(root, ["branch"])
+        const normalizedBranch = normalize(new Chain(root), ["branch"])
         normalizedBranch.then(() => {
             normalized = true
         })
-        const branchHasError = hasError(root, ["branch"])
+        const branchHasError = hasError(new Chain(root), ["branch"])
 
         bad.reject("bad")
 
@@ -350,8 +351,8 @@ describe("hasError", () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
 
-        const first = hasError(root, ["branch"])
-        const second = hasError(root, ["branch"])
+        const first = hasError(new Chain(root), ["branch"])
+        const second = hasError(new Chain(root), ["branch"])
 
         pending.reject("bad")
 
@@ -365,12 +366,12 @@ describe("hasError", () => {
         const root = { branch: { pending: pending.promise } }
         let settled = false
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
 
-        assignPath(root, ["branch", "pending"], "fixed")
+        assignPath(new Chain(root), ["branch", "pending"], "fixed")
         await flushMicrotasks()
 
         expect(settled).to.be(false)
@@ -387,12 +388,12 @@ describe("hasError", () => {
         const root = { branch: { pending: pending.promise } }
         let settled = false
 
-        const result = hasError(root, ["branch"])
+        const result = hasError(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
 
-        deletePath(root, ["branch", "pending"])
+        deletePath(new Chain(root), ["branch", "pending"])
         await flushMicrotasks()
 
         expect(settled).to.be(false)

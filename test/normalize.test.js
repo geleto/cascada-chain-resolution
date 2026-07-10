@@ -1,4 +1,5 @@
 const {
+    Chain,
     expect,
     metaOf,
     getRefCounter,
@@ -15,11 +16,11 @@ describe("normalize", () => {
         const root = { branch: { x: 1 }, primitive: 2 }
         const pending = deferred()
 
-        const branch = normalize(root, ["branch"])
-        const primitive = normalize(root, ["primitive"])
-        const missing = normalize(root, ["missing"])
-        const copy = normalize(root, ["branch"], true, true)
-        const waiting = normalize({ branch: { pending: pending.promise } }, ["branch"])
+        const branch = normalize(new Chain(root), ["branch"])
+        const primitive = normalize(new Chain(root), ["primitive"])
+        const missing = normalize(new Chain(root), ["missing"])
+        const copy = normalize(new Chain(root), ["branch"], true, true)
+        const waiting = normalize(new Chain({ branch: { pending: pending.promise } }), ["branch"])
 
         expect(branch).to.be(root.branch)
         expect(primitive).to.be(2)
@@ -32,8 +33,8 @@ describe("normalize", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
-        const value = normalize(root, ["branch"])
-        assignPath(root, ["branch", "x"], 2)
+        const value = normalize(new Chain(root), ["branch"])
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         expect(value).to.be(branch)
         expect(root.branch).not.to.be(branch)
@@ -46,7 +47,7 @@ describe("normalize", () => {
         const branch = root.branch
 
         importValue(root, "valid normalize import")
-        const value = normalize(root, ["branch"], false)
+        const value = normalize(new Chain(root), ["branch"], false)
 
         expect(value).to.be(branch)
         expect(metaOf(branch).importContext).to.be("valid normalize import")
@@ -57,8 +58,8 @@ describe("normalize", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
-        assignPath(pendingRoot.promise, ["branch", "x"], 2)
-        const value = normalize(root, ["branch"])
+        assignPath(new Chain(pendingRoot.promise), ["branch", "x"], 2)
+        const value = normalize(new Chain(root), ["branch"])
 
         expect(value).to.be(branch)
         expect(value).to.eql({ x: 1 })
@@ -77,8 +78,8 @@ describe("normalize", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
-        const value = normalize(root, ["branch"], false)
-        assignPath(root, ["branch", "x"], 2)
+        const value = normalize(new Chain(root), ["branch"], false)
+        assignPath(new Chain(root), ["branch", "x"], 2)
 
         expect(value).to.be(branch)
         expect(root.branch).to.be(branch)
@@ -90,8 +91,8 @@ describe("normalize", () => {
         const branch = { left: child, right: child }
         const root = { branch }
 
-        const copy = normalize(root, ["branch"], true, true)
-        assignPath(root, ["branch", "left", "x"], 2)
+        const copy = normalize(new Chain(root), ["branch"], true, true)
+        assignPath(new Chain(root), ["branch", "left", "x"], 2)
 
         expect(copy).not.to.be(branch)
         expect(copy.left).to.be(copy.right)
@@ -107,8 +108,8 @@ describe("normalize", () => {
         const branch = { error: new Error("bad"), child }
         const root = { branch }
 
-        const value = normalize(root, ["branch"])
-        assignPath(root, ["branch", "child", "x"], 2)
+        const value = normalize(new Chain(root), ["branch"])
+        assignPath(new Chain(root), ["branch", "child", "x"], 2)
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("normalize: branch contains errors")
@@ -121,8 +122,8 @@ describe("normalize", () => {
         const root = { branch: { pending: pending.promise } }
         const branch = root.branch
 
-        const result = normalize(root, ["branch"])
-        assignPath(root, ["branch", "later"], 2)
+        const result = normalize(new Chain(root), ["branch"])
+        assignPath(new Chain(root), ["branch", "later"], 2)
 
         pending.resolve("done")
         const value = await result
@@ -139,8 +140,8 @@ describe("normalize", () => {
         const root = { branch: { pending: pending.promise } }
         const branch = root.branch
 
-        const result = normalize(root, ["branch"], false)
-        assignPath(root, ["branch", "later"], 2)
+        const result = normalize(new Chain(root), ["branch"], false)
+        assignPath(new Chain(root), ["branch", "later"], 2)
 
         pending.resolve("done")
         const value = await result
@@ -156,9 +157,9 @@ describe("normalize", () => {
         const branch = { pending: pending.promise }
         const root = { branch }
 
-        const first = normalize(root, ["branch"])
+        const first = normalize(new Chain(root), ["branch"])
         const promise = metaOf(branch).settlementPromise
-        const second = normalize(root, ["branch"])
+        const second = normalize(new Chain(root), ["branch"])
 
         expect(promise).to.be.ok()
         expect(metaOf(branch).settlementPromise).to.be(promise)
@@ -175,8 +176,8 @@ describe("normalize", () => {
         const pending = deferred()
         const root = { branch: pending.promise }
 
-        assignPath(root, ["branch", "x"], 1)
-        const result = normalize(root, ["branch"])
+        assignPath(new Chain(root), ["branch", "x"], 1)
+        const result = normalize(new Chain(root), ["branch"])
 
         pending.resolve({})
         const value = await result
@@ -190,8 +191,8 @@ describe("normalize", () => {
         const pending = deferred()
         const root = { branch: pending.promise }
 
-        const result = normalize(root, ["branch"])
-        assignPath(root, ["branch", "x"], 1)
+        const result = normalize(new Chain(root), ["branch"])
+        assignPath(new Chain(root), ["branch", "x"], 1)
 
         pending.resolve({})
         const value = await result
@@ -208,7 +209,7 @@ describe("normalize", () => {
         const root = { branch: { outer: outer.promise } }
         let settled = false
 
-        const result = normalize(root, ["branch"])
+        const result = normalize(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
@@ -230,7 +231,7 @@ describe("normalize", () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
 
-        const result = normalize(root, ["branch"])
+        const result = normalize(new Chain(root), ["branch"])
         pending.reject(new Error("bad"))
         const value = await result
 
@@ -244,7 +245,7 @@ describe("normalize", () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
 
-        const result = normalize(root, ["branch"])
+        const result = normalize(new Chain(root), ["branch"])
         pending.resolve({ failed: new Error("bad") })
         const value = await result
 
@@ -260,8 +261,8 @@ describe("normalize", () => {
         const root = { branch: { outer: outer.promise } }
         let settled = false
 
-        assignPath(root, ["branch", "outer", "inner"], inner.promise)
-        const result = normalize(root, ["branch"])
+        assignPath(new Chain(root), ["branch", "outer", "inner"], inner.promise)
+        const result = normalize(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
@@ -284,8 +285,8 @@ describe("normalize", () => {
         const pending = deferred()
         const root = { branch: { inner: pending.promise } }
 
-        assignPath(root, ["branch", "inner", "e"], "fixed")
-        const result = normalize(root, ["branch"])
+        assignPath(new Chain(root), ["branch", "inner", "e"], "fixed")
+        const result = normalize(new Chain(root), ["branch"])
 
         pending.resolve({ e: new Error("transient") })
         const value = await result
@@ -303,8 +304,8 @@ describe("normalize", () => {
         // the count again while the first recheck may still be queued. Either
         // interleaving must settle exactly once; plainCopy exposes a premature
         // fire, because the copy is taken at settlement time.
-        assignPath(root, ["branch", "outer", "later"], Promise.resolve("late"))
-        const result = normalize(root, ["branch"], true, true)
+        assignPath(new Chain(root), ["branch", "outer", "later"], Promise.resolve("late"))
+        const result = normalize(new Chain(root), ["branch"], true, true)
 
         outer.resolve({})
         const value = await result
@@ -321,15 +322,15 @@ describe("normalize", () => {
         const branch = root.branch
         let settled = false
 
-        const result = normalize(root, ["branch"])            // Op2: pins, waits
+        const result = normalize(new Chain(root), ["branch"])            // Op2: pins, waits
         result.then(() => {
             settled = true
         })
 
         // Later-issued writes COW away from the pin: their promises land in a
         // fresh copy with its own counter, never re-arming the watched one.
-        assignPath(root, ["branch", "a"], later1.promise)
-        assignPath(root, ["branch", "b"], later2.promise)
+        assignPath(new Chain(root), ["branch", "a"], later1.promise)
+        assignPath(new Chain(root), ["branch", "b"], later2.promise)
 
         expect(root.branch).not.to.be(branch)
         expect(getRefCounter(branch).promiseCount).to.be(1)
@@ -359,7 +360,7 @@ describe("normalize", () => {
         const root = { branch }
 
         importValue(root, "normalize import")
-        const value = normalize(root, ["branch"])
+        const value = normalize(new Chain(root), ["branch"])
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("Value cannot be cyclic (imported at: normalize import)")
@@ -371,8 +372,8 @@ describe("normalize", () => {
         const invalid = Object.freeze({ pending: Promise.resolve(1) })
 
         importValue(invalid, "frozen normalize")
-        const copied = normalize(valid, [], true, true)
-        const failure = normalize(invalid, [])
+        const copied = normalize(new Chain(valid), [], true, true)
+        const failure = normalize(new Chain(invalid), [])
 
         expect(copied).to.eql({ x: 1 })
         expect(copied).not.to.be(valid)
@@ -386,7 +387,8 @@ describe("normalize", () => {
 
     it("normalizes through a root promise", async () => {
         const pending = deferred()
-        const result = normalize(pending.promise, ["branch"])
+        const chain = new Chain(pending.promise)
+        const result = normalize(chain, ["branch"])
 
         pending.resolve({ branch: { x: 1 } })
         const value = await result

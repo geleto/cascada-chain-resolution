@@ -40,7 +40,7 @@ const {
 } = require("./refcounts")
 const {
     assertCanMutateLanguageProperty,
-    assertMutationKey,
+    assertMutationPath,
 } = require("./validate")
 const {
     hasSharedMark,
@@ -65,6 +65,13 @@ const {
 // language Error node, so intermediate advances stop instead of autovivifying.
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
+
+class Chain {
+    constructor(initialValue) {
+        this._state = { value: initialValue }
+        this._commands = []
+    }
+}
 
 // Cascada data is own enumerable keys only. `__proto__` is never language data
 // because plain assignment would otherwise hit JS prototype machinery.
@@ -188,18 +195,8 @@ function shallowCopy(
 }
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
-function assignPath(root, path, value) {
-    for (const key of path) {
-        assertMutationKey(key)
-    }
-    if (path.length === 0) return value
-    if (isPromise(root)) {
-        return onValueResolve(root, resolvedRoot => {
-            return assignPath(resolvedRoot, path, value)
-        })
-    }
-
-    return walkMutationPath(root, path, true, (parent, key) => {
+function assignPath(chain, path, value) {
+    walkMutationPath(chain._state, path, true, (parent, key) => {
         if (isPromise(value)) {
             // BIRTH 1 - ASSIGN: assigning a promise to a key. Always creates a
             // fresh mirror. Two assignments of the same promise at the same key
@@ -211,12 +208,15 @@ function assignPath(root, path, value) {
             setProperty(parent, key, value)
         }
     })
+    return chain._state.value
 }
 
-// Walk returns the value that should live at this path level after mutation.
-// The root caller returns it; recursive callers install it into their key.
-function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
-    return walk(root, 0, false)
+// The walk starts at the Chain's private holder, so `_state.value` is prepended
+// to the user path. Recursive callers install copied branches back into their key.
+function walkMutationPath(rootHolder, path, createMissingIntermediates, onTarget) {
+    assertMutationPath(path)
+    const holderPath = ["value", ...path]
+    return walk(rootHolder, 0, false)
 
     function walk(value, index, inheritedSharedBranch) {
         if (isError(value)) return value
@@ -246,7 +246,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
             return value
         }
 
-        const key = path[index]
+        const key = holderPath[index]
         if (parentInsideSharedBranch) {
             parent = shallowCopy(parent, key, true, valueImportContext)
         }
@@ -255,7 +255,7 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
         // own property on a node that was never shared away.
         assertCanMutateLanguageProperty(parent, key, valueImportContext)
 
-        if (index === path.length - 1) {
+        if (index === holderPath.length - 1) {
             onTarget(parent, key)
             return parent
         }
@@ -293,8 +293,8 @@ function walkMutationPath(root, path, createMissingIntermediates, onTarget) {
 // Imported values are marked on extraction even without shared ownership:
 // provenance is about origin, not aliasing, and an ownership-transferred
 // external branch is still external. (markImported implies the shared mark.)
-function lookupPath(root, path, sharedOwnership = true) {
-    return resolvePath(root, path, (value, importContext) => {
+function lookupPath(chain, path, sharedOwnership = true) {
+    return resolvePath(chain, path, (value, importContext) => {
         return markResolvedValue(value, importContext, sharedOwnership)
     })
 }
@@ -304,8 +304,8 @@ function lookupPath(root, path, sharedOwnership = true) {
 // returns a promise only when path resolution or branch settlement must suspend.
 // sharedOwnership matches lookupPath for settled returns; pending branches still
 // mark to pin the snapshot while promises settle.
-function normalize(root, path, sharedOwnership = true, plainCopy = false) {
-    return resolvePath(root, path, (value, importContext) => {
+function normalize(chain, path, sharedOwnership = true, plainCopy = false) {
+    return resolvePath(chain, path, (value, importContext) => {
         return normalizeResolved(value, importContext, sharedOwnership, plainCopy)
     })
 }
@@ -346,11 +346,12 @@ function markResolvedValue(value, importContext, sharedOwnership) {
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
-function hasError(root, path) {
-    const parentPath = path.length === 0 ? path : path.slice(0, -1)
+function hasError(chain, path) {
+    const atRoot = path.length === 0
+    const parentPath = atRoot ? path : path.slice(0, -1)
     const key = path[path.length - 1]
-    return resolvePath(root, parentPath, (parent, importContext) => {
-        if (path.length === 0) return hasErrorAtPathValue(parent, importContext)
+    return resolvePath(chain, parentPath, (parent, importContext) => {
+        if (atRoot) return hasErrorAtPathValue(parent, importContext)
         if (isError(parent)) return true
         if (!isTracked(parent)) return true
 
@@ -486,30 +487,18 @@ function collectPromiseWaits(value, waitPromises, resolveError, visited) {
     }
 }
 
-// Observational path resolution. Callers decide whether the reached value
-// escapes and therefore whether to mark it.
-function resolvePath(root, path, onResolved) {
-    if (isPromise(root)) {
-        return onValueResolve(root, resolvedRoot => {
-            return resolvePath(resolvedRoot, path, onResolved)
-        })
-    }
-
-    const importContext = isTracked(root)
-        ? nodeImportContext(root, undefined)
-        : undefined
-    if (path.length === 0) {
-        return onResolved(root, importContext)
-    }
-
-    return resolveFromParent(root, 0, undefined)
+// Observational path resolution through the Chain's private root holder. Callers
+// decide whether the reached value escapes and therefore whether to mark it.
+function resolvePath(chain, path, onResolved) {
+    const holderPath = ["value", ...path]
+    return resolveFromParent(chain._state, 0, undefined)
 
     function resolveFromParent(parent, index, inheritedImportContext) {
         if (isError(parent)) return onResolved(parent, inheritedImportContext)
         if (!isTracked(parent)) return onResolved(undefined, inheritedImportContext)
 
         const importContext = nodeImportContext(parent, inheritedImportContext)
-        const key = path[index]
+        const key = holderPath[index]
         const value = readLanguageProperty(parent, key)
         if (isPromise(value)) {
             if (!Object.isExtensible(parent)) {
@@ -527,7 +516,7 @@ function resolvePath(root, path, onResolved) {
     }
 
     function resolvePathValue(value, index, importContext) {
-        if (index === path.length - 1) {
+        if (index === holderPath.length - 1) {
             return onResolved(value, importContext)
         }
         if (isError(value)) return onResolved(value, importContext)
@@ -558,22 +547,17 @@ function copyToPlainValue(value, copies = new Map()) {
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------
-function deletePath(root, path) {
-    for (const key of path) {
-        assertMutationKey(key)
-    }
-    if (path.length === 0) return null
-    if (isPromise(root)) {
-        return onValueResolve(root, resolvedRoot => {
-            return deletePath(resolvedRoot, path)
-        })
-    }
-
-    return walkMutationPath(root, path, false, (parent, key) => {
-        if (isArray(parent)) return                    // array element deletion is outside this helper
-        clearPromiseMirror(parent, key)                // no later writeback re-mirrors
-        deleteProperty(parent, key)
+function deletePath(chain, path) {
+    walkMutationPath(chain._state, path, false, (parent, key) => {
+        if (path.length === 0) {
+            clearPromiseMirror(parent, key)            // no later writeback re-mirrors
+            setProperty(parent, key, null)
+        } else {
+            clearPromiseMirror(parent, key)
+            deleteProperty(parent, key)
+        }
     })
+    return chain._state.value
 }
 
-module.exports = { assignPath, deletePath, hasError, import: importValue, lookupPath, normalize }
+module.exports = { Chain, assignPath, deletePath, hasError, import: importValue, lookupPath, normalize }

@@ -1,4 +1,5 @@
 const {
+    Chain,
     expect,
     setFatalErrorReporter,
     assignPath,
@@ -15,7 +16,7 @@ describe("path assignment", () => {
         const root = { old: true }
         const replacement = { next: true }
 
-        const next = assignPath(root, [], replacement)
+        const next = assignPath(new Chain(root), [], replacement)
 
         expect(next).to.be(replacement)
         expect(root).to.eql({ old: true })
@@ -26,7 +27,7 @@ describe("path assignment", () => {
         const pos = root.pos
         const delta = root.delta
 
-        const next = assignPath(root, ["pos", "x"], 2)
+        const next = assignPath(new Chain(root), ["pos", "x"], 2)
 
         expect(next).to.be(root)
         expect(root.pos).to.be(pos)
@@ -47,12 +48,12 @@ describe("path assignment", () => {
             reported.push(error)
         })
         try {
-            assigned = thrownBy(() => assignPath(root, ["__proto__", "polluted"], true))
+            assigned = thrownBy(() => assignPath(new Chain(root), ["__proto__", "polluted"], true))
             nestedAssigned = thrownBy(() => {
-                assignPath(nested, ["safe", "__proto__", "polluted"], true)
+                assignPath(new Chain(nested), ["safe", "__proto__", "polluted"], true)
             })
-            lookedUp = lookupPath(root, ["__proto__"])
-            deleted = thrownBy(() => deletePath(root, ["__proto__"]))
+            lookedUp = lookupPath(new Chain(root), ["__proto__"])
+            deleted = thrownBy(() => deletePath(new Chain(root), ["__proto__"]))
         } finally {
             setFatalErrorReporter()
         }
@@ -85,7 +86,7 @@ describe("path assignment", () => {
         })
 
         importValue(root, "copy proto import")
-        const next = assignPath(root, ["other", "x"], 2)
+        const next = assignPath(new Chain(root), ["other", "x"], 2)
         const descriptor = Object.getOwnPropertyDescriptor(next, "__proto__")
 
         expect(root.other.x).to.be(1)
@@ -96,7 +97,7 @@ describe("path assignment", () => {
         expect(descriptor.value).to.be(protoValue)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
-        expect(lookupPath(next, ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(undefined)
         expect({}.safe).to.be(undefined)
     })
 
@@ -111,13 +112,13 @@ describe("path assignment", () => {
         })
 
         importValue(root, "copy proto promise import")
-        const next = assignPath(root, ["other", "x"], 2)
+        const next = assignPath(new Chain(root), ["other", "x"], 2)
         deferredValue.resolve({ safe: true })
         await flushMicrotasks()
 
         expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(deferredValue.promise)
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
-        expect(lookupPath(next, ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(undefined)
         expect({}.safe).to.be(undefined)
     })
 
@@ -131,9 +132,9 @@ describe("path assignment", () => {
             configurable: true,
         })
 
-        const assigned = thrownBy(() => assignPath(root, ["hidden"], 2))
-        const nestedAssigned = thrownBy(() => assignPath(root, ["hidden", "x"], 2))
-        const deleted = thrownBy(() => deletePath(root, ["hidden"]))
+        const assigned = thrownBy(() => assignPath(new Chain(root), ["hidden"], 2))
+        const nestedAssigned = thrownBy(() => assignPath(new Chain(root), ["hidden", "x"], 2))
+        const deleted = thrownBy(() => deletePath(new Chain(root), ["hidden"]))
 
         expect(assigned instanceof Error).to.be(true)
         expect(nestedAssigned instanceof Error).to.be(true)
@@ -156,7 +157,7 @@ describe("path assignment", () => {
         })
 
         importValue(root, "hidden import")
-        const next = assignPath(root, ["hidden"], 2)
+        const next = assignPath(new Chain(root), ["hidden"], 2)
 
         expect(next).not.to.be(root)
         expect(root.hidden).to.be(hidden)
@@ -168,7 +169,7 @@ describe("path assignment", () => {
     it("can shadow inherited properties", () => {
         const root = {}
 
-        assignPath(root, ["constructor"], 2)
+        assignPath(new Chain(root), ["constructor"], 2)
 
         expect(root.constructor).to.be(2)
         expect(Object.prototype.propertyIsEnumerable.call(root, "constructor")).to.be(true)
@@ -176,11 +177,11 @@ describe("path assignment", () => {
 
     it("copies only an escaped branch", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
-        const oldPos = lookupPath(root, ["pos"])
+        const oldPos = lookupPath(new Chain(root), ["pos"])
         const oldDelta = root.delta
 
-        assignPath(root, ["pos", "x"], 2)
-        assignPath(root, ["delta", "x"], 5)
+        assignPath(new Chain(root), ["pos", "x"], 2)
+        assignPath(new Chain(root), ["delta", "x"], 5)
 
         expect(root.pos).not.to.be(oldPos)
         expect(oldPos.x).to.be(1)
@@ -191,10 +192,10 @@ describe("path assignment", () => {
 
     it("can read a branch without sharing ownership", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
-        const observed = lookupPath(root, ["pos"], false)
+        const observed = lookupPath(new Chain(root), ["pos"], false)
         const delta = root.delta
 
-        const next = assignPath(root, ["pos", "x"], 2)
+        const next = assignPath(new Chain(root), ["pos", "x"], 2)
 
         expect(next).to.be(root)
         expect(root.pos).to.be(observed)
@@ -204,10 +205,10 @@ describe("path assignment", () => {
 
     it("can read the root without sharing ownership", () => {
         const root = { pos: { x: 1 } }
-        const observed = lookupPath(root, [], false)
+        const observed = lookupPath(new Chain(root), [], false)
         const pos = root.pos
 
-        const next = assignPath(root, ["pos", "x"], 2)
+        const next = assignPath(new Chain(root), ["pos", "x"], 2)
 
         expect(observed).to.be(root)
         expect(next).to.be(root)
@@ -221,7 +222,7 @@ describe("path assignment", () => {
         const oldDelta = root.delta
         importValue(root)
 
-        const next = assignPath(root, ["pos", "x"], 2)
+        const next = assignPath(new Chain(root), ["pos", "x"], 2)
 
         expect(next).not.to.be(root)
         expect(next.pos).not.to.be(oldPos)
@@ -229,7 +230,7 @@ describe("path assignment", () => {
         expect(root.pos.x).to.be(1)
         expect(next.pos.x).to.be(2)
 
-        const afterDelta = assignPath(next, ["delta", "x"], 5)
+        const afterDelta = assignPath(new Chain(next), ["delta", "x"], 5)
         expect(afterDelta).to.be(next)
         expect(next.delta).not.to.be(oldDelta)
         expect(oldDelta.x).to.be(3)
@@ -245,7 +246,7 @@ describe("path assignment", () => {
         const oldC = root.c
         importValue(root)
 
-        const next = assignPath(root, ["b", "x"], 5)
+        const next = assignPath(new Chain(root), ["b", "x"], 5)
         const ownedB = next.b
 
         expect(next.b).not.to.be(oldB)
@@ -253,11 +254,11 @@ describe("path assignment", () => {
         expect(root.b.x).to.be(1)
         expect(next.b.x).to.be(5)
 
-        assignPath(next, ["b", "y"], 6)
+        assignPath(new Chain(next), ["b", "y"], 6)
         expect(next.b).to.be(ownedB)
         expect(next.b.y).to.be(6)
 
-        assignPath(next, ["c", "x"], 7)
+        assignPath(new Chain(next), ["c", "x"], 7)
         expect(next.c).not.to.be(oldC)
         expect(oldC.x).to.be(2)
         expect(next.c.x).to.be(7)
@@ -271,18 +272,18 @@ describe("path assignment", () => {
         }
         importValue(root)
 
-        const next = assignPath(root, ["b"], { y: 4 })
+        const next = assignPath(new Chain(root), ["b"], { y: 4 })
         const oldA = next.a
         const oldC = next.c
         const ownedB = next.b
 
-        assignPath(next, ["b", "y"], 5)
+        assignPath(new Chain(next), ["b", "y"], 5)
 
         expect(next.b).to.be(ownedB)
         expect(next.b.y).to.be(5)
         expect(root.b).to.eql({ x: 2 })
 
-        assignPath(next, ["a", "x"], 9)
+        assignPath(new Chain(next), ["a", "x"], 9)
 
         expect(next.a).not.to.be(oldA)
         expect(next.c).to.be(oldC)
@@ -294,8 +295,8 @@ describe("path assignment", () => {
         const value = importValue({ x: 1 })
         const root = {}
 
-        assignPath(root, ["value"], value)
-        assignPath(root, ["value", "x"], 2)
+        assignPath(new Chain(root), ["value"], value)
+        assignPath(new Chain(root), ["value", "x"], 2)
 
         expect(root.value).not.to.be(value)
         expect(value.x).to.be(1)
@@ -308,7 +309,7 @@ describe("path assignment", () => {
         root[1] = "one"
         importValue(root)
 
-        const next = assignPath(root, [2], "two")
+        const next = assignPath(new Chain(root), [2], "two")
 
         expect(next).not.to.be(root)
         expect(next.length).to.be(3)
@@ -320,7 +321,7 @@ describe("path assignment", () => {
     it("can replace an Error at the target key", () => {
         const root = { value: new Error("old") }
 
-        assignPath(root, ["value"], 42)
+        assignPath(new Chain(root), ["value"], 42)
 
         expect(root.value).to.be(42)
     })
@@ -328,10 +329,10 @@ describe("path assignment", () => {
     it("creates missing/null/undefined intermediates but turns primitive intermediates into Error", () => {
         const root = { old: 7, nothing: null, unset: undefined }
 
-        assignPath(root, ["new", "value"], 1)
-        assignPath(root, ["old", "value"], 2)
-        assignPath(root, ["nothing", "value"], 3)
-        assignPath(root, ["unset", "value"], 4)
+        assignPath(new Chain(root), ["new", "value"], 1)
+        assignPath(new Chain(root), ["old", "value"], 2)
+        assignPath(new Chain(root), ["nothing", "value"], 3)
+        assignPath(new Chain(root), ["unset", "value"], 4)
 
         expect(root.new).to.eql({ value: 1 })
         expect(root.old instanceof Error).to.be(true)
@@ -341,16 +342,16 @@ describe("path assignment", () => {
     })
 
     it("creates an object when assigning through null or undefined roots", () => {
-        const fromNull = assignPath(null, ["value"], 1)
-        const fromUndefined = assignPath(undefined, ["value"], 1)
+        const fromNull = assignPath(new Chain(null), ["value"], 1)
+        const fromUndefined = assignPath(new Chain(undefined), ["value"], 1)
 
         expect(fromNull).to.eql({ value: 1 })
         expect(fromUndefined).to.eql({ value: 1 })
     })
 
     it("turns assignment through primitive roots into Error", () => {
-        const fromNumber = assignPath(7, ["value"], 1)
-        const fromString = assignPath("text", ["value"], 1)
+        const fromNumber = assignPath(new Chain(7), ["value"], 1)
+        const fromString = assignPath(new Chain("text"), ["value"], 1)
 
         expect(fromNumber instanceof Error).to.be(true)
         expect(fromNumber.message).to.be("Cannot assign into primitive value")
@@ -362,8 +363,8 @@ describe("path assignment", () => {
         const errorRoot = new Error("root")
         const root = { branch: new Error("branch") }
 
-        const next = assignPath(errorRoot, ["value"], 1)
-        assignPath(root, ["branch", "value"], 1)
+        const next = assignPath(new Chain(errorRoot), ["value"], 1)
+        assignPath(new Chain(root), ["branch", "value"], 1)
 
         expect(next).to.be(errorRoot)
         expect(root.branch instanceof Error).to.be(true)
@@ -377,8 +378,8 @@ describe("lookupPath", () => {
         const root = { pos: { x: 1 } }
         const oldPos = root.pos
 
-        const value = lookupPath(root, [])
-        const next = assignPath(root, ["pos", "x"], 2)
+        const value = lookupPath(new Chain(root), [])
+        const next = assignPath(new Chain(root), ["pos", "x"], 2)
 
         expect(value).to.be(root)
         expect(next).not.to.be(root)
@@ -392,23 +393,23 @@ describe("lookupPath", () => {
         const branchError = new Error("branch")
         const root = { branch: branchError }
 
-        expect(lookupPath(errorRoot, ["value"])).to.be(errorRoot)
-        expect(lookupPath(root, ["branch", "value"])).to.be(branchError)
+        expect(lookupPath(new Chain(errorRoot), ["value"])).to.be(errorRoot)
+        expect(lookupPath(new Chain(root), ["branch", "value"])).to.be(branchError)
     })
 
     it("returns undefined for primitive roots and missing paths", () => {
         const root = { branch: {} }
 
-        expect(lookupPath(7, ["value"])).to.be(undefined)
-        expect(lookupPath(null, ["value"])).to.be(undefined)
-        expect(lookupPath(undefined, ["value"])).to.be(undefined)
-        expect(lookupPath(root, ["branch", "missing"])).to.be(undefined)
-        expect(lookupPath(root, ["branch", "missing", "value"])).to.be(undefined)
-        expect(lookupPath({ value: undefined }, ["value"])).to.be(undefined)
+        expect(lookupPath(new Chain(7), ["value"])).to.be(undefined)
+        expect(lookupPath(new Chain(null), ["value"])).to.be(undefined)
+        expect(lookupPath(new Chain(undefined), ["value"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["branch", "missing"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["branch", "missing", "value"])).to.be(undefined)
+        expect(lookupPath(new Chain({ value: undefined }), ["value"])).to.be(undefined)
     })
 
     it("does not read inherited object properties", () => {
-        expect(lookupPath({}, ["constructor"])).to.be(undefined)
+        expect(lookupPath(new Chain({}), ["constructor"])).to.be(undefined)
     })
 
     it("does not read __proto__ or own non-enumerable properties", () => {
@@ -426,17 +427,17 @@ describe("lookupPath", () => {
             configurable: true,
         })
 
-        expect(lookupPath(root, ["__proto__"])).to.be(undefined)
-        expect(lookupPath(root, ["__proto__", "unsafe"])).to.be(undefined)
-        expect(lookupPath(root, ["hidden"])).to.be(undefined)
-        expect(lookupPath(root, ["hidden", "x"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["__proto__", "unsafe"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["hidden"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["hidden", "x"])).to.be(undefined)
     })
 
     it("supports primitive roots for empty lookup paths", () => {
-        expect(lookupPath(7, [])).to.be(7)
-        expect(lookupPath("text", [])).to.be("text")
-        expect(lookupPath(null, [])).to.be(null)
-        expect(lookupPath(undefined, [])).to.be(undefined)
+        expect(lookupPath(new Chain(7), [])).to.be(7)
+        expect(lookupPath(new Chain("text"), [])).to.be("text")
+        expect(lookupPath(new Chain(null), [])).to.be(null)
+        expect(lookupPath(new Chain(undefined), [])).to.be(undefined)
     })
 
 })
@@ -445,24 +446,24 @@ describe("deletePath", () => {
     it("returns null for an empty delete path", () => {
         const root = { value: 1 }
 
-        const next = deletePath(root, [])
+        const next = deletePath(new Chain(root), [])
 
         expect(next).to.be(null)
         expect(root).to.eql({ value: 1 })
     })
 
     it("supports null and primitive roots", () => {
-        expect(deletePath(null, ["value"])).to.be(null)
-        expect(deletePath(undefined, ["value"])).to.be(undefined)
-        expect(deletePath(7, ["value"])).to.be(7)
-        expect(deletePath("text", ["value"])).to.be("text")
+        expect(deletePath(new Chain(null), ["value"])).to.be(null)
+        expect(deletePath(new Chain(undefined), ["value"])).to.be(undefined)
+        expect(deletePath(new Chain(7), ["value"])).to.be(7)
+        expect(deletePath(new Chain("text"), ["value"])).to.be("text")
     })
 
     it("deletes from a copied branch without changing the escaped branch", () => {
         const root = { config: { keep: true, remove: true } }
-        const oldConfig = lookupPath(root, ["config"])
+        const oldConfig = lookupPath(new Chain(root), ["config"])
 
-        deletePath(root, ["config", "remove"])
+        deletePath(new Chain(root), ["config", "remove"])
 
         expect(oldConfig).to.eql({ keep: true, remove: true })
         expect(root.config).to.eql({ keep: true })
@@ -472,7 +473,7 @@ describe("deletePath", () => {
     it("can delete an Error at the target key", () => {
         const root = { value: new Error("old") }
 
-        deletePath(root, ["value"])
+        deletePath(new Chain(root), ["value"])
 
         expect(root).to.eql({})
     })
@@ -482,40 +483,46 @@ describe("deletePath", () => {
         const branchError = new Error("branch")
         const root = { branch: branchError }
 
-        const next = deletePath(errorRoot, ["value"])
-        deletePath(root, ["branch", "value"])
+        const next = deletePath(new Chain(errorRoot), ["value"])
+        deletePath(new Chain(root), ["branch", "value"])
 
         expect(next).to.be(errorRoot)
         expect(root.branch).to.be(branchError)
     })
 
-    it("treats array element deletion as a no-op", async () => {
+    it("deletes array elements without changing length", async () => {
         const arrayRoot = [1, 2, 3]
         const root = { list: [1, 2, 3] }
         const list = root.list
         const deferredList = deferred()
         const pendingRoot = { list: deferredList.promise }
 
-        const nextArrayRoot = deletePath(arrayRoot, [1])
-        deletePath(root, ["list", 1])
-        deletePath(pendingRoot, ["list", 1])
+        const nextArrayRoot = deletePath(new Chain(arrayRoot), [1])
+        deletePath(new Chain(root), ["list", 1])
+        deletePath(new Chain(pendingRoot), ["list", 1])
 
         deferredList.resolve([1, 2, 3])
         await flushMicrotasks()
 
         expect(nextArrayRoot).to.be(arrayRoot)
-        expect(arrayRoot).to.eql([1, 2, 3])
-        expect(root.list).to.eql([1, 2, 3])
+        expect(arrayRoot.length).to.be(3)
+        expect(arrayRoot[1]).to.be(undefined)
+        expect(1 in arrayRoot).to.be(false)
+        expect(root.list.length).to.be(3)
+        expect(root.list[1]).to.be(undefined)
+        expect(1 in root.list).to.be(false)
         expect(root.list).to.be(list)
-        expect(pendingRoot.list).to.eql([1, 2, 3])
+        expect(pendingRoot.list.length).to.be(3)
+        expect(pendingRoot.list[1]).to.be(undefined)
+        expect(1 in pendingRoot.list).to.be(false)
     })
 
     it("revokes pending writeback when deleting a promise key", async () => {
         const deferredValue = deferred()
         const root = {}
 
-        assignPath(root, ["value"], deferredValue.promise)
-        deletePath(root, ["value"])
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
+        deletePath(new Chain(root), ["value"])
 
         deferredValue.resolve({ x: 1 })
         await flushMicrotasks()
@@ -528,8 +535,8 @@ describe("deletePath", () => {
         const root = { branch: 7 }
         const pendingRoot = { branch: deferredBranch.promise }
 
-        deletePath(root, ["branch", "x"])
-        deletePath(pendingRoot, ["branch", "x"])
+        deletePath(new Chain(root), ["branch", "x"])
+        deletePath(new Chain(pendingRoot), ["branch", "x"])
 
         deferredBranch.resolve(7)
         await flushMicrotasks()
@@ -542,7 +549,7 @@ describe("deletePath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        deletePath(root, ["branch", "value"])
+        deletePath(new Chain(root), ["branch", "value"])
 
         deferredBranch.reject("delete blocked")
         await flushMicrotasks()

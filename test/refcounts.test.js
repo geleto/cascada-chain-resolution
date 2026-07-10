@@ -1,4 +1,5 @@
 const {
+    Chain,
     expect,
     buildRefIndex,
     getRefCounter,
@@ -22,9 +23,9 @@ describe("subtree counters", () => {
         const cyclic = {}
         cyclic.self = cyclic
 
-        assignPath(root, ["pending"], deferredValue.promise)
-        assignPath(root, ["nested", "error"], new Error("bad"))
-        assignPath(root, ["cycle"], cyclic)
+        assignPath(new Chain(root), ["pending"], deferredValue.promise)
+        assignPath(new Chain(root), ["nested", "error"], new Error("bad"))
+        assignPath(new Chain(root), ["cycle"], cyclic)
 
         expect(root.pending).to.be(deferredValue.promise)
         expect(root.nested.error instanceof Error).to.be(true)
@@ -54,7 +55,7 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(rootMeta)
         expect(rootMeta.promiseCount).to.be(1)
 
-        const next = assignPath(root, ["added"], true)
+        const next = assignPath(new Chain(root), ["added"], true)
         const nextMeta = metaOf(next)
         const nextSymbols = Object.getOwnPropertySymbols(next)
 
@@ -93,7 +94,7 @@ describe("subtree counters", () => {
         expectCounts(root, 1, 1)
         verifyRefCounts(root)
 
-        assignPath(root, ["nested", "pending"], nestedPromise.promise)
+        assignPath(new Chain(root), ["nested", "pending"], nestedPromise.promise)
         expectCounts(root, 2, 1)
         verifyRefCounts(root)
     })
@@ -106,17 +107,17 @@ describe("subtree counters", () => {
         const cleanRoot = { value: pendingClean.promise }
         const badRoot = { value: pendingBad.promise }
 
-        expect(hasError(clean, [])).to.be(false)
-        expect(hasError(currentError, [])).to.be(true)
+        expect(hasError(new Chain(clean), [])).to.be(false)
+        expect(hasError(new Chain(currentError), [])).to.be(true)
         expect(getRefCounter(currentError).errorCount).to.be(1)
 
-        const pendingCleanProbe = hasError(cleanRoot, [])
-        const pendingBadProbe = hasError(badRoot, [])
+        const pendingCleanProbe = hasError(new Chain(cleanRoot), [])
+        const pendingBadProbe = hasError(new Chain(badRoot), [])
 
         expect(typeof pendingCleanProbe.then).to.be("function")
         expect(typeof pendingBadProbe.then).to.be("function")
 
-        expect(hasError(clean, [])).to.be(false)
+        expect(hasError(new Chain(clean), [])).to.be(false)
 
         pendingClean.resolve({ ok: true })
         pendingBad.reject("bad")
@@ -139,11 +140,11 @@ describe("subtree counters", () => {
         expectCounts(root, 1, 1)
         verifyRefCounts(root)
 
-        assignPath(root, ["nested", "pending"], second.promise)
+        assignPath(new Chain(root), ["nested", "pending"], second.promise)
         expectCounts(root, 2, 1)
         verifyRefCounts(root)
 
-        deletePath(root, ["error"])
+        deletePath(new Chain(root), ["error"])
         expectCounts(root, 2, 0)
         verifyRefCounts(root)
 
@@ -163,11 +164,11 @@ describe("subtree counters", () => {
         const root = {}
 
         buildRefIndex(root)
-        assignPath(root, ["value"], deferredValue.promise)
+        assignPath(new Chain(root), ["value"], deferredValue.promise)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
-        assignPath(root, ["value"], 7)
+        assignPath(new Chain(root), ["value"], 7)
         expect(root.value).to.be(7)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
@@ -260,7 +261,7 @@ describe("subtree counters", () => {
         const nested = deferred()
         const root = { branch: branch.promise }
 
-        assignPath(root, ["branch", "nested"], nested.promise)
+        assignPath(new Chain(root), ["branch", "nested"], nested.promise)
         buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
@@ -304,8 +305,8 @@ describe("subtree counters", () => {
         const root = { left: child, right: child }
 
         buildRefIndex(root)
-        lookupPath(root, [])
-        const next = assignPath(root, ["added"], true)
+        lookupPath(new Chain(root), [])
+        const next = assignPath(new Chain(root), ["added"], true)
 
         expectCounts(child, 1, 0)
         expectCounts(root, 2, 0)
@@ -329,7 +330,7 @@ describe("subtree counters", () => {
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
-        deletePath(root, ["value"])
+        deletePath(new Chain(root), ["value"])
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
 
@@ -345,9 +346,9 @@ describe("subtree counters", () => {
         const deferredValue = deferred()
         const root = { branch: { x: 1 } }
 
-        lookupPath(root, [])
-        const next = assignPath(root, ["added"], true)
-        assignPath(next, ["branch", "pending"], deferredValue.promise)
+        lookupPath(new Chain(root), [])
+        const next = assignPath(new Chain(root), ["added"], true)
+        assignPath(new Chain(next), ["branch", "pending"], deferredValue.promise)
 
         expectCounts(root, 0, 0)
         expectCounts(next, 1, 0)
@@ -362,14 +363,14 @@ describe("subtree counters", () => {
         }
 
         buildRefIndex(root)
-        lookupPath(root, [])
+        lookupPath(new Chain(root), [])
 
-        const next = assignPath(root, ["added"], true)
+        const next = assignPath(new Chain(root), ["added"], true)
         expectCounts(root, 1, 1)
         expectCounts(next, 1, 1)
         verifyRefCounts(root, next)
 
-        assignPath(next, ["sibling", "error"], "fixed")
+        assignPath(new Chain(next), ["sibling", "error"], "fixed")
         expectCounts(root, 1, 1)
         expectCounts(next, 1, 0)
         verifyRefCounts(root, next)
