@@ -1,3 +1,6 @@
+const path = require("path")
+const { spawnSync } = require("child_process")
+
 const {
     Chain,
     expect,
@@ -41,6 +44,29 @@ describe("promise helpers", () => {
         }
 
         expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
+    it("reports each fatal only once across nested wrapper layers", async () => {
+        const fatal = new TypeError("nested runtime bug")
+        let reportCount = 0
+        let caught
+
+        setFatalErrorReporter(() => {
+            reportCount++
+        })
+        try {
+            await onInternalResolve(
+                onValueResolve(Promise.resolve("ok"), () => reportFatalError(fatal)),
+                value => value,
+            )
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reportCount).to.be(1)
         expect(caught).to.be(fatal)
     })
 
@@ -196,6 +222,21 @@ describe("promise helpers", () => {
         }
 
         expect(reported).to.be(fatal)
+    })
+
+    it("reports suspended mutator fatals and leaves them unhandled", () => {
+        const fixture = path.join(__dirname, "fixtures", "suspended-mutator-fatal.js")
+        const child = spawnSync(process.execPath, [fixture], { encoding: "utf8" })
+
+        expect(child.status).to.be(0)
+        expect(JSON.parse(child.stdout)).to.eql({
+            returnsUndefined: true,
+            reportCount: 1,
+            unhandledCount: 1,
+            sameError: true,
+            message: "Cannot mutate non-enumerable property",
+            valueUnchanged: true,
+        })
     })
 })
 

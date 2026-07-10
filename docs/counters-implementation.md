@@ -657,7 +657,7 @@ normalize uses optional settlement fields on the reached branch's META:
 - `settlementVerifyScheduled` coalesces queued checks.
 - The only wake source is a zero-crossing in `applyCountDelta`.
 
-Verification is registered through `onValueResolve(Promise.resolve(), verify)`, never a
+Verification is registered through `onInternalResolve(Promise.resolve(), verify)`, never a
 bare microtask and never an ambient "settling promise". This is still ordered
 correctly: a zero-crossing happens inside one promise continuation; every consumer
 already registered on that settling promise has already been queued, and registering
@@ -682,7 +682,7 @@ function scheduleSettlementVerify(node) {
     if (meta.settlementPromise === undefined || meta.settlementVerifyScheduled) return
 
     meta.settlementVerifyScheduled = true
-    onValueResolve(Promise.resolve(), () => {
+    onInternalResolve(Promise.resolve(), () => {
         meta.settlementVerifyScheduled = false
         if (meta.settlementPromise !== undefined && meta.promiseCount === 0) {
             const resolve = meta.settlementResolve
@@ -859,7 +859,7 @@ Lazy, branch-level ref-indexing:
   Error answers true from the published `errorCount`; the branch is ref-indexed,
   but no hasError wait tree is registered for its pending promises.
 - wrapper-only scheduling: no `queueMicrotask`/`setTimeout` anywhere in index.js
-  (greppable); zero-verification rides `onValueResolve(Promise.resolve(), ...)`, registered
+  (greppable); zero-verification rides `onInternalResolve(Promise.resolve(), ...)`, registered
   at the zero-crossing, so it runs after the already-queued consumers of the settling
   promise — assert ordering against an earlier-issued suspended write that re-arms the count.
 - frozen node containing a promise or Error anywhere beneath (including via an
@@ -888,5 +888,7 @@ Settlement / normalize / hasError:
   writes.
 - plug & play: the full base suite passes with refcounts.js stubbed to passthroughs,
   and ops on never-ref-indexed data behave bit-for-bit like the base kernel.
-- unhandled-rejection guard: whole matrix runs under a `process.on("unhandledRejection")`
-  sentinel, per basics item 2.
+- unhandled-rejection guard: the whole matrix runs under a
+  `process.on("unhandledRejection")` sentinel for unexpected rejections, per basics item
+  2. A child-process integration test separately pins the intentional host-unhandled
+  rejection produced when a discarded mutator continuation fails fatally.

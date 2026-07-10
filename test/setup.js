@@ -1,4 +1,5 @@
 const expect = require("expect.js")
+const { setFatalErrorReporter } = require("../src/error")
 
 const unhandledRejections = []
 
@@ -14,6 +15,8 @@ exports.mochaHooks = {
     async afterEach() {
         await new Promise(resolve => setImmediate(resolve))
         const reasons = unhandledRejections.splice(0)
+        setFatalErrorReporter()
+
         expect(reasons).to.eql([])
     },
 

@@ -44,6 +44,8 @@ Objects imported from outside calls also need not be modified, so copy on write 
 
 Additionally, promises are handled transparently. If a property is set to a promise, once that promise is resolved, it is replaced by the resolved value automatically. If the value rejects, it is replaced by the language error value. Cascada's real error value is a special immediately-rejecting thenable, so rejecting promises are valid error values too; this sandbox often uses JavaScript `Error` objects to stand in for that value. Below, `Error` means this language-level error value unless JavaScript `Error` is mentioned explicitly. Also assignPath can receive an error value as value and it has to be properly referenced(see Subtree counters). Any operation or walk that encounters a settled-but-unreplaced promise replaces it in place (with counter propagation), and registers writeback for pending unregistered ones it discovers. The one exception is a promise key on a non-extensible holder: nothing can ever be written there, so reads resolve it mirror-free through the raw settled value (see Frozen rule).
 
+Fatal runtime failures are distinct from language Error values: they are reported once per object identity and the original value is thrown. A fatal failure in a discarded internal mutator continuation therefore remains a host-unhandled rejection after reporting; mutators still return nothing. Only rejection of a data promise at a value-settlement boundary is converted to a language Error value.
+
 Public root operations take a `Chain`, not a bare root value. The Chain owns a
 private `_state.value` holder slot that is outside the language graph; operators
 run the value-root algorithm through that holder, so root promises use the normal

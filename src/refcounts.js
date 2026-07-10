@@ -2,7 +2,7 @@ const {
     isError,
     isPromise,
     isTracked,
-    onValueResolve,
+    onInternalResolve,
 } = require("./helpers")
 const {
     ensureMeta,
@@ -252,7 +252,7 @@ function scheduleSettlementVerify(counter) {
     // land in this branch are each suspended on a promise it counts [1,0] —
     // zero means none are left. Later-issued ops never touch this counter at
     // all: the pin mark makes them COW away, onto a copy with its own META.
-    onValueResolve(Promise.resolve(), () => {
+    onInternalResolve(Promise.resolve(), () => {
         counter.settlementVerifyScheduled = false
         if (counter.settlementPromise !== undefined && counter.promiseCount === 0) {
             const resolve = counter.settlementResolve
