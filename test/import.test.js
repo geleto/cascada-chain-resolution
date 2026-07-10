@@ -6,6 +6,7 @@ const {
     getRefCounter,
     buildRefIndex,
     metaOf,
+    STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
     lookupPath,
@@ -175,7 +176,12 @@ describe("import", () => {
         expect(errorFailure.message).to.be(
             "Frozen object cannot contain promises or errors (imported at: frozen error)",
         )
-        expect(metaOf(frozenPromise)).to.be(undefined)
+        if (STORE_META_IN_WEAKMAP) {
+            expect(metaOf(frozenPromise).importContext).to.be("frozen promise")
+            expect(getRefCounter(frozenPromise)).to.be(undefined)
+        } else {
+            expect(metaOf(frozenPromise)).to.be(undefined)
+        }
     })
 
     it("rejects imported own __proto__ keys when counting", () => {

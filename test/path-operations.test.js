@@ -560,6 +560,38 @@ describe("deletePath", () => {
         expect(root).to.eql({})
     })
 
+    it("captures mutation paths before a pending root settles", async () => {
+        const assignedRoot = deferred()
+        const assignedChain = new Chain(assignedRoot.promise)
+        const assignSegments = ["assigned"]
+
+        assignPath(assignedChain, assignSegments, true)
+        assignSegments[0] = "changed"
+        assignedRoot.resolve({})
+
+        const deletedRoot = deferred()
+        const deletedChain = new Chain(deletedRoot.promise)
+        const deleteSegments = ["deleted"]
+
+        deletePath(deletedChain, deleteSegments)
+        deleteSegments.length = 0
+        deletedRoot.resolve({ keep: true, deleted: true })
+
+        const clearedRoot = deferred()
+        const clearedChain = new Chain(clearedRoot.promise)
+        const clearSegments = []
+
+        deletePath(clearedChain, clearSegments)
+        clearSegments.push("changed")
+        clearedRoot.resolve({ keep: true })
+
+        await flushMicrotasks()
+
+        expect(assignedChain._state.value).to.eql({ assigned: true })
+        expect(deletedChain._state.value).to.eql({ keep: true })
+        expect(clearedChain._state.value).to.be(null)
+    })
+
     it("does not create through primitive intermediates", async () => {
         const deferredBranch = deferred()
         const root = { branch: 7 }

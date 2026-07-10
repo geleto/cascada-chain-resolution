@@ -14,6 +14,7 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
+    thrownBy,
 } = require("./support")
 
 describe("subtree counters", () => {
@@ -72,6 +73,22 @@ describe("subtree counters", () => {
         verifyRefCounts(root, next)
     })
 
+    it("does not inherit metadata through object prototypes", () => {
+        const pending = deferred()
+        const prototype = {}
+        const child = Object.create(prototype)
+        child.pending = pending.promise
+        const root = { prototype, child }
+
+        buildRefIndex(root)
+
+        expectCounts(prototype, 0, 0)
+        expectCounts(child, 1, 0)
+        expectCounts(root, 1, 0)
+        expect(metaOf(child)).not.to.be(metaOf(prototype))
+        verifyRefCounts(root)
+    })
+
     it("counts primitive, promise, Error, and valid frozen values", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
 
@@ -83,6 +100,47 @@ describe("subtree counters", () => {
         expect(buildRefIndex(frozen)).to.be(frozen)
         expectCounts(frozen, 0, 0)
         verifyRefCounts(frozen)
+    })
+
+    it("revalidates indexed descendants beneath non-extensible ancestors", () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+
+        expect(buildRefIndex(child)).to.be(child)
+
+        const wrapper = Object.preventExtensions({ child })
+        const failure = buildRefIndex(wrapper)
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Frozen object cannot contain promises or errors")
+        expect(getRefCounter(wrapper)).to.be(undefined)
+    })
+
+    it("revalidates a DAG child reached later through a non-extensible ancestor", () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const wrapper = Object.preventExtensions({ child })
+        const root = { plain: child, frozen: wrapper }
+
+        const failure = buildRefIndex(root)
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Frozen object cannot contain promises or errors")
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(child)).to.be(undefined)
+    })
+
+    it("verifies indexed islands reached through unindexed wrappers", () => {
+        const child = { clean: true }
+        const wrapper = { child }
+
+        buildRefIndex(child)
+        getRefCounter(child).errorCount = 1
+
+        const failure = thrownBy(() => verifyRefCounts(wrapper))
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Counter totals are inconsistent")
     })
 
     it("bookkeeps tracked branches after first count", () => {
@@ -280,6 +338,26 @@ describe("subtree counters", () => {
 
         expect(root.branch.nested).to.be("done")
         expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("keeps mirror advances aligned with validation replacements", async () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        const resolved = importValue({}, "shared resolved value")
+        // Force the outer suspended commit to replace its candidate with Error.
+        assignPath(chain, ["pending", "back"], root)
+        const observed = lookupPath(chain, ["pending"])
+
+        pending.resolve(resolved)
+        const value = await observed
+
+        expect(root.pending instanceof Error).to.be(true)
+        expect(value).to.be(root.pending)
+        expect(value.message).to.be("Value cannot reach its write target")
         verifyRefCounts(root)
     })
 

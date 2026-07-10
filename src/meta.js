@@ -8,6 +8,7 @@ const { reportFatalError } = require("./error")
 const STORE_META_IN_WEAKMAP = false
 const META = Symbol("META")
 const META_MAP = new WeakMap()
+const hasOwn = Object.prototype.hasOwnProperty
 // Inline Symbol storage cannot attach records to non-extensible values, but
 // import attribution must survive on them (they are exactly the values most
 // likely to fail counting validation). Written only by markImported, read only
@@ -36,7 +37,8 @@ function metaOf(value) {
     if (!isTracked(value)) return undefined
     if (STORE_META_IN_WEAKMAP) return META_MAP.get(value)
     if (!Object.isExtensible(value)) return undefined
-    return value[META]
+    // META belongs to this exact node; runtime objects may themselves be prototypes.
+    return hasOwn.call(value, META) ? value[META] : undefined
 }
 
 function ensureMeta(value) {

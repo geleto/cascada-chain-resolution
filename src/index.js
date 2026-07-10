@@ -263,16 +263,17 @@ function walkMutationPath(rootHolder, path, createMissingIntermediates, onTarget
         if (isPromise(child)) {
             const mirror = getOrCreatePromiseMirror(parent, key, child)
             onValueResolve(child, () => {
-                const next = walk(
+                let next = walk(
                     mirror.currentValue,
                     index + 1,
                     parentInsideSharedBranch,
                 )
-                mirror.currentValue = next
                 if (isLivePromiseMirror(parent, key, mirror) &&
                     next !== readLanguageProperty(parent, key)) {
-                    setProperty(parent, key, next)
+                    // Validation may replace the candidate with a language Error.
+                    next = setProperty(parent, key, next)
                 }
+                mirror.currentValue = next
             })
             return parent
         }
@@ -551,8 +552,9 @@ function copyToPlainValue(value, copies = new Map()) {
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deletePath(chain, path) {
+    const deletesRoot = path.length === 0
     walkMutationPath(chain._state, path, false, (parent, key) => {
-        if (path.length === 0) {
+        if (deletesRoot) {
             clearPromiseMirror(parent, key)            // no later writeback re-mirrors
             setProperty(parent, key, null)
         } else {

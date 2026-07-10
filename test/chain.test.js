@@ -85,4 +85,28 @@ describe("Chain root state", () => {
         expect(await normalized).to.eql({ normalized: true })
         expect(normalizeChain._state.value).to.eql({ replacement: "normalize" })
     })
+
+    it("captures observation paths before a pending root settles", async () => {
+        const lookupRoot = deferred()
+        const lookupSegments = ["before"]
+        const read = lookupPath(new Chain(lookupRoot.promise), lookupSegments)
+        lookupSegments[0] = "after"
+        lookupRoot.resolve({ before: 1, after: 2 })
+
+        const normalizeRoot = deferred()
+        const normalizeSegments = ["before"]
+        const normalized = normalize(new Chain(normalizeRoot.promise), normalizeSegments)
+        normalizeSegments[0] = "after"
+        normalizeRoot.resolve({ before: { selected: true }, after: { selected: false } })
+
+        const errorRoot = deferred()
+        const errorSegments = ["before"]
+        const foundError = hasError(new Chain(errorRoot.promise), errorSegments)
+        errorSegments[0] = "after"
+        errorRoot.resolve({ before: new Error("selected"), after: { clean: true } })
+
+        expect(await read).to.be(1)
+        expect(await normalized).to.eql({ selected: true })
+        expect(await foundError).to.be(true)
+    })
 })

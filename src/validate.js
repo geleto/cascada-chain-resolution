@@ -102,9 +102,10 @@ function validateValue(
         return null
     }
 
-    // Already-ref-indexed subtrees are validated, acyclic, and downward-closed
-    // — skippable, but only when there is no write target to find behind them.
-    if (writeTarget === undefined && Object.isExtensible(value) && isRefIndexed(value)) {
+    // Already-ref-indexed subtrees are valid only for ordinary mutable context.
+    // A frozen ancestor imposes the stricter no-promise/no-Error rule, so that
+    // subtree must be checked again even though its counters are already live.
+    if (writeTarget === undefined && !valueInsideFrozen && isRefIndexed(value)) {
         return null
     }
     if (visiting.has(value)) {

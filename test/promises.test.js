@@ -44,6 +44,26 @@ describe("promise helpers", () => {
         expect(caught).to.be(fatal)
     })
 
+    it("reports promises rejected by value continuations as fatal", async () => {
+        const fatal = new TypeError("async runtime bug")
+        let reported
+        let caught
+
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            await onValueResolve(Promise.resolve("ok"), () => Promise.reject(fatal))
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
     it("reports internal promise rejections as fatal errors", async () => {
         const fatal = new TypeError("runtime bug")
         let reported
@@ -54,6 +74,51 @@ describe("promise helpers", () => {
         })
         try {
             await onInternalResolve(Promise.reject(fatal), () => "ignored")
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
+    it("reports promises rejected by internal continuations as fatal", async () => {
+        const fatal = new TypeError("async internal bug")
+        let reported
+        let caught
+
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            await onInternalResolve(Promise.resolve("ok"), () => Promise.reject(fatal))
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(reported).to.be(fatal)
+        expect(caught).to.be(fatal)
+    })
+
+    it("reports failures while converting data rejections", async () => {
+        const fatal = new TypeError("broken rejection reason")
+        const reason = {
+            toString() {
+                throw fatal
+            },
+        }
+        let reported
+        let caught
+
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            await onValueResolve(Promise.reject(reason), value => value)
         } catch (error) {
             caught = error
         } finally {

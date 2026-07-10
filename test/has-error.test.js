@@ -1,6 +1,7 @@
 const {
     Chain,
     expect,
+    buildRefIndex,
     getRefCounter,
     verifyRefCounts,
     assignPath,
@@ -90,6 +91,18 @@ describe("hasError", () => {
         expect(getRefCounter(pending)).to.be(undefined)
         expect(getRefCounter(bad)).to.be(undefined)
         expect(getRefCounter(bad.nested)).to.be(undefined)
+    })
+
+    it("revalidates indexed descendants under a non-extensible branch", () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+
+        expect(buildRefIndex(child)).to.be(child)
+
+        const wrapper = Object.preventExtensions({ child })
+
+        expect(hasError(new Chain(wrapper), [])).to.be(true)
+        expect(getRefCounter(wrapper)).to.be(undefined)
     })
 
     it("returns true on indexed sync errors", () => {

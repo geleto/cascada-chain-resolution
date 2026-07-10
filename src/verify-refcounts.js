@@ -18,26 +18,27 @@ function verifyRefCounts(...roots) {
 }
 
 function verifyRefIndexedNode(node, seen) {
-    if (!isTracked(node) || !Object.isExtensible(node) || seen.has(node)) return
-
-    const counter = getRefCounter(node)
-    if (counter?.parents === undefined) return
-
+    if (!isTracked(node) || seen.has(node)) return
     seen.add(node)
 
-    const expectedCounts = recountRefIndexedNode(node)
-    if (counter.promiseCount !== expectedCounts.promiseCount ||
-        counter.errorCount !== expectedCounts.errorCount) {
-        reportFatalError(new Error("Counter totals are inconsistent"))
-    }
+    const counter = getRefCounter(node)
+    if (counter?.parents !== undefined) {
+        const expectedCounts = recountRefIndexedNode(node)
+        if (counter.promiseCount !== expectedCounts.promiseCount ||
+            counter.errorCount !== expectedCounts.errorCount) {
+            reportFatalError(new Error("Counter totals are inconsistent"))
+        }
 
-    verifyStoredParentEdges(node)
+        verifyStoredParentEdges(node)
+    }
 
     for (const key of Object.keys(node)) {
         verifyRefIndexedNode(node[key], seen)
     }
-    for (const parent of counter.parents.keys()) {
-        verifyRefIndexedNode(parent, seen)
+    if (counter?.parents !== undefined) {
+        for (const parent of counter.parents.keys()) {
+            verifyRefIndexedNode(parent, seen)
+        }
     }
 }
 

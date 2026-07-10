@@ -2,6 +2,8 @@ const {
     Chain,
     expect,
     metaOf,
+    STORE_META_IN_WEAKMAP,
+    buildRefIndex,
     getRefCounter,
     verifyRefCounts,
     assignPath,
@@ -449,7 +451,28 @@ describe("normalize", () => {
         expect(failure.message).to.be(
             "Frozen object cannot contain promises or errors (imported at: frozen normalize)",
         )
-        expect(metaOf(invalid)).to.be(undefined)
+        if (STORE_META_IN_WEAKMAP) {
+            expect(metaOf(invalid).importContext).to.be("frozen normalize")
+            expect(getRefCounter(invalid)).to.be(undefined)
+        } else {
+            expect(metaOf(invalid)).to.be(undefined)
+        }
+    })
+
+    it("revalidates an indexed child when a frozen ancestor makes its promises invalid", () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+
+        expect(buildRefIndex(child)).to.be(child)
+
+        const frozen = Object.freeze({ child })
+        importValue(frozen, "frozen indexed normalize")
+        const failure = normalize(new Chain(frozen), [])
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen indexed normalize)",
+        )
     })
 
     it("normalizes through a root promise", async () => {
