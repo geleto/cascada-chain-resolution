@@ -55,7 +55,9 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(rootMeta)
         expect(rootMeta.promiseCount).to.be(1)
 
-        const next = assignPath(new Chain(root), ["added"], true)
+        const chain = new Chain(root)
+        assignPath(chain, ["added"], true)
+        const next = chain._state.value
         const nextMeta = metaOf(next)
         const nextSymbols = Object.getOwnPropertySymbols(next)
 
@@ -306,7 +308,9 @@ describe("subtree counters", () => {
 
         buildRefIndex(root)
         lookupPath(new Chain(root), [])
-        const next = assignPath(new Chain(root), ["added"], true)
+        const chain = new Chain(root)
+        assignPath(chain, ["added"], true)
+        const next = chain._state.value
 
         expectCounts(child, 1, 0)
         expectCounts(root, 2, 0)
@@ -347,8 +351,10 @@ describe("subtree counters", () => {
         const root = { branch: { x: 1 } }
 
         lookupPath(new Chain(root), [])
-        const next = assignPath(new Chain(root), ["added"], true)
-        assignPath(new Chain(next), ["branch", "pending"], deferredValue.promise)
+        const chain = new Chain(root)
+        assignPath(chain, ["added"], true)
+        const next = chain._state.value
+        assignPath(chain, ["branch", "pending"], deferredValue.promise)
 
         expectCounts(root, 0, 0)
         expectCounts(next, 1, 0)
@@ -364,13 +370,15 @@ describe("subtree counters", () => {
 
         buildRefIndex(root)
         lookupPath(new Chain(root), [])
+        const chain = new Chain(root)
 
-        const next = assignPath(new Chain(root), ["added"], true)
+        assignPath(chain, ["added"], true)
+        const next = chain._state.value
         expectCounts(root, 1, 1)
         expectCounts(next, 1, 1)
         verifyRefCounts(root, next)
 
-        assignPath(new Chain(next), ["sibling", "error"], "fixed")
+        assignPath(chain, ["sibling", "error"], "fixed")
         expectCounts(root, 1, 1)
         expectCounts(next, 1, 0)
         verifyRefCounts(root, next)

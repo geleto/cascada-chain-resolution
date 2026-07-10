@@ -208,7 +208,6 @@ function assignPath(chain, path, value) {
             setProperty(parent, key, value)
         }
     })
-    return chain._state.value
 }
 
 // The walk starts at the Chain's private holder, so `_state.value` is prepended
@@ -561,7 +560,6 @@ function deletePath(chain, path) {
             deleteProperty(parent, key)
         }
     })
-    return chain._state.value
 }
 
 module.exports = { Chain, assignPath, deletePath, hasError, import: importValue, lookupPath, normalize }

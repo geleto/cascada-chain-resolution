@@ -322,6 +322,33 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
+    it("sees an earlier suspended write remove a transient Error", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        assignPath(new Chain(root), ["branch", "pending", "bad"], "fixed")
+        const result = hasError(new Chain(root), ["branch"])
+
+        pending.resolve({ bad: new Error("transient") })
+
+        expect(await result).to.be(false)
+        expect(root.branch.pending).to.eql({ bad: "fixed" })
+        verifyRefCounts(root)
+    })
+
+    it("ignores an Error installed by a later suspended write", async () => {
+        const pending = deferred()
+        const chain = new Chain({ branch: pending.promise })
+
+        const result = hasError(chain, ["branch"])
+        assignPath(chain, ["branch", "bad"], new Error("future"))
+        pending.resolve({})
+
+        expect(await result).to.be(false)
+        expect(chain._state.value.branch.bad.message).to.be("future")
+        verifyRefCounts(chain._state.value)
+    })
+
     it("coexists with normalize on the same pending branch", async () => {
         const bad = deferred()
         const slow = deferred()
@@ -381,6 +408,38 @@ describe("hasError", () => {
         expect(await result).to.be(true)
         expect(root.branch.pending).to.be("fixed")
         verifyRefCounts(root)
+    })
+
+    it("still observes a rejection settled before a later overwrite", async () => {
+        const pending = deferred()
+        const chain = new Chain({ pending: pending.promise })
+
+        const result = hasError(chain, ["pending"])
+        pending.reject("already queued")
+        assignPath(chain, ["pending"], "fixed")
+
+        expect(await result).to.be(true)
+        expect(chain._state.value.pending).to.be("fixed")
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("does not transfer its wait to a replacement promise", async () => {
+        const observed = deferred()
+        const replacement = deferred()
+        const chain = new Chain({ branch: { pending: observed.promise } })
+
+        const result = hasError(chain, ["branch"])
+        assignPath(chain, ["branch", "pending"], replacement.promise)
+        observed.resolve("clean")
+
+        expect(await result).to.be(false)
+        expect(chain._state.value.branch.pending).to.be(replacement.promise)
+
+        replacement.reject("future error")
+        await flushMicrotasks()
+
+        expect(chain._state.value.branch.pending.message).to.be("future error")
+        verifyRefCounts(chain._state.value)
     })
 
     it("still observes a pending root rejection after a root overwrite", async () => {
@@ -448,6 +507,47 @@ describe("hasError", () => {
         expect(await result).to.be(true)
         expect(root.branch.pending).to.be("fixed")
         verifyRefCounts(root)
+    })
+
+    it("follows promises exposed by a mirror revoked before resolution", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: { outer: outer.promise } })
+        let settled = false
+
+        const result = hasError(chain, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, ["branch", "outer"], "fixed")
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        inner.reject("private nested error")
+
+        expect(await result).to.be(true)
+        expect(chain._state.value.branch.outer).to.be("fixed")
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("still probes a nested promise detached after it was discovered", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: { outer: outer.promise } })
+
+        const result = hasError(chain, ["branch"])
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        assignPath(chain, ["branch", "outer", "inner"], "fixed")
+        inner.reject("detached error")
+
+        expect(await result).to.be(true)
+        expect(chain._state.value.branch.outer.inner).to.be("fixed")
+        verifyRefCounts(chain._state.value)
     })
 
     it("still observes a pending parent rejection after a parent-path overwrite", async () => {

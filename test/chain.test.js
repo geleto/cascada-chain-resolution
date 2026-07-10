@@ -63,4 +63,26 @@ describe("Chain root state", () => {
 
         expect(chain._state.value).to.eql({ next: true })
     })
+
+    it("keeps pending root observations on their issue-time state", async () => {
+        const lookupRoot = deferred()
+        const lookupChain = new Chain(lookupRoot.promise)
+        const read = lookupPath(lookupChain, [])
+
+        lookupRoot.resolve({ observed: true })
+        assignPath(lookupChain, [], { replacement: "lookup" })
+
+        expect(await read).to.eql({ observed: true })
+        expect(lookupChain._state.value).to.eql({ replacement: "lookup" })
+
+        const normalizeRoot = deferred()
+        const normalizeChain = new Chain(normalizeRoot.promise)
+        const normalized = normalize(normalizeChain, [])
+
+        normalizeRoot.resolve({ normalized: true })
+        assignPath(normalizeChain, [], { replacement: "normalize" })
+
+        expect(await normalized).to.eql({ normalized: true })
+        expect(normalizeChain._state.value).to.eql({ replacement: "normalize" })
+    })
 })

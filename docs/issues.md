@@ -112,7 +112,7 @@
     Implemented shape:
 
     - Public operators receive the `Chain` and operate on `chain._state.value` as the root value.
-    - Mutating operators return the current `chain._state.value`, but the Chain slot is the authoritative root location. They synchronously replace `chain._state.value` when the root is available; when it is a pending promise, the ordinary promise mirror for `_state.value` serializes root-level operations and writes the settled/current value back only while that mirror remains live.
+    - Mutating operators return nothing. They synchronously replace `chain._state.value` when the root is available; when it is a pending promise, the ordinary promise mirror for `_state.value` serializes root-level operations and writes the settled/current value back only while that mirror remains live. Values are observed only through lookupPath, normalize, or hasError; the Chain slot remains the authoritative root location.
     - Bookkeeping functions (`buildRefIndex`, `markShared`, `markImported`, promise mirrors, COW, normalize/hasError branch probes) receive only values below `_state.value`, never `chain`; the private `_state` holder can carry normal META, but it is host state, not language data.
     - Other `Chain` fields such as command arrays, caches, schedulers, and bookkeeping are outside the language object graph. They are not counted, copied, marked, mirrored, or validated by this kernel.
 

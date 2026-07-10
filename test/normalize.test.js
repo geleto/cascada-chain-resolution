@@ -203,6 +203,73 @@ describe("normalize", () => {
         verifyRefCounts(root, value)
     })
 
+    it("keeps a settled value when a later overwrite overtakes its continuation", async () => {
+        const pending = deferred()
+        const chain = new Chain({ branch: pending.promise })
+        const result = normalize(chain, ["branch"])
+
+        pending.resolve({ observed: true })
+        assignPath(chain, ["branch"], { replacement: true })
+
+        expect(await result).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("continues a nested path wait after a later ancestor replacement", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+        const result = normalize(chain, ["branch", "inner"])
+
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+        assignPath(chain, ["branch"], { replacement: true })
+        inner.resolve({ observed: true })
+
+        expect(await result).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("settles promises exposed by a path mirror revoked before resolution", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+        const result = normalize(chain, ["branch"])
+        let settled = false
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, ["branch"], { replacement: true })
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        inner.resolve({ observed: true })
+
+        expect(await result).to.eql({ inner: { observed: true } })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("does not transfer a pending normalization to a replacement promise", async () => {
+        const observed = deferred()
+        const replacement = deferred()
+        const chain = new Chain({ branch: observed.promise })
+
+        const result = normalize(chain, ["branch"])
+        assignPath(chain, ["branch"], replacement.promise)
+        observed.resolve({ observed: true })
+
+        expect(await result).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.be(replacement.promise)
+
+        replacement.resolve({ replacement: true })
+        await flushMicrotasks()
+
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
     it("waits for promises exposed by resolved promise values", async () => {
         const outer = deferred()
         const inner = deferred()

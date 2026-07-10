@@ -315,6 +315,56 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.branch.value).not.to.be(value)
     })
 
+    it("continues a nested lookup after a later ancestor replacement", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+
+        const read = lookupPath(chain, ["branch", "inner", "value"])
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        assignPath(chain, ["branch"], { replacement: true })
+        inner.resolve({ value: { observed: true } })
+
+        expect(await read).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("continues through promises exposed after its first mirror is revoked", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+
+        const read = lookupPath(chain, ["branch", "inner", "value"])
+        assignPath(chain, ["branch"], { replacement: true })
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        inner.resolve({ value: { observed: true } })
+
+        expect(await read).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("does not transfer a pending lookup to a replacement promise", async () => {
+        const observed = deferred()
+        const replacement = deferred()
+        const chain = new Chain({ branch: observed.promise })
+
+        const read = lookupPath(chain, ["branch"])
+        assignPath(chain, ["branch"], replacement.promise)
+        observed.resolve({ observed: true })
+
+        expect(await read).to.eql({ observed: true })
+        expect(chain._state.value.branch).to.be(replacement.promise)
+
+        replacement.resolve({ replacement: true })
+        await flushMicrotasks()
+
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
     it("can read through a pending intermediate promise without sharing ownership", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
@@ -361,11 +411,15 @@ describe("promise mirrors and lookupPath", () => {
         assignPath(new Chain(root), ["branch", "before"], 1)
         importValue(root)
 
-        const left = assignPath(new Chain(root), ["left"], true)
-        const right = assignPath(new Chain(root), ["right"], true)
+        const leftChain = new Chain(root)
+        const rightChain = new Chain(root)
+        assignPath(leftChain, ["left"], true)
+        assignPath(rightChain, ["right"], true)
+        const left = leftChain._state.value
+        const right = rightChain._state.value
 
-        assignPath(new Chain(left), ["branch", "leftOnly"], 2)
-        assignPath(new Chain(right), ["branch", "rightOnly"], 3)
+        assignPath(leftChain, ["branch", "leftOnly"], 2)
+        assignPath(rightChain, ["branch", "rightOnly"], 3)
 
         deferredBranch.resolve({})
         await flushMicrotasks()
@@ -382,11 +436,15 @@ describe("promise mirrors and lookupPath", () => {
         assignPath(new Chain(root), ["branch", "before"], 1)
         importValue(root)
 
-        const left = assignPath(new Chain(root), ["left"], true)
-        const right = assignPath(new Chain(root), ["right"], true)
+        const leftChain = new Chain(root)
+        const rightChain = new Chain(root)
+        assignPath(leftChain, ["left"], true)
+        assignPath(rightChain, ["right"], true)
+        const left = leftChain._state.value
+        const right = rightChain._state.value
 
-        assignPath(new Chain(left), ["branch", "leftOnly"], 2)
-        assignPath(new Chain(right), ["branch", "rightOnly"], 3)
+        assignPath(leftChain, ["branch", "leftOnly"], 2)
+        assignPath(rightChain, ["branch", "rightOnly"], 3)
 
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
@@ -404,16 +462,19 @@ describe("promise mirrors and lookupPath", () => {
         const root = { branch: deferredBranch.promise }
 
         lookupPath(new Chain(root), [])
-        const next = assignPath(new Chain(root), ["branch"], { replacement: true })
+        const chain = new Chain(root)
+        assignPath(chain, ["branch"], { replacement: true })
+        const next = chain._state.value
 
         deferredBranch.resolve({ x: 1 })
         await flushMicrotasks()
 
         const oldBranch = await lookupPath(new Chain(root), ["branch"], false)
-        const mutated = assignPath(new Chain(oldBranch), ["x"], 2)
+        const oldBranchChain = new Chain(oldBranch)
+        assignPath(oldBranchChain, ["x"], 2)
 
         expect(next.branch).to.eql({ replacement: true })
-        expect(mutated).to.be(oldBranch)
+        expect(oldBranchChain._state.value).to.be(oldBranch)
         expect(oldBranch.x).to.be(2)
     })
 
@@ -422,7 +483,9 @@ describe("promise mirrors and lookupPath", () => {
         const root = { branch: deferredBranch.promise }
 
         lookupPath(new Chain(root), [])
-        const next = assignPath(new Chain(root), ["branch", "x"], 1)
+        const chain = new Chain(root)
+        assignPath(chain, ["branch", "x"], 1)
+        const next = chain._state.value
 
         deferredBranch.resolve({ y: 2 })
         await flushMicrotasks()
@@ -567,8 +630,10 @@ describe("promise mirrors and lookupPath", () => {
         assignPath(new Chain(root), ["branch"], promise)
         importValue(root)
 
-        const next = assignPath(new Chain(root), ["added"], true)
-        assignPath(new Chain(next), ["branch", "x"], 1)
+        const chain = new Chain(root)
+        assignPath(chain, ["added"], true)
+        const next = chain._state.value
+        assignPath(chain, ["branch", "x"], 1)
 
         await flushMicrotasks()
 
@@ -603,6 +668,42 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.branch).to.eql({ replacement: true })
     })
 
+    it("confines a nested suspended write after an ancestor is replaced", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+
+        assignPath(chain, ["branch", "inner", "x"], 1)
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        const discardedBranch = chain._state.value.branch
+        assignPath(chain, ["branch"], { replacement: true })
+        inner.resolve({})
+        await flushMicrotasks()
+
+        expect(discardedBranch.inner).to.eql({ x: 1 })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
+    it("continues a suspended write through a mirror already revoked at settlement", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+        const discardedBranch = { inner: inner.promise }
+
+        assignPath(chain, ["branch", "inner", "x"], 1)
+        assignPath(chain, ["branch"], { replacement: true })
+        outer.resolve(discardedBranch)
+        await flushMicrotasks()
+
+        inner.resolve({})
+        await flushMicrotasks()
+
+        expect(discardedBranch.inner).to.eql({ x: 1 })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
+    })
+
     it("deletes through a pending branch once it resolves", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
@@ -613,6 +714,24 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ y: 2 })
+    })
+
+    it("confines a nested suspended delete after an ancestor is replaced", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const chain = new Chain({ branch: outer.promise })
+
+        deletePath(chain, ["branch", "inner", "remove"])
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        const discardedBranch = chain._state.value.branch
+        assignPath(chain, ["branch"], { replacement: true })
+        inner.resolve({ keep: true, remove: true })
+        await flushMicrotasks()
+
+        expect(discardedBranch.inner).to.eql({ keep: true })
+        expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
     it("orders assignment before delete through the same pending branch", async () => {

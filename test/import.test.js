@@ -44,7 +44,9 @@ describe("import", () => {
         const oldDelta = root.delta
 
         const imported = importValue(root)
-        const next = assignPath(new Chain(imported), ["pos", "x"], 2)
+        const chain = new Chain(imported)
+        assignPath(chain, ["pos", "x"], 2)
+        const next = chain._state.value
 
         expect(imported).to.be(root)
         expect(next).not.to.be(root)
@@ -53,7 +55,7 @@ describe("import", () => {
         expect(root.pos.x).to.be(1)
         expect(next.pos.x).to.be(2)
 
-        assignPath(new Chain(next), ["delta", "x"], 5)
+        assignPath(chain, ["delta", "x"], 5)
 
         expect(next.delta).not.to.be(oldDelta)
         expect(oldDelta.x).to.be(3)
@@ -67,7 +69,9 @@ describe("import", () => {
         deferredRoot.resolve({ branch: { x: 1 } })
         const root = await imported
         const oldBranch = root.branch
-        const next = assignPath(new Chain(root), ["branch", "x"], 2)
+        const chain = new Chain(root)
+        assignPath(chain, ["branch", "x"], 2)
+        const next = chain._state.value
 
         expect(next).not.to.be(root)
         expect(next.branch).not.to.be(oldBranch)
@@ -82,7 +86,9 @@ describe("import", () => {
 
         deferredRoot.resolve(root)
         const value = await imported
-        const next = assignPath(new Chain(value), ["branch", "x"], 2)
+        const chain = new Chain(value)
+        assignPath(chain, ["branch", "x"], 2)
+        const next = chain._state.value
 
         expect(value).to.be(root)
         expect(next).not.to.be(root)
@@ -95,7 +101,9 @@ describe("import", () => {
         const oldBranch = root.branch
 
         importValue(root)
-        const next = assignPath(new Chain(root), ["branch", "x"], 2)
+        const chain = new Chain(root)
+        assignPath(chain, ["branch", "x"], 2)
+        const next = chain._state.value
 
         expect(next).not.to.be(root)
         expect(next.branch).not.to.be(oldBranch)
@@ -193,7 +201,9 @@ describe("import", () => {
 
         importValue(root, "extract import")
         const extracted = lookupPath(new Chain(root), ["branch"], false)
-        const next = assignPath(new Chain(extracted), ["x"], 2)
+        const chain = new Chain(extracted)
+        assignPath(chain, ["x"], 2)
+        const next = chain._state.value
 
         expect(extracted).to.be(branch)
         expect(metaOf(branch).importContext).to.be("extract import")
@@ -211,7 +221,9 @@ describe("import", () => {
         }
 
         importValue(root, "path child import")
-        const next = assignPath(new Chain(root), ["branch", "added"], 2)
+        const chain = new Chain(root)
+        assignPath(chain, ["branch", "added"], 2)
+        const next = chain._state.value
         const failure = buildRefIndex(next.branch)
 
         expect(next).not.to.be(root)
@@ -233,7 +245,9 @@ describe("import", () => {
         await flushMicrotasks()
 
         const oldValue = root.value
-        const next = assignPath(new Chain(root), ["value", "x"], 2)
+        const chain = new Chain(root)
+        assignPath(chain, ["value", "x"], 2)
+        const next = chain._state.value
 
         expect(oldValue).to.eql({ x: 1 })
         expect(next).not.to.be(root)
@@ -256,7 +270,9 @@ describe("import", () => {
         expect(value).to.eql({ x: 1 })
         expect(root.value).to.be(deferredValue.promise)
 
-        const next = assignPath(new Chain(value), ["x"], 2)
+        const chain = new Chain(value)
+        assignPath(chain, ["x"], 2)
+        const next = chain._state.value
         expect(next).not.to.be(value)
         expect(value.x).to.be(1)
         expect(next.x).to.be(2)
@@ -270,7 +286,9 @@ describe("import", () => {
         })
 
         importValue(root, "frozen fork")
-        const next = assignPath(new Chain(root), ["sibling", "x"], 2)
+        const chain = new Chain(root)
+        assignPath(chain, ["sibling", "x"], 2)
+        const next = chain._state.value
 
         deferredValue.resolve(Object.freeze({ pending: Promise.resolve(1) }))
         await flushMicrotasks()
