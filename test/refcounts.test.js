@@ -1,12 +1,13 @@
 const {
     expect,
+    buildRefIndex,
     getRefCounter,
-    refIndexBranch,
     metaOf,
     STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
     deletePath,
+    hasError,
     lookupPath,
     importValue,
     deferred,
@@ -38,7 +39,7 @@ describe("subtree counters", () => {
         const root = { pending: deferredValue.promise, child: { x: 1 } }
 
         importValue(root)
-        refIndexBranch(root)
+        buildRefIndex(root)
 
         const rootSymbols = Object.getOwnPropertySymbols(root)
         const rootMeta = metaOf(root)
@@ -76,7 +77,7 @@ describe("subtree counters", () => {
         expectCounts(Promise.resolve(1), 1, 0)
         expectCounts(new Error("bad"), 0, 1)
 
-        expect(refIndexBranch(frozen)).to.be(frozen)
+        expect(buildRefIndex(frozen)).to.be(frozen)
         expectCounts(frozen, 0, 0)
         verifyRefCounts(frozen)
     })
@@ -97,6 +98,34 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
+    it("lets hasError signal errors and return the clean wait tree", async () => {
+        const clean = { x: 1 }
+        const currentError = { bad: new Error("bad") }
+        const pendingClean = deferred()
+        const pendingBad = deferred()
+        const cleanRoot = { value: pendingClean.promise }
+        const badRoot = { value: pendingBad.promise }
+
+        expect(hasError(clean, [])).to.be(false)
+        expect(hasError(currentError, [])).to.be(true)
+        expect(getRefCounter(currentError).errorCount).to.be(1)
+
+        const pendingCleanProbe = hasError(cleanRoot, [])
+        const pendingBadProbe = hasError(badRoot, [])
+
+        expect(typeof pendingCleanProbe.then).to.be("function")
+        expect(typeof pendingBadProbe.then).to.be("function")
+
+        expect(hasError(clean, [])).to.be(false)
+
+        pendingClean.resolve({ ok: true })
+        pendingBad.reject("bad")
+
+        expect(await pendingCleanProbe).to.be(false)
+        expect(await pendingBadProbe).to.be(true)
+        verifyRefCounts(cleanRoot, badRoot)
+    })
+
     it("keeps counts exact through writes, deletes, and promise settlement", async () => {
         const first = deferred()
         const second = deferred()
@@ -106,7 +135,7 @@ describe("subtree counters", () => {
             nested: {},
         }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 1)
         verifyRefCounts(root)
 
@@ -133,7 +162,7 @@ describe("subtree counters", () => {
         const deferredValue = deferred()
         const root = {}
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         assignPath(root, ["value"], deferredValue.promise)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
@@ -156,7 +185,7 @@ describe("subtree counters", () => {
         const inner = deferred()
         const root = { value: outer.promise }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -180,7 +209,7 @@ describe("subtree counters", () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -195,7 +224,7 @@ describe("subtree counters", () => {
     it("discovers already-settled promise keys during ref-indexing", async () => {
         const root = { value: Promise.resolve("done") }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -211,10 +240,10 @@ describe("subtree counters", () => {
         const child = { pending: deferredValue.promise }
         const root = { child }
 
-        refIndexBranch(child)
+        buildRefIndex(child)
         expectCounts(child, 1, 0)
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -232,7 +261,7 @@ describe("subtree counters", () => {
         const root = { branch: branch.promise }
 
         assignPath(root, ["branch", "nested"], nested.promise)
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -256,7 +285,7 @@ describe("subtree counters", () => {
         const child = { pending: deferredValue.promise }
         const root = { left: child, right: child }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(child, 1, 0)
         expectCounts(root, 2, 0)
         verifyRefCounts(root)
@@ -274,7 +303,7 @@ describe("subtree counters", () => {
         const child = { pending: deferredValue.promise }
         const root = { left: child, right: child }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         lookupPath(root, [])
         const next = assignPath(root, ["added"], true)
 
@@ -296,7 +325,7 @@ describe("subtree counters", () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
@@ -332,7 +361,7 @@ describe("subtree counters", () => {
             sibling: { error: new Error("old") },
         }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         lookupPath(root, [])
 
         const next = assignPath(root, ["added"], true)

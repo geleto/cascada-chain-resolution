@@ -1,0 +1,406 @@
+const {
+    expect,
+    getRefCounter,
+    verifyRefCounts,
+    assignPath,
+    deletePath,
+    hasError,
+    importValue,
+    normalize,
+    deferred,
+    flushMicrotasks,
+} = require("./support")
+
+describe("hasError", () => {
+    it("answers immediate path cases synchronously", () => {
+        const root = {
+            branch: {
+                clean: { x: 1 },
+                bad: new Error("bad"),
+            },
+        }
+
+        expect(hasError(root, [])).to.be(true)
+        expect(hasError(root, ["branch"])).to.be(true)
+        expect(hasError(root, ["branch", "bad"])).to.be(true)
+        expect(hasError(root, ["branch", "clean"])).to.be(false)
+        expect(hasError(root, ["branch", "missing"])).to.be(false)
+        expect(hasError(root, ["missing", "x"])).to.be(true)
+        expect(hasError(new Error("root"), [])).to.be(true)
+        expect(hasError(7, [])).to.be(false)
+        expect(hasError(7, ["x"])).to.be(true)
+    })
+
+    it("treats __proto__ and non-enumerable lookups as missing", () => {
+        const root = {}
+        Object.defineProperty(root, "__proto__", {
+            value: new Error("hidden proto"),
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        Object.defineProperty(root, "hidden", {
+            value: new Error("hidden"),
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        expect(hasError(root, ["__proto__"])).to.be(false)
+        expect(hasError(root, ["hidden"])).to.be(false)
+        expect(hasError(root, ["__proto__", "x"])).to.be(true)
+        expect(hasError(root, ["hidden", "x"])).to.be(true)
+    })
+
+    it("does not mark clean queried branches as shared", () => {
+        const root = { branch: { x: 1 } }
+        const branch = root.branch
+
+        expect(hasError(root, ["branch"])).to.be(false)
+        assignPath(root, ["branch", "x"], 2)
+
+        expect(root.branch).to.be(branch)
+        expect(branch.x).to.be(2)
+        verifyRefCounts(root)
+    })
+
+    it("returns true for validation failures without publishing the failed branch", () => {
+        const branch = {}
+        branch.self = branch
+        const root = { branch }
+
+        importValue(root, "hasError import")
+
+        expect(hasError(root, ["branch"])).to.be(true)
+        expect(getRefCounter(branch)).to.be(undefined)
+    })
+
+    it("validates non-extensible branches without attaching counters", () => {
+        const clean = Object.freeze({ nested: { value: 1 } })
+        const pending = Object.preventExtensions({ pending: Promise.resolve(1) })
+        const bad = Object.freeze({ nested: { bad: new Error("bad") } })
+
+        expect(hasError(clean, [])).to.be(false)
+        expect(hasError(pending, [])).to.be(true)
+        expect(hasError(bad, [])).to.be(true)
+
+        expect(getRefCounter(clean)).to.be(undefined)
+        expect(getRefCounter(clean.nested)).to.be(undefined)
+        expect(getRefCounter(pending)).to.be(undefined)
+        expect(getRefCounter(bad)).to.be(undefined)
+        expect(getRefCounter(bad.nested)).to.be(undefined)
+    })
+
+    it("returns true on indexed sync errors", () => {
+        const before = { x: 1 }
+        const after = { y: 2 }
+        const root = {
+            before,
+            bad: new Error("bad"),
+            after,
+        }
+
+        expect(hasError(root, [])).to.be(true)
+
+        expect(getRefCounter(root).promiseCount).to.be(0)
+        expect(getRefCounter(root).errorCount).to.be(1)
+        expect(getRefCounter(before).errorCount).to.be(0)
+        expect(getRefCounter(after).errorCount).to.be(0)
+        verifyRefCounts(root)
+    })
+
+    it("answers true from errorCount while leaving normal promise writeback live", async () => {
+        const pending = deferred()
+        const root = {
+            pending: pending.promise,
+            bad: new Error("bad"),
+        }
+
+        expect(hasError(root, [])).to.be(true)
+        expect(getRefCounter(root).promiseCount).to.be(1)
+        expect(getRefCounter(root).errorCount).to.be(1)
+
+        pending.resolve({ ok: true })
+        await flushMicrotasks()
+
+        expect(root.pending).to.eql({ ok: true })
+        expect(getRefCounter(root).promiseCount).to.be(0)
+        expect(getRefCounter(root).errorCount).to.be(1)
+        verifyRefCounts(root)
+    })
+
+    it("waits for clean pending branches and then answers false", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        const result = hasError(root, ["branch"])
+
+        expect(typeof result.then).to.be("function")
+
+        pending.resolve({ ok: true })
+
+        expect(await result).to.be(false)
+        expect(root.branch).to.eql({ pending: { ok: true } })
+        verifyRefCounts(root)
+    })
+
+    it("answers true as soon as a watched promise exposes an Error", async () => {
+        const bad = deferred()
+        const slow = deferred()
+        const root = {
+            branch: {
+                bad: bad.promise,
+                slow: slow.promise,
+            },
+        }
+
+        const result = hasError(root, ["branch"])
+
+        bad.reject("bad")
+
+        expect(await result).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("fully indexes resolved promise branches before answering true", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const root = { branch: { outer: outer.promise } }
+
+        const result = hasError(root, ["branch"])
+
+        outer.resolve({
+            nested: { bad: new Error("bad") },
+            inner: inner.promise,
+        })
+
+        expect(await result).to.be(true)
+
+        const resolved = root.branch.outer
+        expect(getRefCounter(root.branch).promiseCount).to.be(1)
+        expect(getRefCounter(root.branch).errorCount).to.be(1)
+        expect(getRefCounter(resolved).promiseCount).to.be(1)
+        expect(getRefCounter(resolved).errorCount).to.be(1)
+        expect(getRefCounter(resolved.nested).errorCount).to.be(1)
+        verifyRefCounts(root, resolved)
+    })
+
+    it("answers true behind several promise barriers while others still pend", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const slow = deferred()
+        const root = { branch: { outer: outer.promise, slow: slow.promise } }
+
+        const result = hasError(root, ["branch"])
+
+        // First barrier exposes only a deeper pending; the next generation waits it.
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        // Second barrier commits the error; the answer fires at THIS settlement
+        // because the resolved branch is indexed while `slow` is still pending.
+        inner.resolve({ deep: { bad: new Error("bad") } })
+
+        expect(await result).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("can wait a raw promise again when a later continuation reintroduces it", async () => {
+        const first = deferred()
+        const second = deferred()
+        const root = {
+            branch: {
+                first: first.promise,
+                second: second.promise,
+            },
+        }
+
+        const result = hasError(root, ["branch"])
+        first.resolve("done")
+        await flushMicrotasks()
+
+        assignPath(root, ["branch", "second", "again"], first.promise)
+        second.resolve({})
+
+        const outcome = await Promise.race([
+            result,
+            flushMicrotasks(20).then(() => "pending"),
+        ])
+
+        expect(outcome).to.be(false)
+        verifyRefCounts(root)
+    })
+
+    it("waits for promises exposed by resolved values", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const root = { branch: { outer: outer.promise } }
+        let settled = false
+
+        const result = hasError(root, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        outer.resolve({ inner: inner.promise })
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        inner.resolve("done")
+
+        expect(await result).to.be(false)
+        verifyRefCounts(root)
+    })
+
+    it("does not wait for later promises outside the original indexed frontier", async () => {
+        const first = deferred()
+        const later = deferred()
+        const root = {
+            branch: {
+                pending: first.promise,
+                clean: { stable: true },
+            },
+        }
+        let settled = false
+
+        const result = hasError(root, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(root, ["branch", "clean", "later"], later.promise)
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        first.resolve("done")
+
+        const outcome = await Promise.race([
+            result,
+            flushMicrotasks(20).then(() => "pending"),
+        ])
+
+        expect(outcome).to.be(false)
+        expect(settled).to.be(true)
+        expect(getRefCounter(root.branch).promiseCount).to.be(1)
+        expect(root.branch.clean.later).to.be(later.promise)
+
+        later.resolve({ ok: true })
+        await flushMicrotasks()
+
+        expect(root.branch.clean.later).to.eql({ ok: true })
+        verifyRefCounts(root)
+    })
+
+    it("continues through pending parent paths", async () => {
+        const pending = deferred()
+        const root = { branch: pending.promise }
+
+        const result = hasError(root, ["branch", "bad"])
+
+        pending.resolve({ bad: new Error("bad") })
+
+        expect(await result).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("sees errors installed by earlier-issued suspended writes", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        // Issued before hasError, suspended on the same promise: its remainder
+        // runs first at settlement (FIFO), installs the Error into the counted
+        // resolved value, and hasError's wait continuation must observe it.
+        assignPath(root, ["branch", "pending", "bad"], new Error("bad"))
+        const result = hasError(root, ["branch"])
+
+        pending.resolve({})
+
+        expect(await result).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("coexists with normalize on the same pending branch", async () => {
+        const bad = deferred()
+        const slow = deferred()
+        const root = { branch: { bad: bad.promise, slow: slow.promise } }
+        let normalized = false
+
+        const normalizedBranch = normalize(root, ["branch"])
+        normalizedBranch.then(() => {
+            normalized = true
+        })
+        const branchHasError = hasError(root, ["branch"])
+
+        bad.reject("bad")
+
+        expect(await branchHasError).to.be(true)
+        expect(normalized).to.be(false)
+
+        slow.resolve("done")
+
+        const normalizedValue = await normalizedBranch
+        expect(normalizedValue instanceof Error).to.be(true)
+        expect(normalized).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("keeps concurrent hasError wait trees independent", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+
+        const first = hasError(root, ["branch"])
+        const second = hasError(root, ["branch"])
+
+        pending.reject("bad")
+
+        expect(await first).to.be(true)
+        expect(await second).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("lets a later overwrite suppress a pending rejection without pinning", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+        let settled = false
+
+        const result = hasError(root, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(root, ["branch", "pending"], "fixed")
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.reject("late")
+
+        expect(await result).to.be(false)
+        expect(root.branch.pending).to.be("fixed")
+        verifyRefCounts(root)
+    })
+
+    it("waits for a revoked promise to settle before answering false", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+        let settled = false
+
+        const result = hasError(root, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        deletePath(root, ["branch", "pending"])
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.resolve("ignored")
+
+        expect(await result).to.be(false)
+        expect(root.branch).to.eql({})
+        verifyRefCounts(root)
+    })
+})

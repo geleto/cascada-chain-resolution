@@ -39,7 +39,7 @@ function getRefCounts(value) {
         return [0, 0]
     }
 
-    const refIndexed = refIndexBranch(value)
+    const refIndexed = buildRefIndex(value)
     // Everything inside a counted region was validated on entry, so a
     // validation failure here is a kernel bug, not language data.
     if (isError(refIndexed)) throw refIndexed
@@ -48,7 +48,7 @@ function getRefCounts(value) {
     return [counter.promiseCount, counter.errorCount]
 }
 
-function refIndexBranch(value, inheritedImportContext = undefined) {
+function buildRefIndex(value, inheritedImportContext = undefined) {
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) {
         // Frozen roots are validated (no promises/Errors anywhere beneath) but
@@ -277,10 +277,10 @@ function copyCounters(source, copy) {
 }
 
 module.exports = {
+    buildRefIndex,
     copyCounters,
     getRefCounter,
     getRefCounts,
-    refIndexBranch,
     refDeleteProperty,
     refSetProperty,
     waitForSettlement,

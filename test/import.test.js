@@ -2,7 +2,7 @@ const {
     expect,
     runtime,
     getRefCounter,
-    refIndexBranch,
+    buildRefIndex,
     metaOf,
     verifyRefCounts,
     assignPath,
@@ -114,7 +114,7 @@ describe("import", () => {
         root.self = root
 
         const imported = importValue(root, "cycle import")
-        const failure = refIndexBranch(root)
+        const failure = buildRefIndex(root)
 
         expect(imported).to.be(root)
         expect(failure instanceof Error).to.be(true)
@@ -128,7 +128,7 @@ describe("import", () => {
 
         importValue(root, "first import")
         importValue(root, "second import")
-        const failure = refIndexBranch(root)
+        const failure = buildRefIndex(root)
 
         expect(failure.message).to.be("Value cannot be cyclic (imported at: first import)")
     })
@@ -142,9 +142,9 @@ describe("import", () => {
         expect(importValue(nestedFrozenPromise, "nested frozen promise")).to.be(nestedFrozenPromise)
         expect(importValue(frozenError, "frozen error")).to.be(frozenError)
 
-        const promiseFailure = refIndexBranch(frozenPromise)
-        const nestedPromiseFailure = refIndexBranch(nestedFrozenPromise)
-        const errorFailure = refIndexBranch(frozenError)
+        const promiseFailure = buildRefIndex(frozenPromise)
+        const nestedPromiseFailure = buildRefIndex(nestedFrozenPromise)
+        const errorFailure = buildRefIndex(frozenError)
 
         expect(promiseFailure instanceof Error).to.be(true)
         expect(nestedPromiseFailure instanceof Error).to.be(true)
@@ -172,7 +172,7 @@ describe("import", () => {
 
         expect(importValue(root, "proto import")).to.be(root)
 
-        const failure = refIndexBranch(root)
+        const failure = buildRefIndex(root)
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Cannot use __proto__ as a key (imported at: proto import)")
@@ -203,7 +203,7 @@ describe("import", () => {
 
         importValue(root, "path child import")
         const next = assignPath(root, ["branch", "added"], 2)
-        const failure = refIndexBranch(next.branch)
+        const failure = buildRefIndex(next.branch)
 
         expect(next).not.to.be(root)
         expect(next.branch).not.to.be(branch)
@@ -217,7 +217,7 @@ describe("import", () => {
         const root = { value: deferredValue.promise }
 
         importValue(root, "promise key import")
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
 
         deferredValue.resolve({ x: 1 })
@@ -266,7 +266,7 @@ describe("import", () => {
         deferredValue.resolve(Object.freeze({ pending: Promise.resolve(1) }))
         await flushMicrotasks()
 
-        const failure = refIndexBranch(next)
+        const failure = buildRefIndex(next)
 
         expect(next).not.to.be(root)
         expect(root.value).to.be(deferredValue.promise)
@@ -282,7 +282,7 @@ describe("import", () => {
         const root = { nested: { value: deferredValue.promise } }
 
         importValue(root, "invalid writeback")
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 1, 0)
 
         deferredValue.resolve(Object.freeze({ pending: Promise.resolve(1) }))
@@ -307,7 +307,7 @@ describe("import", () => {
         }
 
         importValue(root, "writeback back-edge")
-        refIndexBranch(root)
+        buildRefIndex(root)
         expectCounts(root, 2, 0)
 
         deferredValue.resolve(root)
@@ -333,7 +333,7 @@ describe("import", () => {
         const resolved = { target: root.nested }
 
         importValue(root, "containing back-edge")
-        refIndexBranch(root)
+        buildRefIndex(root)
 
         deferredValue.resolve(resolved)
         await flushMicrotasks()
@@ -351,7 +351,7 @@ describe("import", () => {
         const deferredValue = deferred()
         const root = { nested: {} }
 
-        refIndexBranch(root)
+        buildRefIndex(root)
         assignPath(root, ["nested", "value"], importValue(deferredValue.promise, "assigned promise"))
         expectCounts(root, 1, 0)
 
@@ -375,7 +375,7 @@ describe("import", () => {
         deferredValue.resolve(root.nested)
         await flushMicrotasks()
 
-        const failure = refIndexBranch(root)
+        const failure = buildRefIndex(root)
 
         expect(root.nested.value).to.be(root.nested)
         expect(failure instanceof Error).to.be(true)
@@ -390,7 +390,7 @@ describe("import", () => {
 
         deferredValue.resolve(cyclic)
         const value = await imported
-        const failure = refIndexBranch(value)
+        const failure = buildRefIndex(value)
 
         expect(value).to.be(cyclic)
         expect(failure instanceof Error).to.be(true)
@@ -404,7 +404,7 @@ describe("import", () => {
 
         deferredValue.resolve(frozen)
         const value = await imported
-        const failure = refIndexBranch(value)
+        const failure = buildRefIndex(value)
 
         expect(value).to.be(frozen)
         expect(failure instanceof Error).to.be(true)

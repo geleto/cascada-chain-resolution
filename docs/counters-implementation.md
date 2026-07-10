@@ -60,7 +60,8 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   so mirror writeback still performs a language write without creating a cycle.
 - **refcounts.js** — counter logic ONLY. Public runtime hooks are
   `refSetProperty(parent, key, value)`, `refDeleteProperty(parent, key)`,
-  `copyCounters(source, copy)`, `refIndexBranch(value, inheritedImportContext)`,
+  `copyCounters(source, copy)`,
+  `buildRefIndex(value, inheritedImportContext)`,
   and narrow test/debug accessors. The hooks never perform the language write/delete;
   `refSetProperty` returns the value index.js should write, because validation can
   turn an entering value into Error. When ref-indexing discovers a promise key, it
@@ -69,7 +70,7 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   `getRefCounter` accessor from refcounts.js and is not used by runtime code.
 - **index.js** — the operations, language property writes/deletes, COW, import,
   observational context-threading `resolvePath` for lookup/normalize/hasError, `copyToPlainValue`,
-  and the normalize/hasError operation shells. It initializes mirror writeback with
+  hasError's local promise wait-tree probe, and the normalize/hasError operation shells. It initializes mirror writeback with
   `initPromiseMirrors(setProperty)`.
 
 The contract: **non-ref-indexed behavior ≡ base-kernel behavior** — with refcounts.js
@@ -120,7 +121,7 @@ function createMeta() {
         settlementPromise: undefined,
         settlementResolve: undefined,
         settlementVerifyScheduled: false,
-        // parents is added by refIndexBranch when counters become live:
+        // parents is added by buildRefIndex when counters become live:
         // undefined => not ref-indexed; empty Map => ref-indexed root / no ref-indexed parents.
     }
 }
@@ -185,7 +186,7 @@ function clearPromiseMirror(node, key) {             // becomes commit-internal 
 `shallowCopy` change: instead of lazily creating the copy's mirror map, construct the
 copy's whole record up front (`Object.defineProperty(copy, META, { value: createMeta(), … })`)
 and put forked mirrors into `copyMeta.mirrors`. Counter liveness is still absent:
-`parents` is not created until `copyCounters` or `refIndexBranch` makes counters live.
+`parents` is not created until `copyCounters` or `buildRefIndex` makes counters live.
 
 **Checkpoint:** the full suite passes; the frozen-import probe no longer throws.
 
@@ -354,14 +355,18 @@ propagate into it and retain it.
 //   it and return the value to write. A validation failure returns an Error to
 //   commit at the key. If parent is not ref-indexed, this is a passthrough.
 //
-// refIndexBranch(value, inheritedImportContext) — refcounts.js. Used by
-//   normalize/hasError and by ref-indexed writes. It validates, then commits
-//   counters/edges/mirrors transactionally. Mirror minting goes through
-//   promise-mirrors-owned getOrCreatePromiseMirror. Data violations return Error
-//   values; normalize returns them and hasError treats them as true.
+// buildRefIndex(value, inheritedImportContext)
+//   — refcounts.js.
+//   Used by normalize/hasError and by ref-indexed writes. It validates, then
+//   commits counters/edges/mirrors transactionally. It always builds the generic
+//   ref index; hasError-specific wait registration lives in index.js after
+//   counters decide the immediate cases.
+//   Mirror minting goes through promise-mirrors-owned getOrCreatePromiseMirror.
+//   Data violations return Error values; normalize returns them and hasError
+//   treats them as true.
 // The real implementation keeps pure validation in validate.js. It is sketched
 // inline here only to document the algorithm shape.
-function refIndexBranch(value, inheritedImportContext) {
+function buildRefIndex(value, inheritedImportContext) {
     if (!isTracked(value)) return value       // counted at the edge by getRefCounts
 
     const failure = validate(value, new Set(), new Set())
@@ -398,13 +403,12 @@ function refIndexBranch(value, inheritedImportContext) {
     // children are established together, at the single commit point below, reached
     // only after every child is fully processed. No node is ever partially counted,
     // and — crucially — no child points its parent edge at a not-yet-committed node.
-    // This is what makes hasError's early-exit safe (see "Early-exit ref-indexing"): a
-    // walk abandoned at the first error commits nothing partial and leaves no dangling
-    // upward edge, so no rollback is needed.
     function commit(node) {
-        if (!Object.isExtensible(node)) return          // frozen: no counter metadata, [0,0] by rule
+        if (!Object.isExtensible(node)) return [0, 0]   // frozen: no counter metadata, [0,0] by rule
         const meta = ensureMeta(node)
-        if (isRefIndexed(node)) return                     // DAG share / already live
+        if (isRefIndexed(node)) {
+            return [meta.promiseCount, meta.errorCount]  // DAG share / already live
+        }
         let promises = 0, errors = 0
         const trackedChildren = []
         for (const key of Object.keys(node)) {
@@ -419,8 +423,8 @@ function refIndexBranch(value, inheritedImportContext) {
             } else if (isError(child)) {
                 errors += 1                             // imported Errors are language errors
             } else if (isTracked(child)) {
-                commit(child)                           // may abandon upward on early-exit
-                const [cp, ce] = getRefCounts(child)
+                const childCounts = commit(child)
+                const [cp, ce] = childCounts
                 promises += cp; errors += ce
                 if (Object.isExtensible(child)) trackedChildren.push(child)
             }                                           // primitives contribute nothing
@@ -431,6 +435,7 @@ function refIndexBranch(value, inheritedImportContext) {
         meta.errorCount = errors
         for (const child of trackedChildren) addParentEdge(child, node)
         meta.parents = new Map()                        // set last: counters now live
+        return [promises, errors]
     }
 
     // Non-extensible nodes may not contain promises or Errors ANYWHERE beneath
@@ -465,7 +470,7 @@ function refIndexBranch(value, inheritedImportContext) {
 function ensureRefIndexed(node, inheritedImportContext) {
     const meta = ensureMeta(node)
     if (meta.parents === undefined) {
-        const result = refIndexBranch(node, inheritedImportContext)
+        const result = buildRefIndex(node, inheritedImportContext)
         if (isError(result)) return result
     }
     return meta
@@ -480,7 +485,7 @@ ancestor-closure shortcuts later only if profiling shows large live shares in wr
 values.
 
 Callers, by entry point (**lazy ref-indexing and counting-time validation** — see 3d′):
-- `refIndexBranch` — the first `normalize`/`hasError` on a branch, at the caller's
+- `buildRefIndex` — the first `normalize`/`hasError` on a branch, at the caller's
   program position: creates the ref-indexed region, stopping at already-ref-indexed
   sub-branches (boundary edge + totals reuse).
 - `refSetProperty` on an already-ref-indexed parent: validates the entering value
@@ -504,7 +509,7 @@ function refSetProperty(parent, key, value) {
     if (failure) {
         value = failure                             // index.js commits the Error
     } else {
-        value = refIndexBranch(value)               // keeps the region downward-closed;
+        value = buildRefIndex(value)               // keeps the region downward-closed;
                                                     // already-ref-indexed values pass through
     }
     const old = parent[key]                       // may be the promise being replaced:
@@ -584,7 +589,7 @@ the promises once; repeated checks are O(1) after that.
    (keeps downward-closure, and a rebound COW root keeps its counts live for
    settlement waits); a non-ref-indexed source ⇒ no metadata work at all beyond fork mirrors.
 5. **Validation is counting-time**: import and non-ref-indexed writeback do not walk.
-   Validation runs in `refIndexBranch` and in ref-indexed write commits, exactly where
+   Validation runs in `buildRefIndex` and in ref-indexed write commits, exactly where
    counters need acyclicity and the frozen rule. For a ref-indexed write, the
    back-edge check descends the entering value checking `node === target` — sufficient,
    because a cycle created by the write must reach the written target.
@@ -688,7 +693,7 @@ function scheduleSettlementVerify(node) {
 ```
 
 `applyCountDelta` calls `scheduleSettlementVerify(node)` only when a settlement wait exists and
-the node reaches zero pending promises. No subscribe-at-zero path is needed:
+the node reaches zero pending promises. No zero-count wait path is needed:
 normalize answers synchronously when the branch is already settled.
 
 ### 4c. normalize
@@ -706,7 +711,7 @@ function normalize(root, segments = [], sharedOwnership = true, plainCopy = fals
 function normalizeResolved(value, importContext, sharedOwnership, plainCopy) {
     if (isError(value) || !isTracked(value)) return value
 
-    const indexed = refIndexBranch(value, importContext)
+    const indexed = buildRefIndex(value, importContext)
     if (isError(indexed)) return indexed
 
     if (!Object.isExtensible(value)) {
@@ -754,25 +759,41 @@ COW copy does.
 ### 4d. hasError
 
 hasError builds on the resolver and counters from normalize, but it never marks and
-uses no shared settlement wait. It adds two pieces:
+uses no shared settlement wait. `hasErrorAtPathValue` builds the generic ref index for
+each reached path result, then delegates indexed-branch probing to
+`probeIndexedBranchForErrors(value, resolveError)`: answer synchronous errors from
+`errorCount`, and collect promise waits only when `promiseCount > 0`.
+hasError owns the final boolean race.
 
-- early-exit ref-indexing: find an Error and return true without counting the rest;
-- a pending rider: subscribe to pending promises at hasError's FIFO slot and probe
-  again after their writebacks commit counts.
+Empty segments probe the root. Non-empty segments resolve the parent path through
+`resolvePath`, then read the terminal key once: broken parent path => true, missing
+terminal key => false, Error terminal => true, promise/tracked terminal => probe.
 
-Immediate answers are program-order safe. With `promiseCount === 0`, every earlier
-remainder that could touch the branch has already completed because it would ride a
-promise counted inside it. With `errorCount > 0`, the error is reachable only through
-settled positions; a suspended earlier remainder able to remove it would have a
-counted promise on that path.
+Immediate answers are program-order safe for earlier-issued operations. With
+`promiseCount === 0`, every earlier remainder that could touch the branch has
+already completed because it would ride a promise counted inside it. With
+`errorCount > 0`, the error is reachable only through settled positions; a
+suspended earlier remainder able to remove it would have a counted promise on
+that path. hasError deliberately does not pin, but its wait tree still gives an
+issue-time answer: later-issued installs are outside the collected frontier,
+while a later overwrite/delete of a watched pending key can suppress that key's
+outcome.
 
-Early-exit ref-indexing is safe only under the atomic-per-node commit invariant: a
-node becomes counted, with child parent edges attached, at one point after all its
-children have been processed. A bailed walk leaves nodes either fully counted or
-uncounted, never partially counted and never with a child edge pointing at an
-uncounted parent. Clean descendants committed before the first error are counted
-islands; a later normalize or clean hasError reconnects them by stopping at the
-already-ref-indexed subtree and registering the boundary edge.
+`hasErrorAtPathValue` first calls generic `buildRefIndex`. Validation failures answer
+true; otherwise the branch is fully indexed and answers come from counters.
+Behind a promise barrier, writeback commits into an already-indexed parent and
+must index the resolved value fully (downward closure; deltas need exact totals).
+If no current Error is found but `promiseCount > 0`, the pending frontier is
+collected by descending only ref-indexed nodes whose counters still contain
+promises. Waits are registered after `buildRefIndex` has minted mirrors/writebacks:
+`probeIndexedBranchForErrors` returns `Promise.all(waitPromises)`, where each wait
+is `onResolve(childPromise, () => probeIndexedBranchForErrors(mirror.currentValue))`.
+hasError races `onResolve(cleanPromise, () => false)` against the local error
+promise; `Promise.all`/`race` only aggregate already-wrapped internal waits. Each
+settlement runs after writeback committed counts, then probes that already-indexed
+resolved promise branch: an Error calls the resolver, newly exposed promises
+return a nested `Promise.all`, and the whole promise tree resolving means the
+clean side is false.
 
 **Checkpoint:** full suite green.
 
@@ -827,18 +848,11 @@ Lazy, branch-level ref-indexing:
   immediately; with an error arriving mid-wait it answers true at that settlement
   (early exit), not at full settlement. `hasError` never sets the SHARED mark.
 - probe pruning: a branch with one pending promise and large settled-clean siblings —
-  assert the probe's walk never enters the settled subtrees (promiseCount guidance).
-- early-exit partial ref-indexing: `hasError` on a branch whose error sits under an early
-  key, with a large clean sibling after it — assert the walk abandons at the error and
-  the sibling is left UNcounted (no `parents`), while the clean descendants already
-  committed before the error are counted islands with NO parent edge pointing at the
-  uncounted ancestors. Then `verifyRefCounts` must pass (no partial node, no dangling
-  upward edge), a subsequent write into an island must keep its local counts exact
-  without corrupting any uncounted ancestor, and a later `normalize` on the whole
-  branch must fully index and reconnect the islands (boundary edges appear).
-- a branch `hasError` probes to a *negative* (fully clean, settled) answer is fully
-  ref-indexed — a second query on it is O(1); a branch probed to a *positive* answer is
-  only partially ref-indexed and a re-probe re-walks the uncounted spine to the error.
+  assert the pending frontier collection follows only the `promiseCount > 0` spine after
+  the branch is indexed.
+- sync immediate true: `hasError` on a branch containing a synchronously visible
+  Error answers true from the published `errorCount`; the branch is ref-indexed,
+  but no hasError wait tree is registered for its pending promises.
 - wrapper-only scheduling: no `queueMicrotask`/`setTimeout` anywhere in index.js
   (greppable); zero-verification rides `onResolve(Promise.resolve(), ...)`, registered
   at the zero-crossing, so it runs after the already-queued consumers of the settling
@@ -863,7 +877,7 @@ Settlement / normalize / hasError:
   mid-path → Error return; promise mid-path continued through the mirror).
 - `normalize` collapse on any error; plain-copy `normalize` output has no META/marks, is
   fully mutable, and preserves diamond identity (two paths to one object → one copy).
-- `hasError`: error at target or mid-path → true; broken path (intermediate
+- `hasError`: empty path probes root; validation failure → true; error at target or mid-path → true; broken path (intermediate
   missing/primitive) → true; missing terminal property → false; clean branch → false;
   pending branch answers only after settlement and reflects earlier-issued suspended
   writes.

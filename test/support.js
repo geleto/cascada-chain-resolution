@@ -3,9 +3,9 @@ const expect = require("expect.js")
 const runtime = require("../src")
 const { onResolve } = require("../src/helpers")
 const {
+    buildRefIndex,
     getRefCounter,
     getRefCounts,
-    refIndexBranch,
 } = require("../src/refcounts")
 const {
     metaOf,
@@ -16,6 +16,7 @@ const { verifyRefCounts } = require("../src/verify-refcounts")
 const {
     assignPath,
     deletePath,
+    hasError,
     lookupPath,
     normalize,
 } = runtime
@@ -57,14 +58,15 @@ module.exports = {
     expect,
     runtime,
     onResolve,
+    buildRefIndex,
     getRefCounter,
     getRefCounts,
-    refIndexBranch,
     metaOf,
     STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
     deletePath,
+    hasError,
     lookupPath,
     normalize,
     importValue,

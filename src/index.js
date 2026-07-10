@@ -29,9 +29,9 @@ const {
     onResolve,
 } = require("./helpers")
 const {
+    buildRefIndex,
     copyCounters,
     getRefCounter,
-    refIndexBranch,
     refDeleteProperty,
     refSetProperty,
     waitForSettlement,
@@ -311,7 +311,7 @@ function normalize(root, path, sharedOwnership = true, plainCopy = false) {
 function normalizeResolved(value, importContext, sharedOwnership, plainCopy) {
     if (isError(value) || !isTracked(value)) return value
 
-    const indexed = refIndexBranch(value, importContext)
+    const indexed = buildRefIndex(value, importContext)
     if (isError(indexed)) return indexed
 
     if (!Object.isExtensible(value)) {
@@ -341,6 +341,139 @@ function markResolvedValue(value, importContext, sharedOwnership) {
         markShared(value)
     }
     return value
+}
+
+// --- hasError : query whether a path or branch contains an Error -------------
+function hasError(root, path) {
+    const parentPath = path.length === 0 ? path : path.slice(0, -1)
+    const key = path[path.length - 1]
+    return resolvePath(root, parentPath, (parent, importContext) => {
+        if (path.length === 0) return hasErrorAtPathValue(parent, importContext)
+        if (isError(parent)) return true
+        if (!isTracked(parent)) return true
+
+        const value = readLanguageProperty(parent, key)
+        if (isPromise(value)) {
+            if (!Object.isExtensible(parent)) {
+                return onResolve(value, settledValueOrError => {
+                    return hasErrorAtPathValue(settledValueOrError, importContext)
+                })
+            }
+
+            const mirror = getOrCreatePromiseMirror(parent, key, value, importContext)
+            return onResolve(value, () => {
+                return hasErrorAtPathValue(mirror.currentValue, undefined)
+            })
+        }
+        if (value === undefined) return false
+        return hasErrorAtPathValue(value, importContext)
+    })
+}
+
+// Entry for the value reached by hasError's path resolution. This may be a
+// direct branch, a root promise result, or a terminal promise key whose parent
+// was not ref-indexed when writeback ran, so this boundary must build the index.
+function hasErrorAtPathValue(value, importContext) {
+    if (isError(value)) return true
+    if (!isTracked(value)) return false
+
+    const indexed = buildRefIndex(value, importContext)
+    if (isError(indexed)) return true
+    if (!Object.isExtensible(value)) return false
+
+    return hasErrorInIndexedBranch(value)
+}
+
+// The branch is already ref-indexed here: either hasErrorAtPathValue just
+// indexed the resolved path value, or a promise mirror writeback indexed the
+// resolved value before the hasError wait continuation ran.
+function hasErrorInIndexedBranch(value) {
+    let foundError = false
+    let resolveError
+    // The executor runs synchronously, so resolveError is assigned before the
+    // probe below can call it.
+    const errorPromise = new Promise(resolve => {
+        resolveError = () => {
+            foundError = true
+            resolve(true)
+        }
+    })
+    const cleanPromise = probeIndexedBranchForErrors(value, resolveError)
+    if (foundError) return true
+    if (cleanPromise === undefined) return false
+    // Promise.race aggregates hasError-internal waits, which are all
+    // onResolve-derived; FIFO-sensitive registrations on key promises never
+    // happen here.
+    return Promise.race([
+        errorPromise,
+        onResolve(cleanPromise, () => false),
+    ])
+}
+
+// hasError's indexed-branch probe. Recursive promise waits rely on the mirror
+// writeback registered while indexing the parent branch: it is earlier in the
+// promise's FIFO list, so a live resolved branch has already been written
+// through refSetProperty and indexed before this continuation probes it.
+function probeIndexedBranchForErrors(value, resolveError) {
+    if (!isTracked(value) || !Object.isExtensible(value)) {
+        throw new Error("hasError probe requires an indexed branch")
+    }
+
+    const counter = getRefCounter(value)
+    if (counter === undefined) {
+        throw new Error("hasError probe requires an indexed branch")
+    }
+    if (counter.errorCount > 0) {
+        resolveError()
+        return undefined
+    }
+    if (counter.promiseCount === 0) return undefined
+
+    const waitPromises = []
+    collectPromiseWaits(value, waitPromises, resolveError, new Set())
+    if (waitPromises.length === 0) return undefined
+
+    return Promise.all(waitPromises)
+}
+
+function collectPromiseWaits(value, waitPromises, resolveError, visited) {
+    if (!isTracked(value) || !Object.isExtensible(value)) {
+        throw new Error("hasError wait collection requires an indexed branch")
+    }
+    if (visited.has(value)) return
+    visited.add(value)
+
+    const counter = getRefCounter(value)
+    if (counter?.parents === undefined) {
+        throw new Error("hasError wait collection requires an indexed branch")
+    }
+    if (counter.promiseCount === 0) return
+
+    for (const key of Object.keys(value)) {
+        const child = value[key]
+        if (isPromise(child)) {
+            const mirror = getOrCreatePromiseMirror(value, key, child)
+            waitPromises.push(onResolve(child, () => {
+                if (!isLivePromiseMirror(value, key, mirror)) return undefined
+                const currentValue = mirror.currentValue
+                if (isError(currentValue)) {
+                    resolveError()
+                    return undefined
+                }
+                if (!isTracked(currentValue) || !Object.isExtensible(currentValue)) {
+                    return undefined
+                }
+                return probeIndexedBranchForErrors(currentValue, resolveError)
+            }))
+        } else if (isTracked(child) && Object.isExtensible(child)) {
+            const childCounter = getRefCounter(child)
+            if (childCounter?.parents === undefined) {
+                throw new Error("hasError wait collection requires an indexed branch")
+            }
+            if (childCounter.promiseCount === 0) continue
+            collectPromiseWaits(child, waitPromises, resolveError, visited)
+        }
+    }
 }
 
 // Observational path resolution. Callers decide whether the reached value
@@ -433,4 +566,4 @@ function deletePath(root, path) {
     })
 }
 
-module.exports = { assignPath, deletePath, import: importValue, lookupPath, normalize }
+module.exports = { assignPath, deletePath, hasError, import: importValue, lookupPath, normalize }

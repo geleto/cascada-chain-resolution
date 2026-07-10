@@ -151,7 +151,7 @@ sharing does not.
    imported context; ref-indexing passes the commit walk's inherited context to
    `getOrCreatePromiseMirror(node, key, promise, importContext)`.
 
-4. **Language integration (issues.md item 8)** — the compiler routes external values
+4. **Language integration (issues.md item 10)** — the compiler routes external values
    through `import(value, ctx)` and marks extracted branches
    (`var x = getExternalValue().a`), constructing the context at the call site.
 
@@ -200,7 +200,7 @@ Notes:
 
 - With `writeTarget` given (ref-indexed write commits), the descent takes **no
   early exits** — the target may hide behind already-indexed DAG shares. Without it
-  (`refIndexBranch` from normalize/hasError), already-ref-indexed subtrees may be
+  (`buildRefIndex` from normalize/hasError), already-ref-indexed subtrees may be
   skipped: they are validated, acyclic, and downward-closed, and no cycle can pass
   from new nodes through them back out.
 - The validator runs on **every** first-index and every ref-indexed write commit,
@@ -216,7 +216,7 @@ Wiring (validate-then-commit stays two-pass — a failure must leave no partial
 counters, edges, or mirrors):
 
 ```js
-function refIndexBranch(value) {
+function buildRefIndex(value) {
     if (!isTracked(value)) return value
     if (!Object.isExtensible(value)) {
         return validateCountable(value, undefined) ?? value  // frozen root: no counters/mirrors
@@ -283,7 +283,7 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
 | mirrors | writeback captures import context at mirror creation and marks settled value; `getOrCreatePromiseMirror(node, key, promise, importContext)` is used by walks and ref-indexing |
 | `setProperty` | throws before own non-enumerable keys on the object being written; writes through plain assignment |
 | `refSetProperty` | `validateCountable(value, parent)` before commit; Error committed at key |
-| `refIndexBranch` | `validateCountable(value, undefined)` before commit; frozen roots validated, no counters/mirrors |
+| `buildRefIndex` | `validateCountable(value, undefined)` before commit; frozen roots validated, no counters/mirrors |
 | `validate.js` | rewritten to the single `validateCountable` |
 | `assignPath`/`deletePath`/`lookupPath` | lookup treats `__proto__` and own non-enumerables as missing; mutations throw on `__proto__`; owned non-enumerables throw, shared/imported non-enumerables are shadowed after COW |
 
@@ -323,7 +323,7 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
   promise resolving to a frozen object both keep their errorContext (META in
   WeakMap mode, side table in inline mode), and a later counting rejection names
   the import site.
-- Attribution: `refIndexBranch` on a cyclic/frozen-violating imported branch returns
+- Attribution: `buildRefIndex` on a cyclic/frozen-violating imported branch returns
   an Error containing the errorContext; ref-indexed write of an invalid imported
   value commits an Error at the key with context; context survives extraction, COW,
   and settle boundaries (deep chains: import → lookup sub-branch → COW → writeback →
@@ -335,7 +335,7 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
 - Back-edge: imported promise resolving to (a value containing) the live target
   under a ref-indexed parent → Error at the key with context, `verifyRefCounts`
   passes; same under a non-ref-indexed parent → cycle floats, walks terminate,
-  later `refIndexBranch` rejects with context.
+  later `buildRefIndex` rejects with context.
 - Frozen: mirror-free read through a frozen promise key (value, rejection→Error);
   COW of a frozen source with promise key produces a normal counted-able copy;
   the raw-seeded fork mirror carries the walk's current import context — its
