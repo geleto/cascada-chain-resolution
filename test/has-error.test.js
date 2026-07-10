@@ -361,7 +361,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("lets a later overwrite suppress a pending rejection without pinning", async () => {
+    it("still observes a pending rejection after a later overwrite", async () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
         let settled = false
@@ -378,8 +378,98 @@ describe("hasError", () => {
 
         pending.reject("late")
 
-        expect(await result).to.be(false)
+        expect(await result).to.be(true)
         expect(root.branch.pending).to.be("fixed")
+        verifyRefCounts(root)
+    })
+
+    it("still observes a pending root rejection after a root overwrite", async () => {
+        const pending = deferred()
+        const chain = new Chain(pending.promise)
+        let settled = false
+
+        const result = hasError(chain, [])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, [], { clean: true })
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.reject("late root")
+
+        expect(await result).to.be(true)
+        expect(chain._state.value).to.eql({ clean: true })
+    })
+
+    it("still observes a pending terminal rejection after a terminal overwrite", async () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        const chain = new Chain(root)
+        let settled = false
+
+        const result = hasError(chain, ["pending"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, ["pending"], "fixed")
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.reject("late terminal")
+
+        expect(await result).to.be(true)
+        expect(root.pending).to.be("fixed")
+        verifyRefCounts(root)
+    })
+
+    it("still probes a pending resolved branch after a later overwrite", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+        const chain = new Chain(root)
+        let settled = false
+
+        const result = hasError(chain, ["branch"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, ["branch", "pending"], "fixed")
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.resolve({ nested: { bad: new Error("bad") } })
+
+        expect(await result).to.be(true)
+        expect(root.branch.pending).to.be("fixed")
+        verifyRefCounts(root)
+    })
+
+    it("still observes a pending parent rejection after a parent-path overwrite", async () => {
+        const pending = deferred()
+        const root = { branch: pending.promise }
+        const chain = new Chain(root)
+        let settled = false
+
+        const result = hasError(chain, ["branch", "bad"])
+        result.then(() => {
+            settled = true
+        })
+
+        assignPath(chain, ["branch"], { clean: true })
+        await flushMicrotasks()
+
+        expect(settled).to.be(false)
+
+        pending.reject("late parent")
+
+        expect(await result).to.be(true)
+        expect(root.branch).to.eql({ clean: true })
         verifyRefCounts(root)
     })
 

@@ -465,16 +465,7 @@ function collectPromiseWaits(value, waitPromises, resolveError, visited) {
         if (isPromise(child)) {
             const mirror = getOrCreatePromiseMirror(value, key, child)
             waitPromises.push(onValueResolve(child, () => {
-                if (!isLivePromiseMirror(value, key, mirror)) return undefined
-                const currentValue = mirror.currentValue
-                if (isError(currentValue)) {
-                    resolveError()
-                    return undefined
-                }
-                if (!isTracked(currentValue) || !Object.isExtensible(currentValue)) {
-                    return undefined
-                }
-                return probeIndexedBranchForErrors(currentValue, resolveError)
+                return probeResolvedPromiseForErrors(mirror.currentValue, resolveError)
             }))
         } else if (isTracked(child) && Object.isExtensible(child)) {
             const childCounter = getRefCounter(child)
@@ -485,6 +476,19 @@ function collectPromiseWaits(value, waitPromises, resolveError, visited) {
             collectPromiseWaits(child, waitPromises, resolveError, visited)
         }
     }
+}
+
+function probeResolvedPromiseForErrors(value, resolveError) {
+    const result = hasErrorAtPathValue(value, undefined)
+    if (result === true) {
+        resolveError()
+        return undefined
+    }
+    if (result === false) return undefined
+
+    return onInternalResolve(result, foundError => {
+        if (foundError) resolveError()
+    })
 }
 
 // Observational path resolution through the Chain's private root holder. Callers

@@ -58,7 +58,7 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   and meta; counting-validation failures are Error values, not thrown fatal errors.
 - **promise-mirrors.js** — promise mirror storage/birth/clearing and guarded
   writeback. `index.js` injects `setProperty` with `initPromiseMirrors(setProperty)`
-  so mirror writeback still performs a language write without creating a cycle.
+  so live mirror writeback still performs a language write without creating a cycle.
 - **refcounts.js** — counter logic ONLY. Public runtime hooks are
   `refSetProperty(parent, key, value)`, `refDeleteProperty(parent, key)`,
   `copyCounters(source, copy)`,
@@ -89,7 +89,7 @@ surface is normalize/hasError and their shared observational resolver:
 | `assignPath` onTarget (plain) | `clearPromiseMirror; parent[key]=v; updateCleanCounts` | `clearPromiseMirror; value = refSetProperty(...); parent[key]=value` |
 | `assignPath` onTarget (promise) | mirror + writeback registration + bare write + stub | same mirror code + `refSetProperty`, then write in index.js |
 | `deletePath` onTarget | `clearPromiseMirror; delete parent[key]; updateCleanCounts` | `clearPromiseMirror; refDeleteProperty(...); delete parent[key]` |
-| writeback in `onResolvedValue` | `node[key] = value; propagateClean` | `value = refSetProperty(...); node[key]=value` |
+| promise-mirror writeback | `node[key] = value; propagateClean` | if live: `value = refSetProperty(...); node[key]=value`; always store `mirror.currentValue` |
 | walk installs (sync + suspended) | bare write (+ clear) | `refSetProperty`, then write in index.js |
 | `shallowCopy` | — | `copyCounters(obj, copy)` before `return copy` |
 | `import` | — | mark-only `import(value, errorContext)`; no walk, no validation |
@@ -779,8 +779,8 @@ already completed because it would ride a promise counted inside it. With
 suspended earlier remainder able to remove it would have a counted promise on
 that path. hasError deliberately does not pin, but its wait tree still gives an
 issue-time answer: later-issued installs are outside the collected frontier,
-while a later overwrite/delete of a watched pending key can suppress that key's
-outcome.
+while a later overwrite/delete of a watched pending key can detach the resolved
+value from the live tree without changing the captured answer.
 
 `hasErrorAtPathValue` first calls generic `buildRefIndex`. Validation failures answer
 true; otherwise the branch is fully indexed and answers come from counters.
@@ -790,13 +790,15 @@ If no current Error is found but `promiseCount > 0`, the pending frontier is
 collected by descending only ref-indexed nodes whose counters still contain
 promises. Waits are registered after `buildRefIndex` has minted mirrors/writebacks:
 `probeIndexedBranchForErrors` returns `Promise.all(waitPromises)`, where each wait
-is `onValueResolve(childPromise, () => probeIndexedBranchForErrors(mirror.currentValue))`.
+is `onValueResolve(childPromise, () => probeResolvedPromiseForErrors(mirror.currentValue))`.
 hasError races `onInternalResolve(cleanPromise, () => false)` against the local error
 promise; `Promise.all`/`race` only aggregate already-wrapped internal waits. Each
-settlement runs after writeback committed counts, then probes that already-indexed
-resolved promise branch: an Error calls the resolver, newly exposed promises
-return a nested `Promise.all`, and the whole promise tree resolving means the
-clean side is false.
+settlement probes the captured mirror value through `hasErrorAtPathValue`. Live
+mirrors have already committed counts into the live tree through normal writeback;
+revoked mirrors keep a private `currentValue`, which this resolved-path boundary
+ref-indexes if needed. An Error calls the resolver, newly exposed issue-time
+promises return a nested `Promise.all`, and the whole promise tree resolving means
+the clean side is false.
 
 **Checkpoint:** full suite green.
 
