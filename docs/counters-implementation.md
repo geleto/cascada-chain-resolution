@@ -112,6 +112,7 @@ shared for COW), since `hasSharedMark` is being rewritten anyway.
 
 ```js
 const META = Symbol("META")
+const hasOwn = Object.prototype.hasOwnProperty
 
 function createMeta() {
     return {
@@ -131,7 +132,7 @@ function metaOf(node) {                    // read-only peek, never creates
     if (!isTracked(node)) return undefined
     if (STORE_META_IN_WEAKMAP) return META_MAP.get(node)
     if (!Object.isExtensible(node)) return undefined
-    return node[META]
+    return hasOwn.call(node, META) ? node[META] : undefined
 }
 
 function ensureMeta(node) {                // inline mode requires extensible; WeakMap mode does not
@@ -888,6 +889,8 @@ Settlement / normalize / hasError:
   writes.
 - plug & play: the full base suite passes with refcounts.js stubbed to passthroughs,
   and ops on never-ref-indexed data behave bit-for-bit like the base kernel.
+- metadata-storage parity: `npm test` runs the whole matrix in both inline-Symbol
+  and WeakMap modes; either mode also has its own focused npm script.
 - unhandled-rejection guard: the whole matrix runs under a
   `process.on("unhandledRejection")` sentinel for unexpected rejections, per basics item
   2. A child-process integration test separately pins the intentional host-unhandled

@@ -16,7 +16,7 @@
     - Counter metadata, promise mirrors, and the SHARED mark share the single `META` record; `src/meta.js` owns generic metadata and `src/promise-mirrors.js` owns mirror lifecycle.
     - `normalize` is implemented by issue 6 and `hasError` by issue 7; they activate this ref-indexing at their public operation boundary.
 
-2. **Implemented: single META record and accessors.** `src/meta.js` owns the one logical metadata record. Storage is selected by `STORE_META_IN_WEAKMAP`: inline non-enumerable Symbol property by default, or WeakMap. Shared marks, promise mirrors, and subtree counters all use that record, and `shallowCopy` never copies it as language data.
+2. **Implemented: single META record and accessors.** `src/meta.js` owns the one logical metadata record. Storage is selected by `STORE_META_IN_WEAKMAP`, derived from `CASCADA_META_STORAGE`: inline non-enumerable Symbol property by default, or WeakMap when set to `weakmap`. Shared marks, promise mirrors, and subtree counters all use that record, and `shallowCopy` never copies it as language data. The default test command runs the complete suite once in each mode.
 
     ```js
     function createMeta() {

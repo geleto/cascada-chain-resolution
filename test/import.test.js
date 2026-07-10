@@ -9,7 +9,10 @@ const {
     STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
+    deletePath,
+    hasError,
     lookupPath,
+    normalize,
     importValue,
     deferred,
     flushMicrotasks,
@@ -61,6 +64,17 @@ describe("import", () => {
         expect(next.delta).not.to.be(oldDelta)
         expect(oldDelta.x).to.be(3)
         expect(next.delta.x).to.be(5)
+    })
+
+    it("passes primitive and Error imports through unchanged", () => {
+        const error = new Error("language error")
+
+        expect(importValue(null, "null import")).to.be(null)
+        expect(importValue(undefined, "undefined import")).to.be(undefined)
+        expect(importValue(7, "number import")).to.be(7)
+        expect(importValue("text", "string import")).to.be("text")
+        expect(importValue(error, "error import")).to.be(error)
+        expect(metaOf(error)).to.be(undefined)
     })
 
     it("marks resolved promise roots before returning them", async () => {
@@ -149,6 +163,57 @@ describe("import", () => {
         const failure = buildRefIndex(root)
 
         expect(failure.message).to.be("Value cannot be cyclic (imported at: first import)")
+    })
+
+    it("uses the nearest nested import context", () => {
+        const child = {}
+        child.self = child
+        importValue(child, "child import")
+        const root = importValue({ child }, "parent import")
+
+        const failure = buildRefIndex(root)
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Value cannot be cyclic (imported at: child import)")
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(child)).to.be(undefined)
+    })
+
+    it("keeps the first context across asynchronous imports", async () => {
+        const pending = deferred()
+        const first = importValue(pending.promise, "first async import")
+        const second = importValue(pending.promise, "second async import")
+        const cyclic = {}
+        cyclic.self = cyclic
+
+        pending.resolve(cyclic)
+        expect(await first).to.be(cyclic)
+        expect(await second).to.be(cyclic)
+
+        const failure = buildRefIndex(cyclic)
+        expect(failure.message).to.be(
+            "Value cannot be cyclic (imported at: first async import)",
+        )
+    })
+
+    it("recovers from failed validation after a COW repair", () => {
+        const root = {}
+        root.self = root
+        importValue(root, "repairable import")
+        const chain = new Chain(root)
+
+        expect(hasError(chain, [])).to.be(true)
+        expect(getRefCounter(root)).to.be(undefined)
+
+        deletePath(chain, ["self"])
+        const repaired = chain._state.value
+
+        expect(repaired).not.to.be(root)
+        expect(repaired).to.eql({})
+        expect(root.self).to.be(root)
+        expect(normalize(chain, [])).to.be(repaired)
+        expect(hasError(chain, [])).to.be(false)
+        verifyRefCounts(repaired)
     })
 
     it("rejects frozen imported subtrees only when counting", () => {
@@ -282,6 +347,32 @@ describe("import", () => {
         expect(next).not.to.be(value)
         expect(value.x).to.be(1)
         expect(next.x).to.be(2)
+    })
+
+    it("repairs an invalid frozen import through COW deletion", async () => {
+        const pending = deferred()
+        const frozen = Object.freeze({
+            keep: true,
+            invalid: pending.promise,
+        })
+        importValue(frozen, "repair frozen import")
+        const chain = new Chain(frozen)
+
+        expect(hasError(chain, [])).to.be(true)
+        deletePath(chain, ["invalid"])
+        const repaired = chain._state.value
+
+        expect(repaired).not.to.be(frozen)
+        expect(repaired).to.eql({ keep: true })
+        expect(normalize(chain, [])).to.be(repaired)
+        expect(hasError(chain, [])).to.be(false)
+
+        pending.reject("detached")
+        await flushMicrotasks()
+
+        expect(repaired).to.eql({ keep: true })
+        expect(frozen.invalid).to.be(pending.promise)
+        verifyRefCounts(repaired)
     })
 
     it("copies frozen promise keys into mutable imported mirrors", async () => {

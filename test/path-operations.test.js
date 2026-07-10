@@ -128,6 +128,34 @@ describe("path assignment", () => {
         expect({}.safe).to.be(undefined)
     })
 
+    it("marks a shared promise-valued __proto__ result", async () => {
+        const deferredValue = deferred()
+        const resolved = { x: 1 }
+        const root = { other: { x: 1 } }
+        Object.defineProperty(root, "__proto__", {
+            value: deferredValue.promise,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        const chain = new Chain(root)
+
+        lookupPath(chain, [])
+        assignPath(chain, ["other", "x"], 2)
+        deferredValue.resolve(resolved)
+        await flushMicrotasks()
+
+        const resolvedChain = new Chain(resolved)
+        assignPath(resolvedChain, ["x"], 3)
+
+        expect(resolved.x).to.be(1)
+        expect(resolvedChain._state.value).not.to.be(resolved)
+        expect(resolvedChain._state.value.x).to.be(3)
+        expect(Object.getOwnPropertyDescriptor(chain._state.value, "__proto__").value).to.be(
+            deferredValue.promise,
+        )
+    })
+
     it("throws on non-enumerable mutation paths", () => {
         const hidden = { x: 1 }
         const root = {}
@@ -172,6 +200,22 @@ describe("path assignment", () => {
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
         expect(next.hidden).to.be(2)
         expect(Object.prototype.propertyIsEnumerable.call(next, "hidden")).to.be(true)
+    })
+
+    it("treats array length as a non-language mutation property", () => {
+        const root = [1, 2, 3]
+        const chain = new Chain(root)
+
+        expect(lookupPath(chain, ["length"])).to.be(undefined)
+
+        const assigned = thrownBy(() => assignPath(chain, ["length"], 1))
+        const deleted = thrownBy(() => deletePath(chain, ["length"]))
+
+        expect(assigned instanceof Error).to.be(true)
+        expect(deleted instanceof Error).to.be(true)
+        expect(assigned.message).to.be("Cannot mutate non-enumerable property")
+        expect(deleted.message).to.be("Cannot mutate non-enumerable property")
+        expect(root).to.eql([1, 2, 3])
     })
 
     it("can shadow inherited properties", () => {
@@ -243,6 +287,21 @@ describe("path assignment", () => {
         expect(next.delta).not.to.be(oldDelta)
         expect(oldDelta.x).to.be(3)
         expect(next.delta.x).to.be(5)
+    })
+
+    it("splits an imported DAG only along the mutated path", () => {
+        const child = { x: 1 }
+        const root = importValue({ left: child, right: child }, "DAG import")
+        const chain = new Chain(root)
+
+        assignPath(chain, ["left", "x"], 2)
+        const next = chain._state.value
+
+        expect(next).not.to.be(root)
+        expect(next.left).not.to.be(child)
+        expect(next.right).to.be(child)
+        expect(next.left.x).to.be(2)
+        expect(child.x).to.be(1)
     })
 
     it("tracks inherited shared state along the mutated path", () => {
@@ -330,6 +389,21 @@ describe("path assignment", () => {
         expect(0 in next).to.be(false)
         expect(next[1]).to.be("one")
         expect(next[2]).to.be("two")
+    })
+
+    it("copies frozen arrays before mutating nested values", () => {
+        const child = { x: 1 }
+        const root = Object.freeze([child])
+        const chain = new Chain(root)
+
+        assignPath(chain, [0, "x"], 2)
+        const next = chain._state.value
+
+        expect(Array.isArray(next)).to.be(true)
+        expect(next).not.to.be(root)
+        expect(next[0]).not.to.be(child)
+        expect(next[0].x).to.be(2)
+        expect(child.x).to.be(1)
     })
 
     it("can replace an Error at the target key", () => {
@@ -500,6 +574,50 @@ describe("deletePath", () => {
         expect(root.config).not.to.be(oldConfig)
     })
 
+    it("drops a non-enumerable property when deleting through COW", () => {
+        const hidden = { x: 1 }
+        const root = { keep: true }
+        Object.defineProperty(root, "hidden", {
+            value: hidden,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+        importValue(root, "hidden delete import")
+        const chain = new Chain(root)
+
+        deletePath(chain, ["hidden"])
+        const next = chain._state.value
+
+        expect(next).not.to.be(root)
+        expect(next).to.eql({ keep: true })
+        expect(root.hidden).to.be(hidden)
+        expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
+    })
+
+    it("shadows a hidden property during a suspended imported delete", async () => {
+        const pending = deferred()
+        const external = { keep: true }
+        Object.defineProperty(external, "hidden", {
+            value: { x: 1 },
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+        const chain = new Chain({})
+
+        assignPath(chain, ["branch"], importValue(pending.promise, "hidden async delete"))
+        const result = deletePath(chain, ["branch", "hidden"])
+
+        expect(result).to.be(undefined)
+        pending.resolve(external)
+        await flushMicrotasks()
+
+        expect(chain._state.value.branch).not.to.be(external)
+        expect(chain._state.value.branch).to.eql({ keep: true })
+        expect(external.hidden).to.eql({ x: 1 })
+    })
+
     it("can delete an Error at the target key", () => {
         const root = { value: new Error("old") }
 
@@ -558,6 +676,26 @@ describe("deletePath", () => {
         await flushMicrotasks()
 
         expect(root).to.eql({})
+    })
+
+    it("returns immediately when assign and delete suspend", async () => {
+        const assigned = deferred()
+        const deleted = deferred()
+        const assignChain = new Chain({ branch: assigned.promise })
+        const deleteChain = new Chain({ branch: deleted.promise })
+
+        const assignResult = assignPath(assignChain, ["branch", "x"], 1)
+        const deleteResult = deletePath(deleteChain, ["branch", "x"])
+
+        expect(assignResult).to.be(undefined)
+        expect(deleteResult).to.be(undefined)
+
+        assigned.resolve({})
+        deleted.resolve({ x: 1 })
+        await flushMicrotasks()
+
+        expect(assignChain._state.value.branch).to.eql({ x: 1 })
+        expect(deleteChain._state.value.branch).to.eql({})
     })
 
     it("captures mutation paths before a pending root settles", async () => {

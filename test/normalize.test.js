@@ -7,10 +7,12 @@ const {
     getRefCounter,
     verifyRefCounts,
     assignPath,
+    deletePath,
     normalize,
     importValue,
     deferred,
     flushMicrotasks,
+    expectCounts,
 } = require("./support")
 
 describe("normalize", () => {
@@ -105,6 +107,32 @@ describe("normalize", () => {
         expect(metaOf(copy)).to.be(undefined)
     })
 
+    it("plain-copies sparse arrays and preserves DAG identity", () => {
+        const child = { x: 1 }
+        const ignoredSymbol = Symbol("ignored")
+        const root = new Array(4)
+        root[1] = child
+        root.extra = child
+        root[ignoredSymbol] = "symbol value"
+        Object.defineProperty(root, "hidden", {
+            value: "hidden value",
+            enumerable: false,
+        })
+
+        const copy = normalize(new Chain(root), [], true, true)
+
+        expect(Array.isArray(copy)).to.be(true)
+        expect(copy.length).to.be(4)
+        expect(0 in copy).to.be(false)
+        expect(1 in copy).to.be(true)
+        expect(copy[1]).to.be(copy.extra)
+        expect(copy[1]).not.to.be(child)
+        expect(Object.prototype.hasOwnProperty.call(copy, "hidden")).to.be(false)
+        expect(Object.getOwnPropertySymbols(copy)).to.eql([])
+        expect(metaOf(copy)).to.be(undefined)
+        expect(metaOf(copy[1])).to.be(undefined)
+    })
+
     it("returns a single Error for settled error branches without marking them", () => {
         const child = { x: 1 }
         const branch = { error: new Error("bad"), child }
@@ -174,6 +202,57 @@ describe("normalize", () => {
         expect(metaOf(branch).settlementResolve).to.be(undefined)
     })
 
+    it("keeps caller return modes independent on one settlement wait", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        const chain = new Chain({ branch })
+
+        const directResult = normalize(chain, ["branch"])
+        const settlementPromise = metaOf(branch).settlementPromise
+        const plainResult = normalize(chain, ["branch"], true, true)
+
+        expect(metaOf(branch).settlementPromise).to.be(settlementPromise)
+        pending.resolve({ done: true })
+
+        const direct = await directResult
+        const plain = await plainResult
+        expect(direct).to.be(branch)
+        expect(plain).not.to.be(branch)
+        expect(plain).to.eql({ pending: { done: true } })
+        expect(metaOf(plain)).to.be(undefined)
+        expect(metaOf(plain.pending)).to.be(undefined)
+        verifyRefCounts(branch)
+    })
+
+    it("settles overlapping ancestor and child normalizations", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const root = { child }
+        const chain = new Chain(root)
+
+        const childResult = normalize(chain, ["child"])
+        const childSettlement = metaOf(child).settlementPromise
+        const rootResult = normalize(chain, [])
+        const rootSettlement = metaOf(root).settlementPromise
+        const plainRootResult = normalize(chain, [], true, true)
+
+        expect(childSettlement).to.be.ok()
+        expect(rootSettlement).to.be.ok()
+        expect(rootSettlement).not.to.be(childSettlement)
+        expect(metaOf(root).settlementPromise).to.be(rootSettlement)
+
+        pending.resolve({ done: true })
+        const childValue = await childResult
+        const rootValue = await rootResult
+        const plainRoot = await plainRootResult
+
+        expect(childValue).to.be(child)
+        expect(rootValue).to.be(root)
+        expect(plainRoot).to.eql({ child: { pending: { done: true } } })
+        expect(plainRoot).not.to.be(root)
+        verifyRefCounts(root)
+    })
+
     it("includes earlier suspended writes at their program position", async () => {
         const pending = deferred()
         const root = { branch: pending.promise }
@@ -186,6 +265,22 @@ describe("normalize", () => {
 
         expect(value).to.be(root.branch)
         expect(value).to.eql({ x: 1 })
+        verifyRefCounts(root)
+    })
+
+    it("includes an earlier suspended delete at its program position", async () => {
+        const pending = deferred()
+        const root = { branch: pending.promise }
+        const chain = new Chain(root)
+
+        deletePath(chain, ["branch", "remove"])
+        const result = normalize(chain, ["branch"])
+
+        pending.resolve({ keep: true, remove: true })
+        const value = await result
+
+        expect(value).to.be(root.branch)
+        expect(value).to.eql({ keep: true })
         verifyRefCounts(root)
     })
 
@@ -423,6 +518,29 @@ describe("normalize", () => {
         verifyRefCounts(root, branch)
     })
 
+    it("normalizes a later COW counter world independently", async () => {
+        const first = deferred()
+        const second = deferred()
+        const original = { first: first.promise }
+        const chain = new Chain({ branch: original })
+
+        const originalResult = normalize(chain, ["branch"])
+        assignPath(chain, ["branch", "second"], second.promise)
+        const current = chain._state.value.branch
+
+        expect(current).not.to.be(original)
+        first.resolve("first done")
+        expect(await originalResult).to.be(original)
+        expect(original).to.eql({ first: "first done" })
+        expectCounts(current, 1, 0)
+
+        const currentResult = normalize(chain, ["branch"])
+        second.resolve("second done")
+        expect(await currentResult).to.be(current)
+        expect(current).to.eql({ first: "first done", second: "second done" })
+        verifyRefCounts(original, current)
+    })
+
     it("attributes validation failures without marking failed branches", () => {
         const branch = {}
         branch.self = branch
@@ -457,6 +575,17 @@ describe("normalize", () => {
         } else {
             expect(metaOf(invalid)).to.be(undefined)
         }
+    })
+
+    it("returns valid frozen branches synchronously without copying", () => {
+        const frozen = Object.freeze({ nested: { value: 1 } })
+        importValue(frozen, "valid frozen normalize")
+
+        const value = normalize(new Chain(frozen), [], false)
+
+        expect(value).to.be(frozen)
+        expect(getRefCounter(frozen)).to.be(undefined)
+        expect(getRefCounter(frozen.nested)).to.be(undefined)
     })
 
     it("revalidates an indexed child when a frozen ancestor makes its promises invalid", () => {

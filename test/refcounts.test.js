@@ -91,6 +91,8 @@ describe("subtree counters", () => {
 
     it("counts primitive, promise, Error, and valid frozen values", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
+        const sharedChild = { value: 2 }
+        const frozenDAG = Object.freeze({ left: sharedChild, right: sharedChild })
 
         expectCounts(7, 0, 0)
         expectCounts(null, 0, 0)
@@ -98,8 +100,10 @@ describe("subtree counters", () => {
         expectCounts(new Error("bad"), 0, 1)
 
         expect(buildRefIndex(frozen)).to.be(frozen)
+        expect(buildRefIndex(frozenDAG)).to.be(frozenDAG)
         expectCounts(frozen, 0, 0)
-        verifyRefCounts(frozen)
+        expectCounts(frozenDAG, 0, 0)
+        verifyRefCounts(frozen, frozenDAG)
     })
 
     it("revalidates indexed descendants beneath non-extensible ancestors", () => {
@@ -130,6 +134,50 @@ describe("subtree counters", () => {
         expect(getRefCounter(child)).to.be(undefined)
     })
 
+    it("leaves no counters or mirrors when validation fails before commit", async () => {
+        const pending = deferred()
+        const earlier = { pending: pending.promise }
+        const cycle = {}
+        cycle.self = cycle
+        const root = { earlier, cycle }
+
+        importValue(root, "transactional index")
+        const failure = buildRefIndex(root)
+
+        expect(failure instanceof Error).to.be(true)
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(earlier)).to.be(undefined)
+        expect(metaOf(root).mirrors).to.be(null)
+        expect(metaOf(earlier)).to.be(undefined)
+
+        delete cycle.self
+        expect(buildRefIndex(root)).to.be(root)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        pending.resolve("done")
+        await flushMicrotasks()
+
+        expect(earlier.pending).to.be("done")
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("finds a write target behind an already-indexed DAG branch", () => {
+        const parent = {}
+        const bridge = { back: parent }
+
+        buildRefIndex(bridge)
+        const chain = new Chain(parent)
+        assignPath(chain, ["value"], bridge)
+
+        expect(parent.value instanceof Error).to.be(true)
+        expect(parent.value.message).to.be("Value cannot reach its write target")
+        expectCounts(parent, 0, 1)
+        expectCounts(bridge, 0, 1)
+        verifyRefCounts(bridge)
+    })
+
     it("verifies indexed islands reached through unindexed wrappers", () => {
         const child = { clean: true }
         const wrapper = { child }
@@ -141,6 +189,46 @@ describe("subtree counters", () => {
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Counter totals are inconsistent")
+    })
+
+    it("detects every parent-edge consistency failure", () => {
+        const missingChildIndexRoot = {}
+        buildRefIndex(missingChildIndexRoot)
+        missingChildIndexRoot.child = {}
+        expect(thrownBy(() => verifyRefCounts(missingChildIndexRoot)).message).to.be(
+            "Ref-indexed parent contains non-ref-indexed child",
+        )
+
+        const missingReverseChild = {}
+        const missingReverseRoot = { child: missingReverseChild }
+        buildRefIndex(missingReverseRoot)
+        getRefCounter(missingReverseChild).parents.delete(missingReverseRoot)
+        expect(thrownBy(() => verifyRefCounts(missingReverseRoot)).message).to.be(
+            "Parent edge count is inconsistent",
+        )
+
+        const primitiveParentChild = {}
+        buildRefIndex(primitiveParentChild)
+        getRefCounter(primitiveParentChild).parents.set(7, 1)
+        expect(thrownBy(() => verifyRefCounts(primitiveParentChild)).message).to.be(
+            "Parent edge points to untracked parent",
+        )
+
+        const unindexedParentChild = {}
+        const unindexedParent = { child: unindexedParentChild }
+        buildRefIndex(unindexedParentChild)
+        getRefCounter(unindexedParentChild).parents.set(unindexedParent, 1)
+        expect(thrownBy(() => verifyRefCounts(unindexedParentChild)).message).to.be(
+            "Parent edge points to non-ref-indexed parent",
+        )
+
+        const detachedChild = {}
+        const detachedParent = { child: detachedChild }
+        buildRefIndex(detachedParent)
+        delete detachedParent.child
+        expect(thrownBy(() => verifyRefCounts(detachedChild)).message).to.be(
+            "Parent edge count is inconsistent",
+        )
     })
 
     it("bookkeeps tracked branches after first count", () => {
@@ -237,6 +325,31 @@ describe("subtree counters", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be(7)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("keeps one count when the same promise is assigned again", async () => {
+        const pending = deferred()
+        const root = {}
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        assignPath(chain, ["value"], pending.promise)
+        const firstRead = lookupPath(chain, ["value"])
+        assignPath(chain, ["value"], pending.promise)
+        assignPath(chain, ["value", "x"], 1)
+
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+
+        pending.resolve({})
+        const firstValue = await firstRead
+        await flushMicrotasks()
+
+        expect(firstValue).to.eql({})
+        expect(root.value).to.eql({ x: 1 })
+        expect(root.value).not.to.be(firstValue)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
@@ -375,6 +488,104 @@ describe("subtree counters", () => {
         await flushMicrotasks()
 
         expectCounts(child, 0, 0)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("decrements one edge without detaching an aliased child", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const root = { left: child, right: child }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        deletePath(chain, ["left"])
+
+        expectCounts(child, 1, 0)
+        expectCounts(root, 1, 0)
+        expect(getRefCounter(child).parents.get(root)).to.be(1)
+        verifyRefCounts(root, child)
+
+        pending.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root, child)
+    })
+
+    it("detaches a shared child from only the replaced parent", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const left = { child }
+        const right = { child }
+        const root = { left, right }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        deletePath(chain, ["left", "child"])
+
+        expectCounts(left, 0, 0)
+        expectCounts(right, 1, 0)
+        expectCounts(root, 1, 0)
+        expect(getRefCounter(child).parents.has(left)).to.be(false)
+        expect(getRefCounter(child).parents.get(right)).to.be(1)
+        verifyRefCounts(root, child)
+
+        pending.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(right, 0, 0)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root, child)
+    })
+
+    it("swaps counted subtrees and isolates their later settlements", async () => {
+        const oldPending = deferred()
+        const firstNewPending = deferred()
+        const secondNewPending = deferred()
+        const oldChild = { pending: oldPending.promise }
+        const newChild = {
+            first: firstNewPending.promise,
+            second: secondNewPending.promise,
+        }
+        const root = { child: oldChild }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        assignPath(chain, ["child"], newChild)
+
+        expectCounts(root, 2, 0)
+        expect(getRefCounter(oldChild).parents.has(root)).to.be(false)
+        expect(getRefCounter(newChild).parents.get(root)).to.be(1)
+        verifyRefCounts(root, oldChild)
+
+        oldPending.resolve(new Error("detached"))
+        await flushMicrotasks()
+
+        expectCounts(oldChild, 0, 1)
+        expectCounts(root, 2, 0)
+        verifyRefCounts(root, oldChild)
+
+        firstNewPending.resolve("done")
+        await flushMicrotasks()
+        expectCounts(root, 1, 0)
+
+        secondNewPending.reject("bad")
+        await flushMicrotasks()
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root, oldChild)
+    })
+
+    it("recovers indexed counters when an Error is replaced", () => {
+        const root = {}
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        assignPath(chain, ["value"], new Error("bad"))
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+
+        assignPath(chain, ["value"], { clean: true })
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })

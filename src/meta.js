@@ -5,7 +5,7 @@ const {
 } = require("./helpers")
 const { reportFatalError } = require("./error")
 
-const STORE_META_IN_WEAKMAP = false
+const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
 const META_MAP = new WeakMap()
 const hasOwn = Object.prototype.hasOwnProperty

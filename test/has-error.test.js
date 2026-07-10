@@ -93,6 +93,26 @@ describe("hasError", () => {
         expect(getRefCounter(bad.nested)).to.be(undefined)
     })
 
+    it("probes terminal promises on frozen parents without writeback", async () => {
+        const cleanPending = deferred()
+        const badPending = deferred()
+        const cleanRoot = Object.freeze({ pending: cleanPending.promise })
+        const badRoot = Object.freeze({ pending: badPending.promise })
+
+        const cleanResult = hasError(new Chain(cleanRoot), ["pending"])
+        const badResult = hasError(new Chain(badRoot), ["pending"])
+
+        cleanPending.resolve(undefined)
+        badPending.reject("frozen failure")
+
+        expect(await cleanResult).to.be(false)
+        expect(await badResult).to.be(true)
+        expect(cleanRoot.pending).to.be(cleanPending.promise)
+        expect(badRoot.pending).to.be(badPending.promise)
+        expect(getRefCounter(cleanRoot)).to.be(undefined)
+        expect(getRefCounter(badRoot)).to.be(undefined)
+    })
+
     it("revalidates indexed descendants under a non-extensible branch", () => {
         const pending = deferred()
         const child = { pending: pending.promise }
@@ -238,7 +258,7 @@ describe("hasError", () => {
 
         const outcome = await Promise.race([
             result,
-            flushMicrotasks(20).then(() => "pending"),
+            flushMicrotasks().then(() => "pending"),
         ])
 
         expect(outcome).to.be(false)
@@ -292,7 +312,7 @@ describe("hasError", () => {
 
         const outcome = await Promise.race([
             result,
-            flushMicrotasks(20).then(() => "pending"),
+            flushMicrotasks().then(() => "pending"),
         ])
 
         expect(outcome).to.be(false)
@@ -304,6 +324,26 @@ describe("hasError", () => {
         await flushMicrotasks()
 
         expect(root.branch.clean.later).to.eql({ ok: true })
+        verifyRefCounts(root)
+    })
+
+    it("ignores later Errors outside the original pending frontier", async () => {
+        const pending = deferred()
+        const root = {
+            branch: {
+                pending: pending.promise,
+                stable: {},
+            },
+        }
+        const chain = new Chain(root)
+
+        const result = hasError(chain, ["branch"])
+        assignPath(chain, ["branch", "stable", "later"], new Error("future"))
+
+        pending.resolve("done")
+
+        expect(await result).to.be(false)
+        expect(hasError(chain, ["branch"])).to.be(true)
         verifyRefCounts(root)
     })
 
@@ -384,6 +424,43 @@ describe("hasError", () => {
         const normalizedValue = await normalizedBranch
         expect(normalizedValue instanceof Error).to.be(true)
         expect(normalized).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("coexists with ancestor normalization when hasError is issued first", async () => {
+        const bad = deferred()
+        const slow = deferred()
+        const child = { bad: bad.promise }
+        const root = { child, slow: slow.promise }
+        const chain = new Chain(root)
+
+        const childHasError = hasError(chain, ["child"])
+        const rootHasError = hasError(chain, [])
+        const normalizedRoot = normalize(chain, [])
+
+        bad.reject("bad")
+
+        expect(await childHasError).to.be(true)
+        expect(await rootHasError).to.be(true)
+
+        slow.resolve("done")
+        const normalized = await normalizedRoot
+        expect(normalized instanceof Error).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("waits once for a pending child shared across indexed paths", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const root = importValue({ left: child, right: child }, "shared child probe")
+        const chain = new Chain(root)
+
+        const result = hasError(chain, [])
+        pending.reject("shared failure")
+
+        expect(await result).to.be(true)
+        expect(getRefCounter(child).errorCount).to.be(1)
+        expect(getRefCounter(root).errorCount).to.be(2)
         verifyRefCounts(root)
     })
 

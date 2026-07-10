@@ -7,7 +7,9 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "mocha --require ./test/setup.js \"test/**/*.test.js\""
+    "test": "npm run test:inline && npm run test:weakmap",
+    "test:inline": "mocha --require ./test/inline-mode.js --require ./test/setup.js \"test/**/*.test.js\"",
+    "test:weakmap": "mocha --require ./test/weakmap-mode.js --require ./test/setup.js \"test/**/*.test.js\""
   },
   "devDependencies": {
     "expect.js": "^0.3.1",

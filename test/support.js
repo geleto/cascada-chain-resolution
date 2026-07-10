@@ -21,10 +21,9 @@ function deferred() {
     return { promise, resolve, reject }
 }
 
-async function flushMicrotasks(count = 8) {
-    for (let i = 0; i < count; i++) {
-        await Promise.resolve()
-    }
+function flushMicrotasks() {
+    // A full turn drains the recursively queued promise jobs from this turn.
+    return new Promise(resolve => setImmediate(resolve))
 }
 
 function expectCounts(value, promiseCount, errorCount) {

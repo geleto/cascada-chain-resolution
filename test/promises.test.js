@@ -8,12 +8,17 @@ const {
     setFatalErrorReporter,
     onInternalResolve,
     onValueResolve,
+    buildRefIndex,
+    verifyRefCounts,
     assignPath,
     deletePath,
+    hasError,
     lookupPath,
+    normalize,
     importValue,
     deferred,
     flushMicrotasks,
+    expectCounts,
     thrownBy,
 } = require("./support")
 
@@ -231,11 +236,14 @@ describe("promise helpers", () => {
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
             returnsUndefined: true,
-            reportCount: 1,
-            unhandledCount: 1,
-            sameError: true,
-            message: "Cannot mutate non-enumerable property",
-            valueUnchanged: true,
+            reportCount: 2,
+            unhandledCount: 2,
+            sameErrors: true,
+            messages: [
+                "Cannot mutate non-enumerable property",
+                "Cannot mutate non-enumerable property",
+            ],
+            valuesUnchanged: true,
         })
     })
 })
@@ -864,6 +872,142 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ y: 3, x: 2 })
+    })
+
+    describe("sequential operation schedules", () => {
+        it("makes a read between two writes observe only the first write", async () => {
+            const pending = deferred()
+            const chain = new Chain({ branch: pending.promise })
+
+            assignPath(chain, ["branch", "x"], 1)
+            const observed = lookupPath(chain, ["branch"])
+            assignPath(chain, ["branch", "x"], 2)
+
+            pending.resolve({})
+            const value = await observed
+            await flushMicrotasks()
+
+            expect(value).to.eql({ x: 1 })
+            expect(chain._state.value.branch).to.eql({ x: 2 })
+            expect(chain._state.value.branch).not.to.be(value)
+        })
+
+        it("orders delete, read, and write through one pending branch", async () => {
+            const pending = deferred()
+            const chain = new Chain({ branch: pending.promise })
+
+            deletePath(chain, ["branch", "x"])
+            const observed = lookupPath(chain, ["branch", "x"])
+            assignPath(chain, ["branch", "x"], 2)
+
+            pending.resolve({ x: 1 })
+
+            expect(await observed).to.be(undefined)
+            await flushMicrotasks()
+            expect(chain._state.value.branch).to.eql({ x: 2 })
+        })
+
+        it("preserves a read position through two promise barriers", async () => {
+            const outer = deferred()
+            const inner = deferred()
+            const chain = new Chain({ branch: outer.promise })
+
+            assignPath(chain, ["branch", "inner", "x"], 1)
+            const observed = lookupPath(chain, ["branch", "inner"])
+            assignPath(chain, ["branch", "inner", "x"], 2)
+
+            outer.resolve({ inner: inner.promise })
+            await flushMicrotasks()
+            inner.resolve({})
+
+            const value = await observed
+            await flushMicrotasks()
+            expect(value).to.eql({ x: 1 })
+            expect(chain._state.value.branch.inner).to.eql({ x: 2 })
+            expect(chain._state.value.branch.inner).not.to.be(value)
+        })
+
+        it("preserves a root read position between root writes", async () => {
+            const pending = deferred()
+            const chain = new Chain(pending.promise)
+
+            assignPath(chain, ["x"], 1)
+            const observed = lookupPath(chain, [])
+            assignPath(chain, ["x"], 2)
+
+            pending.resolve({})
+
+            const value = await observed
+            await flushMicrotasks()
+            expect(value).to.eql({ x: 1 })
+            expect(chain._state.value).to.eql({ x: 2 })
+            expect(chain._state.value).not.to.be(value)
+        })
+    })
+
+    it("keeps indexed keys sharing one imported promise independent", async () => {
+        const pending = deferred()
+        const imported = importValue(pending.promise, "shared promise")
+        const root = { left: imported, right: imported }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        assignPath(chain, ["left", "x"], 1)
+        assignPath(chain, ["right", "y"], 2)
+        const normalized = normalize(chain, [])
+        const foundError = hasError(chain, [])
+
+        expectCounts(root, 2, 0)
+        pending.resolve({})
+
+        expect(await foundError).to.be(false)
+        expect(await normalized).to.be(root)
+        expect(root.left).to.eql({ x: 1 })
+        expect(root.right).to.eql({ y: 2 })
+        expect(root.left).not.to.be(root.right)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("turns a promise exposed beneath its own result into Error", async () => {
+        const pending = deferred()
+        const root = { value: pending.promise }
+        const chain = new Chain(root)
+        const normalized = normalize(chain, [])
+        const foundError = hasError(chain, [])
+        const resolved = { again: pending.promise }
+
+        pending.resolve(resolved)
+
+        const normalizedValue = await normalized
+        expect(normalizedValue instanceof Error).to.be(true)
+        expect(await foundError).to.be(true)
+        expect(resolved.again instanceof Error).to.be(true)
+        expect(resolved.again.message).to.be("Value cannot reach its write target")
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("turns a cycle closed by a second promise into Error", async () => {
+        const first = deferred()
+        const second = deferred()
+        const root = { value: first.promise }
+        const chain = new Chain(root)
+        const normalized = normalize(chain, [])
+        const foundError = hasError(chain, [])
+        const firstValue = { next: second.promise }
+        const secondValue = { back: firstValue }
+
+        first.resolve(firstValue)
+        second.resolve(secondValue)
+
+        const normalizedValue = await normalized
+        expect(normalizedValue instanceof Error).to.be(true)
+        expect(await foundError).to.be(true)
+        expect(firstValue.next instanceof Error).to.be(true)
+        expect(firstValue.next.message).to.be("Value cannot reach its write target")
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
     })
 })
 
