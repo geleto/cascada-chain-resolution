@@ -599,6 +599,20 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
+    it("observes revoked promise values validated against their indexed parent", async () => {
+        const pending = deferred()
+        const root = { branch: { pending: pending.promise } }
+        const chain = new Chain(root)
+
+        const result = hasError(chain, ["branch"])
+        assignPath(chain, ["branch", "pending"], "fixed")
+        pending.resolve(root.branch)
+
+        expect(await result).to.be(true)
+        expect(root.branch.pending).to.be("fixed")
+        verifyRefCounts(root)
+    })
+
     it("follows promises exposed by a mirror revoked before resolution", async () => {
         const outer = deferred()
         const inner = deferred()

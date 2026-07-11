@@ -151,7 +151,7 @@ sharing does not.
    imported context; ref-indexing passes the commit walk's inherited context to
    `getOrCreatePromiseMirror(node, key, promise, importContext)`.
 
-4. **Language integration (issues.md item 10)** — the compiler routes external values
+4. **Language integration (issues.md item 11)** — the compiler routes external values
    through `import(value, ctx)` and marks extracted branches
    (`var x = getExternalValue().a`), constructing the context at the call site.
 
@@ -236,14 +236,13 @@ function refSetProperty(parent, key, value) {
 Walk budget, stated exactly: an entering value pays **two** passes — the pure
 validate pass and the infallible commit pass; that split is the transactionality
 guarantee and is not fusable without reintroducing rollback. There is no third
-pass: `commitRefIndex` already returns `[promiseCount, errorCount]`, so the write
-path takes the new totals from the commit's return value instead of calling
-`getRefCounts` on the value it just committed.
+walk: after commit, `getRefCounts` is an O(1) counter read and treats a missing
+tracked-value counter as a fatal downward-closure violation.
 
 Failures surface by operation semantics, with attribution: ref-indexed write →
 Error committed at the key; `normalize` → returns the Error; `hasError` → true.
-`getRefCounts` keeps its throw — inside a counted region everything was validated,
-so an Error there is a kernel bug.
+`getRefCounts` keeps its fatal invariant check — inside a counted region every
+tracked extensible value was validated and ref-indexed before it became observable.
 
 **Deliberately accepted:** for non-ref-indexed targets a back-edge writeback commits
 uncaught, and the cycle floats in the uncounted region (all walks are path-bounded —
@@ -332,10 +331,10 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
   children including the path key; fork mirrors inherit flavor; discovery inside an
   imported region marks resolved values imported+shared before consumers observe
   them (FIFO test).
-- Back-edge: imported promise resolving to (a value containing) the live target
-  under a ref-indexed parent → Error at the key with context, `verifyRefCounts`
-  passes; same under a non-ref-indexed parent → cycle floats, walks terminate,
-  later `buildRefIndex` rejects with context.
+- Back-edge: imported promise resolving to (a value containing) its live or revoked
+  logical target under a ref-indexed parent → Error at the key or private mirror value
+  with context, `verifyRefCounts` passes; same under a non-ref-indexed parent → cycle
+  floats, walks terminate, later `buildRefIndex` rejects with context.
 - Frozen: mirror-free read through a frozen promise key (value, rejection→Error);
   COW of a frozen source with promise key produces a normal counted-able copy;
   the raw-seeded fork mirror carries the walk's current import context — its

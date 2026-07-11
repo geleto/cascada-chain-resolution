@@ -9,10 +9,11 @@ const {
     metaOf,
 } = require("./meta")
 
-// The one upward need: committing a writeback is a language write, owned by
-// index.js's setProperty. It is injected once at startup so this module stays
-// below the operations layer.
+// Live writeback is a language write owned by index.js; private child indexing
+// is owned by refcounts.js. Both callbacks are injected once at startup so this
+// module stays below those layers.
 let writeMirrorValue = null
+let refIndexMirrorValue = null
 
 function getPromiseMirrorMap(node) {
     return metaOf(node)?.mirrors
@@ -26,8 +27,9 @@ function ensurePromiseMirrorMap(node) {
     return meta.mirrors
 }
 
-function initPromiseMirrors(writeValue) {
+function initPromiseMirrors(writeValue, refIndexValue) {
     writeMirrorValue = writeValue
+    refIndexMirrorValue = refIndexValue
 }
 
 function createPromiseMirror(
@@ -111,9 +113,9 @@ function isLivePromiseMirror(node, key, mirror) {
 // forkSourceMirror is read inside the onValueResolve continuation, so FORK reads
 // forkSourceMirror.currentValue at the copier's FIFO slot, not earlier. Imported
 // promise keys mark the chosen value with the context captured when the mirror
-// is born, before any consumer can observe it. The value is stored as
-// currentValue, then written to the live key only if this exact mirror still
-// owns it.
+// is born, before any consumer can observe it. A live mirror writes through the
+// property helper; a revoked mirror privately indexes the same logical child
+// without touching its former holder.
 function onPromiseMirrorResolved(
     node,
     key,
@@ -134,10 +136,12 @@ function onPromiseMirrorResolved(
 
         if (isLivePromiseMirror(node, key, mirror)) {
             value = writeMirrorValue(node, key, value)
+        } else {
+            value = refIndexMirrorValue(node, value)
+            // A later op reassigned/deleted the key. Keep the prepared value
+            // privately for reads that captured this mirror; leave the key alone.
         }
         mirror.currentValue = value
-        // Else a later op reassigned/deleted the key: keep currentValue alive
-        // privately for reads that captured this mirror; leave the property alone.
     })
 }
 

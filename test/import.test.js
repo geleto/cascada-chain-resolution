@@ -420,6 +420,29 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
+    it("attributes invalid private values from revoked indexed mirrors", async () => {
+        const pending = deferred()
+        const invalid = Object.freeze({ bad: new Error("bad") })
+        const root = { value: pending.promise }
+        const chain = new Chain(root)
+
+        importValue(invalid, "revoked writeback")
+        buildRefIndex(root)
+        const mirror = metaOf(root).mirrors.value
+        assignPath(chain, ["value"], "fixed")
+
+        pending.resolve(invalid)
+        await flushMicrotasks()
+
+        expect(root.value).to.be("fixed")
+        expect(mirror.currentValue instanceof Error).to.be(true)
+        expect(mirror.currentValue.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: revoked writeback)",
+        )
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
     it("turns imported promise writebacks that reach their target into Error values", async () => {
         const deferredValue = deferred()
         const pendingSibling = deferred()

@@ -40,12 +40,12 @@ function getRefCounts(value) {
         return [0, 0]
     }
 
-    const refIndexed = buildRefIndex(value)
-    // Everything inside a counted region was validated on entry, so a
-    // validation failure here is a kernel bug, not language data.
-    if (isError(refIndexed)) reportFatalError(refIndexed)
-
     const counter = getRefCounter(value)
+    // A tracked child of a ref-indexed parent must already carry counters.
+    // Repairing it here would hide a broken downward-closure invariant.
+    if (counter === undefined) {
+        reportFatalError(new Error("Ref counts require a ref-indexed value"))
+    }
     return [counter.promiseCount, counter.errorCount]
 }
 
@@ -134,27 +134,8 @@ function refSetProperty(parent, key, value) {
         return value
     }
 
-    let nextValue = value
-    let nextPromiseCount = 0
-    let nextErrorCount = 0
-
-    // An entering value pays exactly two passes: the pure validate pass
-    // (cycles, frozen rule, and the back-edge against this parent — a
-    // write-created cycle must pass through the written node) and the
-    // infallible commit pass, whose returned totals feed the delta directly.
-    const failure = validateCountable(value, parent, isRefIndexed)
-    if (failure) {
-        nextValue = failure
-        nextErrorCount = 1
-    } else if (isPromise(value)) {
-        nextPromiseCount = 1
-    } else if (isError(value)) {
-        nextErrorCount = 1
-    } else if (isTracked(value) && Object.isExtensible(value)) {
-        const counts = commitRefIndex(value, new Set(), undefined)
-        nextPromiseCount = counts[0]
-        nextErrorCount = counts[1]
-    }
+    const nextValue = indexChildValue(parent, value)
+    const [nextPromiseCount, nextErrorCount] = getRefCounts(nextValue)
 
     updatePropertyCounts(
         parent,
@@ -165,6 +146,27 @@ function refSetProperty(parent, key, value) {
     )
 
     return nextValue
+}
+
+// A value entering a ref-indexed parent must be validated and carry exact
+// subtree counters before it can become observable. Live property writes use
+// this through refSetProperty; revoked promise mirrors use it without changing
+// the parent property or its counts.
+function refIndexChildValue(parent, value) {
+    if (getRefCounter(parent)?.parents === undefined) return value
+    return indexChildValue(parent, value)
+}
+
+function indexChildValue(parent, value) {
+    // A write-created cycle must pass through the written parent, so validation
+    // uses that parent as its back-edge target before the infallible commit.
+    const failure = validateCountable(value, parent, isRefIndexed)
+    if (failure) return failure
+
+    if (isTracked(value) && Object.isExtensible(value)) {
+        commitRefIndex(value, new Set(), undefined)
+    }
+    return value
 }
 
 function refDeleteProperty(parent, key) {
@@ -283,6 +285,7 @@ module.exports = {
     getRefCounter,
     getRefCounts,
     refDeleteProperty,
+    refIndexChildValue,
     refSetProperty,
     waitForSettlement,
 }

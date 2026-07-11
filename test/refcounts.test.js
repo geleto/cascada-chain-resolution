@@ -3,6 +3,7 @@ const {
     expect,
     buildRefIndex,
     getRefCounter,
+    getRefCounts,
     metaOf,
     STORE_META_IN_WEAKMAP,
     verifyRefCounts,
@@ -104,6 +105,13 @@ describe("subtree counters", () => {
         expectCounts(frozen, 0, 0)
         expectCounts(frozenDAG, 0, 0)
         verifyRefCounts(frozen, frozenDAG)
+    })
+
+    it("rejects count reads from non-ref-indexed tracked values", () => {
+        const failure = thrownBy(() => getRefCounts({ value: 1 }))
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Ref counts require a ref-indexed value")
     })
 
     it("revalidates indexed descendants beneath non-extensible ancestors", () => {
@@ -231,7 +239,7 @@ describe("subtree counters", () => {
         )
     })
 
-    it("bookkeeps tracked branches after first count", () => {
+    it("bookkeeps tracked branches after ref-indexing", () => {
         const deferredValue = deferred()
         const nestedPromise = deferred()
         const root = {
@@ -239,6 +247,7 @@ describe("subtree counters", () => {
             nested: { error: new Error("bad") },
         }
 
+        buildRefIndex(root)
         expectCounts(root, 1, 1)
         verifyRefCounts(root)
 
@@ -325,6 +334,58 @@ describe("subtree counters", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be(7)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
+    it("ref-indexes a revoked mirror's private resolved branch", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const resolved = {
+            bad: new Error("bad"),
+            nested: { pending: inner.promise },
+        }
+        const root = { value: outer.promise }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        const mirror = metaOf(root).mirrors.value
+        assignPath(chain, ["value"], "fixed")
+
+        outer.resolve(resolved)
+        await flushMicrotasks()
+
+        const counter = getRefCounter(resolved)
+        expect(root.value).to.be("fixed")
+        expect(mirror.currentValue).to.be(resolved)
+        expect(counter).not.to.be(undefined)
+        expect(counter.promiseCount).to.be(1)
+        expect(counter.errorCount).to.be(1)
+        expect(counter.parents.size).to.be(0)
+        verifyRefCounts(root, resolved)
+
+        inner.resolve("done")
+        await flushMicrotasks()
+
+        expect(getRefCounter(resolved).promiseCount).to.be(0)
+        verifyRefCounts(root, resolved)
+    })
+
+    it("validates a revoked mirror value as a child of its indexed parent", async () => {
+        const pending = deferred()
+        const root = { value: pending.promise }
+        const chain = new Chain(root)
+
+        buildRefIndex(root)
+        const mirror = metaOf(root).mirrors.value
+        assignPath(chain, ["value"], "fixed")
+
+        pending.resolve(root)
+        await flushMicrotasks()
+
+        expect(root.value).to.be("fixed")
+        expect(mirror.currentValue instanceof Error).to.be(true)
+        expect(mirror.currentValue.message).to.be("Value cannot reach its write target")
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
@@ -645,6 +706,8 @@ describe("subtree counters", () => {
         const next = chain._state.value
         assignPath(chain, ["branch", "pending"], deferredValue.promise)
 
+        buildRefIndex(root)
+        buildRefIndex(next)
         expectCounts(root, 0, 0)
         expectCounts(next, 1, 0)
         verifyRefCounts(root, next)

@@ -57,10 +57,12 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   `validateCountable(value, writeTarget, isRefIndexed)`. It depends only on helpers
   and meta; counting-validation failures are Error values, not thrown fatal errors.
 - **promise-mirrors.js** — promise mirror storage/birth/clearing and guarded
-  writeback. `index.js` injects `setProperty` with `initPromiseMirrors(setProperty)`
-  so live mirror writeback still performs a language write without creating a cycle.
+  settlement. `index.js` injects `setProperty` and `refIndexChildValue` with
+  `initPromiseMirrors(setProperty, refIndexChildValue)` so live mirrors perform a
+  language write and revoked mirrors prepare their private child without an import cycle.
 - **refcounts.js** — counter logic ONLY. Public runtime hooks are
   `refSetProperty(parent, key, value)`, `refDeleteProperty(parent, key)`,
+  `refIndexChildValue(parent, value)`,
   `copyCounters(source, copy)`,
   `buildRefIndex(value, inheritedImportContext)`,
   and narrow test/debug accessors. The hooks never perform the language write/delete;
@@ -71,8 +73,8 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   `getRefCounter` accessor from refcounts.js and is not used by runtime code.
 - **index.js** — the operations, language property writes/deletes, COW, import,
   observational context-threading `resolvePath` for lookup/normalize/hasError, `copyToPlainValue`,
-  hasError's local promise wait-tree probe, and the normalize/hasError operation shells. It initializes mirror writeback with
-  `initPromiseMirrors(setProperty)`.
+  hasError's local promise wait-tree probe, and the normalize/hasError operation shells. It initializes mirror settlement with
+  `initPromiseMirrors(setProperty, refIndexChildValue)`.
 
 The contract: **non-ref-indexed behavior ≡ base-kernel behavior** — with refcounts.js
 stubbed to passthroughs (no promise-mirror initialization needed), every operation behaves exactly as
@@ -89,13 +91,13 @@ surface is normalize/hasError and their shared observational resolver:
 | `assignPath` onTarget (plain) | `clearPromiseMirror; parent[key]=v; updateCleanCounts` | `clearPromiseMirror; value = refSetProperty(...); parent[key]=value` |
 | `assignPath` onTarget (promise) | mirror + writeback registration + bare write + stub | same mirror code + `refSetProperty`, then write in index.js |
 | `deletePath` onTarget | `clearPromiseMirror; delete parent[key]; updateCleanCounts` | `clearPromiseMirror; refDeleteProperty(...); delete parent[key]` |
-| promise-mirror writeback | `node[key] = value; propagateClean` | if live: `value = refSetProperty(...); node[key]=value`; always store `mirror.currentValue` |
+| promise-mirror writeback | `node[key] = value; propagateClean` | if live: `value = refSetProperty(...); node[key]=value`; if revoked: `value = refIndexChildValue(...)`; always store `mirror.currentValue` |
 | walk installs (sync + suspended) | bare write (+ clear) | `refSetProperty`, then write in index.js |
 | `shallowCopy` | — | `copyCounters(obj, copy)` before `return copy` |
 | `import` | — | mark-only `import(value, errorContext)`; no walk, no validation |
 | lookup/normalize/hasError resolver | — | observational, context-threading path walk |
 | exports | — | `+ normalize, hasError` |
-| startup | — | `initPromiseMirrors(setProperty)` |
+| startup | — | `initPromiseMirrors(setProperty, refIndexChildValue)` |
 
 One consistency rule inside index.js: every promise continuation goes through
 `onValueResolve` or `onInternalResolve`, never bare `.then(...)`. Greppable:
@@ -267,11 +269,11 @@ function getRefCounts(value) {                    // [promise, error]
     if (isError(value)) return [0, 1]
     if (isTracked(value)) {
         if (!Object.isExtensible(value)) return [0, 0]   // frozen rule: permanent
-        const meta = ensureRefIndexed(value)     // robust: ref-index-if-needed, per spec
-        if (isError(meta)) reportFatalError(meta) // owned in-tree data failing validation
-        // is a kernel-usage bug → fatal; public operations surface validation
-        // failures before this point as language Error values.
-        return [meta.promiseCount, meta.errorCount]
+        const counter = getRefCounter(value)
+        if (counter === undefined) {
+            reportFatalError(new Error("Ref counts require a ref-indexed value"))
+        }
+        return [counter.promiseCount, counter.errorCount]
     }
     return [0, 0]                             // primitive / null / undefined / hole
 }
@@ -463,24 +465,13 @@ function buildRefIndex(value, inheritedImportContext) {
     }
 }
 
-// The lazy-index entry point: called by normalize/hasError (this is what creates
-// a ref-indexed region) and by getRefCounts inside already-ref-indexed regions.
-// Callers guarantee node is tracked AND extensible; frozen values never receive
-// counter metadata and are handled explicitly by normalize/hasError. Data
-// violations do not throw for public operations: normalize returns the Error,
-// hasError returns true. getRefCounts, whose inputs are already-owned counted
-// data, treats an Error here as a kernel-usage bug and throws it itself.
-function ensureRefIndexed(node, inheritedImportContext) {
-    const meta = ensureMeta(node)
-    if (meta.parents === undefined) {
-        const result = buildRefIndex(node, inheritedImportContext)
-        if (isError(result)) return result
-    }
-    return meta
-}
+// buildRefIndex is the lazy operation boundary used by normalize/hasError and
+// future counter-guided queries. getRefCounts never calls it: below an indexed
+// boundary, writes and promise settlement preserve downward closure, so a
+// missing tracked-child counter is a fatal invariant failure.
 ```
 
-**One universal back-edge check.** Ref-indexed write commits call
+**One universal back-edge check.** Values entering a ref-indexed parent call
 `validateCountable(value, parent, isRefIndexed)` before committing the entering value.
 It descends through the value and checks `node === parent`, so a write-created cycle
 cannot hide under an already-ref-indexed DAG share. Keep this as one mechanism; add
@@ -494,27 +485,34 @@ Callers, by entry point (**lazy ref-indexing and counting-time validation** — 
 - `refSetProperty` on an already-ref-indexed parent: validates the entering value
   with the write-target back-edge check, then commits/ref-indexes it for downward
   closure. On validation failure it returns an Error to commit at the key.
+- `refIndexChildValue` for a revoked promise mirror whose former parent is already
+  ref-indexed: runs the same child gate, but creates no property write, parent edge,
+  or counter delta. Its prepared return becomes the private `mirror.currentValue`.
 - `import` is not a caller. It only marks; imported data is validated later, when
   counting first needs the guarantees.
 
 ### 3c. Filling in the write hooks
 
 ```js
-function refSetProperty(parent, key, value) {
-    // LAZY GATE — evaluated at commit time, never captured at registration: a
-    // continuation (writeback, suspended remainder, fork initializer) registered
-    // while parent was non-ref-indexed does full bookkeeping here if parent is ref-indexed
-    // by the time it commits.
-    if (metaOf(parent)?.parents === undefined) {  // non-ref-indexed world: no bookkeeping
-        return value
-    }
+function indexChildValue(parent, value) {
     const failure = validateCountable(value, parent, isRefIndexed)
-    if (failure) {
-        value = failure                             // index.js commits the Error
-    } else {
-        value = buildRefIndex(value)               // keeps the region downward-closed;
-                                                    // already-ref-indexed values pass through
+    if (failure) return failure
+    if (isTracked(value) && Object.isExtensible(value)) {
+        commitRefIndex(value)                       // keeps the region downward-closed
     }
+    return value
+}
+
+function refIndexChildValue(parent, value) {
+    if (metaOf(parent)?.parents === undefined) return value
+    return indexChildValue(parent, value)
+}
+
+function refSetProperty(parent, key, value) {
+    // LAZY GATE — evaluated at commit time, never captured at registration.
+    if (metaOf(parent)?.parents === undefined) return value
+
+    value = indexChildValue(parent, value)
     const old = parent[key]                       // may be the promise being replaced:
     const [oldP, oldE] = getRefCounts(old)            //   counts [1,0] with zero mirror logic
     const [newP, newE] = getRefCounts(value)
@@ -547,15 +545,16 @@ function deleteProperty(parent, key) {
 
 The delta rules: **new property** → `+getRefCounts(new)`; **replaced property** →
 `−getRefCounts(old) +getRefCounts(new)`; **delete** → `−getRefCounts(old)` (a cleared key's
-contribution is simply removed). Mirror lifecycle stays untouched at the sites, next to
-the helper calls, as today. Promise writeback uses the same `setProperty` path as every
-other language write, so a ref-indexed target validates/ref-indexes the resolved value
-inside `refSetProperty`; a non-ref-indexed target stays cheap and is validated later if
-counting reaches it:
+contribution is simply removed). Mirror lifecycle stays at its existing sites. A live
+promise writeback uses the same `setProperty` path as every other language write. A
+revoked writeback calls the child gate only when its former parent is ref-indexed,
+preserving downward closure for the private issue-time world without changing the live
+world:
 
 ```js
 // inside promise mirror writeback:
 if (isLivePromiseMirror(node, key, mirror)) value = setProperty(node, key, value)
+else value = refIndexChildValue(node, value)
 mirror.currentValue = value
 ```
 
@@ -763,8 +762,8 @@ COW copy does.
 ### 4d. hasError
 
 hasError builds on the resolver and counters from normalize, but it never marks and
-uses no shared settlement wait. `hasErrorAtPathValue` builds the generic ref index for
-each reached path result, then delegates indexed-branch probing to
+uses no shared settlement wait. `hasErrorAtPathValue` builds the generic ref index only
+for the value reached at the path, then delegates indexed-branch probing to
 `probeIndexedBranchForErrors(value, resolveError)`: answer synchronous errors from
 `errorCount`, and collect promise waits only when `promiseCount > 0`.
 hasError owns the final boolean race.
@@ -783,10 +782,11 @@ issue-time answer: later-issued installs are outside the collected frontier,
 while a later overwrite/delete of a watched pending key can detach the resolved
 value from the live tree without changing the captured answer.
 
-`hasErrorAtPathValue` first calls generic `buildRefIndex`. Validation failures answer
-true; otherwise the branch is fully indexed and answers come from counters.
-Behind a promise barrier, writeback commits into an already-indexed parent and
-must index the resolved value fully (downward closure; deltas need exact totals).
+`hasErrorAtPathValue` calls generic `buildRefIndex` only at the path-value boundary.
+Validation failures answer true; otherwise the branch is fully indexed and answers
+come from counters. Behind a promise barrier, settlement prepares the logical child of
+an already-indexed parent before later FIFO consumers run. Live writeback updates the
+tree and its deltas; revoked writeback privately validates/ref-indexes `currentValue`.
 If no current Error is found but `promiseCount > 0`, the pending frontier is
 collected by descending only ref-indexed nodes whose counters still contain
 promises. Waits are registered after `buildRefIndex` has minted mirrors/writebacks:
@@ -794,12 +794,10 @@ promises. Waits are registered after `buildRefIndex` has minted mirrors/writebac
 is `onValueResolve(childPromise, () => probeResolvedPromiseForErrors(mirror.currentValue))`.
 hasError races `onInternalResolve(cleanPromise, () => false)` against the local error
 promise; `Promise.all`/`race` only aggregate already-wrapped internal waits. Each
-settlement probes the captured mirror value through `hasErrorAtPathValue`. Live
-mirrors have already committed counts into the live tree through normal writeback;
-revoked mirrors keep a private `currentValue`, which this resolved-path boundary
-ref-indexes if needed. An Error calls the resolver, newly exposed issue-time
-promises return a nested `Promise.all`, and the whole promise tree resolving means
-the clean side is false.
+settlement consumes the prepared mirror value directly: an Error calls the resolver,
+primitive and valid non-extensible values are clean, and tracked extensible values go
+straight to `probeIndexedBranchForErrors`. Newly exposed issue-time promises return a
+nested `Promise.all`, and the whole promise tree resolving means the clean side is false.
 
 **Checkpoint:** full suite green.
 
@@ -813,6 +811,8 @@ Counting correctness:
   decrements the parent twice).
 - writeback replaces [1,0] with the resolved value's counts, including a resolved value
   that itself contains promises (ref-indexing at writeback when the target is ref-indexed).
+- revoked writeback under a ref-indexed former parent validates/ref-indexes its private
+  logical child, including back-edge replacement, without changing live counts or edges.
 - rejected promise: [1,0] → [0,1] at the same key; `errorCount` visible at the root.
 - COW fork: after copying a node with a pending key, both worlds count it; each world's
   counts diverge with subsequent writes; revoked-mirror advances change no live counts.

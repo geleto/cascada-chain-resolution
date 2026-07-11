@@ -35,6 +35,7 @@ const {
     copyCounters,
     getRefCounter,
     refDeleteProperty,
+    refIndexChildValue,
     refSetProperty,
     waitForSettlement,
 } = require("./refcounts")
@@ -106,7 +107,7 @@ function defineOwnProtoSlot(copy) {
     })
 }
 
-initPromiseMirrors(setProperty)
+initPromiseMirrors(setProperty, refIndexChildValue)
 
 // --- import : external value enters the runtime -----------------------------
 function importValue(value, importContext) {
@@ -479,16 +480,13 @@ function collectPromiseWaits(value, waitPromises, resolveError, visited) {
 }
 
 function probeResolvedPromiseForErrors(value, resolveError) {
-    const result = hasErrorAtPathValue(value, undefined)
-    if (result === true) {
+    if (isError(value)) {
         resolveError()
         return undefined
     }
-    if (result === false) return undefined
+    if (!isTracked(value) || !Object.isExtensible(value)) return undefined
 
-    return onInternalResolve(result, foundError => {
-        if (foundError) resolveError()
-    })
+    return probeIndexedBranchForErrors(value, resolveError)
 }
 
 // Observational path resolution through the Chain's private root holder. Callers
