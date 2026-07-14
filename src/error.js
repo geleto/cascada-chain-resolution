@@ -25,12 +25,16 @@ function setFatalErrorReporter(reporter = () => {}) {
 }
 
 function validationError(message, importContext = undefined) {
-    if (importContext === undefined) return new Error(message)
+    if (!importContext) return new Error(message)
     return new Error(`${message} (imported at: ${String(importContext)})`)
 }
 
 function forbiddenKeyError(importContext = undefined) {
     return validationError("Cannot use __proto__ as a key", importContext)
+}
+
+function pathAccessError() {
+    return new Error("Cannot access property through missing or primitive value")
 }
 
 function errorFromRejection(reason) {
@@ -40,6 +44,7 @@ function errorFromRejection(reason) {
 module.exports = {
     errorFromRejection,
     forbiddenKeyError,
+    pathAccessError,
     reportFatalError,
     setFatalErrorReporter,
     validationError,

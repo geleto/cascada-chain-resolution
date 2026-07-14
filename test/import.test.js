@@ -14,32 +14,35 @@ const {
     lookupPath,
     normalize,
     importValue,
+    countPromiseRegistrations,
     deferred,
     flushMicrotasks,
     expectCounts,
 } = require("./support")
 
 describe("import", () => {
-    it("requires an error context", () => {
-        const root = {}
-        let reported
-        let caught
+    it("requires a non-null error context", () => {
+        for (const context of [undefined, null]) {
+            const root = {}
+            let reported
+            let caught
 
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-        try {
-            runtime.import(root)
-        } catch (error) {
-            caught = error
-        } finally {
-            setFatalErrorReporter()
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+            try {
+                runtime.import(root, context)
+            } catch (error) {
+                caught = error
+            } finally {
+                setFatalErrorReporter()
+            }
+
+            expect(reported).to.be(caught)
+            expect(caught instanceof Error).to.be(true)
+            expect(caught.message).to.be("import requires an error context")
+            expect(metaOf(root)).to.be(undefined)
         }
-
-        expect(reported).to.be(caught)
-        expect(caught instanceof Error).to.be(true)
-        expect(caught.message).to.be("import requires an error context")
-        expect(metaOf(root)).to.be(undefined)
     })
 
     it("marks external roots as shared", () => {
@@ -126,19 +129,78 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("marks only the imported root and does not scan children", async () => {
-        const deferredValue = deferred()
-        const child = { value: deferredValue.promise }
+    it("recursively marks imported data and promise results", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const leaf = { x: 1 }
+        const child = { value: outer.promise }
         const root = { child }
 
-        const imported = importValue(root)
-        deferredValue.resolve({ x: 1 })
-        await flushMicrotasks()
+        const imported = importValue(root, "recursive import")
 
         expect(imported).to.be(root)
-        expect(metaOf(root).importContext).to.be("test import")
-        expect(metaOf(child)).to.be(undefined)
-        expect(root.child.value).to.be(deferredValue.promise)
+        expect(metaOf(root).importContext).to.be("recursive import")
+        expect(metaOf(child).importContext).to.be("recursive import")
+
+        const resolved = { leaf, inner: inner.promise }
+        outer.resolve(resolved)
+        await flushMicrotasks()
+
+        expect(metaOf(resolved).importContext).to.be("recursive import")
+        expect(metaOf(leaf).importContext).to.be("recursive import")
+
+        const nested = { done: true }
+        inner.resolve(nested)
+        await flushMicrotasks()
+
+        expect(metaOf(nested).importContext).to.be("recursive import")
+        // Import prepares promise values but leaves property writes to mirrors.
+        expect(root.child.value).to.be(outer.promise)
+    })
+
+    it("shares one import walk across aliased promise branches", async () => {
+        const first = deferred()
+        const second = deferred()
+        const nested = deferred()
+        const registrations = countPromiseRegistrations(nested.promise)
+        const shared = { nested: nested.promise }
+        const root = {
+            first: first.promise,
+            second: second.promise,
+        }
+
+        importValue(root, "async aliases")
+        first.resolve({ shared })
+        second.resolve(shared)
+        await flushMicrotasks()
+
+        expect(registrations()).to.be(1)
+        expect(metaOf(shared).shared).to.be(true)
+        expect(metaOf(shared).importContext).to.be("async aliases")
+
+        const leaf = { done: true }
+        nested.resolve(leaf)
+        await flushMicrotasks()
+        expect(metaOf(leaf).importContext).to.be("async aliases")
+    })
+
+    it("registers each imported promise identity once", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const root = {
+            left: pending.promise,
+            right: pending.promise,
+        }
+
+        importValue(root, "repeated promise")
+        expect(registrations()).to.be(1)
+
+        const resolved = { nested: {} }
+        pending.resolve(resolved)
+        await flushMicrotasks()
+
+        expect(metaOf(resolved).importContext).to.be("repeated promise")
+        expect(metaOf(resolved.nested).shared).to.be(true)
     })
 
     it("accepts cyclic imports until counting needs the branch", () => {

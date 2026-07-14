@@ -414,7 +414,7 @@ describe("path assignment", () => {
         expect(root.value).to.be(42)
     })
 
-    it("creates missing/null/undefined intermediates but turns primitive intermediates into Error", () => {
+    it("turns every missing or primitive intermediate into Error", () => {
         const root = { old: 7, nothing: null, unset: undefined }
 
         assignPath(new Chain(root), ["new", "value"], 1)
@@ -422,38 +422,47 @@ describe("path assignment", () => {
         assignPath(new Chain(root), ["nothing", "value"], 3)
         assignPath(new Chain(root), ["unset", "value"], 4)
 
-        expect(root.new).to.eql({ value: 1 })
-        expect(root.old instanceof Error).to.be(true)
-        expect(root.old.message).to.be("Cannot assign into primitive value")
-        expect(root.nothing).to.eql({ value: 3 })
-        expect(root.unset).to.eql({ value: 4 })
+        for (const value of [root.new, root.old, root.nothing, root.unset]) {
+            expect(value instanceof Error).to.be(true)
+            expect(value.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
+        }
     })
 
-    it("creates an object when assigning through null or undefined roots", () => {
+    it("copies a shared branch before installing a path Error", () => {
+        const root = importValue({ keep: true }, "shared broken path")
+        const chain = new Chain(root)
+
+        assignPath(chain, ["missing", "value"], 1)
+
+        const next = chain._state.value
+        expect(next).not.to.be(root)
+        expect(root).to.eql({ keep: true })
+        expect(next.keep).to.be(true)
+        expect(next.missing instanceof Error).to.be(true)
+        expect(next.missing.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
+    })
+
+    it("turns assignment through missing or primitive roots into Error", () => {
         const nullChain = new Chain(null)
         const undefinedChain = new Chain(undefined)
-
-        assignPath(nullChain, ["value"], 1)
-        assignPath(undefinedChain, ["value"], 1)
-
-        expect(nullChain._state.value).to.eql({ value: 1 })
-        expect(undefinedChain._state.value).to.eql({ value: 1 })
-    })
-
-    it("turns assignment through primitive roots into Error", () => {
         const numberChain = new Chain(7)
         const stringChain = new Chain("text")
 
+        assignPath(nullChain, ["value"], 1)
+        assignPath(undefinedChain, ["value"], 1)
         assignPath(numberChain, ["value"], 1)
         assignPath(stringChain, ["value"], 1)
 
-        const fromNumber = numberChain._state.value
-        const fromString = stringChain._state.value
-
-        expect(fromNumber instanceof Error).to.be(true)
-        expect(fromNumber.message).to.be("Cannot assign into primitive value")
-        expect(fromString instanceof Error).to.be(true)
-        expect(fromString.message).to.be("Cannot assign into primitive value")
+        for (const chain of [nullChain, undefinedChain, numberChain, stringChain]) {
+            expect(chain._state.value instanceof Error).to.be(true)
+            expect(chain._state.value.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
+        }
     })
 
     it("is a no-op when assigning through an Error root or Error branch", () => {
@@ -497,19 +506,32 @@ describe("lookupPath", () => {
         expect(lookupPath(new Chain(root), ["branch", "value"])).to.be(branchError)
     })
 
-    it("returns undefined for primitive roots and missing paths", () => {
+    it("allows missing targets but returns Error for broken paths", () => {
         const root = { branch: {} }
 
-        expect(lookupPath(new Chain(7), ["value"])).to.be(undefined)
-        expect(lookupPath(new Chain(null), ["value"])).to.be(undefined)
-        expect(lookupPath(new Chain(undefined), ["value"])).to.be(undefined)
+        for (const value of [7, null, undefined]) {
+            const result = lookupPath(new Chain(value), ["value"])
+            expect(result instanceof Error).to.be(true)
+            expect(result.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
+        }
         expect(lookupPath(new Chain(root), ["branch", "missing"])).to.be(undefined)
-        expect(lookupPath(new Chain(root), ["branch", "missing", "value"])).to.be(undefined)
+        const broken = lookupPath(new Chain(root), ["branch", "missing", "value"])
+        expect(broken instanceof Error).to.be(true)
+        expect(broken.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
         expect(lookupPath(new Chain({ value: undefined }), ["value"])).to.be(undefined)
     })
 
     it("does not read inherited object properties", () => {
         expect(lookupPath(new Chain({}), ["constructor"])).to.be(undefined)
+        const broken = lookupPath(new Chain({}), ["constructor", "name"])
+        expect(broken instanceof Error).to.be(true)
+        expect(broken.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
     })
 
     it("does not read __proto__ or own non-enumerable properties", () => {
@@ -528,9 +550,14 @@ describe("lookupPath", () => {
         })
 
         expect(lookupPath(new Chain(root), ["__proto__"])).to.be(undefined)
-        expect(lookupPath(new Chain(root), ["__proto__", "unsafe"])).to.be(undefined)
         expect(lookupPath(new Chain(root), ["hidden"])).to.be(undefined)
-        expect(lookupPath(new Chain(root), ["hidden", "x"])).to.be(undefined)
+        for (const path of [["__proto__", "unsafe"], ["hidden", "x"]]) {
+            const result = lookupPath(new Chain(root), path)
+            expect(result instanceof Error).to.be(true)
+            expect(result.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
+        }
     })
 
     it("supports primitive roots for empty lookup paths", () => {
@@ -554,13 +581,24 @@ describe("deletePath", () => {
         expect(root).to.eql({ value: 1 })
     })
 
-    it("supports null and primitive roots", () => {
+    it("turns deletion through missing or primitive roots into Error", () => {
         const values = [null, undefined, 7, "text"]
         for (const value of values) {
             const chain = new Chain(value)
             expect(deletePath(chain, ["value"])).to.be(undefined)
-            expect(chain._state.value).to.be(value)
+            expect(chain._state.value instanceof Error).to.be(true)
+            expect(chain._state.value.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
         }
+    })
+
+    it("allows deletion of a missing target property", () => {
+        const root = { keep: true }
+
+        deletePath(new Chain(root), ["missing"])
+
+        expect(root).to.eql({ keep: true })
     })
 
     it("deletes from a copied branch without changing the escaped branch", () => {
@@ -730,7 +768,7 @@ describe("deletePath", () => {
         expect(clearedChain._state.value).to.be(null)
     })
 
-    it("does not create through primitive intermediates", async () => {
+    it("turns synchronous and promised primitive intermediates into Error", async () => {
         const deferredBranch = deferred()
         const root = { branch: 7 }
         const pendingRoot = { branch: deferredBranch.promise }
@@ -741,8 +779,12 @@ describe("deletePath", () => {
         deferredBranch.resolve(7)
         await flushMicrotasks()
 
-        expect(root.branch).to.be(7)
-        expect(pendingRoot.branch).to.be(7)
+        for (const value of [root.branch, pendingRoot.branch]) {
+            expect(value instanceof Error).to.be(true)
+            expect(value.message).to.be(
+                "Cannot access property through missing or primitive value",
+            )
+        }
     })
 
     it("is a no-op when deleting through a rejected intermediate promise", async () => {

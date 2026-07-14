@@ -80,7 +80,7 @@ function validateValue(
         ? nodeImportContext(value, inheritedImportContext)
         : inheritedImportContext
 
-    if (writeTarget !== undefined && value === writeTarget) {
+    if (writeTarget && value === writeTarget) {
         return validationError("Value cannot reach its write target", importContext)
     }
     if (isPromise(value) || isError(value)) {
@@ -105,7 +105,7 @@ function validateValue(
     // Already-ref-indexed subtrees are valid only for ordinary mutable context.
     // A frozen ancestor imposes the stricter no-promise/no-Error rule, so that
     // subtree must be checked again even though its counters are already live.
-    if (writeTarget === undefined && !valueInsideFrozen && isRefIndexed(value)) {
+    if (!writeTarget && !valueInsideFrozen && isRefIndexed(value)) {
         return null
     }
     if (visiting.has(value)) {

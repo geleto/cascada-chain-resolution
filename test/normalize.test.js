@@ -23,12 +23,17 @@ describe("normalize", () => {
         const branch = normalize(new Chain(root), ["branch"])
         const primitive = normalize(new Chain(root), ["primitive"])
         const missing = normalize(new Chain(root), ["missing"])
+        const broken = normalize(new Chain(root), ["missing", "value"])
         const copy = normalize(new Chain(root), ["branch"], true, true)
         const waiting = normalize(new Chain({ branch: { pending: pending.promise } }), ["branch"])
 
         expect(branch).to.be(root.branch)
         expect(primitive).to.be(2)
         expect(missing).to.be(undefined)
+        expect(broken instanceof Error).to.be(true)
+        expect(broken.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
         expect(copy).to.eql({ x: 1 })
         expect(typeof waiting.then).to.be("function")
     })
@@ -541,7 +546,7 @@ describe("normalize", () => {
         verifyRefCounts(original, current)
     })
 
-    it("attributes validation failures without marking failed branches", () => {
+    it("attributes validation failures without ref-indexing failed branches", () => {
         const branch = {}
         branch.self = branch
         const root = { branch }
@@ -551,7 +556,9 @@ describe("normalize", () => {
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("Value cannot be cyclic (imported at: normalize import)")
-        expect(metaOf(branch)).to.be(undefined)
+        expect(metaOf(branch).shared).to.be(true)
+        expect(metaOf(branch).importContext).to.be("normalize import")
+        expect(getRefCounter(branch)).to.be(undefined)
     })
 
     it("validates frozen branches without attaching counter metadata", () => {

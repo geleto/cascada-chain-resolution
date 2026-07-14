@@ -47,7 +47,7 @@ function ensureMeta(value) {
     }
 
     let meta = metaOf(value)
-    if (meta === undefined) {
+    if (!meta) {
         meta = createMeta()
         if (STORE_META_IN_WEAKMAP) {
             META_MAP.set(value, meta)
@@ -113,7 +113,7 @@ function markImported(value, importContext) {
 // table, then whatever the walk inherited from a marked ancestor.
 function nodeImportContext(node, inherited) {
     const own = metaOf(node)?.importContext
-    if (own !== undefined) return own
+    if (own) return own
     if (!STORE_META_IN_WEAKMAP && isTracked(node) && !Object.isExtensible(node)) {
         return FROZEN_IMPORT_CONTEXTS.get(node) ?? inherited
     }

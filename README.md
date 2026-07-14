@@ -37,6 +37,7 @@ Cascada compiles your statements into a chain of commands per variable, issued i
 | `deletePath(v, ["a","b"])` | `delete v.a.b` |
 | `import(x)` | bring data from the outside world into the runtime |
 | `hasError(v, ["a"])` | is there an error anywhere inside `v.a`? |
+| `getErrors(v, ["a"])` | collect every distinct error inside `v.a` |
 | `normalize(v, ["a"])` | hand out the current state of `v.a`, with every promise inside it resolved |
 
 The contract is simple: **the result must be exactly what you would get by running the commands one at a time, to completion, in program order.** The interesting part is honoring that contract without paying its obvious price - waiting. No command waits for the previous one's promises to finish; every command starts immediately.
@@ -152,14 +153,14 @@ A few notes, deliberately brief:
 
 ## Counting instead of searching
 
-Two commands ask about a **whole branch**: `hasError` - *is there an error anywhere inside?* - and `normalize` - *hand out its current state, fully resolved*. Answering by searching would mean walking the entire structure, again and again as promises keep landing. Instead, the runtime counts.
+Three commands ask about a **whole branch**: `hasError` - *is there an error anywhere inside?*, `getErrors` - *which errors are inside?*, and `normalize` - *hand out its current state, fully resolved*. Answering by searching would mean walking the entire structure, again and again as promises keep landing. Instead, the runtime counts.
 
 Each node can carry two numbers:
 
 - `promiseCount` - how many promises are still pending anywhere inside it,
 - `errorCount` - how many error values it contains, at any depth.
 
-Most variables are never asked either question, so by default nobody counts anything. The first `hasError` or `normalize` on a branch walks it once and sets the counters up - a walk it would have needed anyway. From then on the branch keeps counting itself: every command knows exactly what it removed and what it added (assign a promise: +1; it resolves: −1, plus whatever its value brings along; delete: subtract what left; replace: both at once), and pushes the difference up to the **parent nodes** - each counting node keeps links to the nodes that contain it - so the numbers stay exact everywhere, without ever walking again.
+Most variables are never queried this way, so by default nobody counts anything. The first `hasError`, `getErrors`, or `normalize` on a branch walks it once and sets the counters up - a walk it would have needed anyway. From then on the branch keeps counting itself: every command knows exactly what it removed and what it added (assign a promise: +1; it resolves: −1, plus whatever its value brings along; delete: subtract what left; replace: both at once), and pushes the difference up to the **parent nodes** - each counting node keeps links to the nodes that contain it - so the numbers stay exact everywhere, without ever walking again.
 
 With the counters in place:
 
@@ -173,7 +174,9 @@ user.stats = fetchStats()       // lands in a copy - the frozen branch never see
 
 **`hasError`** answers for the branch as it is *now*: `errorCount > 0` - `true`, immediately; `promiseCount` at `0` - `false`, immediately, nothing is in flight. Only pending promises make it wait, and it follows just the branches that hold them, stopping the moment any `errorCount` turns positive: the first error wins.
 
-Like every other command, neither blocks the program - the next command runs immediately; you await the returned promise only where you actually need the answer.
+**`getErrors`** follows the same issue-time promise frontier but collects Error identities instead of stopping at the first one. It therefore waits for every captured promise and every promise exposed by their results, returning each Error object once even when several paths reach it.
+
+Like every other command, none blocks the program - the next command runs immediately; you await the returned promise only where you actually need the answer.
 
 ## One record per node
 

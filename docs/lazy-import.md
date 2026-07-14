@@ -1,37 +1,26 @@
-# Lazy import — design (issues.md item 4)
+# Recursive import and lazy validation (issues.md item 4)
 
-Import stops validating, scanning, and minting anything. It marks the value with an
-**import marker carrying an error/attribution context** and returns. Everything the
-eager boundary did is either deleted outright or moved to the one place that actually
-needs it: **counting time**. Never-touched external data pays nothing; observation-only
-use pays no validation, no scanning, and no counting — only O(1) provenance marks at
-the entry points the program actually touches; and validation failures are reported
-with the import site that brought the data in.
+Import recursively marks the language-visible external graph as imported and shared,
+and immediately registers on every promise it reaches. A settled promise value enters
+the same walk, using the same per-import identity state, before later mirror consumers
+can write it back. Import still performs no validation, counter work, or mirror
+minting: those remain at counting time and promise discovery respectively.
 
-Guiding rule, same as the counters: pay only at first use, and let one mechanism do
-one job. The SHARED mark answers "who else can see me", the counters answer "what is
-pending below me", and the import marker answers "where did this come from" — which is
-both the trust boundary and the error attribution.
+The SHARED mark answers "who else can see me", the counters answer "what is pending
+below me", and the import marker answers "where did this come from". Materializing the
+mark on imported descendants also lets branch queries visit imported DAG identities
+once rather than once per path.
 
 ---
 
-## 1. Start by removing (no replacements yet)
+## 1. Separation from validation and writeback
 
-Delete, together with their tests (the behaviors return in lazy form in later steps):
-
-- `validate.js`: `validateImportBoundary` / `validateImportValue` — the eager walker,
-  including its `target` back-edge parameter and the own-`__proto__` check.
-- `index.js`: `screenImportBoundary`, `scanImportedValue`,
-  `getOrCreateImportedPromiseMirror`, the `mirror.screenValue` hook and its fork
-  propagation, and the `IMPORTED_PROMISES` WeakSet.
-- `index.js`: `forbiddenPathError` and `FORBIDDEN_PATH_KEY` (superseded by faithful
-  own-key writes, §5).
-
-After this step the kernel is the trusted-data kernel plus a temporarily unguarded
-import. The base suite must stay green; import-safety tests are re-added per section 8.
-
-What stays untouched: the mirror FIFO machinery, COW/shared marking, the counter
-hooks, `verifyRefCounts`, and the whole trusted-data write path.
+The import walk does exactly three things: record provenance, materialize sharing,
+and register recursive promise continuations. It does not validate cycles, frozen
+rules, or `__proto__`; `validateCountable` still owns those checks when counters are
+needed. It also does not create promise mirrors or replace promise-valued properties.
+Mirrors remain the sole writeback mechanism, preserving their FIFO and private-world
+semantics.
 
 ## 2. The import marker
 
@@ -42,11 +31,11 @@ importContext: undefined,   // undefined = not imported; string = imported, attr
 ```
 
 The marker value IS the error context — in Cascada a context object (line, file, …),
-in this sandbox a string. **The context is required**: `importContext === undefined`
-is the "not imported" sentinel that gates all provenance propagation, so a
-context-less import would silently disable import semantics (unflavored mirrors,
-settled external values entering as owned). That is a compiler bug, not language
-data — `import` throws on a missing context.
+in this sandbox a string. **The context is required and non-null**: null and undefined
+are rejected, and `importContext === undefined` remains the "not imported" sentinel
+that gates provenance propagation. A context-less import would silently disable import
+semantics (unflavored mirrors, settled external values entering as owned). That is a
+compiler bug, not language data, so `import` throws on a missing context.
 
 Non-extensible values cannot carry inline Symbol META, but their attribution must
 survive (they are exactly the values most likely to fail counting validation).
@@ -83,40 +72,71 @@ function nodeImportContext(node, inherited) {
 
 Non-extensible nodes are implicitly shared. Imported non-extensible nodes keep
 their context in META under WeakMap storage, or in the side table under inline
-Symbol storage; interior frozen nodes inherit context from the marked region
-above them. There is no generic attribution fallback.
+Symbol storage. The recursive import walk marks interior frozen nodes directly;
+inherited context remains the fallback for values introduced by later runtime paths.
 
 ## 3. import — the whole operation
 
 ```js
 function importValue(value, errorContext) {
-    if (errorContext === undefined) {
+    if (errorContext === undefined || errorContext === null) {
         // Fatal runtime configuration / compiler error — never a language Error:
         // a default here would mask the compiler bug and silently drop provenance.
         reportFatalError(new Error("import requires an error context"))
     }
-    if (isPromise(value)) {
-        return onValueResolve(value, settled => importValue(settled, errorContext))
+
+    const seen = new WeakSet()
+    return importBranch(value)
+
+    function importBranch(value) {
+        if (isPromise(value)) {
+            if (seen.has(value)) return value
+            seen.add(value)
+            return onValueResolve(value, importBranch)
+        }
+        if (!isTracked(value) || seen.has(value)) return value
+
+        const pending = [value]
+        while (pending.length > 0) {
+            const current = pending.pop()
+            if (isPromise(current)) {
+                if (seen.has(current)) continue
+                seen.add(current)
+                onValueResolve(current, importBranch)
+                continue
+            }
+            if (!isTracked(current) || seen.has(current)) continue
+
+            seen.add(current)
+            markImported(current, errorContext)
+            const keys = Object.keys(current)
+            for (let index = keys.length - 1; index >= 0; index--) {
+                pending.push(current[keys[index]])
+            }
+        }
+        return value
     }
-    return markImported(value, errorContext)  // primitives and Errors pass through
 }
 ```
 
-O(1). No walk, no validation, no mirror minting. The closure carries the context to
-the settle point, and `markImported` routes it to META or the inline-mode side table,
-so attribution is durable for every outcome — tracked, frozen, or re-imported. Promises
-inside imported data are discovered lazily by whatever walk first touches them;
-untouched ones are never resolved in place — external objects the program merely
-holds are never mutated.
+The synchronous cost is O(unique reachable nodes and promises). Import returns the
+original non-promise value immediately; a promise root returns the derived promise as
+before. Nested promise continuations are registered but not awaited. The shared
+`WeakSet` spans the initial walk and every recursively exposed promise branch, so DAGs
+and cycles terminate and each promise is registered once. Cycles remain accepted until
+counting validation rejects them. Promise properties are not rewritten by import.
 
 ## 4. Marker propagation — the invariant
 
 **Every language-reachable entry point into imported data carries the marker.**
-Maintained at four sites, mirroring how SHARED propagates, with one deliberate
-difference: provenance is about origin, not aliasing, so it propagates even where
-sharing does not.
+Import materializes it throughout the graph, and runtime transformations preserve it.
 
-1. **Extraction (`lookupPath`)** — the walk threads the inherited context
+1. **Import traversal** — every synchronously reachable tracked node is marked
+   imported and shared. Every reached promise is registered immediately; its settled
+   value and recursively exposed promises re-enter the same traversal before later
+   mirror consumers run.
+
+2. **Extraction (`lookupPath`)** — the walk threads the inherited context
    (`nodeImportContext` per level); an escaping value from inside an imported region
    is marked **even when `sharedOwnership === false`** (an ownership-transferred
    external branch is still external). `markImported` sets shared too, so the
@@ -127,13 +147,13 @@ sharing does not.
    else if (sharedOwnership) markShared(value)
    ```
 
-2. **COW (`shallowCopy`)** — a copy of an imported node marks **all** reused tracked
+3. **COW (`shallowCopy`)** — a copy of an imported node marks **all** reused tracked
    children with the context, including the path-key child (unlike shared marking:
    imported data must COW regardless, so the owned-path-key optimization does not
    apply to it). The copy itself is language-owned and unmarked; provenance lives on
    the reused content.
 
-3. **Settle boundaries (mirrors)** — a mirror created inside an imported region
+4. **Settle boundaries (mirrors)** — a mirror created inside an imported region
    captures the context for its resolved value in the writeback continuation,
    and marks the settled value before any consumer can observe it:
 
@@ -151,7 +171,7 @@ sharing does not.
    imported context; ref-indexing passes the commit walk's inherited context to
    `getOrCreatePromiseMirror(node, key, promise, importContext)`.
 
-4. **Language integration (issues.md item 11)** — the compiler routes external values
+5. **Language integration (issues.md item 11)** — the compiler routes external values
    through `import(value, ctx)` and marks extracted branches
    (`var x = getExternalValue().a`), constructing the context at the call site.
 
@@ -177,7 +197,7 @@ is forbidden instead of being supported with a special write primitive.
   the prototype.
 
 This keeps the common write path readable and avoids JS prototype mutation without
-reintroducing eager import scans.
+a special write primitive.
 
 ## 6. Validation collapses to one site: counting
 
@@ -275,7 +295,7 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
 
 | site | change |
 |---|---|
-| `import(value, errorContext)` | mark-only, O(1); derived promise marks the settled value |
+| `import(value, errorContext)` | recursively marks the external graph, registers unique promises, and processes their settled branches; no validation, mirrors, or property writeback |
 | `lookupPath` | threads importContext; marks extraction even for `sharedOwnership=false`; mirror-free reads through frozen holders |
 | `walkMutationPath` | re-derives importContext at each reached node; passes it to COW and attributed mutation errors |
 | `shallowCopy` | preserves own enumerable `__proto__` as data before plain assignment; marks all reused tracked children with context; forked mirrors capture the COW walk's context; raw-seeded forks for frozen sources do the same |
@@ -295,11 +315,11 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
    code unrejected — `lookupPath` is identity-preserving observation, and returning
    external code its own (unchanged) structure violates no language guarantee.
    Values Cascada constructs — normalize output, counted regions — remain acyclic
-   and frozen-pure; escape boundaries deliberately do not validate, because escapes
-   are the most frequent boundary in the language and eager cost there is exactly
-   what this design removes.
-2. Untouched promises inside imported data are never resolved in place; external
-   objects the program only holds are never mutated by the runtime.
+   and frozen-pure. Escape boundaries deliberately do not validate; import's eager
+   work is limited to metadata and promise registration.
+2. Promise properties inside imported data are registered immediately for recursive
+   marking. Import does not replace those properties; only a mirror discovered by a
+   runtime operation can write a settled value back.
 3. `__proto__` is forbidden as a language key: lookup treats it as missing,
    mutations throw, COW preserves own enumerable data keys without prototype
    mutation, and imported own enumerable keys reject at counting time.
@@ -308,14 +328,16 @@ into mutable data freely, `normalize`/`hasError` it → Error/true with attribut
    branches COW first and shadow them as missing.
 5. Frozen objects containing promises are readable and COW-able; only
    normalize/hasError reject them.
-6. Reading through imported data marks provenance even on `sharedOwnership=false`
-   lookups (shared marking itself is unchanged).
+6. Reading through imported data preserves provenance even on
+   `sharedOwnership=false` lookups; imported descendants are already shared.
 
 ## 10. Test matrix
 
-- `import` is O(1) and metadata-free beyond the root mark: cyclic import succeeds;
-  no child META appears in the structure; untouched imported promises stay
-  unresolved in place.
+- `import` marks every reachable tracked descendant, terminates on cyclic input, and
+  registers each unique promise once; resolved values and deeper promises receive the
+  same context before mirror writeback.
+- Imported DAGs and aliases split across promise branches carry direct shared marks;
+  hasError/getErrors traverse each identity once across promise barriers.
 - `import(value)` without a context throws synchronously (fatal, not a language
   Error); the value receives no marks.
 - Attribution durability for non-extensible values: a frozen direct import and a

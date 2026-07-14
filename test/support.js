@@ -26,6 +26,17 @@ function flushMicrotasks() {
     return new Promise(resolve => setImmediate(resolve))
 }
 
+function countPromiseRegistrations(promise) {
+    // Observe registrations on this exact promise without changing settlement.
+    let count = 0
+    const then = promise.then
+    promise.then = function (...args) {
+        count++
+        return then.apply(this, args)
+    }
+    return () => count
+}
+
 function expectCounts(value, promiseCount, errorCount) {
     expect(refcounts.getRefCounts(value)).to.eql([promiseCount, errorCount])
 }
@@ -55,10 +66,12 @@ module.exports = {
     verifyRefCounts: verifyRefcounts.verifyRefCounts,
     assignPath: runtime.assignPath,
     deletePath: runtime.deletePath,
+    getErrors: runtime.getErrors,
     hasError: runtime.hasError,
     lookupPath: runtime.lookupPath,
     normalize: runtime.normalize,
     importValue,
+    countPromiseRegistrations,
     deferred,
     flushMicrotasks,
     expectCounts,

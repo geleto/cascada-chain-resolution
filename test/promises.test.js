@@ -394,6 +394,22 @@ describe("promise mirrors and lookupPath", () => {
         expect(wrapper.value.x).to.be(2)
     })
 
+    it("returns Error when a promise exposes a missing intermediate", async () => {
+        const pending = deferred()
+        const result = lookupPath(
+            new Chain({ parent: pending.promise }),
+            ["parent", "missing", "value"],
+        )
+
+        pending.resolve({})
+        const value = await result
+
+        expect(value instanceof Error).to.be(true)
+        expect(value.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
+    })
+
     it("marks shared lookup results before later writes resume", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
@@ -668,10 +684,12 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.branch instanceof Error).to.be(true)
-        expect(root.branch.message).to.be("Cannot assign into primitive value")
+        expect(root.branch.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
     })
 
-    it("creates an intermediate when a promise resolves to null", async () => {
+    it("turns a promised null intermediate into Error", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
@@ -679,7 +697,10 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.resolve(null)
         await flushMicrotasks()
 
-        expect(root.branch).to.eql({ x: 1 })
+        expect(root.branch instanceof Error).to.be(true)
+        expect(root.branch.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
     })
 
     it("keeps two keys holding the same imported promise independent", async () => {

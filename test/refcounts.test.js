@@ -21,7 +21,7 @@ const {
 describe("subtree counters", () => {
     it("keeps non-ref-indexed writes on the normal mutation path", () => {
         const deferredValue = deferred()
-        const root = {}
+        const root = { nested: {} }
         const cyclic = {}
         cyclic.self = cyclic
 
@@ -35,6 +35,28 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(root.nested)).to.be(undefined)
         verifyRefCounts(root)
+    })
+
+    it("counts path Errors installed by broken mutations", () => {
+        const assigned = {}
+        const deleted = {}
+        buildRefIndex(assigned)
+        buildRefIndex(deleted)
+
+        assignPath(new Chain(assigned), ["missing", "value"], 1)
+        deletePath(new Chain(deleted), ["missing", "value"])
+
+        expect(assigned.missing instanceof Error).to.be(true)
+        expect(deleted.missing instanceof Error).to.be(true)
+        expectCounts(assigned, 0, 1)
+        expectCounts(deleted, 0, 1)
+
+        assignPath(new Chain(assigned), ["missing"], {})
+        deletePath(new Chain(deleted), ["missing"])
+
+        expectCounts(assigned, 0, 0)
+        expectCounts(deleted, 0, 0)
+        verifyRefCounts(assigned, deleted)
     })
 
     it("uses one fresh metadata record for shared marks, mirrors, and counters", () => {
@@ -156,7 +178,8 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(earlier)).to.be(undefined)
         expect(metaOf(root).mirrors).to.be(null)
-        expect(metaOf(earlier)).to.be(undefined)
+        expect(metaOf(earlier).mirrors).to.be(null)
+        expect(metaOf(earlier).importContext).to.be("transactional index")
 
         delete cycle.self
         expect(buildRefIndex(root)).to.be(root)

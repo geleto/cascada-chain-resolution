@@ -8,7 +8,10 @@ const {
     isTracked,
 } = require("./helpers")
 const { reportFatalError } = require("./error")
-const { getRefCounter } = require("./refcounts")
+const {
+    getRefCounter,
+    getRequiredRefCounter,
+} = require("./refcounts")
 
 function verifyRefCounts(...roots) {
     const seen = new Set()
@@ -22,7 +25,7 @@ function verifyRefIndexedNode(node, seen) {
     seen.add(node)
 
     const counter = getRefCounter(node)
-    if (counter?.parents !== undefined) {
+    if (counter) {
         const expectedCounts = recountRefIndexedNode(node)
         if (counter.promiseCount !== expectedCounts.promiseCount ||
             counter.errorCount !== expectedCounts.errorCount) {
@@ -35,7 +38,7 @@ function verifyRefIndexedNode(node, seen) {
     for (const key of Object.keys(node)) {
         verifyRefIndexedNode(node[key], seen)
     }
-    if (counter?.parents !== undefined) {
+    if (counter) {
         for (const parent of counter.parents.keys()) {
             verifyRefIndexedNode(parent, seen)
         }
@@ -55,7 +58,7 @@ function recountRefIndexedNode(node) {
             errorCount++
         } else if (isTracked(child) && Object.isExtensible(child)) {
             const childCounter = getRefCounter(child)
-            if (childCounter?.parents === undefined) {
+            if (!childCounter) {
                 reportFatalError(new Error("Ref-indexed parent contains non-ref-indexed child"))
             }
 
@@ -66,7 +69,7 @@ function recountRefIndexedNode(node) {
     }
 
     for (const [child, count] of childEdges) {
-        if (getRefCounter(child).parents.get(node) !== count) {
+        if (getRequiredRefCounter(child).parents.get(node) !== count) {
             reportFatalError(new Error("Parent edge count is inconsistent"))
         }
     }
@@ -75,12 +78,12 @@ function recountRefIndexedNode(node) {
 }
 
 function verifyStoredParentEdges(node) {
-    const counter = getRefCounter(node)
+    const counter = getRequiredRefCounter(node)
     for (const [parent, count] of counter.parents) {
         if (!isTracked(parent) || !Object.isExtensible(parent)) {
             reportFatalError(new Error("Parent edge points to untracked parent"))
         }
-        if (getRefCounter(parent)?.parents === undefined) {
+        if (!getRefCounter(parent)) {
             reportFatalError(new Error("Parent edge points to non-ref-indexed parent"))
         }
 

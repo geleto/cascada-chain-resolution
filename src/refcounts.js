@@ -19,18 +19,22 @@ const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
 function getRefCounter(node) {
     const meta = metaOf(node)
-    return meta?.parents !== undefined ? meta : undefined
+    return meta?.parents ? meta : undefined
 }
 
-function ensureCounter(node) {
-    return ensureMeta(node)
+function getRequiredRefCounter(node) {
+    const counter = getRefCounter(node)
+    if (!counter) {
+        reportFatalError(new Error("Ref counts require a ref-indexed value"))
+    }
+    return counter
 }
 
 // `parents` is both the ref-indexed marker and the exact reverse-edge multiset.
 // Undefined means counters are not live; an empty Map means a ref-indexed root
 // with no ref-indexed parents. Never delete the Map itself.
 function isRefIndexed(node) {
-    return metaOf(node)?.parents !== undefined
+    return !!getRefCounter(node)
 }
 
 function getRefCounts(value) {
@@ -40,12 +44,9 @@ function getRefCounts(value) {
         return [0, 0]
     }
 
-    const counter = getRefCounter(value)
     // A tracked child of a ref-indexed parent must already carry counters.
     // Repairing it here would hide a broken downward-closure invariant.
-    if (counter === undefined) {
-        reportFatalError(new Error("Ref counts require a ref-indexed value"))
-    }
+    const counter = getRequiredRefCounter(value)
     return [counter.promiseCount, counter.errorCount]
 }
 
@@ -76,12 +77,12 @@ function commitRefIndex(node, visited, inheritedImportContext) {
     const importContext = nodeImportContext(node, inheritedImportContext)
 
     const existing = getRefCounter(node)
-    if (existing?.parents !== undefined) {
+    if (existing) {
         return [existing.promiseCount, existing.errorCount]
     }
 
     if (visited.has(node)) {
-        const counter = getRefCounter(node)
+        const counter = getRequiredRefCounter(node)
         return [counter.promiseCount, counter.errorCount]
     }
 
@@ -116,7 +117,7 @@ function commitRefIndex(node, visited, inheritedImportContext) {
     // Atomic commit point: after every child has been counted, publish this node's
     // totals and parent edges together. This keeps failed/bailed walks from leaving
     // partial nodes or dangling child -> parent edges.
-    const counter = ensureCounter(node)
+    const counter = ensureMeta(node)
     counter.promiseCount = promiseCount
     counter.errorCount = errorCount
     counter.parents = new Map()
@@ -130,7 +131,7 @@ function commitRefIndex(node, visited, inheritedImportContext) {
 
 function refSetProperty(parent, key, value) {
     const counter = getRefCounter(parent)
-    if (counter?.parents === undefined) {
+    if (!counter) {
         return value
     }
 
@@ -153,7 +154,7 @@ function refSetProperty(parent, key, value) {
 // this through refSetProperty; revoked promise mirrors use it without changing
 // the parent property or its counts.
 function refIndexChildValue(parent, value) {
-    if (getRefCounter(parent)?.parents === undefined) return value
+    if (!getRefCounter(parent)) return value
     return indexChildValue(parent, value)
 }
 
@@ -171,7 +172,7 @@ function indexChildValue(parent, value) {
 
 function refDeleteProperty(parent, key) {
     const counter = getRefCounter(parent)
-    if (counter?.parents === undefined) {
+    if (!counter) {
         return
     }
 
@@ -193,32 +194,28 @@ function updatePropertyCounts(parent, key, nextValue, nextPromiseCount, nextErro
 }
 
 function addParentEdge(value, parent) {
-    if (!isTracked(value) || !Object.isExtensible(value)) return
-
     const counter = getRefCounter(value)
-    if (counter?.parents === undefined) return
+    if (!counter) return
 
     counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
 }
 
 function removeParentEdge(value, parent) {
-    if (!isTracked(value) || !Object.isExtensible(value)) return
+    const counter = getRefCounter(value)
+    if (!counter) return
 
-    const parents = getRefCounter(value)?.parents
-    if (parents === undefined) return
-
-    const count = parents.get(parent)
+    const count = counter.parents.get(parent)
     if (count === 1) {
-        parents.delete(parent)
-    } else if (count !== undefined) {
-        parents.set(parent, count - 1)
+        counter.parents.delete(parent)
+    } else if (count > 1) {
+        counter.parents.set(parent, count - 1)
     }
 }
 
 function applyCountDelta(node, promiseDelta, errorDelta) {
     if (promiseDelta === 0 && errorDelta === 0) return
 
-    const counter = getRefCounter(node)
+    const counter = getRequiredRefCounter(node)
     const oldPromiseCount = counter.promiseCount
     counter.promiseCount += promiseDelta
     counter.errorCount += errorDelta
@@ -232,9 +229,9 @@ function applyCountDelta(node, promiseDelta, errorDelta) {
 }
 
 function waitForSettlement(node) {
-    const counter = getRefCounter(node)
+    const counter = getRequiredRefCounter(node)
 
-    if (counter.settlementPromise === undefined) {
+    if (!counter.settlementPromise) {
         counter.settlementPromise = new Promise(resolve => {
             counter.settlementResolve = resolve
         })
@@ -243,7 +240,7 @@ function waitForSettlement(node) {
 }
 
 function scheduleSettlementVerify(counter) {
-    if (counter.settlementPromise === undefined || counter.settlementVerifyScheduled) return
+    if (!counter.settlementPromise || counter.settlementVerifyScheduled) return
 
     counter.settlementVerifyScheduled = true
     // Use Promise.resolve(), not a sync fast-path: same-promise FIFO jobs
@@ -256,7 +253,7 @@ function scheduleSettlementVerify(counter) {
     // all: the pin mark makes them COW away, onto a copy with its own META.
     onInternalResolve(Promise.resolve(), () => {
         counter.settlementVerifyScheduled = false
-        if (counter.settlementPromise !== undefined && counter.promiseCount === 0) {
+        if (counter.settlementPromise && counter.promiseCount === 0) {
             const resolve = counter.settlementResolve
             counter.settlementPromise = undefined
             counter.settlementResolve = undefined
@@ -267,9 +264,9 @@ function scheduleSettlementVerify(counter) {
 
 function copyCounters(source, copy) {
     const sourceCounter = getRefCounter(source)
-    if (sourceCounter?.parents === undefined) return
+    if (!sourceCounter) return
 
-    const copyCounter = ensureCounter(copy)
+    const copyCounter = ensureMeta(copy)
     copyCounter.promiseCount = sourceCounter.promiseCount
     copyCounter.errorCount = sourceCounter.errorCount
     copyCounter.parents = new Map()
@@ -283,6 +280,7 @@ module.exports = {
     buildRefIndex,
     copyCounters,
     getRefCounter,
+    getRequiredRefCounter,
     getRefCounts,
     refDeleteProperty,
     refIndexChildValue,

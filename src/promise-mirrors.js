@@ -99,7 +99,7 @@ function forkPromiseMirror(
 
 function clearPromiseMirror(node, key) {
     const map = getPromiseMirrorMap(node)
-    if (map === null || map === undefined) return
+    if (!map) return
     delete map[key]
 }
 
@@ -128,7 +128,7 @@ function onPromiseMirrorResolved(
         let value = forkSourceMirror === null
             ? settledValueOrError
             : forkSourceMirror.currentValue
-        if (importContext !== undefined) {
+        if (importContext) {
             markImported(value, importContext)
         } else if (markResolvedValueShared && isTracked(value)) {
             markShared(value)

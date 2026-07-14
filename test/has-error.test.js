@@ -9,6 +9,8 @@ const {
     hasError,
     importValue,
     normalize,
+    lookupPath,
+    countPromiseRegistrations,
     deferred,
     flushMicrotasks,
 } = require("./support")
@@ -111,6 +113,20 @@ describe("hasError", () => {
         expect(badRoot.pending).to.be(badPending.promise)
         expect(getRefCounter(cleanRoot)).to.be(undefined)
         expect(getRefCounter(badRoot)).to.be(undefined)
+    })
+
+    it("distinguishes promised missing terminals from broken paths", async () => {
+        const pending = deferred()
+        const chain = new Chain({ parent: pending.promise })
+
+        const missingTerminal = hasError(chain, ["parent", "missing"])
+        const brokenPath = hasError(chain, ["parent", "missing", "child"])
+
+        pending.resolve({})
+
+        expect(await missingTerminal).to.be(false)
+        expect(await brokenPath).to.be(true)
+        verifyRefCounts(chain._state.value)
     })
 
     it("revalidates indexed descendants under a non-extensible branch", () => {
@@ -449,7 +465,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("waits once for a pending child shared across indexed paths", async () => {
+    it("handles a pending child shared across indexed paths", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         const root = importValue({ left: child, right: child }, "shared child probe")
@@ -461,6 +477,26 @@ describe("hasError", () => {
         expect(await result).to.be(true)
         expect(getRefCounter(child).errorCount).to.be(1)
         expect(getRefCounter(root).errorCount).to.be(2)
+        verifyRefCounts(root)
+    })
+
+    it("reuses a marked-node visit across promise barriers", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const shared = { pending: pending.promise }
+        lookupPath(new Chain({ shared }), ["shared"])
+
+        const delayed = deferred()
+        const root = { direct: shared, delayed: delayed.promise }
+        const result = hasError(new Chain(root), [])
+
+        expect(registrations()).to.be(2) // mirror writeback plus one query wait
+        delayed.resolve(shared)
+        await flushMicrotasks()
+        expect(registrations()).to.be(2)
+
+        pending.reject("bad")
+        expect(await result).to.be(true)
         verifyRefCounts(root)
     })
 
