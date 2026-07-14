@@ -33,10 +33,6 @@ function isTracked(x) {
     )
 }
 
-function isArray(x) {
-    return Array.isArray(x)
-}
-
 function runFatal(fn, value) {
     try {
         const result = fn(value)
@@ -70,7 +66,6 @@ function onInternalResolve(promise, fn) {
 }
 
 module.exports = {
-    isArray,
     isError,
     isPromise,
     isTracked,

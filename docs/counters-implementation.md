@@ -48,14 +48,16 @@ Ground rules for the whole sequence:
 
 Layering, bottom-up, **no circular imports**. Source files live under `src/`:
 
+- **error.js** — language Error construction and rejection conversion, plus fatal
+  error reporting. Fatal errors are reported once per identity and always rethrown.
 - **helpers.js** — the promise wrappers (`onValueResolve`, `onInternalResolve`)
   and type predicates. It owns all `.then` usage; value continuations use
   `onValueResolve`, and internal aggregate waits use `onInternalResolve`.
 - **meta.js** — the META record and accessors: shared/import markers, promise mirror
   storage, counter fields, parent edges, and optional settlement-wait fields.
-- **validate.js** — pure validation helpers: mutation-key/property checks and
-  `validateCountable(value, writeTarget, isRefIndexed)`. It depends only on helpers
-  and meta; counting-validation failures are Error values, not thrown fatal errors.
+- **validate.js** — mutation-key/property assertions and the pure
+  `validateCountable(value, writeTarget, isRefIndexed)`. It depends only on helpers,
+  error, and meta; counting-validation failures are Error values, not fatal throws.
 - **promise-mirrors.js** — promise mirror storage/birth/clearing and guarded
   settlement. `index.js` injects `setProperty` and `refIndexChildValue` with
   `initPromiseMirrors(setProperty, refIndexChildValue)` so live mirrors perform a
@@ -71,9 +73,10 @@ Layering, bottom-up, **no circular imports**. Source files live under `src/`:
   calls the promise-mirrors-owned `getOrCreatePromiseMirror`.
 - **verify-refcounts.js** — test-only consistency oracle. It imports the narrow
   `getRefCounter` accessor from refcounts.js and is not used by runtime code.
-- **index.js** — the operations, language property writes/deletes, COW, import,
-  observational context-threading `walkObservationPath` for lookup/normalize/hasError, `copyToPlainValue`,
-  hasError's local promise wait-tree probe, and the normalize/hasError operation shells. It initializes mirror settlement with
+- **index.js** — `Chain` and the public operations, language property
+  writes/deletes, COW, import, observational context-threading
+  `walkObservationPath`, `copyToPlainValue`, and the shared promise-frontier walk
+  used by hasError/getErrors. It initializes mirror settlement with
   `initPromiseMirrors(setProperty, refIndexChildValue)`.
 
 The contract: **non-ref-indexed behavior ≡ base-kernel behavior** — with refcounts.js

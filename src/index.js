@@ -22,7 +22,6 @@
 // only version that will ever exist.
 
 const {
-    isArray,
     isError,
     isPromise,
     isTracked,
@@ -146,7 +145,7 @@ function shallowCopy(
     markReusedChildrenShared = false,
     inheritedImportContext = undefined,
 ) {
-    const copy = isArray(obj) ? new Array(obj.length) : {}
+    const copy = Array.isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
     const importContext = nodeImportContext(obj, inheritedImportContext)
     const keys = Object.keys(obj)
@@ -618,7 +617,7 @@ function copyToPlainValue(value, copies = new Map()) {
     const existing = copies.get(value)
     if (existing) return existing
 
-    const copy = isArray(value) ? new Array(value.length) : {}
+    const copy = Array.isArray(value) ? new Array(value.length) : {}
     copies.set(value, copy)
 
     const keys = Object.keys(value)
