@@ -1,4 +1,4 @@
-const { onValueResolveWithCompletion } = require("./helpers")
+const { onValueResolve } = require("./helpers")
 const {
     ensureMeta,
     getCycleError,
@@ -149,11 +149,16 @@ function isLivePromiseMirror(node, key, mirror) {
 // pending and a returned Promise does not delay this mirror's drain.
 function onPromiseMirrorResolve(mirror, fn) {
     mirror.pendingConsumerCount++
-    return onValueResolveWithCompletion(
-        mirror.promise,
-        fn,
-        failed => finishPromiseMirrorConsumer(mirror, failed),
-    )
+    return onValueResolve(mirror.promise, value => {
+        let failed = true
+        try {
+            const result = fn(value)
+            failed = false
+            return result
+        } finally {
+            finishPromiseMirrorConsumer(mirror, failed)
+        }
+    })
 }
 
 function finishPromiseMirrorConsumer(mirror, failed) {

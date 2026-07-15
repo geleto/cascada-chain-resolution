@@ -1,13 +1,11 @@
 let fatalReporter = () => {}
 const reportedFatalErrors = new WeakSet()
 
-function isObjectLike(value) {
-    return value !== null && (typeof value === "object" || typeof value === "function")
-}
-
 function reportFatalError(error) {
-    if (!isObjectLike(error) || !reportedFatalErrors.has(error)) {
-        if (isObjectLike(error)) reportedFatalErrors.add(error)
+    const isObjectLike = error !== null &&
+        (typeof error === "object" || typeof error === "function")
+    if (!isObjectLike || !reportedFatalErrors.has(error)) {
+        if (isObjectLike) reportedFatalErrors.add(error)
         try {
             fatalReporter(error)
         } catch {
@@ -18,9 +16,6 @@ function reportFatalError(error) {
 }
 
 function setFatalErrorReporter(reporter = () => {}) {
-    if (typeof reporter !== "function") {
-        reportFatalError(new TypeError("fatal reporter must be a function"))
-    }
     fatalReporter = reporter
 }
 

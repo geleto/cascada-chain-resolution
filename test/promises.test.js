@@ -31,7 +31,6 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
-    thrownBy,
 } = require("./support")
 
 describe("promise helpers", () => {
@@ -206,29 +205,6 @@ describe("promise helpers", () => {
 
         expect(reported).to.be(fatal)
         expect(caught).to.be(fatal)
-    })
-
-    it("rejects invalid fatal reporters without installing them", () => {
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
-        const badReporter = thrownBy(() => setFatalErrorReporter(7))
-        const fatal = new Error("later fatal")
-        let caught
-        try {
-            reportFatalError(fatal)
-        } catch (error) {
-            caught = error
-        } finally {
-            setFatalErrorReporter()
-        }
-
-        expect(badReporter instanceof TypeError).to.be(true)
-        expect(badReporter.message).to.be("fatal reporter must be a function")
-        expect(caught).to.be(fatal)
-        expect(reported).to.be(fatal)
     })
 
     it("reports losing internal race rejections after the race has settled", async () => {

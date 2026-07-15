@@ -24,6 +24,7 @@ function isError(x) {
     return x instanceof Error
 }
 
+// ncludes arrays, plain objects, frozen objects, and class instances,
 function isTracked(x) {
     return (
         x !== null &&
@@ -33,17 +34,10 @@ function isTracked(x) {
     )
 }
 
-function runReaction(fn, value, onSynchronousComplete) {
+function runFatal(fn, value) {
     let result
     try {
         result = fn(value)
-    } catch (error) {
-        onSynchronousComplete(true)
-        return reportFatalError(error)
-    }
-
-    try {
-        onSynchronousComplete(false)
     } catch (error) {
         return reportFatalError(error)
     }
@@ -53,30 +47,21 @@ function runReaction(fn, value, onSynchronousComplete) {
         : result
 }
 
-function runFatal(fn, value) {
-    return runReaction(fn, value, () => {})
-}
-
 // Rejected data promises arrive at fn as Error values. Exceptions thrown by fn
 // and rejections returned by it are runtime bugs and go through reportFatalError.
-function onValueResolveWithCompletion(promise, fn, onSynchronousComplete) {
+function onValueResolve(promise, fn) {
     return Promise.resolve(promise).then(
-        value => runReaction(fn, value, onSynchronousComplete),
+        value => runFatal(fn, value),
         reason => {
             let value
             try {
                 value = errorFromRejection(reason)
             } catch (error) {
-                onSynchronousComplete(true)
                 return reportFatalError(error)
             }
-            return runReaction(fn, value, onSynchronousComplete)
+            return runFatal(fn, value)
         },
     )
-}
-
-function onValueResolve(promise, fn) {
-    return onValueResolveWithCompletion(promise, fn, () => {})
 }
 
 // Internal promises already carry runtime failures, not language data
@@ -94,5 +79,4 @@ module.exports = {
     isTracked,
     onInternalResolve,
     onValueResolve,
-    onValueResolveWithCompletion,
 }
