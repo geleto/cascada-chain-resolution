@@ -32,7 +32,9 @@ Cascada can trust values created by its own compiler. A new object has one owner
 
 JavaScript values brought in from outside Cascada cannot be assumed to follow those rules. The same object may appear under several properties, and an object may point back to itself. Every external value therefore passes through `import`, which marks the boundary as outside data but does not immediately search the whole graph. Ordinary reads and writes stay cheap. The deeper alias and cycle work is delayed until `hasError`, `getErrors`, or `normalize` first needs exact information about that branch.
 
-The imported JavaScript object is never rewritten. Cascada keeps settled promise values and imported-data problems in private metadata beside it. A normal path read or write still sees the original logical value. Error queries report cyclic or invalid properties; normalization preserves raw aliases and cycles, while a genuine validation failure produces an Error result. A cycle Error is diagnostic rather than poisoning: `hasError` may report it even though `normalize` can still return the cyclic value.
+The imported JavaScript object is never rewritten. Cascada keeps settled promise values and cycle diagnostics in private metadata beside it. A normal path read or write still sees the original logical value. A cycle Error is diagnostic rather than poisoning: `hasError` may report it even though `normalize` preserves the raw aliases and cycles.
+
+The language sees only own enumerable string properties. That includes an own enumerable `__proto__` data property, which is read, counted, copied, and mutated like any other key. Inherited properties remain invisible. Every missing language key is created as an own enumerable data property, so assigning `__proto__` never invokes JavaScript's legacy setter or changes the object's prototype.
 
 ## The command chain
 
@@ -204,7 +206,7 @@ All the bookkeeping above - the shared flag, mirrors, counters, and imported-pro
     db: { promise, currentValue, edgeMark, settled, pendingConsumerCount },
   },
   edgeMarks: {               // projected cuts, when present
-    self: { kind: "cycle", error },
+    self: cycleError,
   },
   promiseCount: 0,           // the counters - maintained once the branch
   errorCount: 0,             //   has been queried at least once

@@ -25,7 +25,6 @@ const {
     onInternalResolve,
 } = require("./helpers")
 const {
-    forbiddenKeyError,
     pathAccessError,
 } = require("./error")
 const {
@@ -44,14 +43,13 @@ const {
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
     assertCanSetLanguageProperty,
-    assertMutationPath,
+    writeLanguageProperty,
 } = require("./validate")
 const {
     hasSharedMark,
     markImported,
     markShared,
     nodeImportContext,
-    setEdgeMark,
 } = require("./meta")
 const {
     createAssignedPromiseMirror,
@@ -95,19 +93,6 @@ function deleteProperty(parent, key, importContext = undefined) {
     deleteEdge(parent, key)
 }
 
-function defineOwnProtoSlot(copy) {
-    // Object.keys only sees an own enumerable data key on the source, but a
-    // fresh copy would otherwise inherit Object.prototype.__proto__. Pre-create
-    // an own data slot so plain assignment preserves the value instead of
-    // invoking the legacy prototype setter.
-    Object.defineProperty(copy, "__proto__", {
-        value: undefined,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-    })
-}
-
 initPromiseMirrors(
     (mirror, value, markValueShared) => prepareEdgeTransition(
         mirror.node,
@@ -123,9 +108,6 @@ function shallowCopy(obj, pathKey, importContext) {
     const copy = Array.isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = String(pathKey)
     const keys = Object.keys(obj)
-    if (keys.includes("__proto__")) {
-        defineOwnProtoSlot(copy)
-    }
 
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
@@ -138,29 +120,10 @@ function shallowCopy(obj, pathKey, importContext) {
     for (const key of keys) {
         const isPathKey = key === pathKeyString
         const markCopiedValueShared = !isPathKey
-        const value = key === "__proto__" ? obj[key] : readLogicalProperty(obj, key)
+        const value = readLogicalProperty(obj, key)
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or copyCounters reconstructs its indexed edges.
-        copy[key] = value
-        if (key === "__proto__" && importContext) {
-            // Imported __proto__ remains physically present across COW, but the
-            // new owner/key placement needs its own validation boundary.
-            setEdgeMark(copy, key, {
-                kind: "invalid",
-                error: forbiddenKeyError(importContext),
-            })
-            continue
-        }
-        if (key === "__proto__" && isPromise(value)) {
-            // The key was pre-created as an own data property above, so the
-            // assignment is safe. Do not mirror this promise: writeback would
-            // later go through the normal mutation guard and throw. Boundary
-            // marking is still owed for the eventual resolved value.
-            if (markCopiedValueShared) {
-                markShared(value)
-            }
-            continue
-        }
+        writeLanguageProperty(copy, key, value)
         if (isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
@@ -206,7 +169,6 @@ function assignPath(chain, path, value) {
 // install copied branches back into their key.
 function walkMutationPath(rootHolder, path, onTarget) {
     const targetPath = ["value", ...path]
-    assertMutationPath(path)
     return walk(rootHolder, 0, false, undefined)
 
     function walk(value, index, inheritedSharedBranch, inheritedImportContext) {
@@ -291,15 +253,12 @@ function normalize(chain, path, sharedOwnership = true, plainCopy = false) {
 
 function normalizeResolved(value, importContext, placement, sharedOwnership, plainCopy) {
     let edgeMark = getResolvedPlacementMark(placement)
-    if (edgeMark?.kind === "invalid") return edgeMark.error
-    let terminalCycle = edgeMark?.kind === "cycle"
+    let terminalCycle = !!edgeMark
     if (isError(value) || !isTracked(value)) return value
 
-    const indexed = buildRefIndex(value, importContext, placement)
-    if (isError(indexed)) return indexed
+    buildRefIndex(value, importContext, placement)
     edgeMark = getResolvedPlacementMark(placement)
-    if (edgeMark?.kind === "invalid") return edgeMark.error
-    terminalCycle ||= edgeMark?.kind === "cycle"
+    terminalCycle ||= !!edgeMark
 
     const counter = getRefCounter(value)
     if (!counter) {
@@ -380,11 +339,7 @@ function classifyProjectedErrors(value) {
 
         for (const key of Object.keys(node)) {
             const edgeMark = getCommittedEdgeMark(node, key)
-            if (edgeMark?.kind === "invalid") {
-                hasOrdinaryError = true
-                return
-            }
-            if (edgeMark?.kind === "cycle") {
+            if (edgeMark) {
                 hasCycleError = true
                 continue
             }
@@ -426,30 +381,20 @@ function inspectRawCycleBranch(value, plainCopy) {
             : node
         visited.set(node, output)
         const keys = Object.keys(node)
-        if (plainCopy && keys.includes("__proto__")) defineOwnProtoSlot(output)
 
         const waits = []
         for (const key of keys) {
-            if (getCommittedEdgeMark(node, key)?.kind === "invalid") {
-                result.hasOrdinaryError = true
-                continue
-            }
-
             const child = readLogicalProperty(node, key)
             if (isPromise(child)) {
                 const mirror = getRequiredPromiseMirror(node, key, child)
                 waits.push(onPromiseMirrorResolve(mirror, () => {
-                    if (mirror.edgeMark?.kind === "invalid") {
-                        result.hasOrdinaryError = true
-                        return undefined
-                    }
                     const nested = walk(mirror.currentValue)
-                    if (plainCopy) output[key] = nested.value
+                    if (plainCopy) writeLanguageProperty(output, key, nested.value)
                     return nested.readiness
                 }))
             } else {
                 const nested = walk(child)
-                if (plainCopy) output[key] = nested.value
+                if (plainCopy) writeLanguageProperty(output, key, nested.value)
                 if (nested.readiness) waits.push(nested.readiness)
             }
         }
@@ -483,8 +428,7 @@ function hasErrorAtPathValue(value, importContext, placement) {
     if (isError(value)) return true
     if (!isTracked(value)) return false
 
-    const indexed = buildRefIndex(value, importContext, placement)
-    if (isError(indexed)) return true
+    buildRefIndex(value, importContext, placement)
     if (getResolvedPlacementMark(placement)) return true
 
     return hasErrorInIndexedBranch(value)
@@ -556,7 +500,7 @@ function getErrors(chain, path) {
     function collectErrorsAtPathValue(value, importContext, placement) {
         let edgeMark = getResolvedPlacementMark(placement)
         if (edgeMark) {
-            errors.add(edgeMark.error)
+            errors.add(edgeMark)
             return undefined
         }
         if (isError(value)) {
@@ -565,14 +509,10 @@ function getErrors(chain, path) {
         }
         if (!isTracked(value)) return undefined
 
-        const indexed = buildRefIndex(value, importContext, placement)
-        if (isError(indexed)) {
-            errors.add(indexed)
-            return undefined
-        }
+        buildRefIndex(value, importContext, placement)
         edgeMark = getResolvedPlacementMark(placement)
         if (edgeMark) {
-            errors.add(edgeMark.error)
+            errors.add(edgeMark)
             return undefined
         }
 
@@ -585,7 +525,7 @@ function getErrors(chain, path) {
             value,
             mirror => {
                 if (mirror.edgeMark) {
-                    errors.add(mirror.edgeMark.error)
+                    errors.add(mirror.edgeMark)
                     return undefined
                 }
                 if (isError(mirror.currentValue)) {
@@ -628,7 +568,7 @@ function collectErrorSearchWaits(
         for (const key of Object.keys(node)) {
             const edgeMark = getCommittedEdgeMark(node, key)
             if (edgeMark) {
-                if (errors) errors.add(edgeMark.error)
+                if (errors) errors.add(edgeMark)
                 continue
             }
 
@@ -711,15 +651,11 @@ function copyToPlainValue(value, copies = new Map()) {
     const copy = Array.isArray(value) ? new Array(value.length) : {}
     copies.set(value, copy)
 
-    const keys = Object.keys(value)
-    if (keys.includes("__proto__")) {
-        defineOwnProtoSlot(copy)
-    }
-    for (const key of keys) {
+    for (const key of Object.keys(value)) {
         // Sanctioned write bypass: normalize(..., plainCopy) creates output data
         // outside the runtime graph, so there is no metadata to bookkeep.
-        const child = key === "__proto__" ? value[key] : readLogicalProperty(value, key)
-        copy[key] = copyToPlainValue(child, copies)
+        const child = readLogicalProperty(value, key)
+        writeLanguageProperty(copy, key, copyToPlainValue(child, copies))
     }
     return copy
 }

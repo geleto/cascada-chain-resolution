@@ -36,7 +36,7 @@ describe("hasError", () => {
         expect(hasError(new Chain(7), ["x"])).to.be(true)
     })
 
-    it("treats __proto__ and non-enumerable lookups as missing", () => {
+    it("reads own enumerable __proto__ data but hides non-enumerable properties", () => {
         const root = {}
         Object.defineProperty(root, "__proto__", {
             value: new Error("hidden proto"),
@@ -51,7 +51,7 @@ describe("hasError", () => {
             configurable: true,
         })
 
-        expect(hasError(new Chain(root), ["__proto__"])).to.be(false)
+        expect(hasError(new Chain(root), ["__proto__"])).to.be(true)
         expect(hasError(new Chain(root), ["hidden"])).to.be(false)
         expect(hasError(new Chain(root), ["__proto__", "x"])).to.be(true)
         expect(hasError(new Chain(root), ["hidden", "x"])).to.be(true)

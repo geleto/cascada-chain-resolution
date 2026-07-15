@@ -6,10 +6,12 @@ const {
     isTracked,
     onInternalResolve,
 } = require("./helpers")
-const { reportFatalError } = require("./error")
+const {
+    cycleError,
+    reportFatalError,
+} = require("./error")
 const {
     clearEdgeMark,
-    cycleEdgeMark,
     ensureMeta,
     markShared,
     metaOf,
@@ -26,6 +28,7 @@ const {
     readLogicalProperty,
 } = require("./promise-mirrors")
 const { prepareImportedData } = require("./import")
+const { writeLanguageProperty } = require("./validate")
 
 function getRefCounter(node) {
     const meta = metaOf(node)
@@ -80,19 +83,11 @@ function buildRefIndex(value, inheritedImportContext = undefined, placement = un
             placement?.parent,
             placement?.mirror,
         )
-        if (preparedImport.failure) {
-            if (!placement) return preparedImport.failure
-            commitPlacementEdgeMark(placement, {
-                kind: "invalid",
-                error: preparedImport.failure,
-            })
-            return value
-        }
 
         let closingEdgeMark = getResolvedPlacementMark(placement)
         if (placement && !closingEdgeMark &&
             reachesProjected(value, placement.parent, preparedImport)) {
-            closingEdgeMark = cycleEdgeMark(placement.key, importContext)
+            closingEdgeMark = cycleError(placement.key, importContext)
         }
         commitImportedPreparation(preparedImport)
         if (closingEdgeMark) {
@@ -235,19 +230,11 @@ function prepareEdgeTransition(
             owner,
             mirror,
         )
-        if (imported.failure) {
-            prepared.edgeMark = {
-                kind: "invalid",
-                error: imported.failure,
-            }
-            prepared.errorCount = 1
-            return prepared
-        }
         const closesCycle = reachesProjected(candidate, owner, imported)
         commitImportedPreparation(imported)
         buildPreparedImportRefIndexes(imported)
         if (closesCycle) {
-            prepared.edgeMark = cycleEdgeMark(key, importContext)
+            prepared.edgeMark = cycleError(key, importContext)
             prepared.errorCount = 1
             return prepared
         }
@@ -290,12 +277,12 @@ function commitEdgeTransition(owner, key, mirror, prepared) {
         nextChild,
         () => {
             if (mirror) {
-                owner[key] = mirror.promise
+                writeLanguageProperty(owner, key, mirror.promise)
                 clearEdgeMark(owner, key)
                 installPromiseMirror(owner, key, mirror)
                 mirror.edgeMark = prepared.edgeMark
             } else {
-                owner[key] = prepared.value
+                writeLanguageProperty(owner, key, prepared.value)
                 clearEdgeMark(owner, key)
                 clearPromiseMirror(owner, key)
                 if (prepared.edgeMark) setEdgeMark(owner, key, prepared.edgeMark)
@@ -319,7 +306,7 @@ function commitMirrorDrain(mirror) {
             mirror,
             mirror.currentValue,
         )
-        if (previousEdgeMark?.kind === prepared.edgeMark?.kind) {
+        if (previousEdgeMark && prepared.edgeMark) {
             prepared.edgeMark = previousEdgeMark
         }
         mirror.prepared = prepared
@@ -334,7 +321,7 @@ function commitMirrorDrain(mirror) {
         nextChild,
         () => {
             if (!mirror.externalHolder && Object.isExtensible(mirror.node)) {
-                mirror.node[mirror.key] = prepared.value
+                writeLanguageProperty(mirror.node, mirror.key, prepared.value)
             }
             clearEdgeMark(mirror.node, mirror.key)
         },

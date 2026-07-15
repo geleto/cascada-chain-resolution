@@ -248,9 +248,9 @@ describe("import", () => {
 
         expect(hasError(new Chain(left), [])).to.be(true)
 
-        const leftError = metaOf(left).edgeMarks.right.error
-        const rightError = metaOf(right).edgeMarks.left.error
-        const selfError = metaOf(right).edgeMarks.self.error
+        const leftError = metaOf(left).edgeMarks.right
+        const rightError = metaOf(right).edgeMarks.left
+        const selfError = metaOf(right).edgeMarks.self
         expect(leftError.message).to.be(
             'Cyclic property "right" (imported at: interlocking SCC)',
         )
@@ -258,10 +258,10 @@ describe("import", () => {
         expect(selfError).not.to.be(leftError)
         expect(selfError).not.to.be(rightError)
         expect(getErrors(new Chain(right), []).includes(rightError)).to.be(true)
-        expect(metaOf(left).edgeMarks.right.error).to.be(leftError)
+        expect(metaOf(left).edgeMarks.right).to.be(leftError)
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
-        expect(metaOf(left).edgeMarks.right.error).to.be(leftError)
+        expect(metaOf(left).edgeMarks.right).to.be(leftError)
         expectCounts(left, 0, 1)
         expectCounts(right, 0, 2)
         expectCounts(wrapper, 0, 1)
@@ -275,8 +275,8 @@ describe("import", () => {
         importValue(batchParent, "batch cycle")
         buildRefIndex(batchParent)
 
-        expect(metaOf(batchParent).edgeMarks.child.kind).to.be("cycle")
-        expect(metaOf(batchChild).edgeMarks.back.kind).to.be("cycle")
+        expect(metaOf(batchParent).edgeMarks.child instanceof Error).to.be(true)
+        expect(metaOf(batchChild).edgeMarks.back instanceof Error).to.be(true)
 
         const incrementalParent = {}
         const incrementalChild = importValue(
@@ -286,7 +286,7 @@ describe("import", () => {
         buildRefIndex(incrementalParent)
         assignPath(new Chain(incrementalParent), ["child"], incrementalChild)
 
-        expect(metaOf(incrementalParent).edgeMarks.child.kind).to.be("cycle")
+        expect(metaOf(incrementalParent).edgeMarks.child instanceof Error).to.be(true)
         expect(metaOf(incrementalChild).edgeMarks).to.be(null)
         expect(incrementalParent.child).to.be(incrementalChild)
         expect(incrementalChild.back).to.be(incrementalParent)
@@ -294,18 +294,11 @@ describe("import", () => {
         verifyRefCounts(incrementalParent, incrementalChild)
     })
 
-    it("commits edge-mark kind changes, clearing, and deletion exactly once", () => {
+    it("commits cycle-mark replacement, clearing, and deletion exactly once", () => {
         const owner = {}
         const ancestor = { left: owner, right: owner }
-        const cyclic = importValue({ back: owner }, "mark transition cycle")
-        const invalid = {}
-        Object.defineProperty(invalid, "__proto__", {
-            value: { unsafe: true },
-            enumerable: true,
-            writable: true,
-            configurable: true,
-        })
-        importValue(invalid, "mark transition invalid")
+        const firstCycle = importValue({ back: owner }, "first mark transition")
+        const secondCycle = importValue({ back: owner }, "second mark transition")
         const clean = { clean: true }
         buildRefIndex(ancestor)
         const replace = value => commitEdgeTransition(
@@ -315,43 +308,40 @@ describe("import", () => {
             prepareEdgeTransition(owner, "value", null, value),
         )
 
-        replace(cyclic)
-        expect(metaOf(owner).edgeMarks.value.kind).to.be("cycle")
+        replace(firstCycle)
+        const firstMark = metaOf(owner).edgeMarks.value
+        expect(firstMark instanceof Error).to.be(true)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
-        verifyRefCounts(ancestor, owner, cyclic)
+        verifyRefCounts(ancestor, owner, firstCycle)
 
-        replace(invalid)
-        expect(metaOf(owner).edgeMarks.value.kind).to.be("invalid")
+        replace(secondCycle)
+        const secondMark = metaOf(owner).edgeMarks.value
+        expect(secondMark instanceof Error).to.be(true)
+        expect(secondMark).not.to.be(firstMark)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
-        verifyRefCounts(ancestor, owner, cyclic)
-
-        replace(cyclic)
-        expect(metaOf(owner).edgeMarks.value.kind).to.be("cycle")
-        expectCounts(owner, 0, 1)
-        expectCounts(ancestor, 0, 2)
-        verifyRefCounts(ancestor, owner, cyclic)
+        verifyRefCounts(ancestor, owner, firstCycle, secondCycle)
 
         replace(clean)
         expect(metaOf(owner).edgeMarks.value).to.be(undefined)
         expectCounts(owner, 0, 0)
         expectCounts(ancestor, 0, 0)
         expect(getRefCounter(clean).parents.get(owner)).to.be(1)
-        verifyRefCounts(ancestor, owner, cyclic, clean)
+        verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
 
-        replace(cyclic)
-        expect(metaOf(owner).edgeMarks.value.kind).to.be("cycle")
+        replace(firstCycle)
+        expect(metaOf(owner).edgeMarks.value instanceof Error).to.be(true)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
         expect(getRefCounter(clean).parents.has(owner)).to.be(false)
-        verifyRefCounts(ancestor, owner, cyclic, clean)
+        verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
 
         deleteEdge(owner, "value")
         expect(metaOf(owner).edgeMarks.value).to.be(undefined)
         expectCounts(owner, 0, 0)
         expectCounts(ancestor, 0, 0)
-        verifyRefCounts(ancestor, owner, cyclic, clean)
+        verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
     })
 
     it("stores cycle metadata for frozen imports in both metadata modes", () => {
@@ -362,7 +352,7 @@ describe("import", () => {
 
         buildRefIndex(frozen)
 
-        expect(metaOf(frozen).edgeMarks.self.error.message).to.be(
+        expect(metaOf(frozen).edgeMarks.self.message).to.be(
             'Cyclic property "self" (imported at: frozen cycle)',
         )
         expectCounts(frozen, 0, 1)
@@ -434,7 +424,7 @@ describe("import", () => {
         )
     })
 
-    it("recovers from failed validation after a COW repair", () => {
+    it("recovers from a cycle after a COW repair", () => {
         const root = {}
         root.self = root
         importValue(root, "repairable import")
@@ -534,8 +524,8 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("rejects __proto__ regardless of neighboring Promise order", () => {
-        function invalidFrozenValue(protoFirst) {
+    it("indexes own enumerable __proto__ regardless of neighboring Promise order", async () => {
+        function frozenValue(protoFirst) {
             const value = {}
             const addProto = () => Object.defineProperty(value, "__proto__", {
                 value: { unsafe: true },
@@ -551,13 +541,16 @@ describe("import", () => {
             return Object.freeze(value)
         }
 
-        for (const value of [invalidFrozenValue(true), invalidFrozenValue(false)]) {
-            importValue(value, "validation order")
-            const failure = buildRefIndex(value)
+        for (const value of [frozenValue(true), frozenValue(false)]) {
+            importValue(value, "property order")
+            const indexed = buildRefIndex(value)
 
-            expect(failure.message).to.be(
-                "Cannot use __proto__ as a key (imported at: validation order)",
-            )
+            expect(indexed).to.be(value)
+            expect(lookupPath(new Chain(value), ["__proto__", "unsafe"], false)).to.be(true)
+            expectCounts(value, 1, 0)
+            await flushMicrotasks()
+            expectCounts(value, 0, 0)
+            verifyRefCounts(value)
         }
     })
 
@@ -566,8 +559,8 @@ describe("import", () => {
         const secondError = new Error("bad")
         const first = Object.freeze({ clean: 1, pending: firstPromise })
         const second = Object.freeze({ bad: secondError })
-        importValue(first, "first invalid sibling")
-        importValue(second, "second invalid sibling")
+        importValue(first, "first frozen sibling")
+        importValue(second, "second frozen sibling")
         const wrapper = { keep: true, first, second }
         const chain = new Chain(wrapper)
 
@@ -590,10 +583,11 @@ describe("import", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("rejects imported own __proto__ keys when counting", () => {
+    it("counts imported own enumerable __proto__ data", () => {
         const root = {}
+        const protoValue = { safe: true }
         Object.defineProperty(root, "__proto__", {
-            value: { unsafe: true },
+            value: protoValue,
             enumerable: true,
             writable: true,
             configurable: true,
@@ -601,13 +595,41 @@ describe("import", () => {
 
         expect(importValue(root, "proto import")).to.be(root)
 
-        const failure = buildRefIndex(root)
+        const indexed = buildRefIndex(root)
 
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be("Cannot use __proto__ as a key (imported at: proto import)")
+        expect(indexed).to.be(root)
+        expect(lookupPath(new Chain(root), ["__proto__", "safe"], false)).to.be(true)
+        expectCounts(root, 0, 0)
+        expect(getRefCounter(protoValue)).not.to.be(undefined)
+        verifyRefCounts(root, protoValue)
     })
 
-    it("exposes a prohibited value reached through a draining promise", async () => {
+    it("detects cycles through imported enumerable __proto__ data", () => {
+        const root = {}
+        Object.defineProperty(root, "__proto__", {
+            value: root,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        importValue(root, "proto cycle")
+
+        buildRefIndex(root)
+        const edgeError = metaOf(root).edgeMarks.__proto__
+
+        expect(edgeError.message).to.be(
+            'Cyclic property "__proto__" (imported at: proto cycle)',
+        )
+        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(getErrors(new Chain(root), [])).to.eql([edgeError])
+        expect(normalize(new Chain(root), [])).to.be(root)
+        expect(root.__proto__).to.be(root)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("indexes enumerable __proto__ data reached through a draining promise", async () => {
         const pending = deferred()
         const root = {
             value: importValue(pending.promise, "pending proto import"),
@@ -618,30 +640,26 @@ describe("import", () => {
         const normalized = normalize(chain, ["value"])
         const mirror = metaOf(root).mirrors.value
         onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
-        const invalid = { clean: true }
-        Object.defineProperty(invalid, "__proto__", {
+        const resolved = { clean: true }
+        Object.defineProperty(resolved, "__proto__", {
             value: Promise.resolve("hidden"),
             enumerable: true,
             writable: true,
             configurable: true,
         })
 
-        pending.resolve(invalid)
+        pending.resolve(resolved)
 
-        expect(await found).to.be(true)
-        const errors = await collected
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            "Cannot use __proto__ as a key (imported at: pending proto import)",
-        )
-        expect(await normalized).to.be(errors[0])
-        expect(mirror.edgeMark.kind).to.be("invalid")
-        expect(mirror.edgeMark.error).to.be(errors[0])
-        expectCounts(root, 0, 1)
-        verifyRefCounts(root)
+        expect(await found).to.be(false)
+        expect(await collected).to.eql([])
+        expect(await normalized).to.be(resolved)
+        expect(mirror.edgeMark).to.be(undefined)
+        expect(lookupPath(new Chain(resolved), ["__proto__"], false)).to.be("hidden")
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root, resolved)
     })
 
-    it("preserves a prohibited imported property and its Error through COW", () => {
+    it("preserves and resolves imported enumerable __proto__ data through COW", async () => {
         const hidden = Promise.resolve("hidden")
         const external = { branch: { value: 1 } }
         Object.defineProperty(external, "__proto__", {
@@ -655,24 +673,23 @@ describe("import", () => {
 
         assignPath(chain, ["branch", "value"], 2)
         const copy = chain._state.value
-        const errors = getErrors(chain, [])
-        const normalized = normalize(chain, [], true, true)
+        const errors = await getErrors(chain, [])
+        const normalized = await normalize(chain, [], true, true)
 
         expect(copy).not.to.be(external)
-        expect(Object.getOwnPropertyDescriptor(copy, "__proto__").value).to.be(hidden)
+        expect(Object.getOwnPropertyDescriptor(external, "__proto__").value).to.be(hidden)
+        expect(Object.getOwnPropertyDescriptor(copy, "__proto__").value).to.be("hidden")
         expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
-        expect(hasError(chain, [])).to.be(true)
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            "Cannot use __proto__ as a key (imported at: COW proto import)",
-        )
-        expect(normalized instanceof Error).to.be(true)
+        expect(await hasError(chain, [])).to.be(false)
+        expect(errors).to.eql([])
+        expect(Object.getOwnPropertyDescriptor(normalized, "__proto__").value).to.be("hidden")
+        expect(Object.getPrototypeOf(normalized)).to.be(Object.prototype)
         expect(external.branch.value).to.be(1)
         expect(copy.branch.value).to.be(2)
         verifyRefCounts(copy)
     })
 
-    it("rechecks a trusted indexed node reached later through import", () => {
+    it("prepares a trusted indexed node reached later through import", () => {
         const child = {}
         Object.defineProperty(child, "__proto__", {
             value: { unsafe: true },
@@ -683,14 +700,14 @@ describe("import", () => {
         buildRefIndex(child)
         const root = importValue({ child }, "late imported provenance")
 
-        const failure = buildRefIndex(root)
+        const indexed = buildRefIndex(root)
 
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Cannot use __proto__ as a key (imported at: late imported provenance)",
-        )
+        expect(indexed).to.be(root)
         expect(getRefCounter(child)).not.to.be(undefined)
-        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(root)).not.to.be(undefined)
+        expect(metaOf(child).importPrepared).to.be(true)
+        expect(lookupPath(new Chain(root), ["child", "__proto__", "unsafe"], false)).to.be(true)
+        verifyRefCounts(root, child)
     })
 
     it("marks extracted imported values even when ownership is ceded", () => {
@@ -833,7 +850,7 @@ describe("import", () => {
         const deferredValue = deferred()
         const root = { nested: { value: deferredValue.promise } }
 
-        importValue(root, "invalid writeback")
+        importValue(root, "frozen writeback")
         buildRefIndex(root)
         expectCounts(root, 1, 0)
 
@@ -849,23 +866,23 @@ describe("import", () => {
 
     it("indexes private non-extensible values from revoked mirrors", async () => {
         const pending = deferred()
-        const invalid = Object.freeze({ bad: new Error("bad") })
+        const errorValue = Object.freeze({ bad: new Error("bad") })
         const root = { value: pending.promise }
         const chain = new Chain(root)
 
-        importValue(invalid, "revoked writeback")
+        importValue(errorValue, "revoked writeback")
         buildRefIndex(root)
         const mirror = metaOf(root).mirrors.value
         assignPath(chain, ["value"], "fixed")
 
-        pending.resolve(invalid)
+        pending.resolve(errorValue)
         await flushMicrotasks()
 
         expect(root.value).to.be("fixed")
-        expect(mirror.currentValue).to.be(invalid)
+        expect(mirror.currentValue).to.be(errorValue)
         expect(mirror.edgeMark).to.be(undefined)
-        expectCounts(invalid, 0, 1)
-        expect(getErrors(new Chain(invalid), [])[0]).to.be(invalid.bad)
+        expectCounts(errorValue, 0, 1)
+        expect(getErrors(new Chain(errorValue), [])[0]).to.be(errorValue.bad)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
@@ -888,8 +905,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value).to.be(deferredValue.promise)
-        expect(metaOf(root.nested).mirrors.value.edgeMark.kind).to.be("cycle")
-        expect(metaOf(root.nested).mirrors.value.edgeMark.error.message).to.be(
+        expect(metaOf(root.nested).mirrors.value.edgeMark.message).to.be(
             'Cyclic property "value" (imported at: writeback back-edge)',
         )
         expectCounts(root, 1, 1)
@@ -960,7 +976,7 @@ describe("import", () => {
         expect(hasError(new Chain(root), [])).to.be(true)
     })
 
-    it("lets invalid imported promise roots fail later at counting time", async () => {
+    it("detects cyclic imported promise roots later at counting time", async () => {
         const deferredValue = deferred()
         const imported = importValue(deferredValue.promise, "promise root")
         const cyclic = {}

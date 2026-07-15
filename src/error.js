@@ -29,8 +29,11 @@ function validationError(message, importContext = undefined) {
     return new Error(`${message} (imported at: ${String(importContext)})`)
 }
 
-function forbiddenKeyError(importContext = undefined) {
-    return validationError("Cannot use __proto__ as a key", importContext)
+function cycleError(key, importContext) {
+    return validationError(
+        `Cyclic property "${String(key)}"`,
+        importContext,
+    )
 }
 
 function pathAccessError() {
@@ -42,8 +45,8 @@ function errorFromRejection(reason) {
 }
 
 module.exports = {
+    cycleError,
     errorFromRejection,
-    forbiddenKeyError,
     pathAccessError,
     reportFatalError,
     setFatalErrorReporter,

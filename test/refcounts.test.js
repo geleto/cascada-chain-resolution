@@ -231,31 +231,27 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("leaves no counters or mirrors when validation fails before commit", async () => {
+    it("indexes enumerable __proto__ data with neighboring promises", async () => {
         const pending = deferred()
         const earlier = { pending: pending.promise }
-        const invalid = {}
-        Object.defineProperty(invalid, "__proto__", {
-            value: { unsafe: true },
+        const protoValue = { safe: true }
+        const root = { earlier }
+        Object.defineProperty(root, "__proto__", {
+            value: protoValue,
             enumerable: true,
             writable: true,
             configurable: true,
         })
-        const root = { earlier, invalid }
 
         importValue(root, "transactional index")
-        const failure = buildRefIndex(root)
+        const indexed = buildRefIndex(root)
 
-        expect(failure instanceof Error).to.be(true)
-        expect(getRefCounter(root)).to.be(undefined)
-        expect(getRefCounter(earlier)).to.be(undefined)
-        expect(metaOf(root).mirrors).to.be(null)
-        expect(metaOf(earlier)).to.be(undefined)
-
-        root.invalid = { clean: true }
-        expect(buildRefIndex(root)).to.be(root)
+        expect(indexed).to.be(root)
         expectCounts(root, 1, 0)
-        verifyRefCounts(root)
+        expectCounts(earlier, 1, 0)
+        expectCounts(protoValue, 0, 0)
+        expect(lookupPath(new Chain(root), ["__proto__", "safe"], false)).to.be(true)
+        verifyRefCounts(root, earlier, protoValue)
 
         pending.resolve("done")
         await flushMicrotasks()
@@ -263,7 +259,7 @@ describe("subtree counters", () => {
         expect(earlier.pending).to.be(pending.promise)
         expect(lookupPath(new Chain(root), ["earlier", "pending"], false)).to.be("done")
         expectCounts(root, 0, 0)
-        verifyRefCounts(root)
+        verifyRefCounts(root, earlier, protoValue)
     })
 
     it("indexes a cyclic imported branch without replacing its data", () => {
@@ -292,7 +288,7 @@ describe("subtree counters", () => {
 
         buildRefIndex(wrapper)
 
-        expect(metaOf(wrapper).edgeMarks.child.error.message).to.be(
+        expect(metaOf(wrapper).edgeMarks.child.message).to.be(
             'Cyclic property "child" (imported at: nested imported back-reference)',
         )
         expect(metaOf(child).edgeMarks).to.be(null)
@@ -506,7 +502,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root, resolved)
     })
 
-    it("validates a revoked mirror value as a child of its indexed parent", async () => {
+    it("prepares a revoked mirror value against its indexed parent", async () => {
         const pending = deferred()
         const root = {
             value: importValue(pending.promise, "revoked back-edge"),
@@ -522,8 +518,7 @@ describe("subtree counters", () => {
 
         expect(root.value).to.be("fixed")
         expect(mirror.currentValue).to.be(root)
-        expect(mirror.edgeMark.kind).to.be("cycle")
-        expect(mirror.edgeMark.error.message).to.be(
+        expect(mirror.edgeMark.message).to.be(
             'Cyclic property "value" (imported at: revoked back-edge)',
         )
         expectCounts(root, 0, 0)
@@ -655,14 +650,14 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps mirror advances aligned with validation replacements", async () => {
+    it("keeps mirror advances aligned with cycle detection", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
         const cyclic = {}
         cyclic.self = cyclic
 
-        importValue(cyclic, "mirror validation replacement")
+        importValue(cyclic, "mirror cycle replacement")
         buildRefIndex(root)
         const observed = lookupPath(chain, ["pending"])
 

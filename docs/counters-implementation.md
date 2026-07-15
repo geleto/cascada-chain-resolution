@@ -19,8 +19,9 @@ All per-node runtime state lives in the single META record:
 - `parents`: reverse indexed edges with multiplicity. Its existence is the
   ref-indexed marker; an empty Map is an indexed root.
 - `mirrors`: promise placements and their private logical state.
-- `edgeMarks`: property-level tagged `{ kind, error }` projected cuts. `cycle`
-  keeps the raw edge visible to normalization; `invalid` is an Error boundary.
+- `edgeMarks`: property-level cycle Errors. Each one cuts its raw edge from the
+  projected counter graph while leaving that edge visible to path operations
+  and cycle-aware normalization.
 - `settlementPromise`, `settlementResolve`,
   `settlementVerifyScheduled`: normalize's optional shared wait generation.
 - `shared`, `importContext`, `importPrepared`: ownership and lazy import state.
@@ -35,7 +36,7 @@ Counts are placement-sensitive. `getPropertyRefCounts(parent, key)` applies
 these rules in order:
 
 - An unresolved or draining live mirror contributes `[1, 0]`.
-- A settled `cycle` or `invalid` edge mark contributes `[0, 1]`.
+- A settled cycle edge mark contributes `[0, 1]`.
 - An ordinary Promise contributes `[1, 0]`.
 - An ordinary Error contributes `[0, 1]`.
 - A tracked child contributes its indexed subtree totals.
@@ -61,9 +62,9 @@ entry for initial indexing.
 
 Trusted language data follows the compiler's tree-shaped ownership contract,
 so `commitRefIndex` walks it directly without identity bookkeeping. When an
-import context is reached, `prepareImportedData` first discovers and validates
-that imported region, deduplicates its identities, stages cycle/validation
-cuts, and creates required mirrors. The completed preparation is then committed
+import context is reached, `prepareImportedData` first discovers that imported
+region, deduplicates its identities, stages cycle cuts, and creates required
+mirrors. The completed preparation is then committed
 and its records are indexed. See `docs/lazy-import.md`.
 
 Frozen, sealed, and otherwise non-extensible nodes follow the same counter
@@ -73,7 +74,7 @@ indexed. Non-extensibility affects ownership and physical writeback, not counts.
 
 Parent maps retain every structural edge. If one parent references a child at
 two keys, its map entry has multiplicity two and propagated deltas are
-multiplied accordingly. Cycle and validation cuts never add reverse edges.
+multiplied accordingly. Cycle cuts never add reverse edges.
 
 ## Edge transitions
 

@@ -1,7 +1,6 @@
 const {
     Chain,
     expect,
-    setFatalErrorReporter,
     assignPath,
     deletePath,
     lookupPath,
@@ -37,44 +36,79 @@ describe("path assignment", () => {
         expect(root.pos.x).to.be(2)
     })
 
-    it("throws on __proto__ mutation paths without touching prototypes", () => {
+    it("creates and deletes missing __proto__ data without touching prototypes", () => {
         const root = {}
-        const nested = { safe: {} }
-        const reported = []
-        let assigned
-        let nestedAssigned
-        let lookedUp
-        let deleted
+        const value = { safe: true }
+        const chain = new Chain(root)
 
-        setFatalErrorReporter(error => {
-            reported.push(error)
-        })
-        try {
-            assigned = thrownBy(() => assignPath(new Chain(root), ["__proto__", "polluted"], true))
-            nestedAssigned = thrownBy(() => {
-                assignPath(new Chain(nested), ["safe", "__proto__", "polluted"], true)
-            })
-            lookedUp = lookupPath(new Chain(root), ["__proto__"])
-            deleted = thrownBy(() => deletePath(new Chain(root), ["__proto__"]))
-        } finally {
-            setFatalErrorReporter()
-        }
+        expect(assignPath(chain, ["__proto__"], value)).to.be(undefined)
 
-        expect(assigned instanceof Error).to.be(true)
-        expect(nestedAssigned instanceof Error).to.be(true)
-        expect(deleted instanceof Error).to.be(true)
-        expect(reported.length).to.be(3)
-        expect(reported[0]).to.be(assigned)
-        expect(reported[1]).to.be(nestedAssigned)
-        expect(reported[2]).to.be(deleted)
-        expect(assigned.message).to.be("Cannot use __proto__ as a key")
-        expect(nestedAssigned.message).to.be("Cannot use __proto__ as a key")
-        expect(deleted.message).to.be("Cannot use __proto__ as a key")
-        expect(lookedUp).to.be(undefined)
-        expect({}.polluted).to.be(undefined)
+        const descriptor = Object.getOwnPropertyDescriptor(root, "__proto__")
+        expect(descriptor.value).to.be(value)
+        expect(descriptor.enumerable).to.be(true)
+        expect(descriptor.writable).to.be(true)
+        expect(descriptor.configurable).to.be(true)
+        expect(lookupPath(chain, ["__proto__"], false)).to.be(value)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
-        expect(Object.prototype.hasOwnProperty.call(root, "__proto__")).to.be(false)
-        expect(nested).to.eql({ safe: {} })
+
+        expect(deletePath(chain, ["__proto__"])).to.be(undefined)
+        expect(deletePath(chain, ["__proto__"])).to.be(undefined)
+        expect(Object.hasOwn(root, "__proto__")).to.be(false)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+    })
+
+    it("stores a path-access Error at a missing intermediate __proto__", () => {
+        const root = { safe: {} }
+        const chain = new Chain(root)
+
+        assignPath(chain, ["safe", "__proto__", "polluted"], true)
+
+        const failure = lookupPath(chain, ["safe", "__proto__"], false)
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
+        expect(Object.getPrototypeOf(root.safe)).to.be(Object.prototype)
+        expect({}.polluted).to.be(undefined)
+    })
+
+    it("safely drains a promise assigned to missing __proto__", async () => {
+        const pending = deferred()
+        const resolved = { safe: true }
+        const root = {}
+        const chain = new Chain(root)
+
+        assignPath(chain, ["__proto__"], pending.promise)
+        const pendingDescriptor = Object.getOwnPropertyDescriptor(root, "__proto__")
+        expect(pendingDescriptor.value).to.be(pending.promise)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+
+        pending.resolve(resolved)
+        await flushMicrotasks()
+
+        const settledDescriptor = Object.getOwnPropertyDescriptor(root, "__proto__")
+        expect(settledDescriptor.value).to.be(resolved)
+        expect(lookupPath(chain, ["__proto__"], false)).to.be(resolved)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+    })
+
+    it("keeps own non-enumerable __proto__ under normal descriptor rules", () => {
+        const hidden = { safe: true }
+        const root = {}
+        Object.defineProperty(root, "__proto__", {
+            value: hidden,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        const failure = thrownBy(() => {
+            assignPath(new Chain(root), ["__proto__"], { replacement: true })
+        })
+
+        expect(failure.message).to.be("Cannot mutate non-enumerable property")
+        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(hidden)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
     })
 
     it("preserves own __proto__ data during COW without touching prototypes", () => {
@@ -101,12 +135,13 @@ describe("path assignment", () => {
         expect(descriptor.value).to.be(protoValue)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
-        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(protoValue)
         expect({}.safe).to.be(undefined)
     })
 
-    it("preserves promise-valued __proto__ data during COW without writeback", async () => {
+    it("preserves promise-valued __proto__ data safely during COW", async () => {
         const deferredValue = deferred()
+        const resolved = { safe: true }
         const root = { other: { x: 1 } }
         Object.defineProperty(root, "__proto__", {
             value: deferredValue.promise,
@@ -119,12 +154,13 @@ describe("path assignment", () => {
         const chain = new Chain(root)
         assignPath(chain, ["other", "x"], 2)
         const next = chain._state.value
-        deferredValue.resolve({ safe: true })
+        deferredValue.resolve(resolved)
         await flushMicrotasks()
 
-        expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(deferredValue.promise)
+        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(deferredValue.promise)
+        expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(resolved)
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
-        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(next), ["__proto__"])).to.be(resolved)
         expect({}.safe).to.be(undefined)
     })
 
@@ -151,9 +187,55 @@ describe("path assignment", () => {
         expect(resolved.x).to.be(1)
         expect(resolvedChain._state.value).not.to.be(resolved)
         expect(resolvedChain._state.value.x).to.be(3)
-        expect(Object.getOwnPropertyDescriptor(chain._state.value, "__proto__").value).to.be(
-            deferredValue.promise,
-        )
+        expect(Object.getOwnPropertyDescriptor(chain._state.value, "__proto__").value).to.be(resolved)
+    })
+
+    it("mutates and deletes an existing own enumerable __proto__ property", () => {
+        const root = {}
+        const initial = { x: 1 }
+        const replacement = { x: 2 }
+        Object.defineProperty(root, "__proto__", {
+            value: initial,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        const chain = new Chain(root)
+
+        assignPath(chain, ["__proto__", "x"], 3)
+        assignPath(chain, ["__proto__"], replacement)
+
+        expect(initial.x).to.be(3)
+        expect(lookupPath(chain, ["__proto__"])).to.be(replacement)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+
+        deletePath(chain, ["__proto__"])
+        expect(Object.prototype.hasOwnProperty.call(root, "__proto__")).to.be(false)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+    })
+
+    it("copy-on-writes through imported enumerable __proto__ data", () => {
+        const root = {}
+        const protoValue = { x: 1 }
+        Object.defineProperty(root, "__proto__", {
+            value: protoValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        importValue(root, "proto path COW")
+        const chain = new Chain(root)
+
+        assignPath(chain, ["__proto__", "x"], 2)
+        const copy = chain._state.value
+        const copiedProtoValue = lookupPath(chain, ["__proto__"], false)
+
+        expect(copy).not.to.be(root)
+        expect(copiedProtoValue).not.to.be(protoValue)
+        expect(protoValue.x).to.be(1)
+        expect(copiedProtoValue.x).to.be(2)
+        expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+        expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
     })
 
     it("throws on non-enumerable mutation paths", () => {
@@ -180,15 +262,16 @@ describe("path assignment", () => {
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
     })
 
-    it("throws before invoking accessor or inherited assignment blockers", () => {
-        let setterCalls = 0
+    it("throws for own accessors but safely shadows inherited blockers", () => {
+        let ownSetterCalls = 0
+        let inheritedSetterCalls = 0
         const accessor = {}
         Object.defineProperty(accessor, "value", {
             get() {
                 return 1
             },
             set() {
-                setterCalls++
+                ownSetterCalls++
             },
             enumerable: true,
             configurable: true,
@@ -200,19 +283,30 @@ describe("path assignment", () => {
             writable: false,
             configurable: true,
         })
+        Object.defineProperty(prototype, "hook", {
+            get() {
+                return 1
+            },
+            set() {
+                inheritedSetterCalls++
+            },
+            enumerable: true,
+            configurable: true,
+        })
         const inherited = Object.create(prototype)
 
         const accessorFailure = thrownBy(() => {
             assignPath(new Chain(accessor), ["value"], 2)
         })
-        const inheritedFailure = thrownBy(() => {
-            assignPath(new Chain(inherited), ["locked"], 2)
-        })
+        assignPath(new Chain(inherited), ["locked"], 2)
+        assignPath(new Chain(inherited), ["hook"], 3)
 
         expect(accessorFailure.message).to.be("Cannot assign to accessor property")
-        expect(inheritedFailure.message).to.be("Cannot assign to non-writable property")
-        expect(setterCalls).to.be(0)
-        expect(Object.prototype.hasOwnProperty.call(inherited, "locked")).to.be(false)
+        expect(ownSetterCalls).to.be(0)
+        expect(inheritedSetterCalls).to.be(0)
+        expect(Object.getOwnPropertyDescriptor(inherited, "locked").value).to.be(2)
+        expect(Object.getOwnPropertyDescriptor(inherited, "hook").value).to.be(3)
+        expect(prototype.locked).to.be(1)
     })
 
     it("shadows non-enumerable properties after COW", () => {
@@ -569,7 +663,7 @@ describe("lookupPath", () => {
         )
     })
 
-    it("does not read __proto__ or own non-enumerable properties", () => {
+    it("reads own enumerable __proto__ data but not inherited or non-enumerable properties", () => {
         const root = {}
         Object.defineProperty(root, "__proto__", {
             value: { unsafe: true },
@@ -584,9 +678,11 @@ describe("lookupPath", () => {
             configurable: true,
         })
 
-        expect(lookupPath(new Chain(root), ["__proto__"])).to.be(undefined)
+        expect(lookupPath(new Chain(root), ["__proto__"])).to.be(root.__proto__)
+        expect(lookupPath(new Chain(root), ["__proto__", "unsafe"])).to.be(true)
+        expect(lookupPath(new Chain({}), ["__proto__"])).to.be(undefined)
         expect(lookupPath(new Chain(root), ["hidden"])).to.be(undefined)
-        for (const path of [["__proto__", "unsafe"], ["hidden", "x"]]) {
+        for (const path of [["hidden", "x"]]) {
             const result = lookupPath(new Chain(root), path)
             expect(result instanceof Error).to.be(true)
             expect(result.message).to.be(

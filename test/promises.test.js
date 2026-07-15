@@ -345,8 +345,7 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(mirror.edgeMark.kind).to.be("cycle")
-        expect(mirror.edgeMark.error.message).to.be(
+        expect(mirror.edgeMark.message).to.be(
             'Cyclic property "value" (imported at: self-resolving drain)',
         )
         expectCounts(root, 0, 1)
@@ -372,7 +371,7 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(privateMark.kind).to.be("cycle")
+        expect(privateMark instanceof Error).to.be(true)
         expect(committedMark).to.be(undefined)
         expect(countsDuringDrain).to.eql([1, 0])
         expect(getCommittedEdgeMark(root, "value")).to.be(privateMark)
@@ -392,7 +391,7 @@ describe("promise mirrors and lookupPath", () => {
             null,
             prepareEdgeTransition(owner, "value", null, cyclic),
         )
-        expect(metaOf(owner).edgeMarks.value.kind).to.be("cycle")
+        expect(metaOf(owner).edgeMarks.value instanceof Error).to.be(true)
 
         const mirror = createAssignedPromiseMirror(
             owner,

@@ -53,15 +53,14 @@ describe("getErrors", () => {
 
         const errors = getErrors(chain, [])
         const cycleMark = metaOf(left).edgeMarks.right
-        const cycleError = cycleMark.error
 
-        expect(cycleMark.kind).to.be("cycle")
-        expectErrors(errors, [siblingError, cycleError])
+        expect(cycleMark instanceof Error).to.be(true)
+        expectErrors(errors, [siblingError, cycleMark])
         expect(errors.includes(hiddenError)).to.be(false)
         expect(hasError(chain, [])).to.be(true)
-        expectErrors(getErrors(chain, ["right"]), [cycleError])
+        expectErrors(getErrors(chain, ["right"]), [cycleMark])
         expect(getErrors(new Chain(right), []).includes(
-            metaOf(right).edgeMarks.left.error,
+            metaOf(right).edgeMarks.left,
         )).to.be(true)
     })
 
@@ -425,7 +424,7 @@ describe("getErrors", () => {
         verifyRefCounts(chain._state.value, privateBranch)
     })
 
-    it("collects attributed validation failures from revoked mirrors", async () => {
+    it("collects attributed cycle Errors from revoked mirrors", async () => {
         const pending = deferred()
         const branch = {}
         branch.pending = importValue(pending.promise, "revoked getErrors")

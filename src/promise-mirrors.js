@@ -30,9 +30,9 @@ function getPromiseMirror(node, key) {
     return getPromiseMirrorMap(node)?.[key]
 }
 
-// A mirrored placement stores its mark only on the mirror; mirror installation
+// A mirrored placement stores its cycle Error only on the mirror; installation
 // and removal keep meta.edgeMarks[key] absent. Counters see only attached state,
-// so a draining mirror's private mark stays hidden until every consumer commits.
+// so a draining mirror's private Error stays hidden until every consumer commits.
 function getCommittedEdgeMark(node, key) {
     const mirror = getPromiseMirror(node, key)
     return mirror
@@ -180,7 +180,6 @@ function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
 function readLogicalProperty(node, key) {
     const mirror = getPromiseMirror(node, key)
     if (mirror) return mirror.settled ? mirror.currentValue : mirror.promise
-    if (key === "__proto__") return undefined
     return propertyIsEnumerable.call(node, key) ? node[key] : undefined
 }
 

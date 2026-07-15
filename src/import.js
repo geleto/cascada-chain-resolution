@@ -4,11 +4,10 @@ const {
     onValueResolve,
 } = require("./helpers")
 const {
-    forbiddenKeyError,
+    cycleError,
     reportFatalError,
 } = require("./error")
 const {
-    cycleEdgeMark,
     ensureMeta,
     markImported,
     metaOf,
@@ -22,7 +21,6 @@ const {
 } = require("./promise-mirrors")
 
 const EMPTY_PREPARATION = {
-    failure: undefined,
     records: new Map(),
     commit() {},
 }
@@ -37,8 +35,8 @@ function importValue(value, importContext) {
     return markImported(value, importContext)
 }
 
-// Purely discover and validate an imported graph. The returned commit closure
-// is the sole publication point for shared marks, edge marks, and mirrors.
+// Purely discover an imported graph. The returned commit closure is the sole
+// publication point for shared marks, cycle Errors, and mirrors.
 function prepareImportedData(
     value,
     inheritedImportContext,
@@ -52,14 +50,11 @@ function prepareImportedData(
     if (metaOf(value)?.importPrepared) return EMPTY_PREPARATION
 
     const records = new Map()
-    let failure
     let needsScc = false
     discover(value, rootContext)
-    if (failure) return { failure, commit() {} }
 
     if (needsScc) markCycleEdges(records)
     return {
-        failure: undefined,
         records,
         commit(commitEdgeMark) {
             for (const record of records.values()) {
@@ -116,10 +111,6 @@ function prepareImportedData(
         records.set(node, record)
 
         for (const key of Object.keys(node)) {
-            if (key === "__proto__") {
-                failure = forbiddenKeyError(context)
-                return
-            }
             const mirror = getPromiseMirror(node, key)
             const child = readLogicalProperty(node, key)
             const edge = {
@@ -132,7 +123,6 @@ function prepareImportedData(
             if (edge.edgeMark || isPromise(child) || !isTracked(child)) continue
 
             discover(child, context)
-            if (failure) return
         }
         record.state = "done"
     }
@@ -183,7 +173,7 @@ function markCycleEdges(records) {
         for (const ownerRecord of component) {
             for (const edge of ownerRecord.edges) {
                 if (edge.edgeMark || !members.has(edge.value)) continue
-                edge.edgeMark = cycleEdgeMark(edge.key, ownerRecord.context)
+                edge.edgeMark = cycleError(edge.key, ownerRecord.context)
             }
         }
     }

@@ -4,7 +4,7 @@
 truthy attribution context and marks only the imported root. For a promise
 root, it returns one derived promise whose fulfilled value is marked before
 runtime consumers see it. Import does not walk descendants, register nested
-promises, validate a graph, or build counters.
+promises, analyze a graph, or build counters.
 
 This keeps the common case cheap. Imported variables that never use
 `normalize`, `hasError`, or `getErrors` pay only for one root mark.
@@ -27,14 +27,14 @@ nor repeated tracked identities and need no graph table.
 called only when exact counters are required. It handles an imported region in
 two stages:
 
-1. Discover and validate without publishing metadata.
+1. Discover aliases and cycles without publishing metadata.
 2. Commit shared marks, promise mirrors, cycle markers, and the prepared flag.
 
 The discovery table interns each tracked identity once but records every
 owner/key edge. This preserves alias multiplicity while avoiding repeated
 work. A node first indexed as trusted is still inspected when it is later
 reached under imported provenance; trusted counters do not imply imported
-validation.
+graph preparation.
 
 The optional write target stops discovery at the language-owned parent into
 which a candidate is being installed. It prevents inherited import provenance
@@ -59,7 +59,7 @@ cycle. If no back-edge is seen, no Tarjan state is allocated. Otherwise one
 Tarjan pass runs over the already-discovered records.
 
 For a cyclic SCC, every intra-SCC owner/key placement receives its own stable
-attributed `{ kind: "cycle", error }` edge mark. The raw property is not changed.
+attributed cycle Error as its edge mark. The raw property is not changed.
 The projected counter graph cuts that edge and counts it as `[0, 1]`, so parent
 propagation remains acyclic. Lookup and mutation continue through the raw value,
 while `hasError` and `getErrors` report the marker.
@@ -67,31 +67,22 @@ while `hasError` and `getErrors` report the marker.
 An edge added later is handled incrementally. Candidate preparation first
 finds intrinsic imported cycles. Refcounting then asks whether the proposed
 owner/key edge can reach its owner through the projected graph. If so, only
-that known closing edge gets a cycle marker. Existing cycle and validation
-cuts are not crossed.
+that known closing edge gets a cycle marker. Existing cycle cuts are not crossed.
 
-## Validation overlays
+## Enumerable `__proto__`
 
-Imported own enumerable `__proto__` keys are prohibited. This is the only
-language-data validation failure discovered by imported preparation. Promises
-and Errors are valid enumerable values in extensible and non-extensible imports.
+An own enumerable `__proto__` property is ordinary imported data.
+Discovery, mirrors, counters, error queries, and normalization all process it.
+The inherited legacy accessor and own non-enumerable properties are outside the
+language-visible property surface.
 
-COW preserves an imported enumerable `__proto__` data slot physically using a
-pre-created own property, then gives that new owner/key placement a fresh
-attributed edge Error. The prohibited value therefore remains inaccessible and
-cannot disappear from error queries merely because an unrelated property was
-mutated.
+Every physical language write defines a missing key as an own enumerable data
+property. COW, plain-copy normalization, assignment, and promise writeback can
+therefore create or replace `__proto__` without invoking JavaScript's legacy
+prototype setter or changing the object's prototype.
 
-A validation failure becomes an attributed `{ kind: "invalid", error }` edge
-mark on the imported boundary placement containing the invalid subtree. The
-host object and its raw property remain unchanged. The projected graph counts
-the placement as `[0, 1]` and does not descend through it. Unlike a cycle mark,
-an invalid mark is also an Error boundary for normalize.
-
-Validation and SCC discovery are preparatory. A failed discovery publishes no
-descendant shared marks, mirrors, counters, or parent edges. The edge-transition
-layer installs a completed preparation against the live placement in one
-synchronous commit.
+SCC discovery is preparatory. The edge-transition layer installs completed
+preparation against the live placement in one synchronous commit.
 
 ## Promises
 
@@ -113,6 +104,6 @@ extensible. All logical operations read through the mirror, and host output uses
 - `import`: the public root boundary.
 - `prepareImportedData`: the refcount layer's lazy preparation hook.
 
-Graph discovery, prohibited-key validation, and SCC helpers remain private.
+Graph discovery and SCC helpers remain private.
 Generic metadata access stays in `src/meta.js`; edge transitions and projected
 counts stay in `src/refcounts.js`.

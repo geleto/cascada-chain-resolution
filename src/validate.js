@@ -1,43 +1,32 @@
+"use strict"
+
 const {
-    forbiddenKeyError,
     reportFatalError,
     validationError,
 } = require("./error")
 
 const hasOwn = Object.prototype.hasOwnProperty
-const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-function assertMutationPath(path) {
-    for (const key of path) {
-        if (key === "__proto__") reportFatalError(forbiddenKeyError())
-    }
-}
-
-// Language data is own enumerable string keys only. Reads treat __proto__ and
-// own non-enumerable properties as missing; mutations through them are fatal.
+// Language data is own enumerable string keys only.
 function assertCanMutateLanguageProperty(parent, key, importContext = undefined) {
-    if (key === "__proto__") {
-        reportFatalError(forbiddenKeyError(importContext))
-    }
-    if (hasOwn.call(parent, key) && !propertyIsEnumerable.call(parent, key)) {
+    const descriptor = Object.getOwnPropertyDescriptor(parent, key)
+    if (descriptor && !descriptor.enumerable) {
         reportFatalError(validationError(
             "Cannot mutate non-enumerable property",
             importContext,
         ))
     }
+    return descriptor
 }
 
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
 // descriptor before candidate preparation can publish any imported state.
 function assertCanSetLanguageProperty(parent, key, importContext = undefined) {
-    assertCanMutateLanguageProperty(parent, key, importContext)
-
-    let owner = parent
-    let descriptor
-    while (owner && !descriptor) {
-        descriptor = Object.getOwnPropertyDescriptor(owner, key)
-        if (!descriptor) owner = Object.getPrototypeOf(owner)
-    }
+    const descriptor = assertCanMutateLanguageProperty(
+        parent,
+        key,
+        importContext,
+    )
 
     if (descriptor && !("value" in descriptor)) {
         reportFatalError(validationError(
@@ -54,8 +43,11 @@ function assertCanSetLanguageProperty(parent, key, importContext = undefined) {
 }
 
 function assertCanDeleteLanguageProperty(parent, key, importContext = undefined) {
-    assertCanMutateLanguageProperty(parent, key, importContext)
-    const descriptor = Object.getOwnPropertyDescriptor(parent, key)
+    const descriptor = assertCanMutateLanguageProperty(
+        parent,
+        key,
+        importContext,
+    )
     if (descriptor && !descriptor.configurable) {
         reportFatalError(validationError(
             "Cannot delete non-configurable property",
@@ -64,9 +56,24 @@ function assertCanDeleteLanguageProperty(parent, key, importContext = undefined)
     }
 }
 
+// Define missing language keys as own data properties so inherited setters,
+// notably Object.prototype.__proto__, never participate in a physical write.
+function writeLanguageProperty(parent, key, value) {
+    if (hasOwn.call(parent, key)) {
+        parent[key] = value
+        return
+    }
+    Object.defineProperty(parent, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+    })
+}
+
 module.exports = {
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
     assertCanSetLanguageProperty,
-    assertMutationPath,
+    writeLanguageProperty,
 }
