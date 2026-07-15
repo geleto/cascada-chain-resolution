@@ -4,7 +4,6 @@ const {
     isError,
     isPromise,
     isTracked,
-    onInternalResolve,
 } = require("./helpers")
 const {
     createCycleError,
@@ -429,8 +428,17 @@ function applyCountDelta(node, promiseDelta, errorDelta) {
     const oldPromiseCount = counter.promiseCount
     counter.promiseCount += promiseDelta
     counter.errorCount += errorDelta
-    if (oldPromiseCount > 0 && counter.promiseCount === 0) {
-        scheduleSettlementVerify(counter)
+    // A mirror retains [1,0] until every registered consumer drains, so this
+    // zero is final for the pinned settlement generation.
+    if (
+        oldPromiseCount > 0 &&
+        counter.promiseCount === 0 &&
+        counter.settlementPromise
+    ) {
+        const resolve = counter.settlementResolve
+        counter.settlementPromise = undefined
+        counter.settlementResolve = undefined
+        resolve()
     }
     for (const [parent, multiplicity] of counter.parents) {
         applyCountDelta(parent, promiseDelta * multiplicity, errorDelta * multiplicity)
@@ -445,22 +453,6 @@ function waitForSettlement(node) {
         })
     }
     return counter.settlementPromise
-}
-
-function scheduleSettlementVerify(counter) {
-    if (!counter.settlementPromise || counter.settlementVerifyScheduled) return
-    counter.settlementVerifyScheduled = true
-    // FIFO jobs already registered on the settling promise can raise the count
-    // again; this verification runs after those jobs have had their turn.
-    onInternalResolve(Promise.resolve(), () => {
-        counter.settlementVerifyScheduled = false
-        if (counter.settlementPromise && counter.promiseCount === 0) {
-            const resolve = counter.settlementResolve
-            counter.settlementPromise = undefined
-            counter.settlementResolve = undefined
-            resolve()
-        }
-    })
 }
 
 function copyCounters(source, copy, inheritedImportContext = undefined) {

@@ -11,6 +11,7 @@ const {
     hasError,
     lookupPath,
     normalize,
+    onInternalResolve,
     importValue,
     deferred,
     flushMicrotasks,
@@ -582,22 +583,21 @@ describe("normalize", () => {
         verifyRefCounts(root)
     })
 
-    it("settles on a second zero-crossing while a recheck is pending", async () => {
-        const outer = deferred()
-        const root = { branch: { outer: outer.promise } }
+    it("clears the settlement generation at the drained zero-crossing", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        const result = normalize(new Chain({ branch }), ["branch"])
+        let settlementAtLaterReaction
 
-        // An already-settled promise re-arms the transient zero, then zeroes
-        // the count again while the first recheck may still be queued. Either
-        // interleaving must settle exactly once; plainCopy exposes a premature
-        // fire, because the copy is taken at settlement time.
-        assignPath(new Chain(root), ["branch", "outer", "later"], Promise.resolve("late"))
-        const result = normalize(new Chain(root), ["branch"], true, true)
+        const laterReaction = onInternalResolve(pending.promise, () => {
+            settlementAtLaterReaction = metaOf(branch).settlementPromise
+        })
+        pending.resolve("done")
+        await Promise.all([result, laterReaction])
 
-        outer.resolve({})
-        const value = await result
-
-        expect(value).to.eql({ outer: { later: "late" } })
-        verifyRefCounts(root)
+        expect(settlementAtLaterReaction).to.be(undefined)
+        expect(branch).to.eql({ pending: "done" })
+        verifyRefCounts(branch)
     })
 
     it("does not wait for promises added by later-issued writes", async () => {

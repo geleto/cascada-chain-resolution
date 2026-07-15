@@ -19,7 +19,6 @@ function createMeta() {
         errorCount: 0,
         settlementPromise: undefined,
         settlementResolve: undefined,
-        settlementVerifyScheduled: false,
         importContext: undefined,
         importPrepared: false,
         parents: undefined,

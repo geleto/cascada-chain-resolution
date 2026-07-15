@@ -22,8 +22,8 @@ All per-node runtime state lives in the single META record:
 - `cycleErrors`: property-level cycle Errors. Each one cuts its raw edge from the
   projected counter graph while leaving that edge visible to path operations
   and cycle-aware normalization.
-- `settlementPromise`, `settlementResolve`,
-  `settlementVerifyScheduled`: normalize's optional shared wait generation.
+- `settlementPromise`, `settlementResolve`: normalize's optional shared wait
+  generation.
 - `shared`, `importContext`, `importPrepared`: ownership and lazy import state.
 
 Inline metadata uses one non-enumerable Symbol on extensible values. The same
@@ -140,10 +140,10 @@ count. The projected parent graph is acyclic: trusted data is tree-shaped,
 imported aliases retain multiplicity, and every imported cycle is cut by a
 cycle Error.
 
-When `promiseCount` falls to zero, normalize's settlement verification is
-queued once. The extra microtask lets FIFO jobs already registered on the same
-settling promise raise the count before verification. A waiting generation is
-resolved only if the count is still zero then.
+When `promiseCount` falls to zero, its optional normalize settlement generation
+is cleared and resolved immediately. Promise callbacks remain asynchronous;
+the mirror-drain invariant makes the zero exact by retaining `[1,0]` until all
+registered consumers have completed their synchronous work.
 
 ## Consumers
 
