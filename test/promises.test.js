@@ -1,5 +1,14 @@
 const path = require("path")
 const { spawnSync } = require("child_process")
+const {
+    createAssignedPromiseMirror,
+    getCommittedEdgeMark,
+    onPromiseMirrorResolve,
+} = require("../src/promise-mirrors")
+const {
+    commitEdgeTransition,
+    prepareEdgeTransition,
+} = require("../src/refcounts")
 
 const {
     Chain,
@@ -9,6 +18,8 @@ const {
     onInternalResolve,
     onValueResolve,
     buildRefIndex,
+    getRefCounts,
+    metaOf,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -16,6 +27,7 @@ const {
     lookupPath,
     normalize,
     importValue,
+    countPromiseRegistrations,
     deferred,
     flushMicrotasks,
     expectCounts,
@@ -23,6 +35,20 @@ const {
 } = require("./support")
 
 describe("promise helpers", () => {
+    it("keeps value and internal reactions in registration order", async () => {
+        const pending = deferred()
+        const order = []
+
+        onValueResolve(pending.promise, () => order.push("value 1"))
+        onInternalResolve(pending.promise, () => order.push("internal"))
+        onValueResolve(pending.promise, () => order.push("value 2"))
+
+        pending.resolve("done")
+        await flushMicrotasks()
+
+        expect(order).to.eql(["value 1", "internal", "value 2"])
+    })
+
     it("passes rejected data promises to continuations as Error values", async () => {
         const value = await onValueResolve(Promise.reject("data boom"), value => value)
 
@@ -249,6 +275,181 @@ describe("promise helpers", () => {
 })
 
 describe("promise mirrors and lookupPath", () => {
+    it("prepares the final value when its owner becomes indexed during the drain", async () => {
+        const pending = deferred()
+        const nested = deferred()
+        const root = {}
+
+        assignPath(new Chain(root), ["value"], pending.promise)
+        const mirror = metaOf(root).mirrors.value
+        onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
+
+        pending.resolve({ bad: new Error("bad"), nested: nested.promise })
+        await flushMicrotasks()
+
+        expectCounts(root, 1, 1)
+        expectCounts(root.value, 1, 1)
+        verifyRefCounts(root)
+
+        nested.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("cuts a self-resolving import when its owner is indexed during the drain", async () => {
+        const pending = deferred()
+        const root = {}
+
+        assignPath(
+            new Chain(root),
+            ["value"],
+            importValue(pending.promise, "self-resolving drain"),
+        )
+        const mirror = metaOf(root).mirrors.value
+        onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
+
+        pending.resolve(root)
+        await flushMicrotasks()
+
+        expect(mirror.edgeMark.kind).to.be("cycle")
+        expect(mirror.edgeMark.error.message).to.be(
+            'Cyclic property "value" (imported at: self-resolving drain)',
+        )
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("keeps a draining mirror mark private until its final edge commit", async () => {
+        const pending = deferred()
+        const root = { value: pending.promise }
+        importValue(root, "private draining mark")
+        buildRefIndex(root)
+        const mirror = metaOf(root).mirrors.value
+        let privateMark
+        let committedMark
+        let countsDuringDrain
+
+        onPromiseMirrorResolve(mirror, () => {
+            privateMark = mirror.edgeMark
+            committedMark = getCommittedEdgeMark(root, "value")
+            countsDuringDrain = getRefCounts(root)
+        })
+
+        pending.resolve(root)
+        await flushMicrotasks()
+
+        expect(privateMark.kind).to.be("cycle")
+        expect(committedMark).to.be(undefined)
+        expect(countsDuringDrain).to.eql([1, 0])
+        expect(getCommittedEdgeMark(root, "value")).to.be(privateMark)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("moves a committed edge mark exclusively into its replacement mirror", () => {
+        const owner = {}
+        const cyclic = importValue({ back: owner }, "marked mirror replacement")
+        const pending = deferred()
+
+        buildRefIndex(owner)
+        commitEdgeTransition(
+            owner,
+            "value",
+            null,
+            prepareEdgeTransition(owner, "value", null, cyclic),
+        )
+        expect(metaOf(owner).edgeMarks.value.kind).to.be("cycle")
+
+        const mirror = createAssignedPromiseMirror(
+            owner,
+            "value",
+            pending.promise,
+            false,
+        )
+        commitEdgeTransition(
+            owner,
+            "value",
+            mirror,
+            prepareEdgeTransition(owner, "value", mirror, pending.promise),
+        )
+
+        expect(metaOf(owner).mirrors.value).to.be(mirror)
+        expect(mirror.promise).to.be(pending.promise)
+        expect(mirror.edgeMark).to.be(undefined)
+        expect(metaOf(owner).edgeMarks?.value).to.be(undefined)
+        expectCounts(owner, 1, 0)
+        verifyRefCounts(owner, cyclic)
+    })
+
+    it("does not publish a mirror whose consumer throws a falsy fatal value", async () => {
+        const pending = deferred()
+        const root = {}
+        let rejected = false
+        let reported = "not reported"
+
+        assignPath(new Chain(root), ["value"], pending.promise)
+        const mirror = metaOf(root).mirrors.value
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        const failedConsumer = onPromiseMirrorResolve(mirror, () => {
+            throw undefined
+        }).then(
+            () => undefined,
+            reason => {
+                rejected = true
+                expect(reason).to.be(undefined)
+            },
+        )
+
+        pending.resolve({ settled: true })
+        await failedConsumer
+
+        expect(rejected).to.be(true)
+        expect(reported).to.be(undefined)
+        expect(mirror.failedDrain).to.be(true)
+        expect(mirror.settled).to.be(false)
+        expect(root.value).to.be(pending.promise)
+    })
+
+    it("keeps reads behind consumers registered in the settlement gap", async () => {
+        const source = deferred()
+        const firstJob = deferred()
+        const readJob = deferred()
+        const root = { branch: source.promise }
+        const chain = new Chain(root)
+        let read
+        let normalized
+        let countsDuringGap
+
+        buildRefIndex(root)
+        onInternalResolve(firstJob.promise, () => {
+            readJob.resolve()
+            assignPath(chain, ["branch", "x"], 1)
+        })
+        onInternalResolve(readJob.promise, () => {
+            read = lookupPath(chain, ["branch", "x"], false)
+            normalized = normalize(chain, ["branch"], false)
+            countsDuringGap = getRefCounts(root)
+            verifyRefCounts(root)
+        })
+
+        firstJob.resolve()
+        source.resolve({})
+        await flushMicrotasks()
+
+        expect(await read).to.be(1)
+        expect(await normalized).to.eql({ x: 1 })
+        expect(countsDuringGap).to.eql([1, 0])
+        const mirror = metaOf(root).mirrors.branch
+        expect(mirror.pendingConsumerCount).to.be(0)
+        expect(mirror.settled).to.be(true)
+        expectCounts(root, 0, 0)
+        verifyRefCounts(root)
+    })
+
     it("keeps owned promise results mutable until they escape", async () => {
         const deferredValue = deferred()
         const root = {}
@@ -306,6 +507,7 @@ describe("promise mirrors and lookupPath", () => {
 
     it("preserves promises that resolve to undefined", async () => {
         const deferredValue = deferred()
+        const registrations = countPromiseRegistrations(deferredValue.promise)
         const root = {}
 
         assignPath(new Chain(root), ["value"], deferredValue.promise)
@@ -317,6 +519,9 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(value).to.be(undefined)
         expect(root.value).to.be(undefined)
+        const before = registrations()
+        expect(lookupPath(new Chain(root), ["value"])).to.be(undefined)
+        expect(registrations()).to.be(before)
     })
 
     it("applies writes to an already-settled assigned promise before writeback", async () => {
@@ -990,9 +1195,11 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("turns a promise exposed beneath its own result into Error", async () => {
+    it("marks a promise exposed beneath its own result without replacing it", async () => {
         const pending = deferred()
-        const root = { value: pending.promise }
+        const root = {
+            value: importValue(pending.promise, "self promise"),
+        }
         const chain = new Chain(root)
         const normalized = normalize(chain, [])
         const foundError = hasError(chain, [])
@@ -1001,18 +1208,19 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(resolved)
 
         const normalizedValue = await normalized
-        expect(normalizedValue instanceof Error).to.be(true)
+        expect(normalizedValue).to.be(root)
         expect(await foundError).to.be(true)
-        expect(resolved.again instanceof Error).to.be(true)
-        expect(resolved.again.message).to.be("Value cannot reach its write target")
+        expect(resolved.again).to.be(pending.promise)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("turns a cycle closed by a second promise into Error", async () => {
+    it("marks a cycle closed by a second promise without replacing it", async () => {
         const first = deferred()
         const second = deferred()
-        const root = { value: first.promise }
+        const root = {
+            value: importValue(first.promise, "two-promise cycle"),
+        }
         const chain = new Chain(root)
         const normalized = normalize(chain, [])
         const foundError = hasError(chain, [])
@@ -1023,10 +1231,9 @@ describe("promise mirrors and lookupPath", () => {
         second.resolve(secondValue)
 
         const normalizedValue = await normalized
-        expect(normalizedValue instanceof Error).to.be(true)
+        expect(normalizedValue).to.be(root)
         expect(await foundError).to.be(true)
-        expect(firstValue.next instanceof Error).to.be(true)
-        expect(firstValue.next.message).to.be("Value cannot reach its write target")
+        expect(firstValue.next).to.be(second.promise)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })

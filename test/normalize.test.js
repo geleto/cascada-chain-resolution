@@ -2,12 +2,14 @@ const {
     Chain,
     expect,
     metaOf,
-    STORE_META_IN_WEAKMAP,
     buildRefIndex,
     getRefCounter,
     verifyRefCounts,
     assignPath,
     deletePath,
+    getErrors,
+    hasError,
+    lookupPath,
     normalize,
     importValue,
     deferred,
@@ -16,6 +18,102 @@ const {
 } = require("./support")
 
 describe("normalize", () => {
+    it("keeps a mirror pending when cycle normalization re-enters it", async () => {
+        const pending = deferred()
+        const root = {
+            value: importValue(pending.promise, "re-entrant cycle"),
+        }
+        const chain = new Chain(root)
+        const normalized = normalize(chain, ["value"], false, true)
+        const mirror = metaOf(root).mirrors.value
+        const resolved = { back: root }
+
+        pending.resolve(resolved)
+        const copy = await normalized
+
+        expect(copy.back.value).to.be(copy)
+        expect(mirror.pendingConsumerCount).to.be(0)
+        expect(mirror.settled).to.be(true)
+        expect(mirror.edgeMark.kind).to.be("cycle")
+        expect(mirror.edgeMark.error instanceof Error).to.be(true)
+        verifyRefCounts(root)
+    })
+
+    it("preserves cycle topology by identity or in a plain copy", () => {
+        const shared = { leaf: true }
+        const root = { left: shared, right: shared }
+        root.self = root
+        importValue(root, "normalize topology")
+        const chain = new Chain(root)
+
+        const value = normalize(chain, [])
+        const copy = normalize(chain, [], true, true)
+
+        expect(value).to.be(root)
+        expect(copy).not.to.be(root)
+        expect(copy.self).to.be(copy)
+        expect(copy.left).to.be(copy.right)
+        expect(copy.left).not.to.be(shared)
+        expect(hasError(chain, [])).to.be(true)
+        expect(getErrors(chain, []).length).to.be(1)
+        verifyRefCounts(root)
+    })
+
+    it("waits for promises hidden behind cycle cuts", async () => {
+        const pending = deferred()
+        const left = {}
+        const right = { pending: pending.promise }
+        left.right = right
+        right.left = left
+        importValue(left, "hidden cycle wait")
+        const chain = new Chain(left)
+
+        const result = normalize(chain, [])
+        const plainResult = normalize(chain, [], true, true)
+        let settled = false
+        result.then(() => {
+            settled = true
+        })
+        await flushMicrotasks()
+        expect(settled).to.be(false)
+
+        pending.resolve({ done: true })
+        expect(await result).to.be(left)
+        const copy = await plainResult
+        expect(copy).not.to.be(left)
+        expect(copy.right.left).to.be(copy)
+        expect(copy.right.pending).to.eql({ done: true })
+        expect(right.pending).to.be(pending.promise)
+        expect(lookupPath(chain, ["right", "pending", "done"], false)).to.be(true)
+        verifyRefCounts(left, right)
+    })
+
+    it("lets an ordinary Error behind a cycle cut poison normalize", () => {
+        const left = {}
+        const right = { bad: new Error("hidden") }
+        left.right = right
+        right.left = left
+        importValue(left, "hidden cycle Error")
+
+        const result = normalize(new Chain(left), [])
+
+        expect(result instanceof Error).to.be(true)
+        expect(result.message).to.be("normalize: branch contains errors")
+    })
+
+    it("normalizes a clean subpath through a cyclic import normally", () => {
+        const root = { child: { clean: { x: 1 } } }
+        root.child.back = root
+        importValue(root, "clean cyclic subpath")
+        const chain = new Chain(root)
+
+        const clean = normalize(chain, ["child", "clean"], false)
+
+        expect(clean).to.be(root.child.clean)
+        expect(hasError(chain, [])).to.be(true)
+        expect(hasError(chain, ["child", "clean"])).to.be(false)
+    })
+
     it("returns direct values until a real wait is needed", () => {
         const root = { branch: { x: 1 }, primitive: 2 }
         const pending = deferred()
@@ -546,7 +644,7 @@ describe("normalize", () => {
         verifyRefCounts(original, current)
     })
 
-    it("attributes validation failures without ref-indexing failed branches", () => {
+    it("preserves cyclic imports while exposing their diagnostics separately", () => {
         const branch = {}
         branch.self = branch
         const root = { branch }
@@ -554,11 +652,11 @@ describe("normalize", () => {
         importValue(root, "normalize import")
         const value = normalize(new Chain(root), ["branch"])
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("Value cannot be cyclic (imported at: normalize import)")
+        expect(value).to.be(branch)
+        expect(hasError(new Chain(root), ["branch"])).to.be(true)
         expect(metaOf(branch).shared).to.be(true)
         expect(metaOf(branch).importContext).to.be("normalize import")
-        expect(getRefCounter(branch)).to.be(undefined)
+        expect(getRefCounter(branch).errorCount).to.be(1)
     })
 
     it("validates frozen branches without attaching counter metadata", () => {
@@ -576,12 +674,8 @@ describe("normalize", () => {
         expect(failure.message).to.be(
             "Frozen object cannot contain promises or errors (imported at: frozen normalize)",
         )
-        if (STORE_META_IN_WEAKMAP) {
-            expect(metaOf(invalid).importContext).to.be("frozen normalize")
-            expect(getRefCounter(invalid)).to.be(undefined)
-        } else {
-            expect(metaOf(invalid)).to.be(undefined)
-        }
+        expect(metaOf(invalid).importContext).to.be("frozen normalize")
+        expect(getRefCounter(invalid)).to.be(undefined)
     })
 
     it("returns valid frozen branches synchronously without copying", () => {

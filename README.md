@@ -8,7 +8,7 @@ This repository is a sandbox implementation of the chain command engine behind C
 
 Cascada is a data orchestration language. Three principles shape everything below:
 
-- **Cascada is implicitly async.** Any value may be a promise, and you use it as if it were already there. A property can hold a promise, and the language treats it exactly like the value it will become; when the promise resolves, the runtime replaces it in place.
+- **Cascada is implicitly async.** Any value may be a promise, and you use it as if it were already there. A property can hold a promise, and the language treats it exactly like the value it will become. Cascada-owned properties eventually receive the settled value; imported host objects remain untouched and expose it through runtime metadata instead.
 - **Errors are values.** A failed operation doesn't throw. It leaves an *error value* where its result would have gone - in a variable, in a property, anywhere. The most common source is a promise that rejects: its error value simply takes the place its result would have taken. The error travels with the data until something checks for it (we call this *error poisoning*).
 - **Variables hold values, not references** (*value semantics*). Assigning a variable to another, or reading part of one into another, behaves like handing over a *copy*: changing one afterwards never changes the other. (The engine avoids actually copying for as long as it can - more on that later.)
 
@@ -25,6 +25,14 @@ let order = {                    // node  (the value at the top)
 ```
 
 Every object or array here, at any depth, is a **node**. A node together with everything inside it is a **branch**: `order.items` with its contents is a branch, and so is the whole `order`. All the machinery below works per node, not per variable.
+
+## Language data and outside data
+
+Cascada can trust values created by its own compiler. A new object has one owner. If it is read into another variable or stored somewhere else, that read marks it shared; a later write then copies only the changed path. Even `a.prop = a` does not create a self-cycle: the right-hand side is read first, so `prop` receives the value of `a` from before the property was added.
+
+JavaScript values brought in from outside Cascada cannot be assumed to follow those rules. The same object may appear under several properties, and an object may point back to itself. Every external value therefore passes through `import`, which marks the boundary as outside data but does not immediately search the whole graph. Ordinary reads and writes stay cheap. The deeper alias and cycle work is delayed until `hasError`, `getErrors`, or `normalize` first needs exact information about that branch.
+
+The imported JavaScript object is never rewritten. Cascada keeps settled promise values and imported-data problems in private metadata beside it. A normal path read or write still sees the original logical value. Error queries report cyclic or invalid properties; normalization preserves raw aliases and cycles, while a genuine validation failure produces an Error result. A cycle Error is diagnostic rather than poisoning: `hasError` may report it even though `normalize` can still return the cyclic value.
 
 ## The command chain
 
@@ -90,11 +98,12 @@ What *should* happen? Run it sequentially in your head: the config loads, (2) se
 Here is how the mirror produces the same answer without anyone waiting:
 
 1. When the promise resolves, its value lands in the mirror entry first.
-2. Waiting commands resume in order, each applying its change to the entry's value - so each one sees the previous one's changes.
-3. After each change, the entry's value is copied into the real property - **but only if the property still holds that same promise.**
-4. Overwriting the property, as (3) does, *detaches* its mirror entry - commands issued *later* can never reach the old promise again. Commands already in line keep their reference to the detached entry.
+2. Waiting commands resume in order, each preparing its change on the entry's newest value, so each one sees every earlier command.
+3. While registered commands remain in line, the mirror is still considered pending. A later read joins that line instead of taking a half-finished value synchronously.
+4. When the line is fully drained, its final value is copied into the real property only if the mirror still owns that property and the holder belongs to Cascada. An imported host property is never rewritten.
+5. Overwriting the property, as (3) does, *detaches* its mirror entry. Commands issued later cannot reach the old promise, while commands already in line keep their private reference and finish off to the side.
 
-So in the example: (3) replaces the property and detaches the entry. But (2) had already joined the line and still holds it. When the config loads, (2) completes its write on the entry's value - and rule 3 stops it there, because the property has moved on. The write lands nowhere visible. Final state: `{ port: 9999 }` - the sequential answer, with no locks and no rollback. A superseded write simply finishes quietly off to the side.
+So in the example: (3) replaces the property and detaches the entry. But (2) had already joined the line and still holds it. When the config loads, (2) completes its write on the entry's value, but the final live-edge check stops it there because the property has moved on. The write lands nowhere visible. Final state: `{ port: 9999 }` - the sequential answer, with no locks and no rollback. A superseded write simply finishes quietly off to the side.
 
 Seen from above, a mirror entry is a private relay between the commands queued on one promise: each resumes at its turn, takes the newest version of the value from the entry, applies its own change, and leaves the result for the next in line.
 
@@ -146,9 +155,10 @@ Two nodes were copied (`doc` and `body` - the levels on the path), and everythin
 
 A few notes, deliberately brief:
 
-- The mark is a single flag at the top of the shared branch. Children don't need their own - a write walking downward remembers "I'm inside a shared branch."
+- For ordinary copy-on-write, one mark at the top of a shared branch is enough: a write walking downward remembers "I'm inside a shared branch."
 - A pending promise can't be marked (its value hasn't arrived), so the runtime attaches one extra step to it: *when you resolve, mark whatever arrived.*
-- `import`ed data - objects from the outside world - is marked shared immediately. We never write into someone else's objects; changing imported data always copies.
+- The root of `import`ed data is marked shared immediately. Descendant marks are added lazily only when a whole-branch operation needs them. We never write into someone else's objects; changing imported data always copies.
+- If an imported property contains a promise, the host property remains that same promise after settlement. Its mirror holds the logical settled value seen by Cascada.
 - If a copied node has a property still waiting on a promise, the copy gets its own mirror entry for it - from that moment the two trees receive the value independently and can diverge.
 
 ## Counting instead of searching
@@ -158,9 +168,11 @@ Three commands ask about a **whole branch**: `hasError` - *is there an error any
 Each node can carry two numbers:
 
 - `promiseCount` - how many promises are still pending anywhere inside it,
-- `errorCount` - how many error values it contains, at any depth.
+- `errorCount` - how many error values or imported-property error markers it contains, at any depth.
 
 Most variables are never queried this way, so by default nobody counts anything. The first `hasError`, `getErrors`, or `normalize` on a branch walks it once and sets the counters up - a walk it would have needed anyway. From then on the branch keeps counting itself: every command knows exactly what it removed and what it added (assign a promise: +1; it resolves: −1, plus whatever its value brings along; delete: subtract what left; replace: both at once), and pushes the difference up to the **parent nodes** - each counting node keeps links to the nodes that contain it - so the numbers stay exact everywhere, without ever walking again.
+
+An imported cycle cannot be placed directly into this recursive counter graph. Cascada records the cyclic property as one error for whole-branch queries and stops the counters at that edge, while leaving the original property and object graph untouched. Ordinary finite path operations can still cross it.
 
 With the counters in place:
 
@@ -172,6 +184,8 @@ let done = normalize(user)      // waits for fetchProfile - then fetchAvatar too
 user.stats = fetchStats()       // lands in a copy - the frozen branch never sees it
 ```
 
+Internal Cascada code may keep the normalized branch itself. A value leaving Cascada asks for a plain copy, which materializes logical mirror values, preserves aliases and cycles, and carries no runtime metadata.
+
 **`hasError`** answers for the branch as it is *now*: `errorCount > 0` - `true`, immediately; `promiseCount` at `0` - `false`, immediately, nothing is in flight. Only pending promises make it wait, and it follows just the branches that hold them, stopping the moment any `errorCount` turns positive: the first error wins.
 
 **`getErrors`** follows the same issue-time promise frontier but collects Error identities instead of stopping at the first one. It therefore waits for every captured promise and every promise exposed by their results, returning each Error object once even when several paths reach it.
@@ -180,13 +194,16 @@ Like every other command, none blocks the program - the next command runs immedi
 
 ## One record per node
 
-All the bookkeeping above - the shared flag, the mirror, the counters - lives in a small record the runtime keeps for each node.
+All the bookkeeping above - the shared flag, mirrors, counters, and imported-property errors - lives in a small record the runtime keeps for each node.
 
 ```js
 {
   shared: false,             // the copy-on-write flag
   mirrors: {                 // one entry per promise-holding property -
-    db: { promise, currentValue },    // here the "db" property is pending
+    db: { promise, currentValue, edgeMark, settled, pendingConsumerCount },
+  },
+  edgeMarks: {               // projected cuts, when present
+    self: { kind: "cycle", error },
   },
   promiseCount: 0,           // the counters - maintained once the branch
   errorCount: 0,             //   has been queried at least once
@@ -194,7 +211,7 @@ All the bookkeeping above - the shared flag, the mirror, the counters - lives in
 }
 ```
 
-A copy gets its own record, not the original's: it starts owned again (exactly one place can reach it), with its own mirror entries and no parent links yet. The counters are the one thing carried over - the copy holds the same contents, so its counts are identical, and nothing needs recalculating.
+A copy gets its own record, not the original's: it starts owned again, with its own mirror entries and no parent links yet. If the source was already counted, the copy rebuilds each copied edge's contribution and parent link in its new world. Its totals are often the same, but placement-specific promise and error state is never copied blindly.
 
 ## What all this buys
 

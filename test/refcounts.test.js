@@ -19,6 +19,18 @@ const {
 } = require("./support")
 
 describe("subtree counters", () => {
+    it("keeps inline metadata visible after a node becomes non-extensible", () => {
+        const root = { bad: new Error("bad") }
+
+        buildRefIndex(root)
+        const counter = getRefCounter(root)
+        Object.preventExtensions(root)
+
+        expect(getRefCounter(root)).to.be(counter)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
     it("keeps non-ref-indexed writes on the normal mutation path", () => {
         const deferredValue = deferred()
         const root = { nested: {} }
@@ -35,6 +47,53 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(root.nested)).to.be(undefined)
         verifyRefCounts(root)
+    })
+
+    it("preserves an indexed mirror when its property cannot be assigned", () => {
+        const pending = deferred()
+        const root = {}
+        Object.defineProperty(root, "value", {
+            value: pending.promise,
+            enumerable: true,
+            writable: false,
+            configurable: true,
+        })
+        buildRefIndex(root)
+        const mirror = metaOf(root).mirrors.value
+        const replacement = importValue({ clean: true }, "blocked assignment")
+
+        const failure = thrownBy(() => {
+            assignPath(new Chain(root), ["value"], replacement)
+        })
+
+        expect(failure.message).to.be("Cannot assign to non-writable property")
+        expect(root.value).to.be(pending.promise)
+        expect(metaOf(root).mirrors.value).to.be(mirror)
+        expect(metaOf(replacement).importPrepared).to.be(false)
+        expectCounts(root, 1, 0)
+        verifyRefCounts(root)
+    })
+
+    it("preserves indexed counts and parents when a property cannot be deleted", () => {
+        const child = { bad: new Error("bad") }
+        const root = {}
+        Object.defineProperty(root, "value", {
+            value: child,
+            enumerable: true,
+            writable: true,
+            configurable: false,
+        })
+        buildRefIndex(root)
+
+        const failure = thrownBy(() => {
+            deletePath(new Chain(root), ["value"])
+        })
+
+        expect(failure.message).to.be("Cannot delete non-configurable property")
+        expect(root.value).to.be(child)
+        expect(getRefCounter(child).parents.get(root)).to.be(1)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root, child)
     })
 
     it("counts path Errors installed by broken mutations", () => {
@@ -143,10 +202,13 @@ describe("subtree counters", () => {
         expect(buildRefIndex(child)).to.be(child)
 
         const wrapper = Object.preventExtensions({ child })
+        importValue(wrapper, "frozen indexed child")
         const failure = buildRefIndex(wrapper)
 
         expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be("Frozen object cannot contain promises or errors")
+        expect(failure.message).to.be(
+            "Frozen object cannot contain promises or errors (imported at: frozen indexed child)",
+        )
         expect(getRefCounter(wrapper)).to.be(undefined)
     })
 
@@ -155,21 +217,20 @@ describe("subtree counters", () => {
         const child = { pending: pending.promise }
         const wrapper = Object.preventExtensions({ child })
         const root = { plain: child, frozen: wrapper }
+        importValue(wrapper, "frozen DAG child")
 
-        const failure = buildRefIndex(root)
+        const indexed = buildRefIndex(root)
 
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be("Frozen object cannot contain promises or errors")
-        expect(getRefCounter(root)).to.be(undefined)
-        expect(getRefCounter(child)).to.be(undefined)
+        expect(indexed).to.be(root)
+        expectCounts(root, 1, 1)
+        expect(getRefCounter(child)).not.to.be(undefined)
     })
 
     it("leaves no counters or mirrors when validation fails before commit", async () => {
         const pending = deferred()
         const earlier = { pending: pending.promise }
-        const cycle = {}
-        cycle.self = cycle
-        const root = { earlier, cycle }
+        const invalid = Object.freeze({ bad: new Error("bad") })
+        const root = { earlier, invalid }
 
         importValue(root, "transactional index")
         const failure = buildRefIndex(root)
@@ -178,10 +239,9 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(earlier)).to.be(undefined)
         expect(metaOf(root).mirrors).to.be(null)
-        expect(metaOf(earlier).mirrors).to.be(null)
-        expect(metaOf(earlier).importContext).to.be("transactional index")
+        expect(metaOf(earlier)).to.be(undefined)
 
-        delete cycle.self
+        root.invalid = { clean: true }
         expect(buildRefIndex(root)).to.be(root)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
@@ -189,24 +249,50 @@ describe("subtree counters", () => {
         pending.resolve("done")
         await flushMicrotasks()
 
-        expect(earlier.pending).to.be("done")
+        expect(earlier.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(root), ["earlier", "pending"], false)).to.be("done")
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 
-    it("finds a write target behind an already-indexed DAG branch", () => {
-        const parent = {}
-        const bridge = { back: parent }
+    it("indexes a cyclic imported branch without replacing its data", () => {
+        const cycle = {}
+        const imported = { child: cycle, keep: true }
+        const root = {}
+        cycle.next = { back: cycle }
 
-        buildRefIndex(bridge)
-        const chain = new Chain(parent)
-        assignPath(chain, ["value"], bridge)
+        importValue(imported, "nested cycle")
+        buildRefIndex(root)
+        assignPath(new Chain(root), ["branch"], imported)
 
-        expect(parent.value instanceof Error).to.be(true)
-        expect(parent.value.message).to.be("Value cannot reach its write target")
-        expectCounts(parent, 0, 1)
-        expectCounts(bridge, 0, 1)
-        verifyRefCounts(bridge)
+        expect(root.branch).to.be(imported)
+        expect(imported.child).to.be(cycle)
+        expect(cycle.next.back).to.be(cycle)
+        expectCounts(root, 0, 1)
+        expect(getRefCounter(imported).errorCount).to.be(1)
+        verifyRefCounts(root)
+    })
+
+    it("cuts an imported child back-reference without re-indexing its owner", async () => {
+        const pending = deferred()
+        const wrapper = { pending: pending.promise }
+        const child = importValue({ back: wrapper }, "nested imported back-reference")
+        wrapper.child = child
+
+        buildRefIndex(wrapper)
+
+        expect(metaOf(wrapper).edgeMarks.child.error.message).to.be(
+            'Cyclic property "child" (imported at: nested imported back-reference)',
+        )
+        expect(metaOf(child).edgeMarks).to.be(null)
+        expectCounts(wrapper, 1, 1)
+        verifyRefCounts(wrapper, child)
+
+        pending.resolve("done")
+        await flushMicrotasks()
+
+        expectCounts(wrapper, 0, 1)
+        verifyRefCounts(wrapper, child)
     })
 
     it("verifies indexed islands reached through unindexed wrappers", () => {
@@ -260,6 +346,21 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(detachedChild)).message).to.be(
             "Parent edge count is inconsistent",
         )
+    })
+
+    it("reports a committed parent-graph cycle fatally", () => {
+        const left = {}
+        const right = {}
+        buildRefIndex(left)
+        buildRefIndex(right)
+
+        left.right = right
+        right.left = left
+        getRefCounter(left).parents.set(right, 1)
+        getRefCounter(right).parents.set(left, 1)
+
+        const failure = thrownBy(() => verifyRefCounts(left))
+        expect(failure.message).to.be("Ref-count parent graph contains a cycle")
     })
 
     it("bookkeeps tracked branches after ref-indexing", () => {
@@ -396,7 +497,9 @@ describe("subtree counters", () => {
 
     it("validates a revoked mirror value as a child of its indexed parent", async () => {
         const pending = deferred()
-        const root = { value: pending.promise }
+        const root = {
+            value: importValue(pending.promise, "revoked back-edge"),
+        }
         const chain = new Chain(root)
 
         buildRefIndex(root)
@@ -407,8 +510,11 @@ describe("subtree counters", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be("fixed")
-        expect(mirror.currentValue instanceof Error).to.be(true)
-        expect(mirror.currentValue.message).to.be("Value cannot reach its write target")
+        expect(mirror.currentValue).to.be(root)
+        expect(mirror.edgeMark.kind).to.be("cycle")
+        expect(mirror.edgeMark.error.message).to.be(
+            'Cyclic property "value" (imported at: revoked back-edge)',
+        )
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
@@ -542,19 +648,20 @@ describe("subtree counters", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
+        const cyclic = {}
+        cyclic.self = cyclic
 
+        importValue(cyclic, "mirror validation replacement")
         buildRefIndex(root)
-        const resolved = importValue({}, "shared resolved value")
-        // Force the outer suspended commit to replace its candidate with Error.
-        assignPath(chain, ["pending", "back"], root)
         const observed = lookupPath(chain, ["pending"])
 
-        pending.resolve(resolved)
+        pending.resolve(cyclic)
         const value = await observed
 
-        expect(root.pending instanceof Error).to.be(true)
+        expect(root.pending).to.be(cyclic)
         expect(value).to.be(root.pending)
-        expect(value.message).to.be("Value cannot reach its write target")
+        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(cyclic.self).to.be(cyclic)
         verifyRefCounts(root)
     })
 

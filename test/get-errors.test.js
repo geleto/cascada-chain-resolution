@@ -1,6 +1,7 @@
 const {
     Chain,
     assignPath,
+    buildRefIndex,
     countPromiseRegistrations,
     deferred,
     deletePath,
@@ -11,6 +12,7 @@ const {
     importValue,
     metaOf,
     normalize,
+    thrownBy,
     verifyRefCounts,
 } = require("./support")
 
@@ -22,6 +24,46 @@ function expectErrors(actual, expected) {
 }
 
 describe("getErrors", () => {
+    it("reports a missing indexed promise mirror as fatal", () => {
+        for (const query of [hasError, getErrors]) {
+            const pending = deferred()
+            const root = { pending: pending.promise }
+            buildRefIndex(root)
+            delete metaOf(root).mirrors.pending
+
+            const failure = thrownBy(() => query(new Chain(root), []))
+
+            expect(failure instanceof Error).to.be(true)
+            expect(failure.message).to.be(
+                "Indexed promise property has no matching mirror",
+            )
+        }
+    })
+
+    it("stops at cycle markers while collecting ordinary siblings", () => {
+        const siblingError = new Error("sibling")
+        const hiddenError = new Error("hidden")
+        const left = { siblingError }
+        const right = { hiddenError }
+        left.right = right
+        right.left = left
+        importValue(left, "error cut")
+        const chain = new Chain(left)
+
+        const errors = getErrors(chain, [])
+        const cycleMark = metaOf(left).edgeMarks.right
+        const cycleError = cycleMark.error
+
+        expect(cycleMark.kind).to.be("cycle")
+        expectErrors(errors, [siblingError, cycleError])
+        expect(errors.includes(hiddenError)).to.be(false)
+        expect(hasError(chain, [])).to.be(true)
+        expectErrors(getErrors(chain, ["right"]), [cycleError])
+        expect(getErrors(new Chain(right), []).includes(
+            metaOf(right).edgeMarks.left.error,
+        )).to.be(true)
+    })
+
     it("returns immediate path results synchronously", () => {
         const nestedError = new Error("nested")
         const pathError = new Error("path")
@@ -110,7 +152,7 @@ describe("getErrors", () => {
 
         expect(cyclicErrors.length).to.be(1)
         expect(cyclicErrors[0].message).to.be(
-            "Value cannot be cyclic (imported at: cyclic getErrors)",
+            'Cyclic property "self" (imported at: cyclic getErrors)',
         )
         expect(frozenErrors.length).to.be(1)
         expect(frozenErrors[0].message).to.be(
@@ -163,14 +205,14 @@ describe("getErrors", () => {
         const root = importValue({ branch }, "shared path branch")
 
         const result = getErrors(new Chain(root), ["branch"])
-        // Import, mirror writeback, and the query each register once.
-        expect(registrations()).to.be(3)
+        // Lazy import creates the mirror at indexing; the query is the second consumer.
+        expect(registrations()).to.be(2)
         expect(metaOf(branch).shared).to.be(true)
         expect(metaOf(child).shared).to.be(true)
 
         delayed.resolve(child)
         await flushMicrotasks()
-        expect(registrations()).to.be(3)
+        expect(registrations()).to.be(2)
 
         pending.reject("bad")
         const errors = await result
@@ -190,8 +232,8 @@ describe("getErrors", () => {
         const root = importValue(branch, "imported diamond")
         const result = getErrors(new Chain(root), [])
 
-        // One import registration, one mirror, and one error-query wait.
-        expect(registrations()).to.be(3)
+        // One mirror writeback and one error-query wait.
+        expect(registrations()).to.be(2)
 
         pending.reject("diamond failure")
         const errors = await result
@@ -394,7 +436,7 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be(
-            "Value cannot reach its write target (imported at: revoked getErrors)",
+            'Cyclic property "pending" (imported at: revoked getErrors)',
         )
         expect(chain._state.value.pending).to.be("replacement")
     })

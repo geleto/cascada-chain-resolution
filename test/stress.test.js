@@ -7,6 +7,7 @@ const {
     assignPath,
     deletePath,
     hasError,
+    lookupPath,
     normalize,
     importValue,
     deferred,
@@ -43,7 +44,11 @@ describe("bounded stress", () => {
             sourceNode = sourceNode.next
             copiedNode = copiedNode.next
         }
-        expect(sourceNode.pending).to.be("done")
+        expect(sourceNode.pending).to.be(pending.promise)
+        expect(lookupPath(chain, [
+            ...Array.from({ length: depth }, () => "next"),
+            "pending",
+        ], false)).to.be("done")
         expect(copiedNode.pending).to.be("done")
         verifyRefCounts(root)
     })

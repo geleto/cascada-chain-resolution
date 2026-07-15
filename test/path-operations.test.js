@@ -180,6 +180,41 @@ describe("path assignment", () => {
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
     })
 
+    it("throws before invoking accessor or inherited assignment blockers", () => {
+        let setterCalls = 0
+        const accessor = {}
+        Object.defineProperty(accessor, "value", {
+            get() {
+                return 1
+            },
+            set() {
+                setterCalls++
+            },
+            enumerable: true,
+            configurable: true,
+        })
+        const prototype = {}
+        Object.defineProperty(prototype, "locked", {
+            value: 1,
+            enumerable: true,
+            writable: false,
+            configurable: true,
+        })
+        const inherited = Object.create(prototype)
+
+        const accessorFailure = thrownBy(() => {
+            assignPath(new Chain(accessor), ["value"], 2)
+        })
+        const inheritedFailure = thrownBy(() => {
+            assignPath(new Chain(inherited), ["locked"], 2)
+        })
+
+        expect(accessorFailure.message).to.be("Cannot assign to accessor property")
+        expect(inheritedFailure.message).to.be("Cannot assign to non-writable property")
+        expect(setterCalls).to.be(0)
+        expect(Object.prototype.hasOwnProperty.call(inherited, "locked")).to.be(false)
+    })
+
     it("shadows non-enumerable properties after COW", () => {
         const hidden = { x: 1 }
         const root = {}

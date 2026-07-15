@@ -68,7 +68,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("returns true for validation failures without publishing the failed branch", () => {
+    it("indexes cyclic imports without replacing their raw branch", () => {
         const branch = {}
         branch.self = branch
         const root = { branch }
@@ -76,13 +76,17 @@ describe("hasError", () => {
         importValue(root, "hasError import")
 
         expect(hasError(new Chain(root), ["branch"])).to.be(true)
-        expect(getRefCounter(branch)).to.be(undefined)
+        expect(getRefCounter(branch).errorCount).to.be(1)
+        expect(branch.self).to.be(branch)
     })
 
     it("validates non-extensible branches without attaching counters", () => {
         const clean = Object.freeze({ nested: { value: 1 } })
         const pending = Object.preventExtensions({ pending: Promise.resolve(1) })
         const bad = Object.freeze({ nested: { bad: new Error("bad") } })
+
+        importValue(pending, "pending frozen probe")
+        importValue(bad, "error frozen probe")
 
         expect(hasError(new Chain(clean), [])).to.be(false)
         expect(hasError(new Chain(pending), [])).to.be(true)
@@ -136,6 +140,7 @@ describe("hasError", () => {
         expect(buildRefIndex(child)).to.be(child)
 
         const wrapper = Object.preventExtensions({ child })
+        importValue(wrapper, "indexed frozen probe")
 
         expect(hasError(new Chain(wrapper), [])).to.be(true)
         expect(getRefCounter(wrapper)).to.be(undefined)
@@ -637,7 +642,11 @@ describe("hasError", () => {
 
     it("observes revoked promise values validated against their indexed parent", async () => {
         const pending = deferred()
-        const root = { branch: { pending: pending.promise } }
+        const root = {
+            branch: {
+                pending: importValue(pending.promise, "revoked hasError"),
+            },
+        }
         const chain = new Chain(root)
 
         const result = hasError(chain, ["branch"])
