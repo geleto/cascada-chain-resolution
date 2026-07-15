@@ -197,11 +197,11 @@ Like every other command, none blocks the program - the next command runs immedi
 
 ## One record per node
 
-All the bookkeeping above - the shared flag, mirrors, counters, and imported-property errors - lives in a small record the runtime keeps for each node.
+All the bookkeeping above - the shared flag, mirrors, counters, and imported-property errors - lives in a small record the runtime keeps for each node. The record starts empty and gains fields only as their features become active; a fully active record can look like this:
 
 ```js
 {
-  shared: false,             // the copy-on-write flag
+  shared: true,              // the copy-on-write flag, absent until set
   mirrors: {                 // one entry per promise-holding property -
     db: { promise, currentValue, cycleError, settled, pendingConsumerCount },
   },

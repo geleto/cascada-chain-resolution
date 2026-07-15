@@ -287,7 +287,7 @@ describe("import", () => {
         assignPath(new Chain(incrementalParent), ["child"], incrementalChild)
 
         expect(metaOf(incrementalParent).cycleErrors.child instanceof Error).to.be(true)
-        expect(metaOf(incrementalChild).cycleErrors).to.be(null)
+        expect(metaOf(incrementalChild).cycleErrors).to.be(undefined)
         expect(incrementalParent.child).to.be(incrementalChild)
         expect(incrementalChild.back).to.be(incrementalParent)
         expectCounts(incrementalParent, 0, 1)

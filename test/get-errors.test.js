@@ -268,12 +268,12 @@ describe("getErrors", () => {
         const result = getErrors(new Chain({ branch }), ["branch"])
         const meta = metaOf(branch)
 
-        expect(meta.shared).to.be(false)
+        expect(meta.shared).to.be(undefined)
         expect(meta.settlementPromise).to.be(undefined)
 
         pending.resolve("clean")
         expect(await result).to.eql([])
-        expect(meta.shared).to.be(false)
+        expect(meta.shared).to.be(undefined)
         expect(meta.settlementPromise).to.be(undefined)
     })
 

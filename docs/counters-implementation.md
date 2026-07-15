@@ -26,6 +26,11 @@ All per-node runtime state lives in the single META record:
   generation.
 - `shared`, `importContext`, `importPrepared`: ownership and lazy import state.
 
+A META record starts empty. Each field is added by the subsystem that activates
+it: `shared` at the first ownership boundary, mirrors and cycle cuts on first
+placement, the counter trio on ref-indexing, settlement fields on a pending
+normalize, and import fields at their respective boundary/preparation events.
+
 Inline metadata uses one non-enumerable Symbol on extensible values. The same
 WeakMap used by WeakMap mode is the fallback for non-extensible values, so both
 storage modes have identical semantics.

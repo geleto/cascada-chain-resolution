@@ -12,16 +12,13 @@ const hasOwn = Object.prototype.hasOwnProperty
 
 function createMeta() {
     return {
-        shared: false,
-        mirrors: null,
-        cycleErrors: null,
-        promiseCount: 0,
-        errorCount: 0,
-        settlementPromise: undefined,
-        settlementResolve: undefined,
-        importContext: undefined,
-        importPrepared: false,
-        parents: undefined,
+        // shared: added when ownership first becomes shared.
+        // mirrors: added when the first promise mirror is installed.
+        // cycleErrors: added when the first cycle cut is published.
+        // promiseCount, errorCount, parents: added together by ref-indexing.
+        // settlementPromise, settlementResolve: added by a pending normalize.
+        // importContext: added at a direct import boundary.
+        // importPrepared: added after imported-graph preparation commits.
     }
 }
 

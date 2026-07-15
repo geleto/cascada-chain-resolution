@@ -69,7 +69,7 @@ describe("subtree counters", () => {
         expect(failure.message).to.be("Cannot assign to non-writable property")
         expect(root.value).to.be(pending.promise)
         expect(metaOf(root).mirrors.value).to.be(mirror)
-        expect(metaOf(replacement).importPrepared).to.be(false)
+        expect(metaOf(replacement).importPrepared).to.be(undefined)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
     })
@@ -291,7 +291,7 @@ describe("subtree counters", () => {
         expect(metaOf(wrapper).cycleErrors.child.message).to.be(
             'Cyclic property "child" (imported at: nested imported back-reference)',
         )
-        expect(metaOf(child).cycleErrors).to.be(null)
+        expect(metaOf(child).cycleErrors).to.be(undefined)
         expectCounts(wrapper, 1, 1)
         verifyRefCounts(wrapper, child)
 

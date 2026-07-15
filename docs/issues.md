@@ -21,17 +21,13 @@
     ```js
     function createMeta() {
         return {
-            shared: false,   // set once, never cleared; false at birth = "no mark"
-            mirrors: null,   // lazy Object.create(null), the promise mirror map
-            promiseCount: 0,
-            errorCount: 0,
-            settlementPromise: undefined,
-            settlementResolve: undefined,
-            importContext: undefined,
-            importPrepared: false,
-            cycleErrors: null, // lazy owner/key map of cycle Error cuts
-            // parents is added by buildRefIndex when counters become live:
-            // undefined => not ref-indexed; empty Map => ref-indexed root / no ref-indexed parents.
+            // shared: added when ownership first becomes shared.
+            // mirrors: added when the first promise mirror is installed.
+            // cycleErrors: added when the first cycle cut is published.
+            // promiseCount, errorCount, parents: added together by ref-indexing.
+            // settlementPromise, settlementResolve: added by a pending normalize.
+            // importContext: added at a direct import boundary.
+            // importPrepared: added after imported-graph preparation commits.
         }
     }
     ```
