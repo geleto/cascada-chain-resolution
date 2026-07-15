@@ -87,7 +87,7 @@ function setProperty(parent, key, value, importContext = undefined) {
         ? createAssignedPromiseMirror(parent, key, value)
         : null
     const prepared = prepareEdgeTransition(parent, key, mirror, value)
-    return commitEdgeTransition(parent, key, mirror, prepared)
+    commitEdgeTransition(parent, key, mirror, prepared)
 }
 
 function deleteProperty(parent, key, importContext = undefined) {
@@ -119,15 +119,9 @@ initPromiseMirrors(
     commitMirrorDrain,
 )
 
-function shallowCopy(
-    obj,
-    pathKey = undefined,
-    markReusedChildrenShared = false,
-    inheritedImportContext = undefined,
-) {
+function shallowCopy(obj, pathKey, importContext) {
     const copy = Array.isArray(obj) ? new Array(obj.length) : {}
-    const pathKeyString = pathKey === undefined ? undefined : String(pathKey)
-    const importContext = nodeImportContext(obj, inheritedImportContext)
+    const pathKeyString = String(pathKey)
     const keys = Object.keys(obj)
     if (keys.includes("__proto__")) {
         defineOwnProtoSlot(copy)
@@ -143,7 +137,7 @@ function shallowCopy(
     // not aliasing, and imported data must COW regardless.
     for (const key of keys) {
         const isPathKey = key === pathKeyString
-        const markCopiedValueShared = markReusedChildrenShared && !isPathKey
+        const markCopiedValueShared = !isPathKey
         const value = key === "__proto__" ? obj[key] : readLogicalProperty(obj, key)
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or copyCounters reconstructs its indexed edges.
@@ -227,7 +221,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
-            parent = shallowCopy(parent, key, true, valueImportContext)
+            parent = shallowCopy(parent, key, valueImportContext)
         }
         if (index === targetPath.length - 1) {
             onTarget(parent, key, valueImportContext)
@@ -500,11 +494,11 @@ function hasErrorAtPathValue(value, importContext, placement) {
 // indexed the resolved path value, or a promise mirror writeback indexed the
 // resolved value before the hasError wait continuation ran.
 function hasErrorInIndexedBranch(value) {
-    const visited = new WeakSet()
     const counter = getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
     if (counter.promiseCount === 0) return false
 
+    const visited = new WeakSet()
     let resolveError
     const errorPromise = new Promise(resolve => {
         resolveError = () => resolve(true)
@@ -548,70 +542,63 @@ function hasErrorInIndexedBranch(value) {
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path) {
     const errors = new Set()
+    let visited
     return walkObservationPath(chain, path, (value, importContext, placement) => {
         const readiness = collectErrorsAtPathValue(
             value,
             importContext,
             placement,
-            errors,
         )
         if (!readiness) return [...errors]
         return onInternalResolve(readiness, () => [...errors])
     })
-}
 
-function collectErrorsAtPathValue(value, importContext, placement, errors) {
-    let edgeMark = getResolvedPlacementMark(placement)
-    if (edgeMark) {
-        errors.add(edgeMark.error)
-        return undefined
-    }
-    if (isError(value)) {
-        errors.add(value)
-        return undefined
-    }
-    if (!isTracked(value)) return undefined
+    function collectErrorsAtPathValue(value, importContext, placement) {
+        let edgeMark = getResolvedPlacementMark(placement)
+        if (edgeMark) {
+            errors.add(edgeMark.error)
+            return undefined
+        }
+        if (isError(value)) {
+            errors.add(value)
+            return undefined
+        }
+        if (!isTracked(value)) return undefined
 
-    const indexed = buildRefIndex(value, importContext, placement)
-    if (isError(indexed)) {
-        errors.add(indexed)
-        return undefined
-    }
-    edgeMark = getResolvedPlacementMark(placement)
-    if (edgeMark) {
-        errors.add(edgeMark.error)
-        return undefined
+        const indexed = buildRefIndex(value, importContext, placement)
+        if (isError(indexed)) {
+            errors.add(indexed)
+            return undefined
+        }
+        edgeMark = getResolvedPlacementMark(placement)
+        if (edgeMark) {
+            errors.add(edgeMark.error)
+            return undefined
+        }
+
+        visited = new WeakSet()
+        return collectErrorsInIndexedBranch(value)
     }
 
-    return collectErrorsInIndexedBranch(value, errors, new WeakSet())
-}
-
-function collectErrorsInIndexedBranch(
-    value,
-    errors,
-    visited,
-) {
-    return collectErrorSearchWaits(
-        value,
-        mirror => {
-            if (mirror.edgeMark) {
-                errors.add(mirror.edgeMark.error)
-                return undefined
-            }
-            if (isError(mirror.currentValue)) {
-                errors.add(mirror.currentValue)
-                return undefined
-            }
-            if (!isTracked(mirror.currentValue)) return undefined
-            return collectErrorsInIndexedBranch(
-                mirror.currentValue,
-                errors,
-                visited,
-            )
-        },
-        visited,
-        errors,
-    )
+    function collectErrorsInIndexedBranch(value) {
+        return collectErrorSearchWaits(
+            value,
+            mirror => {
+                if (mirror.edgeMark) {
+                    errors.add(mirror.edgeMark.error)
+                    return undefined
+                }
+                if (isError(mirror.currentValue)) {
+                    errors.add(mirror.currentValue)
+                    return undefined
+                }
+                if (!isTracked(mirror.currentValue)) return undefined
+                return collectErrorsInIndexedBranch(mirror.currentValue)
+            },
+            visited,
+            errors,
+        )
+    }
 }
 
 // Shared synchronous walk for error queries. hasError follows only promises;

@@ -98,16 +98,15 @@ function prepareImportedData(
     }
 
     function discover(node, inheritedContext) {
-        if (!isTracked(node)) return
         if (node === writeTarget) return
 
-        const context = nodeImportContext(node, inheritedContext)
         const existing = records.get(node)
         if (existing) {
             if (existing.state === "active") needsScc = true
             return
         }
 
+        const context = nodeImportContext(node, inheritedContext)
         const record = {
             node,
             context,

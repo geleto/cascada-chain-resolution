@@ -75,13 +75,10 @@ function markShared(value) {
     return value
 }
 
-// An import marker belongs only to the boundary root. Descendants inherit its
-// context during a walk and are marked shared by lazy imported preparation.
+// importValue resolves bare promises before marking the boundary root.
+// Descendants inherit its context during a walk and are marked shared by lazy
+// imported preparation.
 function markImported(value, importContext) {
-    if (isPromise(value)) {
-        onValueResolve(value, settled => markImported(settled, importContext))
-        return value
-    }
     if (!isTracked(value)) return value
 
     const meta = ensureMeta(value)

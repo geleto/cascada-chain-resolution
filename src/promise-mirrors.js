@@ -42,7 +42,7 @@ function getCommittedEdgeMark(node, key) {
 
 function getRequiredPromiseMirror(node, key, promise) {
     const mirror = getPromiseMirror(node, key)
-    if (!mirror || (promise !== undefined && mirror.promise !== promise)) {
+    if (!mirror || mirror.promise !== promise) {
         reportFatalError(new Error("Indexed promise property has no matching mirror"))
     }
     return mirror
@@ -175,7 +175,6 @@ function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
     mirror.prepared = prepared
     mirror.currentValue = prepared.value
     mirror.edgeMark = prepared.edgeMark
-    return mirror.currentValue
 }
 
 function readLogicalProperty(node, key) {

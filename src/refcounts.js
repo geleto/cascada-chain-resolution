@@ -151,17 +151,13 @@ function commitRefIndex(
         }
 
         let mirror = preparedRecord ? edge.mirror : getPromiseMirror(node, key)
-        let child = preparedRecord ? edge.value : readLogicalProperty(node, key)
+        const child = preparedRecord ? edge.value : readLogicalProperty(node, key)
         if (isPromise(child)) {
             mirror ??= getOrCreatePromiseMirror(node, key, child, importContext)
             promiseCount++
             continue
         }
 
-        if (mirror?.settled && mirror.edgeMark) {
-            errorCount++
-            continue
-        }
         if (isError(child)) {
             errorCount++
             continue
@@ -227,11 +223,11 @@ function prepareEdgeTransition(
     // The next FIFO consumer may mutate this private value before the mirror
     // drains. Publish the irreversible sharing mark now so that advance COWs.
     if (markCandidateShared) markShared(candidate)
-    if (!ownerCounter || isPromise(candidate) || isError(candidate) || !isTracked(candidate)) {
+    if (!ownerCounter || !isTracked(candidate)) {
         return prepared
     }
 
-    const importContext = mirror?.importContext ?? nodeImportContext(candidate, undefined)
+    const importContext = mirror?.importContext ?? nodeImportContext(candidate)
     if (importContext !== undefined) {
         const imported = prepareImportedData(
             candidate,
@@ -276,7 +272,7 @@ function reachesProjected(value, target, preparedImport, visited = new Set()) {
         const edgeMark = record ? edge.edgeMark : getCommittedEdgeMark(value, key)
         if (edgeMark) continue
         const child = record ? edge.value : readLogicalProperty(value, key)
-        if (!isPromise(child) && reachesProjected(child, target, preparedImport, visited)) {
+        if (isTracked(child) && reachesProjected(child, target, preparedImport, visited)) {
             return true
         }
     }
@@ -306,7 +302,6 @@ function commitEdgeTransition(owner, key, mirror, prepared) {
             }
         },
     )
-    return prepared.value
 }
 
 function commitMirrorDrain(mirror) {
