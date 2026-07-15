@@ -19,15 +19,15 @@ function setFatalErrorReporter(reporter = () => {}) {
     fatalReporter = reporter
 }
 
-function validationError(message, importContext = undefined) {
-    if (!importContext) return new Error(message)
-    return new Error(`${message} (imported at: ${String(importContext)})`)
+function validationError(message, errorContext = undefined) {
+    if (!errorContext) return new Error(message)
+    return new Error(`${message} (imported at: ${String(errorContext)})`)
 }
 
-function createCycleError(key, importContext) {
+function createCycleError(key, errorContext) {
     return validationError(
         `Cyclic property "${String(key)}"`,
-        importContext,
+        errorContext,
     )
 }
 

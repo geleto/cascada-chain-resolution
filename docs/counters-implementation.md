@@ -24,12 +24,13 @@ All per-node runtime state lives in the single META record:
   and cycle-aware normalization.
 - `settlementPromise`, `settlementResolve`: normalize's optional shared wait
   generation.
-- `shared`, `importContext`, `importPrepared`: ownership and lazy import state.
+- `shared`, `importBoundary`: ownership and import state. A direct boundary
+  stores `{ root, errorContext }`.
 
 A META record starts empty. Each field is added by the subsystem that activates
 it: `shared` at the first ownership boundary, mirrors and cycle cuts on first
 placement, the counter trio on ref-indexing, settlement fields on a pending
-normalize, and import fields at their respective boundary/preparation events.
+normalize, and the import boundary at direct import.
 
 Inline metadata uses one non-enumerable Symbol on extensible values. The same
 WeakMap used by WeakMap mode is the fallback for non-extensible values, so both
@@ -62,15 +63,17 @@ implicit repair.
 
 ## Building the index
 
-`buildRefIndex(value, inheritedImportContext, placement)` is the sole public
+`buildRefIndex(value, inheritedImportBoundary, placement)` is the sole public
 entry for initial indexing.
 
 Trusted language data follows the compiler's tree-shaped ownership contract,
 so `commitRefIndex` walks it directly without identity bookkeeping. When an
-import context is reached, `prepareImportedData` first discovers that imported
-region, deduplicates its identities, stages cycle cuts, and creates required
-mirrors. The completed preparation is then committed
-and its records are indexed. See `docs/lazy-import.md`.
+import boundary is reached, `prepareImportedData` starts from that boundary's
+stored root. One depth-first walk uses `visited` to mark repeated identities
+shared and `currentPath` to cut properties that point back into the active
+path. It publishes mirrors and cycle Errors directly. Ordinary `commitRefIndex`
+then walks the resulting acyclic projection from the root; no imported record
+graph or preparation flag is retained. See `docs/lazy-import.md`.
 
 Frozen, sealed, and otherwise non-extensible nodes follow the same counter
 rules as extensible nodes. Once reached by a successful index build, each has a

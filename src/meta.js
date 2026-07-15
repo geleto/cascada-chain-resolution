@@ -17,8 +17,7 @@ function createMeta() {
         // cycleErrors: added when the first cycle cut is published.
         // promiseCount, errorCount, parents: added together by ref-indexing.
         // settlementPromise, settlementResolve: added by a pending normalize.
-        // importContext: added at a direct import boundary.
-        // importPrepared: added after imported-graph preparation commits.
+        // importBoundary: added at a direct import boundary.
     }
 }
 
@@ -68,20 +67,19 @@ function markShared(value) {
     return value
 }
 
-// importValue resolves bare promises before marking the boundary root.
-// Descendants inherit its context during a walk and are marked shared by lazy
-// imported preparation.
-function markImported(value, importContext) {
+// A direct mark makes the value the root of its own imported boundary.
+// Descendants inherit that boundary until independent use creates another one.
+function markImported(value, errorContext) {
     if (!isTracked(value)) return value
 
     const meta = ensureMeta(value)
-    meta.importContext ??= importContext
+    meta.importBoundary ??= { root: value, errorContext }
     meta.shared = true
     return value
 }
 
-function nodeImportContext(node, inherited) {
-    const own = metaOf(node)?.importContext
+function nodeImportBoundary(node, inherited) {
+    const own = metaOf(node)?.importBoundary
     return own === undefined ? inherited : own
 }
 
@@ -109,7 +107,7 @@ module.exports = {
     markImported,
     markShared,
     metaOf,
-    nodeImportContext,
+    nodeImportBoundary,
     setCycleError,
     STORE_META_IN_WEAKMAP,
 }

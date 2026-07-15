@@ -24,7 +24,7 @@ function isError(x) {
     return x instanceof Error
 }
 
-// ncludes arrays, plain objects, frozen objects, and class instances,
+// Includes arrays, plain objects, frozen objects, and class instances.
 function isTracked(x) {
     return (
         x !== null &&

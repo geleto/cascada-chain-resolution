@@ -8,12 +8,12 @@ const {
 const hasOwn = Object.prototype.hasOwnProperty
 
 // Language data is own enumerable string keys only.
-function assertCanMutateLanguageProperty(parent, key, importContext = undefined) {
+function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = Object.getOwnPropertyDescriptor(parent, key)
     if (descriptor && !descriptor.enumerable) {
         reportFatalError(validationError(
             "Cannot mutate non-enumerable property",
-            importContext,
+            errorContext,
         ))
     }
     return descriptor
@@ -21,37 +21,37 @@ function assertCanMutateLanguageProperty(parent, key, importContext = undefined)
 
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
 // descriptor before candidate preparation can publish any imported state.
-function assertCanSetLanguageProperty(parent, key, importContext = undefined) {
+function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = assertCanMutateLanguageProperty(
         parent,
         key,
-        importContext,
+        errorContext,
     )
 
     if (descriptor && !("value" in descriptor)) {
         reportFatalError(validationError(
             "Cannot assign to accessor property",
-            importContext,
+            errorContext,
         ))
     }
     if (descriptor && !descriptor.writable) {
         reportFatalError(validationError(
             "Cannot assign to non-writable property",
-            importContext,
+            errorContext,
         ))
     }
 }
 
-function assertCanDeleteLanguageProperty(parent, key, importContext = undefined) {
+function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = assertCanMutateLanguageProperty(
         parent,
         key,
-        importContext,
+        errorContext,
     )
     if (descriptor && !descriptor.configurable) {
         reportFatalError(validationError(
             "Cannot delete non-configurable property",
-            importContext,
+            errorContext,
         ))
     }
 }

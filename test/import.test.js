@@ -143,7 +143,7 @@ describe("import", () => {
         expect(metaOf(value)).to.be(undefined)
     })
 
-    it("marks only the boundary until counting prepares descendants", async () => {
+    it("keeps unique imported descendants unmarked", async () => {
         const outer = deferred()
         const inner = deferred()
         const leaf = { x: 1 }
@@ -153,20 +153,22 @@ describe("import", () => {
         const imported = importValue(root, "recursive import")
 
         expect(imported).to.be(root)
-        expect(metaOf(root).importContext).to.be("recursive import")
+        expect(metaOf(root).importBoundary.root).to.be(root)
+        expect(metaOf(root).importBoundary.errorContext).to.be("recursive import")
         expect(metaOf(child)).to.be(undefined)
 
         buildRefIndex(root)
-        expect(metaOf(child).shared).to.be(true)
-        expect(metaOf(child).importContext).to.be(undefined)
+        expect(metaOf(child).shared).to.be(undefined)
+        expect(metaOf(child).importBoundary).to.be(undefined)
 
         const resolved = { leaf, inner: inner.promise }
         outer.resolve(resolved)
         await flushMicrotasks()
 
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved).importContext).to.be(undefined)
-        expect(metaOf(leaf).shared).to.be(true)
+        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
+        expect(metaOf(resolved).importBoundary.errorContext).to.be("recursive import")
+        expect(metaOf(leaf).shared).to.be(undefined)
 
         const nested = { done: true }
         inner.resolve(nested)
@@ -196,7 +198,8 @@ describe("import", () => {
 
         expect(registrations()).to.be(1)
         expect(metaOf(shared).shared).to.be(true)
-        expect(metaOf(shared).importContext).to.be(undefined)
+        expect(metaOf(shared).importBoundary.root).to.be(shared)
+        expect(metaOf(shared).importBoundary.errorContext).to.be("async aliases")
 
         const leaf = { done: true }
         nested.resolve(leaf)
@@ -222,7 +225,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved.nested).shared).to.be(true)
+        expect(metaOf(resolved.nested).shared).to.be(undefined)
     })
 
     it("accepts cyclic imports until counting needs the branch", () => {
@@ -238,44 +241,77 @@ describe("import", () => {
         expect(root.self).to.be(root)
     })
 
-    it("marks every intra-SCC property with a stable distinct Error", () => {
+    it("prepares from the import root when a nested branch is queried first", () => {
+        const root = {}
+        const branch = { back: root }
+        root.branch = branch
+        importValue(root, "rooted preparation")
+
+        expect(hasError(new Chain(root), ["branch"])).to.be(true)
+
+        expect(metaOf(root).cycleErrors).to.be(undefined)
+        expect(metaOf(branch).cycleErrors.back.message).to.be(
+            'Cyclic property "back" (imported at: rooted preparation)',
+        )
+        expect(metaOf(branch).importBoundary).to.be(undefined)
+        verifyRefCounts(root, branch)
+    })
+
+    it("uses an extracted and assigned branch as a new import root", () => {
+        const root = {}
+        const branch = { back: root }
+        root.branch = branch
+        importValue(root, "rerooted branch")
+
+        const extracted = lookupPath(new Chain(root), ["branch"], false)
+        const chain = new Chain({})
+        assignPath(chain, ["branch"], extracted)
+
+        expect(hasError(chain, ["branch"])).to.be(true)
+        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).cycleErrors).to.be(undefined)
+        expect(metaOf(root).cycleErrors.branch.message).to.be(
+            'Cyclic property "branch" (imported at: rerooted branch)',
+        )
+        verifyRefCounts(root, branch)
+    })
+
+    it("marks stable first-repeat edges from the import root", () => {
         const left = {}
         const right = {}
         left.right = right
         right.left = left
         right.self = right
-        importValue(left, "interlocking SCC")
+        importValue(left, "interlocking cycles")
 
         expect(hasError(new Chain(left), [])).to.be(true)
 
-        const leftError = metaOf(left).cycleErrors.right
         const rightError = metaOf(right).cycleErrors.left
         const selfError = metaOf(right).cycleErrors.self
-        expect(leftError.message).to.be(
-            'Cyclic property "right" (imported at: interlocking SCC)',
+        expect(metaOf(left).cycleErrors).to.be(undefined)
+        expect(rightError.message).to.be(
+            'Cyclic property "left" (imported at: interlocking cycles)',
         )
-        expect(rightError).not.to.be(leftError)
-        expect(selfError).not.to.be(leftError)
         expect(selfError).not.to.be(rightError)
         expect(getErrors(new Chain(right), []).includes(rightError)).to.be(true)
-        expect(metaOf(left).cycleErrors.right).to.be(leftError)
+        expect(metaOf(right).cycleErrors.left).to.be(rightError)
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
-        expect(metaOf(left).cycleErrors.right).to.be(leftError)
-        expectCounts(left, 0, 1)
+        expect(metaOf(right).cycleErrors.left).to.be(rightError)
+        expectCounts(left, 0, 2)
         expectCounts(right, 0, 2)
-        expectCounts(wrapper, 0, 1)
+        expectCounts(wrapper, 0, 2)
         verifyRefCounts(wrapper, left, right)
     })
 
-    it("distinguishes batch SCC marking from an incremental closing edge", () => {
+    it("distinguishes a discovered back-edge from an incremental closing edge", () => {
         const batchParent = {}
         const batchChild = { back: batchParent }
         batchParent.child = batchChild
         importValue(batchParent, "batch cycle")
         buildRefIndex(batchParent)
 
-        expect(metaOf(batchParent).cycleErrors.child instanceof Error).to.be(true)
+        expect(metaOf(batchParent).cycleErrors).to.be(undefined)
         expect(metaOf(batchChild).cycleErrors.back instanceof Error).to.be(true)
 
         const incrementalParent = {}
@@ -376,7 +412,7 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps the first import context", () => {
+    it("keeps the first import boundary attribution", () => {
         const root = {}
         root.self = root
 
@@ -390,7 +426,7 @@ describe("import", () => {
         )
     })
 
-    it("uses the nearest nested import context", () => {
+    it("uses the nearest nested import boundary", () => {
         const child = {}
         child.self = child
         importValue(child, "child import")
@@ -467,7 +503,8 @@ describe("import", () => {
         expectCounts(nestedFrozenPromise.nested, 1, 0)
         expectCounts(frozenError, 0, 1)
         expect(metaOf(frozenPromise).mirrors.pending).not.to.be(undefined)
-        expect(metaOf(frozenPromise).importContext).to.be("frozen promise")
+        expect(metaOf(frozenPromise).importBoundary.root).to.be(frozenPromise)
+        expect(metaOf(frozenPromise).importBoundary.errorContext).to.be("frozen promise")
 
         await flushMicrotasks()
 
@@ -705,7 +742,7 @@ describe("import", () => {
         expect(indexed).to.be(root)
         expect(getRefCounter(child)).not.to.be(undefined)
         expect(getRefCounter(root)).not.to.be(undefined)
-        expect(metaOf(child).importPrepared).to.be(true)
+        expect(metaOf(child).shared).to.be(undefined)
         expect(lookupPath(new Chain(root), ["child", "__proto__", "unsafe"], false)).to.be(true)
         verifyRefCounts(root, child)
     })
@@ -721,13 +758,14 @@ describe("import", () => {
         const next = chain._state.value
 
         expect(extracted).to.be(branch)
-        expect(metaOf(branch).importContext).to.be("extract import")
+        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).importBoundary.errorContext).to.be("extract import")
         expect(next).not.to.be(branch)
         expect(branch.x).to.be(1)
         expect(next.x).to.be(2)
     })
 
-    it("preserves import context on copied path-key children", () => {
+    it("preserves the import boundary on copied path-key children", () => {
         const branch = {}
         branch.self = branch
         const root = {
@@ -935,7 +973,8 @@ describe("import", () => {
             'Cyclic property "value" (imported at: containing back-edge)',
         )
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved).importContext).to.be(undefined)
+        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
+        expect(metaOf(resolved).importBoundary.errorContext).to.be("containing back-edge")
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -991,7 +1030,7 @@ describe("import", () => {
         expect(hasError(new Chain(value), [])).to.be(true)
     })
 
-    it("keeps import context when promise roots resolve to frozen values", async () => {
+    it("keeps the import boundary when promise roots resolve to frozen values", async () => {
         const deferredValue = deferred()
         const imported = importValue(deferredValue.promise, "frozen promise root")
         const frozen = Object.freeze({ pending: Promise.resolve(1) })
@@ -1002,7 +1041,8 @@ describe("import", () => {
 
         expect(value).to.be(frozen)
         expect(indexed).to.be(frozen)
-        expect(metaOf(frozen).importContext).to.be("frozen promise root")
+        expect(metaOf(frozen).importBoundary.root).to.be(frozen)
+        expect(metaOf(frozen).importBoundary.errorContext).to.be("frozen promise root")
         expectCounts(frozen, 1, 0)
 
         await flushMicrotasks()

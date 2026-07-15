@@ -12,9 +12,10 @@ const {
 const {
     clearCycleError,
     ensureMeta,
+    markImported,
     markShared,
     metaOf,
-    nodeImportContext,
+    nodeImportBoundary,
     setCycleError,
 } = require("./meta")
 const {
@@ -71,83 +72,75 @@ function getCountedChild(parent, key) {
     return readLogicalProperty(parent, key)
 }
 
-function buildRefIndex(value, inheritedImportContext = undefined, placement = undefined) {
+function buildRefIndex(value, inheritedImportBoundary = undefined, placement = undefined) {
     if (!isTracked(value)) return value
 
-    const importContext = nodeImportContext(value, inheritedImportContext)
-    if (importContext !== undefined) {
-        const preparedImport = prepareImportedData(
-            value,
-            importContext,
-            placement?.parent,
-            placement?.mirror,
-        )
+    const importBoundary = nodeImportBoundary(value, inheritedImportBoundary)
+    let preparedImport = false
+    if (importBoundary) {
+        const atBoundaryRoot = importBoundary.root === value
+        if (!getRefCounter(importBoundary.root)) {
+            prepareImportedData(
+                importBoundary,
+                atBoundaryRoot ? placement?.parent : undefined,
+                atBoundaryRoot ? placement?.mirror : undefined,
+                commitCycleError,
+            )
+            preparedImport = true
+        }
 
         let closingCycleError = getResolvedCycleError(placement)
-        if (placement && !closingCycleError &&
-            reachesProjected(value, placement.parent, preparedImport)) {
-            closingCycleError = createCycleError(placement.key, importContext)
+        if (atBoundaryRoot && placement && !closingCycleError &&
+            reachesProjected(value, placement.parent)) {
+            closingCycleError = createCycleError(
+                placement.key,
+                importBoundary.errorContext,
+            )
         }
-        commitImportedPreparation(preparedImport)
         if (closingCycleError) {
             commitPlacementCycleError(placement, closingCycleError)
         }
         const privateCut = closingCycleError &&
             placement.mirror && !placement.mirror.settled
         // A draining mirror's cut is private until its final commit. Indexing
-        // these records now could follow the raw back-reference into its owner.
-        if (!privateCut) buildPreparedImportRefIndexes(preparedImport)
+        // this branch now could follow the raw back-reference into its owner.
+        if (preparedImport && !privateCut) {
+            commitRefIndex(importBoundary.root, importBoundary, true)
+        }
         if (closingCycleError) return value
     }
 
     if (getRefCounter(value)) return value
-    commitRefIndex(value, importContext)
+    commitRefIndex(value, importBoundary, !!importBoundary)
     return value
-}
-
-function commitImportedPreparation(preparedImport) {
-    preparedImport.commit(commitCycleError)
-}
-
-function buildPreparedImportRefIndexes(preparedImport) {
-    for (const record of preparedImport.records.values()) {
-        commitRefIndex(
-            record.node,
-            record.context,
-            preparedImport.records,
-        )
-    }
 }
 
 function commitRefIndex(
     node,
-    inheritedImportContext,
-    preparedRecords = undefined,
+    inheritedImportBoundary,
+    importGraphPrepared = false,
 ) {
     if (!isTracked(node)) return [0, 0]
 
     const existing = getRefCounter(node)
     if (existing) return [existing.promiseCount, existing.errorCount]
 
-    const importContext = nodeImportContext(node, inheritedImportContext)
-    const preparedRecord = preparedRecords?.get(node)
+    const importBoundary = nodeImportBoundary(node, inheritedImportBoundary)
 
     let promiseCount = 0
     let errorCount = 0
     const childNodes = []
-    const edges = preparedRecord?.edges ?? Object.keys(node)
 
-    for (const edge of edges) {
-        const key = preparedRecord ? edge.key : edge
-        if ((preparedRecord ? edge.cycleError : getCommittedCycleError(node, key))) {
+    for (const key of Object.keys(node)) {
+        if (getCommittedCycleError(node, key)) {
             errorCount++
             continue
         }
 
-        let mirror = preparedRecord ? edge.mirror : getPromiseMirror(node, key)
-        const child = preparedRecord ? edge.value : readLogicalProperty(node, key)
+        let mirror = getPromiseMirror(node, key)
+        const child = readLogicalProperty(node, key)
         if (isPromise(child)) {
-            mirror ??= getOrCreatePromiseMirror(node, key, child, importContext)
+            mirror ??= getOrCreatePromiseMirror(node, key, child, importBoundary)
             promiseCount++
             continue
         }
@@ -158,10 +151,10 @@ function commitRefIndex(
         }
         if (!isTracked(child)) continue
 
-        const childImportContext = mirror?.importContext ??
-            nodeImportContext(child, importContext)
-        if (childImportContext !== undefined && !preparedRecords?.has(child)) {
-            buildRefIndex(child, childImportContext, {
+        const childImportBoundary = mirror?.importBoundary ??
+            nodeImportBoundary(child, importBoundary)
+        if (childImportBoundary && !importGraphPrepared) {
+            buildRefIndex(child, childImportBoundary, {
                 parent: node,
                 key,
                 mirror,
@@ -174,8 +167,8 @@ function commitRefIndex(
 
         const childCounts = commitRefIndex(
             child,
-            childImportContext,
-            preparedRecords,
+            childImportBoundary,
+            importGraphPrepared,
         )
         promiseCount += childCounts[0]
         errorCount += childCounts[1]
@@ -183,9 +176,9 @@ function commitRefIndex(
     }
 
     // Imported preparation can index this node through a back-reference after
-    // staging a cut on the edge currently being walked. That completed index is
-    // authoritative; publishing this older recursive frame would duplicate its
-    // child edges and overwrite its totals.
+    // publishing a cut on the edge currently being walked. That completed
+    // index is authoritative; publishing this older recursive frame would
+    // duplicate its child edges and overwrite its totals.
     const completedDuringWalk = getRefCounter(node)
     if (completedDuringWalk) {
         return [completedDuringWalk.promiseCount, completedDuringWalk.errorCount]
@@ -217,48 +210,55 @@ function prepareEdgeTransition(
     // The next FIFO consumer may mutate this private value before the mirror
     // drains. Publish the irreversible sharing mark now so that advance COWs.
     if (markCandidateShared) markShared(candidate)
+
+    let importBoundary = nodeImportBoundary(candidate)
+    if (mirror?.importBoundary && !importBoundary) {
+        markImported(candidate, mirror.importBoundary.errorContext)
+        importBoundary = nodeImportBoundary(candidate)
+    }
+    if (mirror && importBoundary) mirror.importBoundary = importBoundary
+
     if (!ownerCounter || !isTracked(candidate)) {
         return prepared
     }
 
-    const importContext = mirror?.importContext ?? nodeImportContext(candidate)
-    if (importContext !== undefined) {
-        const imported = prepareImportedData(
-            candidate,
-            importContext,
-            owner,
-            mirror,
-        )
-        const closesCycle = reachesProjected(candidate, owner, imported)
-        commitImportedPreparation(imported)
-        buildPreparedImportRefIndexes(imported)
+    if (importBoundary) {
+        if (!getRefCounter(importBoundary.root)) {
+            prepareImportedData(
+                importBoundary,
+                owner,
+                mirror,
+                commitCycleError,
+            )
+            commitRefIndex(importBoundary.root, importBoundary, true)
+        }
+        const closesCycle = reachesProjected(candidate, owner)
         if (closesCycle) {
-            prepared.cycleError = createCycleError(key, importContext)
+            prepared.cycleError = createCycleError(
+                key,
+                importBoundary.errorContext,
+            )
             prepared.errorCount = 1
             return prepared
         }
     }
 
-    buildRefIndex(candidate, importContext)
+    buildRefIndex(candidate, importBoundary)
     const counts = getRefCounts(candidate)
     prepared.promiseCount = counts[0]
     prepared.errorCount = counts[1]
     return prepared
 }
 
-function reachesProjected(value, target, preparedImport, visited = new Set()) {
+function reachesProjected(value, target, visited = new Set()) {
     if (value === target) return true
     if (!isTracked(value) || visited.has(value)) return false
     visited.add(value)
 
-    const record = preparedImport.records.get(value)
-    const edges = record?.edges ?? Object.keys(value)
-    for (const edge of edges) {
-        const key = record ? edge.key : edge
-        const cycleError = record ? edge.cycleError : getCommittedCycleError(value, key)
-        if (cycleError) continue
-        const child = record ? edge.value : readLogicalProperty(value, key)
-        if (isTracked(child) && reachesProjected(child, target, preparedImport, visited)) {
+    for (const key of Object.keys(value)) {
+        if (getCommittedCycleError(value, key)) continue
+        const child = readLogicalProperty(value, key)
+        if (isTracked(child) && reachesProjected(child, target, visited)) {
             return true
         }
     }
@@ -455,9 +455,9 @@ function waitForSettlement(node) {
     return counter.settlementPromise
 }
 
-function copyCounters(source, copy, inheritedImportContext = undefined) {
+function copyCounters(source, copy) {
     if (!getRefCounter(source)) return
-    commitRefIndex(copy, inheritedImportContext)
+    commitRefIndex(copy)
 }
 
 module.exports = {

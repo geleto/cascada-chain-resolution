@@ -69,7 +69,7 @@ describe("subtree counters", () => {
         expect(failure.message).to.be("Cannot assign to non-writable property")
         expect(root.value).to.be(pending.promise)
         expect(metaOf(root).mirrors.value).to.be(mirror)
-        expect(metaOf(replacement).importPrepared).to.be(undefined)
+        expect(getRefCounter(replacement)).to.be(undefined)
         expectCounts(root, 1, 0)
         verifyRefCounts(root)
     })

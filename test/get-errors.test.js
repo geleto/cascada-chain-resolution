@@ -52,16 +52,13 @@ describe("getErrors", () => {
         const chain = new Chain(left)
 
         const errors = getErrors(chain, [])
-        const cycleError = metaOf(left).cycleErrors.right
+        const cycleError = metaOf(right).cycleErrors.left
 
         expect(cycleError instanceof Error).to.be(true)
-        expectErrors(errors, [siblingError, cycleError])
-        expect(errors.includes(hiddenError)).to.be(false)
+        expectErrors(errors, [siblingError, hiddenError, cycleError])
         expect(hasError(chain, [])).to.be(true)
-        expectErrors(getErrors(chain, ["right"]), [cycleError])
-        expect(getErrors(new Chain(right), []).includes(
-            metaOf(right).cycleErrors.left,
-        )).to.be(true)
+        expectErrors(getErrors(chain, ["right"]), [hiddenError, cycleError])
+        expectErrors(getErrors(new Chain(right), []), [hiddenError, cycleError])
     })
 
     it("returns immediate path results synchronously", () => {
@@ -197,7 +194,7 @@ describe("getErrors", () => {
         verifyRefCounts(branch)
     })
 
-    it("reuses recursively marked imported descendants across promise barriers", async () => {
+    it("reuses imported identities across promise barriers", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const child = { pending: pending.promise }
@@ -208,12 +205,13 @@ describe("getErrors", () => {
         const result = getErrors(new Chain(root), ["branch"])
         // Lazy import creates the mirror at indexing; the query is the second consumer.
         expect(registrations()).to.be(2)
-        expect(metaOf(branch).shared).to.be(true)
-        expect(metaOf(child).shared).to.be(true)
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(metaOf(child).shared).to.be(undefined)
 
-        delayed.resolve(child)
+        delayed.resolve({ repeated: child })
         await flushMicrotasks()
         expect(registrations()).to.be(2)
+        expect(metaOf(child).shared).to.be(undefined)
 
         pending.reject("bad")
         const errors = await result
@@ -225,7 +223,8 @@ describe("getErrors", () => {
     it("walks imported DAG identities once instead of once per path", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
-        let branch = { pending: pending.promise }
+        const leaf = { pending: pending.promise }
+        let branch = leaf
         for (let i = 0; i < 10; i++) {
             branch = { left: branch, right: branch }
         }
@@ -235,6 +234,7 @@ describe("getErrors", () => {
 
         // One mirror writeback and one error-query wait.
         expect(registrations()).to.be(2)
+        expect(metaOf(leaf).shared).to.be(true)
 
         pending.reject("diamond failure")
         const errors = await result

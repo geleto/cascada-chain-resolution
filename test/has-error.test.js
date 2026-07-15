@@ -502,7 +502,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("reuses a marked-node visit across promise barriers", async () => {
+    it("reuses a node visit across promise barriers", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const shared = { pending: pending.promise }

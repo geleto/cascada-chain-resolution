@@ -58,7 +58,7 @@ function createPromiseMirror(
     promise,
     forkSourceMirror = null,
     markResolvedValueShared = false,
-    importContext = undefined,
+    importBoundary = undefined,
     externalHolder = false,
     install = true,
 ) {
@@ -72,7 +72,7 @@ function createPromiseMirror(
         settled: false,
         failedDrain: false,
         cycleError: undefined,
-        importContext,
+        importBoundary,
         externalHolder,
     }
     if (install) installPromiseMirror(node, key, mirror)
@@ -95,7 +95,7 @@ function createAssignedPromiseMirror(node, key, promise) {
 }
 
 // DISCOVERY: the physical Promise already occupies the imported/raw property.
-function getOrCreatePromiseMirror(node, key, promise, importContext = undefined) {
+function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined) {
     const existing = getPromiseMirror(node, key)
     if (existing?.promise === promise) return existing
     return createPromiseMirror(
@@ -104,8 +104,8 @@ function getOrCreatePromiseMirror(node, key, promise, importContext = undefined)
         promise,
         null,
         false,
-        importContext,
-        importContext !== undefined,
+        importBoundary,
+        importBoundary !== undefined,
     )
 }
 
@@ -117,13 +117,13 @@ function forkPromiseMirror(
     key,
     promise,
     markResolvedValueShared,
-    importContext,
+    importBoundary,
 ) {
     const forkSourceMirror = getOrCreatePromiseMirror(
         source,
         key,
         promise,
-        importContext,
+        importBoundary,
     )
     return createPromiseMirror(
         copy,
@@ -131,7 +131,7 @@ function forkPromiseMirror(
         promise,
         forkSourceMirror,
         markResolvedValueShared,
-        importContext,
+        importBoundary,
     )
 }
 

@@ -111,7 +111,7 @@ describe("normalize", () => {
 
         const result = normalize(new Chain(root), ["branch"])
 
-        expect(metaOf(root).cycleErrors.branch instanceof Error).to.be(true)
+        expect(metaOf(branch).cycleErrors.back instanceof Error).to.be(true)
         expect(getRefCounter(branch)).not.to.be(undefined)
         expect(result instanceof Error).to.be(true)
         expect(result.message).to.be("normalize: branch contains errors")
@@ -177,7 +177,8 @@ describe("normalize", () => {
         const value = normalize(new Chain(root), ["branch"], false)
 
         expect(value).to.be(branch)
-        expect(metaOf(branch).importContext).to.be("valid normalize import")
+        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).importBoundary.errorContext).to.be("valid normalize import")
     })
 
     it("protects fast-path results from already-issued suspended writes", async () => {
@@ -674,7 +675,8 @@ describe("normalize", () => {
         expect(value).to.be(branch)
         expect(hasError(new Chain(root), ["branch"])).to.be(true)
         expect(metaOf(branch).shared).to.be(true)
-        expect(metaOf(branch).importContext).to.be("normalize import")
+        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).importBoundary.errorContext).to.be("normalize import")
         expect(getRefCounter(branch).errorCount).to.be(1)
     })
 

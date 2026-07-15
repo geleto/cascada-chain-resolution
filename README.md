@@ -30,7 +30,9 @@ Every object or array here, at any depth, is a **node**. A node together with ev
 
 Cascada can trust values created by its own compiler. A new object has one owner. If it is read into another variable or stored somewhere else, that read marks it shared; a later write then copies only the changed path. Even `a.prop = a` does not create a self-cycle: the right-hand side is read first, so `prop` receives the value of `a` from before the property was added.
 
-JavaScript values brought in from outside Cascada cannot be assumed to follow those rules. The same object may appear under several properties, and an object may point back to itself. Every external value therefore passes through `import`, which marks the boundary as outside data but does not immediately search the whole graph. Ordinary reads and writes stay cheap. The deeper alias and cycle work is delayed until `hasError`, `getErrors`, or `normalize` first needs exact information about that branch.
+JavaScript values brought in from outside Cascada cannot be assumed to follow those rules. The same object may appear under several properties, and an object may point back to itself. Every external value therefore passes through `import`, which records the imported root and its error context but does not immediately search the graph. Ordinary reads and writes stay cheap. The alias and cycle work is delayed until `hasError`, `getErrors`, or `normalize` first needs exact information anywhere inside that boundary.
+
+That first whole-branch operation starts from the recorded import root, even if it was requested for a nested path. A depth-first walk visits each object once; a repeated object is an alias, while a property pointing back into the current path is recorded as a cycle cut. Starting from one stable root keeps the result independent of which nested path happened to trigger preparation. A branch extracted from the import, reused by copy-on-write, or produced by an imported promise becomes a new boundary rooted at that independently used branch.
 
 The imported JavaScript object is never rewritten. Cascada keeps settled promise values and cycle diagnostics in private metadata beside it. A normal path read or write still sees the original logical value. A cycle Error is diagnostic rather than poisoning: `hasError` may report it even though `normalize` preserves the raw aliases and cycles.
 
@@ -159,7 +161,7 @@ A few notes, deliberately brief:
 
 - For ordinary copy-on-write, one mark at the top of a shared branch is enough: a write walking downward remembers "I'm inside a shared branch."
 - A pending promise can't be marked (its value hasn't arrived), so the runtime attaches one extra step to it: *when you resolve, mark whatever arrived.*
-- The root of `import`ed data is marked shared immediately. Descendant marks are added lazily only when a whole-branch operation needs them. We never write into someone else's objects; changing imported data always copies.
+- The root of `import`ed data is marked shared immediately. A descendant gets its own rooted boundary when extraction, COW reuse, or promise settlement makes it independently usable. Lazy preparation marks only identities reached by more than one imported path; unique descendants rely on the inherited shared branch. We never write into someone else's objects; changing imported data always copies.
 - Frozen, sealed, and otherwise non-extensible nodes are implicitly shared. Writes COW them, while whole-branch queries index them through WeakMap metadata just like extensible nodes.
 - If an imported property contains a promise, the host property remains that same promise after settlement. Its mirror holds the logical settled value seen by Cascada.
 - If a copied node has a property still waiting on a promise, the copy gets its own mirror entry for it - from that moment the two trees receive the value independently and can diverge.
@@ -202,6 +204,10 @@ All the bookkeeping above - the shared flag, mirrors, counters, and imported-pro
 ```js
 {
   shared: true,              // the copy-on-write flag, absent until set
+  importBoundary: {          // present on a direct imported boundary
+    root,
+    errorContext,
+  },
   mirrors: {                 // one entry per promise-holding property -
     db: { promise, currentValue, cycleError, settled, pendingConsumerCount },
   },
