@@ -14,7 +14,7 @@ function createMeta() {
     return {
         shared: false,
         mirrors: null,
-        edgeMarks: null,
+        cycleErrors: null,
         promiseCount: 0,
         errorCount: 0,
         settlementPromise: undefined,
@@ -89,31 +89,31 @@ function nodeImportContext(node, inherited) {
     return own === undefined ? inherited : own
 }
 
-function getEdgeMark(node, key) {
-    return metaOf(node)?.edgeMarks?.[key]
+function getCycleError(node, key) {
+    return metaOf(node)?.cycleErrors?.[key]
 }
 
-// Each marked edge stores its attributed cycle Error directly.
-function setEdgeMark(node, key, edgeMark) {
+// Each cycle cut stores its attributed Error directly on the owner/key placement.
+function setCycleError(node, key, cycleError) {
     const meta = ensureMeta(node)
-    meta.edgeMarks ??= Object.create(null)
-    meta.edgeMarks[key] = edgeMark
+    meta.cycleErrors ??= Object.create(null)
+    meta.cycleErrors[key] = cycleError
 }
 
-function clearEdgeMark(node, key) {
+function clearCycleError(node, key) {
     const meta = metaOf(node)
-    if (meta?.edgeMarks) delete meta.edgeMarks[key]
+    if (meta?.cycleErrors) delete meta.cycleErrors[key]
 }
 
 module.exports = {
-    clearEdgeMark,
+    clearCycleError,
     ensureMeta,
-    getEdgeMark,
+    getCycleError,
     hasSharedMark,
     markImported,
     markShared,
     metaOf,
     nodeImportContext,
-    setEdgeMark,
+    setCycleError,
     STORE_META_IN_WEAKMAP,
 }

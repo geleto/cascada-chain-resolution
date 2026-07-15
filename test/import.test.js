@@ -248,9 +248,9 @@ describe("import", () => {
 
         expect(hasError(new Chain(left), [])).to.be(true)
 
-        const leftError = metaOf(left).edgeMarks.right
-        const rightError = metaOf(right).edgeMarks.left
-        const selfError = metaOf(right).edgeMarks.self
+        const leftError = metaOf(left).cycleErrors.right
+        const rightError = metaOf(right).cycleErrors.left
+        const selfError = metaOf(right).cycleErrors.self
         expect(leftError.message).to.be(
             'Cyclic property "right" (imported at: interlocking SCC)',
         )
@@ -258,10 +258,10 @@ describe("import", () => {
         expect(selfError).not.to.be(leftError)
         expect(selfError).not.to.be(rightError)
         expect(getErrors(new Chain(right), []).includes(rightError)).to.be(true)
-        expect(metaOf(left).edgeMarks.right).to.be(leftError)
+        expect(metaOf(left).cycleErrors.right).to.be(leftError)
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
-        expect(metaOf(left).edgeMarks.right).to.be(leftError)
+        expect(metaOf(left).cycleErrors.right).to.be(leftError)
         expectCounts(left, 0, 1)
         expectCounts(right, 0, 2)
         expectCounts(wrapper, 0, 1)
@@ -275,8 +275,8 @@ describe("import", () => {
         importValue(batchParent, "batch cycle")
         buildRefIndex(batchParent)
 
-        expect(metaOf(batchParent).edgeMarks.child instanceof Error).to.be(true)
-        expect(metaOf(batchChild).edgeMarks.back instanceof Error).to.be(true)
+        expect(metaOf(batchParent).cycleErrors.child instanceof Error).to.be(true)
+        expect(metaOf(batchChild).cycleErrors.back instanceof Error).to.be(true)
 
         const incrementalParent = {}
         const incrementalChild = importValue(
@@ -286,19 +286,19 @@ describe("import", () => {
         buildRefIndex(incrementalParent)
         assignPath(new Chain(incrementalParent), ["child"], incrementalChild)
 
-        expect(metaOf(incrementalParent).edgeMarks.child instanceof Error).to.be(true)
-        expect(metaOf(incrementalChild).edgeMarks).to.be(null)
+        expect(metaOf(incrementalParent).cycleErrors.child instanceof Error).to.be(true)
+        expect(metaOf(incrementalChild).cycleErrors).to.be(null)
         expect(incrementalParent.child).to.be(incrementalChild)
         expect(incrementalChild.back).to.be(incrementalParent)
         expectCounts(incrementalParent, 0, 1)
         verifyRefCounts(incrementalParent, incrementalChild)
     })
 
-    it("commits cycle-mark replacement, clearing, and deletion exactly once", () => {
+    it("commits cycle-Error replacement, clearing, and deletion exactly once", () => {
         const owner = {}
         const ancestor = { left: owner, right: owner }
-        const firstCycle = importValue({ back: owner }, "first mark transition")
-        const secondCycle = importValue({ back: owner }, "second mark transition")
+        const firstCycle = importValue({ back: owner }, "first cycle transition")
+        const secondCycle = importValue({ back: owner }, "second cycle transition")
         const clean = { clean: true }
         buildRefIndex(ancestor)
         const replace = value => commitEdgeTransition(
@@ -309,36 +309,36 @@ describe("import", () => {
         )
 
         replace(firstCycle)
-        const firstMark = metaOf(owner).edgeMarks.value
-        expect(firstMark instanceof Error).to.be(true)
+        const firstCycleError = metaOf(owner).cycleErrors.value
+        expect(firstCycleError instanceof Error).to.be(true)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
         verifyRefCounts(ancestor, owner, firstCycle)
 
         replace(secondCycle)
-        const secondMark = metaOf(owner).edgeMarks.value
-        expect(secondMark instanceof Error).to.be(true)
-        expect(secondMark).not.to.be(firstMark)
+        const secondCycleError = metaOf(owner).cycleErrors.value
+        expect(secondCycleError instanceof Error).to.be(true)
+        expect(secondCycleError).not.to.be(firstCycleError)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
         verifyRefCounts(ancestor, owner, firstCycle, secondCycle)
 
         replace(clean)
-        expect(metaOf(owner).edgeMarks.value).to.be(undefined)
+        expect(metaOf(owner).cycleErrors.value).to.be(undefined)
         expectCounts(owner, 0, 0)
         expectCounts(ancestor, 0, 0)
         expect(getRefCounter(clean).parents.get(owner)).to.be(1)
         verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
 
         replace(firstCycle)
-        expect(metaOf(owner).edgeMarks.value instanceof Error).to.be(true)
+        expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
         expectCounts(owner, 0, 1)
         expectCounts(ancestor, 0, 2)
         expect(getRefCounter(clean).parents.has(owner)).to.be(false)
         verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
 
         deleteEdge(owner, "value")
-        expect(metaOf(owner).edgeMarks.value).to.be(undefined)
+        expect(metaOf(owner).cycleErrors.value).to.be(undefined)
         expectCounts(owner, 0, 0)
         expectCounts(ancestor, 0, 0)
         verifyRefCounts(ancestor, owner, firstCycle, secondCycle, clean)
@@ -352,7 +352,7 @@ describe("import", () => {
 
         buildRefIndex(frozen)
 
-        expect(metaOf(frozen).edgeMarks.self.message).to.be(
+        expect(metaOf(frozen).cycleErrors.self.message).to.be(
             'Cyclic property "self" (imported at: frozen cycle)',
         )
         expectCounts(frozen, 0, 1)
@@ -360,7 +360,7 @@ describe("import", () => {
         verifyRefCounts(frozen)
     })
 
-    it("propagates descendant cycle markers through frozen imports", () => {
+    it("propagates descendant cycle Errors through frozen imports", () => {
         const child = {}
         child.self = child
         const root = Object.freeze({ child })
@@ -615,13 +615,13 @@ describe("import", () => {
         importValue(root, "proto cycle")
 
         buildRefIndex(root)
-        const edgeError = metaOf(root).edgeMarks.__proto__
+        const cycleError = metaOf(root).cycleErrors.__proto__
 
-        expect(edgeError.message).to.be(
+        expect(cycleError.message).to.be(
             'Cyclic property "__proto__" (imported at: proto cycle)',
         )
         expect(hasError(new Chain(root), [])).to.be(true)
-        expect(getErrors(new Chain(root), [])).to.eql([edgeError])
+        expect(getErrors(new Chain(root), [])).to.eql([cycleError])
         expect(normalize(new Chain(root), [])).to.be(root)
         expect(root.__proto__).to.be(root)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
@@ -653,7 +653,7 @@ describe("import", () => {
         expect(await found).to.be(false)
         expect(await collected).to.eql([])
         expect(await normalized).to.be(resolved)
-        expect(mirror.edgeMark).to.be(undefined)
+        expect(mirror.cycleError).to.be(undefined)
         expect(lookupPath(new Chain(resolved), ["__proto__"], false)).to.be("hidden")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, resolved)
@@ -880,7 +880,7 @@ describe("import", () => {
 
         expect(root.value).to.be("fixed")
         expect(mirror.currentValue).to.be(errorValue)
-        expect(mirror.edgeMark).to.be(undefined)
+        expect(mirror.cycleError).to.be(undefined)
         expectCounts(errorValue, 0, 1)
         expect(getErrors(new Chain(errorValue), [])[0]).to.be(errorValue.bad)
         expectCounts(root, 0, 0)
@@ -905,7 +905,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value).to.be(deferredValue.promise)
-        expect(metaOf(root.nested).mirrors.value.edgeMark.message).to.be(
+        expect(metaOf(root.nested).mirrors.value.cycleError.message).to.be(
             'Cyclic property "value" (imported at: writeback back-edge)',
         )
         expectCounts(root, 1, 1)

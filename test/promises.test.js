@@ -2,7 +2,7 @@ const path = require("path")
 const { spawnSync } = require("child_process")
 const {
     createAssignedPromiseMirror,
-    getCommittedEdgeMark,
+    getCommittedCycleError,
     onPromiseMirrorResolve,
 } = require("../src/promise-mirrors")
 const {
@@ -345,41 +345,41 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(mirror.edgeMark.message).to.be(
+        expect(mirror.cycleError.message).to.be(
             'Cyclic property "value" (imported at: self-resolving drain)',
         )
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("keeps a draining mirror mark private until its final edge commit", async () => {
+    it("keeps a draining mirror cycle Error private until final commit", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
         importValue(root, "private draining mark")
         buildRefIndex(root)
         const mirror = metaOf(root).mirrors.value
-        let privateMark
-        let committedMark
+        let privateCycleError
+        let committedCycleError
         let countsDuringDrain
 
         onPromiseMirrorResolve(mirror, () => {
-            privateMark = mirror.edgeMark
-            committedMark = getCommittedEdgeMark(root, "value")
+            privateCycleError = mirror.cycleError
+            committedCycleError = getCommittedCycleError(root, "value")
             countsDuringDrain = getRefCounts(root)
         })
 
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(privateMark instanceof Error).to.be(true)
-        expect(committedMark).to.be(undefined)
+        expect(privateCycleError instanceof Error).to.be(true)
+        expect(committedCycleError).to.be(undefined)
         expect(countsDuringDrain).to.eql([1, 0])
-        expect(getCommittedEdgeMark(root, "value")).to.be(privateMark)
+        expect(getCommittedCycleError(root, "value")).to.be(privateCycleError)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("moves a committed edge mark exclusively into its replacement mirror", () => {
+    it("moves a committed cycle Error exclusively into its replacement mirror", () => {
         const owner = {}
         const cyclic = importValue({ back: owner }, "marked mirror replacement")
         const pending = deferred()
@@ -391,7 +391,7 @@ describe("promise mirrors and lookupPath", () => {
             null,
             prepareEdgeTransition(owner, "value", null, cyclic),
         )
-        expect(metaOf(owner).edgeMarks.value instanceof Error).to.be(true)
+        expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
 
         const mirror = createAssignedPromiseMirror(
             owner,
@@ -407,8 +407,8 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(metaOf(owner).mirrors.value).to.be(mirror)
         expect(mirror.promise).to.be(pending.promise)
-        expect(mirror.edgeMark).to.be(undefined)
-        expect(metaOf(owner).edgeMarks?.value).to.be(undefined)
+        expect(mirror.cycleError).to.be(undefined)
+        expect(metaOf(owner).cycleErrors?.value).to.be(undefined)
         expectCounts(owner, 1, 0)
         verifyRefCounts(owner, cyclic)
     })
@@ -1245,7 +1245,7 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("marks a cycle closed by a second promise without replacing it", async () => {
+    it("cuts a cycle closed by a second promise without replacing it", async () => {
         const first = deferred()
         const second = deferred()
         const root = {

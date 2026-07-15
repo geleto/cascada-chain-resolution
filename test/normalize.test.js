@@ -34,7 +34,7 @@ describe("normalize", () => {
         expect(copy.back.value).to.be(copy)
         expect(mirror.pendingConsumerCount).to.be(0)
         expect(mirror.settled).to.be(true)
-        expect(mirror.edgeMark instanceof Error).to.be(true)
+        expect(mirror.cycleError instanceof Error).to.be(true)
         verifyRefCounts(root)
     })
 
@@ -110,7 +110,7 @@ describe("normalize", () => {
 
         const result = normalize(new Chain(root), ["branch"])
 
-        expect(metaOf(root).edgeMarks.branch instanceof Error).to.be(true)
+        expect(metaOf(root).cycleErrors.branch instanceof Error).to.be(true)
         expect(getRefCounter(branch)).not.to.be(undefined)
         expect(result instanceof Error).to.be(true)
         expect(result.message).to.be("normalize: branch contains errors")

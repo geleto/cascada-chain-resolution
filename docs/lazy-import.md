@@ -28,7 +28,7 @@ called only when exact counters are required. It handles an imported region in
 two stages:
 
 1. Discover aliases and cycles without publishing metadata.
-2. Commit shared marks, promise mirrors, cycle markers, and the prepared flag.
+2. Commit shared marks, promise mirrors, cycle Errors, and the prepared flag.
 
 The discovery table interns each tracked identity once but records every
 owner/key edge. This preserves alias multiplicity while avoiding repeated
@@ -59,15 +59,15 @@ cycle. If no back-edge is seen, no Tarjan state is allocated. Otherwise one
 Tarjan pass runs over the already-discovered records.
 
 For a cyclic SCC, every intra-SCC owner/key placement receives its own stable
-attributed cycle Error as its edge mark. The raw property is not changed.
+attributed cycle Error. The raw property is not changed.
 The projected counter graph cuts that edge and counts it as `[0, 1]`, so parent
 propagation remains acyclic. Lookup and mutation continue through the raw value,
-while `hasError` and `getErrors` report the marker.
+while `hasError` and `getErrors` report the Error.
 
 An edge added later is handled incrementally. Candidate preparation first
 finds intrinsic imported cycles. Refcounting then asks whether the proposed
 owner/key edge can reach its owner through the projected graph. If so, only
-that known closing edge gets a cycle marker. Existing cycle cuts are not crossed.
+that known closing edge gets a cycle Error. Existing cycle cuts are not crossed.
 
 ## Enumerable `__proto__`
 

@@ -41,7 +41,7 @@ describe("getErrors", () => {
         }
     })
 
-    it("stops at cycle markers while collecting ordinary siblings", () => {
+    it("stops at cycle cuts while collecting ordinary sibling Errors", () => {
         const siblingError = new Error("sibling")
         const hiddenError = new Error("hidden")
         const left = { siblingError }
@@ -52,15 +52,15 @@ describe("getErrors", () => {
         const chain = new Chain(left)
 
         const errors = getErrors(chain, [])
-        const cycleMark = metaOf(left).edgeMarks.right
+        const cycleError = metaOf(left).cycleErrors.right
 
-        expect(cycleMark instanceof Error).to.be(true)
-        expectErrors(errors, [siblingError, cycleMark])
+        expect(cycleError instanceof Error).to.be(true)
+        expectErrors(errors, [siblingError, cycleError])
         expect(errors.includes(hiddenError)).to.be(false)
         expect(hasError(chain, [])).to.be(true)
-        expectErrors(getErrors(chain, ["right"]), [cycleMark])
+        expectErrors(getErrors(chain, ["right"]), [cycleError])
         expect(getErrors(new Chain(right), []).includes(
-            metaOf(right).edgeMarks.left,
+            metaOf(right).cycleErrors.left,
         )).to.be(true)
     })
 

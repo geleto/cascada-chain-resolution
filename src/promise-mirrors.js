@@ -1,7 +1,7 @@
 const { onValueResolveWithCompletion } = require("./helpers")
 const {
     ensureMeta,
-    getEdgeMark,
+    getCycleError,
     metaOf,
 } = require("./meta")
 const { reportFatalError } = require("./error")
@@ -31,13 +31,13 @@ function getPromiseMirror(node, key) {
 }
 
 // A mirrored placement stores its cycle Error only on the mirror; installation
-// and removal keep meta.edgeMarks[key] absent. Counters see only attached state,
+// and removal keep meta.cycleErrors[key] absent. Counters see only attached state,
 // so a draining mirror's private Error stays hidden until every consumer commits.
-function getCommittedEdgeMark(node, key) {
+function getCommittedCycleError(node, key) {
     const mirror = getPromiseMirror(node, key)
     return mirror
-        ? (mirror.settled ? mirror.edgeMark : undefined)
-        : getEdgeMark(node, key)
+        ? (mirror.settled ? mirror.cycleError : undefined)
+        : getCycleError(node, key)
 }
 
 function getRequiredPromiseMirror(node, key, promise) {
@@ -71,7 +71,7 @@ function createPromiseMirror(
         pendingConsumerCount: 0,
         settled: false,
         failedDrain: false,
-        edgeMark: undefined,
+        cycleError: undefined,
         importContext,
         externalHolder,
     }
@@ -174,7 +174,7 @@ function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
     const prepared = prepareMirrorValue(mirror, value, markResolvedValueShared)
     mirror.prepared = prepared
     mirror.currentValue = prepared.value
-    mirror.edgeMark = prepared.edgeMark
+    mirror.cycleError = prepared.cycleError
 }
 
 function readLogicalProperty(node, key) {
@@ -187,7 +187,7 @@ module.exports = {
     clearPromiseMirror,
     createAssignedPromiseMirror,
     forkPromiseMirror,
-    getCommittedEdgeMark,
+    getCommittedCycleError,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,

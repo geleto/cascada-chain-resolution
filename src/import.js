@@ -4,7 +4,7 @@ const {
     onValueResolve,
 } = require("./helpers")
 const {
-    cycleError,
+    createCycleError,
     reportFatalError,
 } = require("./error")
 const {
@@ -14,7 +14,7 @@ const {
     nodeImportContext,
 } = require("./meta")
 const {
-    getCommittedEdgeMark,
+    getCommittedCycleError,
     getPromiseMirror,
     getOrCreatePromiseMirror,
     readLogicalProperty,
@@ -53,18 +53,18 @@ function prepareImportedData(
     let needsScc = false
     discover(value, rootContext)
 
-    if (needsScc) markCycleEdges(records)
+    if (needsScc) stageCycleErrors(records)
     return {
         records,
-        commit(commitEdgeMark) {
+        commit(commitCycleError) {
             for (const record of records.values()) {
                 const meta = ensureMeta(record.node)
                 meta.shared = true
                 meta.importPrepared = true
-                // Mirrors are born before marks are published so every committed
+                // Mirrors are born before cycle Errors are published so every committed
                 // placement has its final storage owner when bookkeeping runs.
                 for (const edge of record.edges) {
-                    if (edge.edgeMark || !isPromise(edge.value) ||
+                    if (edge.cycleError || !isPromise(edge.value) ||
                         edge.mirror === excludedMirror) continue
                     let mirror = edge.mirror
                     if (mirror?.promise === edge.value) {
@@ -84,8 +84,8 @@ function prepareImportedData(
 
             for (const record of records.values()) {
                 for (const edge of record.edges) {
-                    if (getCommittedEdgeMark(record.node, edge.key) !== edge.edgeMark) {
-                        commitEdgeMark(record.node, edge.key, edge.edgeMark)
+                    if (getCommittedCycleError(record.node, edge.key) !== edge.cycleError) {
+                        commitCycleError(record.node, edge.key, edge.cycleError)
                     }
                 }
             }
@@ -117,10 +117,10 @@ function prepareImportedData(
                 key,
                 value: child,
                 mirror,
-                edgeMark: getCommittedEdgeMark(node, key),
+                cycleError: getCommittedCycleError(node, key),
             }
             record.edges.push(edge)
-            if (edge.edgeMark || isPromise(child) || !isTracked(child)) continue
+            if (edge.cycleError || isPromise(child) || !isTracked(child)) continue
 
             discover(child, context)
         }
@@ -128,7 +128,7 @@ function prepareImportedData(
     }
 }
 
-function markCycleEdges(records) {
+function stageCycleErrors(records) {
     let nextIndex = 0
     const stack = []
 
@@ -144,7 +144,7 @@ function markCycleEdges(records) {
         record.onStack = true
 
         for (const edge of record.edges) {
-            if (edge.edgeMark) continue
+            if (edge.cycleError) continue
             const child = records.get(edge.value)
             if (!child) continue
             if (child.index === undefined) {
@@ -166,14 +166,14 @@ function markCycleEdges(records) {
 
         const members = new Set(component.map(item => item.node))
         const cyclic = component.length > 1 || component[0].edges.some(
-            edge => !edge.edgeMark && edge.value === component[0].node,
+            edge => !edge.cycleError && edge.value === component[0].node,
         )
         if (!cyclic) return
 
         for (const ownerRecord of component) {
             for (const edge of ownerRecord.edges) {
-                if (edge.edgeMark || !members.has(edge.value)) continue
-                edge.edgeMark = cycleError(edge.key, ownerRecord.context)
+                if (edge.cycleError || !members.has(edge.value)) continue
+                edge.cycleError = createCycleError(edge.key, ownerRecord.context)
             }
         }
     }

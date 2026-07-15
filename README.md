@@ -203,9 +203,9 @@ All the bookkeeping above - the shared flag, mirrors, counters, and imported-pro
 {
   shared: false,             // the copy-on-write flag
   mirrors: {                 // one entry per promise-holding property -
-    db: { promise, currentValue, edgeMark, settled, pendingConsumerCount },
+    db: { promise, currentValue, cycleError, settled, pendingConsumerCount },
   },
-  edgeMarks: {               // projected cuts, when present
+  cycleErrors: {             // projected cuts, when present
     self: cycleError,
   },
   promiseCount: 0,           // the counters - maintained once the branch

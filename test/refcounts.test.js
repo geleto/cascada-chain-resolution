@@ -288,10 +288,10 @@ describe("subtree counters", () => {
 
         buildRefIndex(wrapper)
 
-        expect(metaOf(wrapper).edgeMarks.child.message).to.be(
+        expect(metaOf(wrapper).cycleErrors.child.message).to.be(
             'Cyclic property "child" (imported at: nested imported back-reference)',
         )
-        expect(metaOf(child).edgeMarks).to.be(null)
+        expect(metaOf(child).cycleErrors).to.be(null)
         expectCounts(wrapper, 1, 1)
         verifyRefCounts(wrapper, child)
 
@@ -518,7 +518,7 @@ describe("subtree counters", () => {
 
         expect(root.value).to.be("fixed")
         expect(mirror.currentValue).to.be(root)
-        expect(mirror.edgeMark.message).to.be(
+        expect(mirror.cycleError.message).to.be(
             'Cyclic property "value" (imported at: revoked back-edge)',
         )
         expectCounts(root, 0, 0)

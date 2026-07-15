@@ -19,7 +19,7 @@ All per-node runtime state lives in the single META record:
 - `parents`: reverse indexed edges with multiplicity. Its existence is the
   ref-indexed marker; an empty Map is an indexed root.
 - `mirrors`: promise placements and their private logical state.
-- `edgeMarks`: property-level cycle Errors. Each one cuts its raw edge from the
+- `cycleErrors`: property-level cycle Errors. Each one cuts its raw edge from the
   projected counter graph while leaving that edge visible to path operations
   and cycle-aware normalization.
 - `settlementPromise`, `settlementResolve`,
@@ -36,19 +36,19 @@ Counts are placement-sensitive. `getPropertyRefCounts(parent, key)` applies
 these rules in order:
 
 - An unresolved or draining live mirror contributes `[1, 0]`.
-- A settled cycle edge mark contributes `[0, 1]`.
+- A settled cycle Error contributes `[0, 1]`.
 - An ordinary Promise contributes `[1, 0]`.
 - An ordinary Error contributes `[0, 1]`.
 - A tracked child contributes its indexed subtree totals.
 - A primitive contributes `[0, 0]`.
 
 `getCountedChild(parent, key)` returns the child that owns a reverse parent edge,
-or nothing for a pending mirror or marked cut. Code that changes a property
+or nothing for a pending mirror or cycle cut. Code that changes a property
 must use these placement helpers rather than inspect the physical slot.
 
-`getCommittedEdgeMark(parent, key)` reads only attached state, so a draining
-mirror remains `[1,0]`. `getResolvedPlacementMark(placement)` lets an operation
-that captured a mirror see its private prepared mark. These views are distinct
+`getCommittedCycleError(parent, key)` reads only attached state, so a draining
+mirror remains `[1,0]`. `getResolvedCycleError(placement)` lets an operation
+that captured a mirror see its private prepared Error. These views are distinct
 because private FIFO state must not leak into parent counters before drain.
 
 Every ordinary tracked child below an indexed parent is itself indexed. A
@@ -81,24 +81,24 @@ multiplied accordingly. Cycle cuts never add reverse edges.
 Candidates are prepared before they enter the attached graph:
 
 - `prepareEdgeTransition(owner, key, mirror, candidate)` derives imported
-  preparation, markers, child indexing, and final counts without changing the
+  preparation, cycle Errors, child indexing, and final counts without changing the
   attached placement.
 - `commitEdgeTransition(owner, key, mirror, prepared)` installs that state.
 
-Every live assignment, deletion, changed edge mark, and successful mirror drain
+Every live assignment, deletion, changed cycle Error, and successful mirror drain
 then shares one synchronous commit primitive. It snapshots the old projected
 counts and child, performs the already-validated placement update, swaps the
 reverse edge, and propagates exactly one delta from explicitly supplied next
 counts. Revoked mirror state is private and bypasses this attached-edge commit.
 Descriptor constraints that could block assignment or deletion are validated
 before candidate preparation. The physical mutation then occurs before mirror
-or mark metadata changes, so a failed mutation leaves the previous attached
+or cycle-Error metadata changes, so a failed mutation leaves the previous attached
 edge unchanged. A fatal preparation likewise leaves it unchanged. A newly
 assigned Promise is installed immediately as a fresh mirror contributing
 `[1,0]`.
 
 `copyCounters` reconstructs an indexed COW copy from the copy's own logical
-placements. It never clones source totals, parent maps, or placement markers.
+placements. It never clones source totals, parent maps, or placement cycle Errors.
 
 ## Promise mirrors
 
@@ -128,9 +128,9 @@ External imported holders and holders that become non-extensible retain their
 physical Promise permanently; the mirror remains the authoritative logical
 placement.
 
-A mirrored placement stores its edge mark exclusively in `mirror.edgeMark`.
-Installing a mirror clears `meta.edgeMarks[key]`, and removing one clears both
-locations, so a stale metadata mark can never reappear after mirror removal.
+A mirrored placement stores its cycle Error exclusively in `mirror.cycleError`.
+Installing a mirror clears `meta.cycleErrors[key]`, and removing one clears both
+locations, so a stale cycle Error can never reappear after mirror removal.
 
 ## Delta propagation
 
@@ -138,7 +138,7 @@ locations, so a stale metadata mark can never reappear after mirror removal.
 recursively propagates the delta through every parent, multiplied by edge
 count. The projected parent graph is acyclic: trusted data is tree-shaped,
 imported aliases retain multiplicity, and every imported cycle is cut by a
-marker.
+cycle Error.
 
 When `promiseCount` falls to zero, normalize's settlement verification is
 queued once. The extra microtask lets FIFO jobs already registered on the same

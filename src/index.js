@@ -35,7 +35,7 @@ const {
     deleteEdge,
     getRefCounter,
     getRequiredRefCounter,
-    getResolvedPlacementMark,
+    getResolvedCycleError,
     prepareEdgeTransition,
     waitForSettlement,
 } = require("./refcounts")
@@ -54,7 +54,7 @@ const {
 const {
     createAssignedPromiseMirror,
     forkPromiseMirror,
-    getCommittedEdgeMark,
+    getCommittedCycleError,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,
@@ -252,13 +252,13 @@ function normalize(chain, path, sharedOwnership = true, plainCopy = false) {
 }
 
 function normalizeResolved(value, importContext, placement, sharedOwnership, plainCopy) {
-    let edgeMark = getResolvedPlacementMark(placement)
-    let terminalCycle = !!edgeMark
+    let cycleError = getResolvedCycleError(placement)
+    let terminalCycle = !!cycleError
     if (isError(value) || !isTracked(value)) return value
 
     buildRefIndex(value, importContext, placement)
-    edgeMark = getResolvedPlacementMark(placement)
-    terminalCycle ||= !!edgeMark
+    cycleError = getResolvedCycleError(placement)
+    terminalCycle ||= !!cycleError
 
     const counter = getRefCounter(value)
     if (!counter) {
@@ -338,8 +338,8 @@ function classifyProjectedErrors(value) {
         if (counter.errorCount === 0) return
 
         for (const key of Object.keys(node)) {
-            const edgeMark = getCommittedEdgeMark(node, key)
-            if (edgeMark) {
+            const cycleError = getCommittedCycleError(node, key)
+            if (cycleError) {
                 hasCycleError = true
                 continue
             }
@@ -424,12 +424,12 @@ function hasError(chain, path) {
 // Entry for the value reached by hasError's path resolution. This boundary must
 // build the index because its parent need not have been ref-indexed.
 function hasErrorAtPathValue(value, importContext, placement) {
-    if (getResolvedPlacementMark(placement)) return true
+    if (getResolvedCycleError(placement)) return true
     if (isError(value)) return true
     if (!isTracked(value)) return false
 
     buildRefIndex(value, importContext, placement)
-    if (getResolvedPlacementMark(placement)) return true
+    if (getResolvedCycleError(placement)) return true
 
     return hasErrorInIndexedBranch(value)
 }
@@ -462,7 +462,7 @@ function hasErrorInIndexedBranch(value) {
 
     function probeResolvedMirror(mirror) {
         const currentValue = mirror.currentValue
-        if (mirror.edgeMark || isError(currentValue)) {
+        if (mirror.cycleError || isError(currentValue)) {
             resolveError()
             return undefined
         }
@@ -498,9 +498,9 @@ function getErrors(chain, path) {
     })
 
     function collectErrorsAtPathValue(value, importContext, placement) {
-        let edgeMark = getResolvedPlacementMark(placement)
-        if (edgeMark) {
-            errors.add(edgeMark)
+        let cycleError = getResolvedCycleError(placement)
+        if (cycleError) {
+            errors.add(cycleError)
             return undefined
         }
         if (isError(value)) {
@@ -510,9 +510,9 @@ function getErrors(chain, path) {
         if (!isTracked(value)) return undefined
 
         buildRefIndex(value, importContext, placement)
-        edgeMark = getResolvedPlacementMark(placement)
-        if (edgeMark) {
-            errors.add(edgeMark)
+        cycleError = getResolvedCycleError(placement)
+        if (cycleError) {
+            errors.add(cycleError)
             return undefined
         }
 
@@ -524,8 +524,8 @@ function getErrors(chain, path) {
         return collectErrorSearchWaits(
             value,
             mirror => {
-                if (mirror.edgeMark) {
-                    errors.add(mirror.edgeMark)
+                if (mirror.cycleError) {
+                    errors.add(mirror.cycleError)
                     return undefined
                 }
                 if (isError(mirror.currentValue)) {
@@ -566,9 +566,9 @@ function collectErrorSearchWaits(
             (!errors || counter.errorCount === 0)) return
 
         for (const key of Object.keys(node)) {
-            const edgeMark = getCommittedEdgeMark(node, key)
-            if (edgeMark) {
-                if (errors) errors.add(edgeMark)
+            const cycleError = getCommittedCycleError(node, key)
+            if (cycleError) {
+                if (errors) errors.add(cycleError)
                 continue
             }
 

@@ -29,7 +29,7 @@ function validationError(message, importContext = undefined) {
     return new Error(`${message} (imported at: ${String(importContext)})`)
 }
 
-function cycleError(key, importContext) {
+function createCycleError(key, importContext) {
     return validationError(
         `Cyclic property "${String(key)}"`,
         importContext,
@@ -45,7 +45,7 @@ function errorFromRejection(reason) {
 }
 
 module.exports = {
-    cycleError,
+    createCycleError,
     errorFromRejection,
     pathAccessError,
     reportFatalError,
