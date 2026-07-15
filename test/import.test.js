@@ -136,6 +136,13 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
+    it("does not allocate metadata merely to share a clean non-extensible value", () => {
+        const value = Object.freeze({ x: 1 })
+
+        expect(lookupPath(new Chain(value), [])).to.be(value)
+        expect(metaOf(value)).to.be(undefined)
+    })
+
     it("marks only the boundary until counting prepares descendants", async () => {
         const outer = deferred()
         const inner = deferred()
@@ -291,10 +298,14 @@ describe("import", () => {
         const owner = {}
         const ancestor = { left: owner, right: owner }
         const cyclic = importValue({ back: owner }, "mark transition cycle")
-        const invalid = importValue(
-            Object.freeze({ bad: new Error("bad") }),
-            "mark transition invalid",
-        )
+        const invalid = {}
+        Object.defineProperty(invalid, "__proto__", {
+            value: { unsafe: true },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        importValue(invalid, "mark transition invalid")
         const clean = { clean: true }
         buildRefIndex(ancestor)
         const replace = value => commitEdgeTransition(
@@ -443,36 +454,87 @@ describe("import", () => {
         verifyRefCounts(repaired)
     })
 
-    it("rejects frozen imported subtrees only when counting", () => {
-        const frozenPromise = Object.freeze({ pending: Promise.resolve(1) })
-        const nestedFrozenPromise = Object.freeze({ nested: { pending: Promise.resolve(1) } })
-        const frozenError = Object.freeze({ error: new Error("bad") })
+    it("indexes promises and Errors inside non-extensible imports", async () => {
+        const firstPromise = Promise.resolve(1)
+        const nestedPromise = Promise.resolve(2)
+        const error = new Error("bad")
+        const frozenPromise = Object.freeze({ pending: firstPromise })
+        const nestedFrozenPromise = Object.freeze({
+            nested: Object.seal({ pending: nestedPromise }),
+        })
+        const frozenError = Object.preventExtensions({ error })
 
         expect(importValue(frozenPromise, "frozen promise")).to.be(frozenPromise)
         expect(importValue(nestedFrozenPromise, "nested frozen promise")).to.be(nestedFrozenPromise)
         expect(importValue(frozenError, "frozen error")).to.be(frozenError)
 
-        const promiseFailure = buildRefIndex(frozenPromise)
-        const nestedPromiseFailure = buildRefIndex(nestedFrozenPromise)
-        const errorFailure = buildRefIndex(frozenError)
+        expect(buildRefIndex(frozenPromise)).to.be(frozenPromise)
+        expect(buildRefIndex(nestedFrozenPromise)).to.be(nestedFrozenPromise)
+        expect(buildRefIndex(frozenError)).to.be(frozenError)
 
-        expect(promiseFailure instanceof Error).to.be(true)
-        expect(nestedPromiseFailure instanceof Error).to.be(true)
-        expect(errorFailure instanceof Error).to.be(true)
-        expect(promiseFailure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen promise)",
-        )
-        expect(nestedPromiseFailure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: nested frozen promise)",
-        )
-        expect(errorFailure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen error)",
-        )
+        expectCounts(frozenPromise, 1, 0)
+        expectCounts(nestedFrozenPromise, 1, 0)
+        expectCounts(nestedFrozenPromise.nested, 1, 0)
+        expectCounts(frozenError, 0, 1)
+        expect(metaOf(frozenPromise).mirrors.pending).not.to.be(undefined)
         expect(metaOf(frozenPromise).importContext).to.be("frozen promise")
-        expect(getRefCounter(frozenPromise)).to.be(undefined)
+
+        await flushMicrotasks()
+
+        expect(frozenPromise.pending).to.be(firstPromise)
+        expect(nestedFrozenPromise.nested.pending).to.be(nestedPromise)
+        expect(lookupPath(new Chain(frozenPromise), ["pending"], false)).to.be(1)
+        expect(lookupPath(new Chain(nestedFrozenPromise), ["nested", "pending"], false)).to.be(2)
+        expect(getErrors(new Chain(frozenError), [])[0]).to.be(error)
+        expectCounts(frozenPromise, 0, 0)
+        expectCounts(nestedFrozenPromise, 0, 0)
+        verifyRefCounts(frozenPromise, nestedFrozenPromise, frozenError)
     })
 
-    it("preserves the first imported validation failure", () => {
+    it("normalizes pending elements in a non-extensible array", async () => {
+        const first = deferred()
+        const second = deferred()
+        const nested = Object.seal({ pending: second.promise })
+        const array = Object.freeze([first.promise, nested])
+
+        importValue(array, "frozen array")
+        const normalized = normalize(new Chain(array), [], false, true)
+
+        expectCounts(array, 2, 0)
+        expectCounts(nested, 1, 0)
+
+        first.resolve({ x: 1 })
+        second.resolve(2)
+        const copy = await normalized
+
+        expect(copy).to.eql([{ x: 1 }, { pending: 2 }])
+        expect(array[0]).to.be(first.promise)
+        expect(nested.pending).to.be(second.promise)
+        expect(hasError(new Chain(array), [])).to.be(false)
+        expect(getErrors(new Chain(array), [])).to.eql([])
+        expectCounts(array, 0, 0)
+        verifyRefCounts(array)
+    })
+
+    it("counts rejection Errors behind frozen promise properties", async () => {
+        const pending = deferred()
+        const error = new Error("rejected frozen value")
+        const root = Object.freeze({ pending: pending.promise })
+
+        importValue(root, "frozen rejection")
+        const errors = getErrors(new Chain(root), [])
+        expectCounts(root, 1, 0)
+
+        pending.reject(error)
+        const result = await errors
+
+        expect(result).to.eql([error])
+        expect(root.pending).to.be(pending.promise)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("rejects __proto__ regardless of neighboring Promise order", () => {
         function invalidFrozenValue(protoFirst) {
             const value = {}
             const addProto = () => Object.defineProperty(value, "__proto__", {
@@ -499,7 +561,7 @@ describe("import", () => {
         }
     })
 
-    it("keeps invalid imported siblings as separate logical overlays", async () => {
+    it("keeps non-extensible imported siblings independent", async () => {
         const firstPromise = Promise.resolve(1)
         const secondError = new Error("bad")
         const first = Object.freeze({ clean: 1, pending: firstPromise })
@@ -509,9 +571,10 @@ describe("import", () => {
         const wrapper = { keep: true, first, second }
         const chain = new Chain(wrapper)
 
-        const errors = getErrors(chain, [])
+        const errors = await getErrors(chain, [])
 
-        expect(errors.length).to.be(2)
+        expect(errors.length).to.be(1)
+        expect(errors[0]).to.be(secondError)
         expect(wrapper.keep).to.be(true)
         expect(wrapper.first).to.be(first)
         expect(wrapper.second).to.be(second)
@@ -694,7 +757,7 @@ describe("import", () => {
         verifyRefCounts(root, next)
     })
 
-    it("reads frozen promise keys without mirrors or writeback", async () => {
+    it("reads frozen promise keys through mirrors without physical writeback", async () => {
         const deferredValue = deferred()
         const root = Object.freeze({ value: deferredValue.promise })
 
@@ -705,6 +768,7 @@ describe("import", () => {
 
         expect(value).to.eql({ x: 1 })
         expect(root.value).to.be(deferredValue.promise)
+        expect(metaOf(root).mirrors.value.settled).to.be(true)
 
         const chain = new Chain(value)
         assignPath(chain, ["x"], 2)
@@ -714,7 +778,7 @@ describe("import", () => {
         expect(next.x).to.be(2)
     })
 
-    it("repairs an invalid frozen import through COW deletion", async () => {
+    it("keeps a captured frozen promise query independent of later COW deletion", async () => {
         const pending = deferred()
         const frozen = Object.freeze({
             keep: true,
@@ -723,24 +787,23 @@ describe("import", () => {
         importValue(frozen, "repair frozen import")
         const chain = new Chain(frozen)
 
-        expect(hasError(chain, [])).to.be(true)
+        const captured = hasError(chain, [])
         deletePath(chain, ["invalid"])
         const repaired = chain._state.value
 
         expect(repaired).not.to.be(frozen)
         expect(repaired).to.eql({ keep: true })
-        expect(normalize(chain, [])).to.be(repaired)
         expect(hasError(chain, [])).to.be(false)
 
         pending.reject("detached")
-        await flushMicrotasks()
+        expect(await captured).to.be(true)
 
         expect(repaired).to.eql({ keep: true })
         expect(frozen.invalid).to.be(pending.promise)
         verifyRefCounts(repaired)
     })
 
-    it("copies frozen promise keys into mutable imported mirrors", async () => {
+    it("forks frozen promise keys into mutable mirrors", async () => {
         const deferredValue = deferred()
         const root = Object.freeze({
             value: deferredValue.promise,
@@ -760,14 +823,13 @@ describe("import", () => {
         expect(next).not.to.be(root)
         expect(root.value).to.be(deferredValue.promise)
         expect(typeof next.value.pending.then).to.be("function")
-        const errors = getErrors(new Chain(next), [])
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen fork)",
-        )
+        expect(await getErrors(new Chain(next), [])).to.eql([])
+        expect(lookupPath(new Chain(next), ["value", "pending"], false)).to.be(1)
+        expectCounts(next, 0, 0)
+        verifyRefCounts(next)
     })
 
-    it("represents invalid imported writebacks as counted edge Errors", async () => {
+    it("indexes non-extensible values exposed by imported writebacks", async () => {
         const deferredValue = deferred()
         const root = { nested: { value: deferredValue.promise } }
 
@@ -779,15 +841,13 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value).to.be(deferredValue.promise)
-        const errors = getErrors(new Chain(root), [])
-        expect(errors[0].message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: invalid writeback)",
-        )
-        expectCounts(root, 0, 1)
+        expect(await getErrors(new Chain(root), [])).to.eql([])
+        expect(lookupPath(new Chain(root), ["nested", "value", "pending"], false)).to.be(1)
+        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 
-    it("attributes invalid private values from revoked indexed mirrors", async () => {
+    it("indexes private non-extensible values from revoked mirrors", async () => {
         const pending = deferred()
         const invalid = Object.freeze({ bad: new Error("bad") })
         const root = { value: pending.promise }
@@ -803,10 +863,9 @@ describe("import", () => {
 
         expect(root.value).to.be("fixed")
         expect(mirror.currentValue).to.be(invalid)
-        expect(mirror.edgeMark.kind).to.be("invalid")
-        expect(mirror.edgeMark.error.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: revoked writeback)",
-        )
+        expect(mirror.edgeMark).to.be(undefined)
+        expectCounts(invalid, 0, 1)
+        expect(getErrors(new Chain(invalid), [])[0]).to.be(invalid.bad)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
@@ -916,20 +975,26 @@ describe("import", () => {
         expect(hasError(new Chain(value), [])).to.be(true)
     })
 
-    it("keeps import context when promise roots resolve to frozen invalid values", async () => {
+    it("keeps import context when promise roots resolve to frozen values", async () => {
         const deferredValue = deferred()
         const imported = importValue(deferredValue.promise, "frozen promise root")
         const frozen = Object.freeze({ pending: Promise.resolve(1) })
 
         deferredValue.resolve(frozen)
         const value = await imported
-        const failure = buildRefIndex(value)
+        const indexed = buildRefIndex(value)
 
         expect(value).to.be(frozen)
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen promise root)",
-        )
+        expect(indexed).to.be(frozen)
+        expect(metaOf(frozen).importContext).to.be("frozen promise root")
+        expectCounts(frozen, 1, 0)
+
+        await flushMicrotasks()
+
+        expect(frozen.pending instanceof Promise).to.be(true)
+        expect(lookupPath(new Chain(frozen), ["pending"], false)).to.be(1)
+        expectCounts(frozen, 0, 0)
+        verifyRefCounts(frozen)
     })
 
     it("turns an imported rejecting promise into an Error", async () => {

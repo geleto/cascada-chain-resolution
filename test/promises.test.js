@@ -275,6 +275,38 @@ describe("promise helpers", () => {
 })
 
 describe("promise mirrors and lookupPath", () => {
+    it("keeps physical promises when holders become non-extensible during drain", async () => {
+        for (const makeNonExtensible of [Object.seal, Object.freeze]) {
+            const pending = deferred()
+            const error = new Error("settled")
+            const value = { error }
+            const root = {}
+
+            assignPath(new Chain(root), ["value"], pending.promise)
+            buildRefIndex(root)
+            const mirror = metaOf(root).mirrors.value
+            const observed = lookupPath(new Chain(root), ["value"])
+
+            makeNonExtensible(root)
+            expectCounts(root, 1, 0)
+            expect(mirror.pendingConsumerCount > 1).to.be(true)
+
+            pending.resolve(value)
+            expect(await observed).to.be(value)
+            await flushMicrotasks()
+
+            expect(root.value).to.be(pending.promise)
+            expect(mirror.currentValue).to.be(value)
+            expect(mirror.settled).to.be(true)
+            expectCounts(root, 0, 1)
+            expect(hasError(new Chain(root), [])).to.be(true)
+            expect(normalize(new Chain(root), []).message).to.be(
+                "normalize: branch contains errors",
+            )
+            verifyRefCounts(root)
+        }
+    })
+
     it("prepares the final value when its owner becomes indexed during the drain", async () => {
         const pending = deferred()
         const nested = deferred()

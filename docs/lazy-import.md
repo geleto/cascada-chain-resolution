@@ -42,14 +42,14 @@ from classifying the existing owner graph as external. The excluded mirror
 prevents preparation from rediscovering the exact promise placement currently
 being drained.
 
-Discovery, frozen validation, SCC analysis, and ref-index construction are
-recursive. Import itself remains O(1), but the first counter-based operation on
-a very deep imported graph is therefore bounded by the JavaScript call stack.
+Discovery, SCC analysis, and ref-index construction are recursive. Import
+itself remains O(1), but the first counter-based operation on a very deep
+imported graph is therefore bounded by the JavaScript call stack.
 
-Successful preparation marks every retained extensible imported node shared.
-`meta.importPrepared` then prevents another full imported scan. Non-extensible
-nodes use the metadata WeakMap fallback when they need placement metadata or
-counters.
+Successful preparation marks every retained imported node shared and sets
+`meta.importPrepared`, which prevents another full imported scan.
+Non-extensible nodes use the metadata WeakMap fallback for that state and for
+mirrors, counters, or placement metadata.
 
 ## Cycles and aliases
 
@@ -72,10 +72,9 @@ cuts are not crossed.
 
 ## Validation overlays
 
-Imported own enumerable `__proto__` keys are prohibited. A non-extensible
-imported subtree may not contain a Promise or Error in its enumerable
-string-key graph. The same identity can be checked both outside and inside a
-non-extensible ancestor, so frozen-mode visitation is tracked separately.
+Imported own enumerable `__proto__` keys are prohibited. This is the only
+language-data validation failure discovered by imported preparation. Promises
+and Errors are valid enumerable values in extensible and non-extensible imports.
 
 COW preserves an imported enumerable `__proto__` data slot physically using a
 pre-created own property, then gives that new owner/key placement a fresh
@@ -102,10 +101,10 @@ holder is external. Its resolved branch is prepared before later FIFO
 consumers inspect it.
 
 An external holder keeps its exact physical Promise property after settlement;
-the mirror owns the logical settled value. Language-owned assigned and COW-fork
-holders write the final drained value physically. All logical operations read
-through the mirror, and host output uses `normalize(..., plainCopy=true)` to
-materialize ordinary promise-free data.
+the mirror owns the logical settled value. A language-owned assigned or COW-fork
+holder writes the final drained value physically only while it remains
+extensible. All logical operations read through the mirror, and host output uses
+`normalize(..., plainCopy=true)` to materialize ordinary promise-free data.
 
 ## Module boundary
 
@@ -114,6 +113,6 @@ materialize ordinary promise-free data.
 - `import`: the public root boundary.
 - `prepareImportedData`: the refcount layer's lazy preparation hook.
 
-Graph discovery, frozen validation, and SCC helpers remain private. Generic
-metadata access stays in `src/meta.js`; edge transitions and projected counts
-stay in `src/refcounts.js`.
+Graph discovery, prohibited-key validation, and SCC helpers remain private.
+Generic metadata access stays in `src/meta.js`; edge transitions and projected
+counts stay in `src/refcounts.js`.

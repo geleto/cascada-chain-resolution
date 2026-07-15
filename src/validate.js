@@ -51,12 +51,6 @@ function assertCanSetLanguageProperty(parent, key, importContext = undefined) {
             importContext,
         ))
     }
-    if (owner !== parent && !Object.isExtensible(parent)) {
-        reportFatalError(validationError(
-            "Cannot add property to non-extensible object",
-            importContext,
-        ))
-    }
 }
 
 function assertCanDeleteLanguageProperty(parent, key, importContext = undefined) {

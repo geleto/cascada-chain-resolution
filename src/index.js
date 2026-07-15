@@ -23,7 +23,6 @@ const {
     isPromise,
     isTracked,
     onInternalResolve,
-    onValueResolve,
 } = require("./helpers")
 const {
     forbiddenKeyError,
@@ -310,17 +309,16 @@ function normalizeResolved(value, importContext, placement, sharedOwnership, pla
 
     const counter = getRefCounter(value)
     if (!counter) {
-        if (terminalCycle) {
-            return finishNormalize(
-                value,
-                importContext,
-                sharedOwnership,
-                plainCopy,
-                true,
-            )
-        }
-        if (!plainCopy) markResolvedValue(value, importContext, sharedOwnership)
-        return plainCopy ? copyToPlainValue(value) : value
+        // A private terminal cycle cut is the only raw tracked value that may
+        // deliberately sit outside the projected ref index.
+        if (!terminalCycle) getRequiredRefCounter(value)
+        return finishNormalize(
+            value,
+            importContext,
+            sharedOwnership,
+            plainCopy,
+            terminalCycle,
+        )
     }
 
     if (counter.promiseCount === 0) {
@@ -352,14 +350,19 @@ function finishNormalize(
     plainCopy,
     terminalCycle,
 ) {
-    const classification = classifyProjectedErrors(value)
-    if (classification.hasOrdinaryError) {
-        return new Error("normalize: branch contains errors")
-    }
-    if (!terminalCycle && !classification.hasCycleError) {
-        if (plainCopy) return copyToPlainValue(value)
-        markResolvedValue(value, importContext, sharedOwnership)
-        return value
+    // A private terminal cycle may deliberately be counterless. Counted
+    // terminal cycles still classify first so an ordinary Error wins without
+    // waiting for promises reachable only through the raw cycle frontier.
+    if (!terminalCycle || getRefCounter(value)) {
+        const classification = classifyProjectedErrors(value)
+        if (classification.hasOrdinaryError) {
+            return new Error("normalize: branch contains errors")
+        }
+        if (!classification.hasCycleError) {
+            if (plainCopy) return copyToPlainValue(value)
+            markResolvedValue(value, importContext, sharedOwnership)
+            return value
+        }
     }
 
     markResolvedValue(value, importContext, true)
@@ -387,8 +390,8 @@ function classifyProjectedErrors(value) {
     function walk(node) {
         if (hasOrdinaryError || !isTracked(node) || visited.has(node)) return
         visited.add(node)
-        const counter = getRefCounter(node)
-        if (!counter || counter.errorCount === 0) return
+        const counter = getRequiredRefCounter(node)
+        if (counter.errorCount === 0) return
 
         for (const key of Object.keys(node)) {
             const edgeMark = getCommittedEdgeMark(node, key)
@@ -498,7 +501,6 @@ function hasErrorAtPathValue(value, importContext, placement) {
     const indexed = buildRefIndex(value, importContext, placement)
     if (isError(indexed)) return true
     if (getResolvedPlacementMark(placement)) return true
-    if (!getRefCounter(value)) return false
 
     return hasErrorInIndexedBranch(value, new WeakSet())
 }
@@ -576,7 +578,7 @@ function probeResolvedPromiseForErrors(
         resolveError()
         return undefined
     }
-    if (!isTracked(value) || !getRefCounter(value)) return undefined
+    if (!isTracked(value)) return undefined
 
     return probeIndexedBranchForErrors(
         value,
@@ -626,7 +628,6 @@ function collectErrorsAtPathValue(value, importContext, placement, errors) {
             return undefined
         }
     }
-    if (!getRefCounter(value)) return undefined
 
     return collectErrorsInIndexedBranch(value, errors, new WeakSet())
 }
@@ -647,10 +648,7 @@ function collectErrorsInIndexedBranch(
                 errors.add(mirror.currentValue)
                 return undefined
             }
-            if (!isTracked(mirror.currentValue) ||
-                !getRefCounter(mirror.currentValue)) {
-                return undefined
-            }
+            if (!isTracked(mirror.currentValue)) return undefined
             return collectErrorsInIndexedBranch(
                 mirror.currentValue,
                 errors,
@@ -700,8 +698,7 @@ function collectErrorSearchWaits(
                 const mirror = getRequiredPromiseMirror(node, key, child)
                 waitPromises.push(onPromiseMirrorResolve(mirror, () => onPromiseValue(mirror)))
             } else if (isTracked(child)) {
-                const childCounter = getRefCounter(child)
-                if (!childCounter) continue
+                const childCounter = getRequiredRefCounter(child)
                 if (childCounter.promiseCount > 0 ||
                     (errors && childCounter.errorCount > 0)) {
                     walk(child)
@@ -736,20 +733,7 @@ function walkObservationPath(chain, path, onResolved) {
         let mirror = getPromiseMirror(parent, key)
         const value = readLogicalProperty(parent, key)
         if (isPromise(value)) {
-            if (!mirror && Object.isExtensible(parent)) {
-                mirror = getOrCreatePromiseMirror(parent, key, value, importContext)
-            }
-            if (!mirror) {
-                return onValueResolve(value, settledValueOrError => {
-                    return walkValue(
-                        settledValueOrError,
-                        index,
-                        importContext,
-                        { parent, key, mirror: undefined },
-                    )
-                })
-            }
-
+            mirror ??= getOrCreatePromiseMirror(parent, key, value, importContext)
             return onPromiseMirrorResolve(mirror, () => {
                 return walkValue(
                     mirror.currentValue,

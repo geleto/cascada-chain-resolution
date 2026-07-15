@@ -1,5 +1,4 @@
 const {
-    isError,
     isPromise,
     isTracked,
     onValueResolve,
@@ -10,10 +9,10 @@ const {
     validationError,
 } = require("./error")
 const {
+    ensureMeta,
     markImported,
     metaOf,
     nodeImportContext,
-    setSharedMark,
 } = require("./meta")
 const {
     getCommittedEdgeMark,
@@ -56,7 +55,6 @@ function prepareImportedData(
     let failure
     let needsScc = false
     discover(value, rootContext)
-    if (!failure) markFrozenModes(value, false, new Map())
     if (failure) return { failure, commit() {} }
 
     if (needsScc) markCycleEdges(records)
@@ -65,8 +63,9 @@ function prepareImportedData(
         records,
         commit(commitEdgeMark) {
             for (const record of records.values()) {
-                setSharedMark(record.node)
-                metaOf(record.node).importPrepared = true
+                const meta = ensureMeta(record.node)
+                meta.shared = true
+                meta.importPrepared = true
                 // Mirrors are born before marks are published so every committed
                 // placement has its final storage owner when bookkeeping runs.
                 for (const edge of record.edges) {
@@ -113,7 +112,6 @@ function prepareImportedData(
             node,
             context,
             edges: [],
-            outsideFrozen: false,
             state: "active",
         }
         records.set(node, record)
@@ -138,33 +136,6 @@ function prepareImportedData(
             if (failure) return
         }
         record.state = "done"
-    }
-
-    function markFrozenModes(node, insideFrozen, modes) {
-        if (!isTracked(node)) return
-        const record = records.get(node)
-        if (!record) return
-
-        const valueInsideFrozen = insideFrozen || !Object.isExtensible(node)
-        const mode = valueInsideFrozen ? 2 : 1
-        const seenModes = modes.get(node) ?? 0
-        if (seenModes & mode) return
-        modes.set(node, seenModes | mode)
-        if (!valueInsideFrozen) record.outsideFrozen = true
-
-        for (const edge of record.edges) {
-            if (edge.edgeMark) continue
-            if (valueInsideFrozen &&
-                (isPromise(edge.value) || isError(edge.value))) {
-                failure = validationError(
-                    "Frozen object cannot contain promises or errors",
-                    record.context,
-                )
-                return
-            }
-            markFrozenModes(edge.value, valueInsideFrozen, modes)
-            if (failure) return
-        }
     }
 }
 

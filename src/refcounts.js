@@ -51,10 +51,8 @@ function getRefCounts(value) {
     if (isError(value)) return [0, 1]
     if (!isTracked(value)) return [0, 0]
 
-    const counter = getRefCounter(value)
-    if (counter) return [counter.promiseCount, counter.errorCount]
-    if (!Object.isExtensible(value)) return [0, 0]
-    reportFatalError(new Error("Ref counts require a ref-indexed value"))
+    const counter = getRequiredRefCounter(value)
+    return [counter.promiseCount, counter.errorCount]
 }
 
 function getResolvedPlacementMark(placement) {
@@ -130,39 +128,12 @@ function commitImportedPreparation(preparedImport) {
 }
 
 function buildPreparedImportRefIndexes(preparedImport) {
-    const requiredCounters = findRequiredPreparedCounters(preparedImport)
     for (const record of preparedImport.records.values()) {
-        if (requiredCounters.get(record.node)) {
-            commitRefIndex(
-                record.node,
-                record.context,
-                preparedImport.records,
-                requiredCounters,
-            )
-        }
-    }
-}
-
-function findRequiredPreparedCounters(preparedImport) {
-    const required = new Map()
-    for (const record of preparedImport.records.values()) visit(record)
-    return required
-
-    function visit(record) {
-        if (required.has(record.node)) return required.get(record.node)
-        required.set(record.node, false)
-
-        let needsCounter = record.outsideFrozen
-        for (const edge of record.edges) {
-            if (edge.edgeMark) {
-                needsCounter = true
-                continue
-            }
-            const child = preparedImport.records.get(edge.value)
-            if (child && visit(child)) needsCounter = true
-        }
-        required.set(record.node, needsCounter)
-        return needsCounter
+        commitRefIndex(
+            record.node,
+            record.context,
+            preparedImport.records,
+        )
     }
 }
 
@@ -170,7 +141,6 @@ function commitRefIndex(
     node,
     inheritedImportContext,
     preparedRecords = undefined,
-    requiredPreparedCounters = undefined,
 ) {
     if (!isTracked(node)) return [0, 0]
 
@@ -178,13 +148,7 @@ function commitRefIndex(
     if (existing) return [existing.promiseCount, existing.errorCount]
 
     const importContext = nodeImportContext(node, inheritedImportContext)
-    const meta = metaOf(node)
     const preparedRecord = preparedRecords?.get(node)
-    const needsFrozenCounter = !Object.isExtensible(node) && (
-        !!meta?.edgeMarks || !!meta?.mirrors ||
-        requiredPreparedCounters?.get(node)
-    )
-    if (!Object.isExtensible(node) && !needsFrozenCounter) return [0, 0]
 
     let promiseCount = 0
     let errorCount = 0
@@ -215,9 +179,6 @@ function commitRefIndex(
             continue
         }
         if (!isTracked(child)) continue
-        if (preparedRecords?.has(child) && !requiredPreparedCounters.get(child)) {
-            continue
-        }
 
         const childImportContext = mirror?.importContext ??
             nodeImportContext(child, importContext)
@@ -237,11 +198,10 @@ function commitRefIndex(
             child,
             childImportContext,
             preparedRecords,
-            requiredPreparedCounters,
         )
         promiseCount += childCounts[0]
         errorCount += childCounts[1]
-        if (getRefCounter(child)) childNodes.push(child)
+        childNodes.push(child)
     }
 
     // Imported preparation can index this node through a back-reference after
@@ -397,7 +357,9 @@ function commitMirrorDrain(mirror) {
         [prepared.promiseCount, prepared.errorCount],
         nextChild,
         () => {
-            if (!mirror.externalHolder) mirror.node[mirror.key] = prepared.value
+            if (!mirror.externalHolder && Object.isExtensible(mirror.node)) {
+                mirror.node[mirror.key] = prepared.value
+            }
             clearEdgeMark(mirror.node, mirror.key)
         },
     )
@@ -476,14 +438,14 @@ function commitLiveEdge(owner, key, nextCounts, nextChild, updatePlacement) {
 }
 
 function addParentEdge(value, parent) {
-    const counter = getRefCounter(value)
-    if (!counter) return
+    if (!isTracked(value)) return
+    const counter = getRequiredRefCounter(value)
     counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
 }
 
 function removeParentEdge(value, parent) {
-    const counter = getRefCounter(value)
-    if (!counter) return
+    if (!isTracked(value)) return
+    const counter = getRequiredRefCounter(value)
     const count = counter.parents.get(parent)
     if (count === 1) {
         counter.parents.delete(parent)

@@ -39,7 +39,7 @@ these rules in order:
 - An ordinary Promise contributes `[1, 0]`.
 - An ordinary Error contributes `[0, 1]`.
 - A tracked child contributes its indexed subtree totals.
-- A primitive or valid non-extensible leaf contributes `[0, 0]`.
+- A primitive contributes `[0, 0]`.
 
 `getCountedChild(parent, key)` returns the child that owns a reverse parent edge,
 or nothing for a pending mirror or marked cut. Code that changes a property
@@ -66,10 +66,10 @@ that imported region, deduplicates its identities, stages cycle/validation
 cuts, and creates required mirrors. The completed preparation is then committed
 and its records are indexed. See `docs/lazy-import.md`.
 
-A clean frozen branch with no projected runtime state is settled `[0, 0]` and
-needs no counter. A frozen node that owns, or lies on a path to, a cycle/Error
-marker uses fallback metadata and receives a real counter so the diagnostic
-propagates to its indexed ancestors.
+Frozen, sealed, and otherwise non-extensible nodes follow the same counter
+rules as extensible nodes. Once reached by a successful index build, each has a
+counter in WeakMap metadata, and every ordinary tracked child below it is also
+indexed. Non-extensibility affects ownership and physical writeback, not counts.
 
 Parent maps retain every structural edge. If one parent references a child at
 two keys, its map entry has multiplicity two and propagated deltas are
@@ -123,8 +123,9 @@ synchronous fatal consumer marks the drain failed and prevents publication.
 - `mirror.currentValue` for a settled mirror;
 - otherwise the own enumerable physical property.
 
-External imported holders may retain their physical Promise permanently; the
-mirror remains the authoritative logical placement.
+External imported holders and holders that become non-extensible retain their
+physical Promise permanently; the mirror remains the authoritative logical
+placement.
 
 A mirrored placement stores its edge mark exclusively in `mirror.edgeMark`.
 Installing a mirror clears `meta.edgeMarks[key]`, and removing one clears both

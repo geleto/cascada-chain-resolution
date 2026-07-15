@@ -101,6 +101,26 @@ describe("normalize", () => {
         expect(result.message).to.be("normalize: branch contains errors")
     })
 
+    it("returns counted terminal-cycle Errors without waiting for the raw frontier", async () => {
+        const pending = deferred()
+        const branch = { bad: new Error("known") }
+        const root = { branch, pending: pending.promise }
+        branch.back = root
+        importValue(root, "terminal cycle Error")
+        buildRefIndex(root)
+
+        const result = normalize(new Chain(root), ["branch"])
+
+        expect(metaOf(root).edgeMarks.branch.kind).to.be("cycle")
+        expect(getRefCounter(branch)).not.to.be(undefined)
+        expect(result instanceof Error).to.be(true)
+        expect(result.message).to.be("normalize: branch contains errors")
+
+        pending.resolve("done")
+        await flushMicrotasks()
+        verifyRefCounts(root, branch)
+    })
+
     it("normalizes a clean subpath through a cyclic import normally", () => {
         const root = { child: { clean: { x: 1 } } }
         root.child.back = root
@@ -659,37 +679,38 @@ describe("normalize", () => {
         expect(getRefCounter(branch).errorCount).to.be(1)
     })
 
-    it("validates frozen branches without attaching counter metadata", () => {
+    it("normalizes promises inside frozen branches through mirrors", async () => {
         const valid = Object.freeze({ x: 1 })
-        const invalid = Object.freeze({ pending: Promise.resolve(1) })
+        const promise = Promise.resolve(1)
+        const pending = Object.freeze({ pending: promise })
 
-        importValue(invalid, "frozen normalize")
+        importValue(pending, "frozen normalize")
         const copied = normalize(new Chain(valid), [], true, true)
-        const failure = normalize(new Chain(invalid), [])
+        const normalized = normalize(new Chain(pending), [])
 
         expect(copied).to.eql({ x: 1 })
         expect(copied).not.to.be(valid)
-        expect(metaOf(valid)).to.be(undefined)
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen normalize)",
-        )
-        expect(metaOf(invalid).importContext).to.be("frozen normalize")
-        expect(getRefCounter(invalid)).to.be(undefined)
+        expect(await normalized).to.be(pending)
+        expect(pending.pending).to.be(promise)
+        expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
+        expect(getRefCounter(valid)).not.to.be(undefined)
+        expect(getRefCounter(pending).promiseCount).to.be(0)
+        verifyRefCounts(valid, pending)
     })
 
-    it("returns valid frozen branches synchronously without copying", () => {
+    it("returns clean frozen branches synchronously without copying", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
-        importValue(frozen, "valid frozen normalize")
+        importValue(frozen, "clean frozen normalize")
 
         const value = normalize(new Chain(frozen), [], false)
 
         expect(value).to.be(frozen)
-        expect(getRefCounter(frozen)).to.be(undefined)
-        expect(getRefCounter(frozen.nested)).to.be(undefined)
+        expect(getRefCounter(frozen)).not.to.be(undefined)
+        expect(getRefCounter(frozen.nested)).not.to.be(undefined)
+        verifyRefCounts(frozen)
     })
 
-    it("revalidates an indexed child when a frozen ancestor makes its promises invalid", () => {
+    it("waits for an indexed child beneath a frozen ancestor", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
 
@@ -697,12 +718,14 @@ describe("normalize", () => {
 
         const frozen = Object.freeze({ child })
         importValue(frozen, "frozen indexed normalize")
-        const failure = normalize(new Chain(frozen), [])
+        const normalized = normalize(new Chain(frozen), [])
 
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen indexed normalize)",
-        )
+        expect(getRefCounter(frozen).promiseCount).to.be(1)
+        pending.resolve("done")
+        expect(await normalized).to.be(frozen)
+        expect(child.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(frozen), ["child", "pending"], false)).to.be("done")
+        verifyRefCounts(frozen)
     })
 
     it("normalizes through a root promise", async () => {

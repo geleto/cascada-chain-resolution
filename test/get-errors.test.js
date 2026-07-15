@@ -8,6 +8,7 @@ const {
     expect,
     flushMicrotasks,
     getErrors,
+    getRefCounter,
     hasError,
     importValue,
     metaOf,
@@ -130,21 +131,24 @@ describe("getErrors", () => {
         verifyRefCounts(branch)
     })
 
-    it("skips valid frozen children before reading counters", () => {
+    it("prunes clean frozen children by their counters", () => {
         const error = new Error("bad")
         const frozen = Object.freeze({ nested: Object.freeze({ clean: true }) })
         const branch = { frozen, error }
 
         expectErrors(getErrors(new Chain({ branch }), ["branch"]), [error])
+        expect(getRefCounter(frozen).errorCount).to.be(0)
+        expect(getRefCounter(frozen.nested).errorCount).to.be(0)
         verifyRefCounts(branch)
     })
 
-    it("returns attributed validation failures", () => {
+    it("returns cycle diagnostics and preserves Errors in frozen data", () => {
         const cyclic = {}
         cyclic.self = cyclic
         importValue(cyclic, "cyclic getErrors")
 
-        const frozen = Object.freeze({ bad: new Error("bad") })
+        const frozenError = new Error("bad")
+        const frozen = Object.freeze({ bad: frozenError })
         importValue(frozen, "frozen getErrors")
 
         const cyclicErrors = getErrors(new Chain(cyclic), [])
@@ -155,9 +159,7 @@ describe("getErrors", () => {
             'Cyclic property "self" (imported at: cyclic getErrors)',
         )
         expect(frozenErrors.length).to.be(1)
-        expect(frozenErrors[0].message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen getErrors)",
-        )
+        expect(frozenErrors[0]).to.be(frozenError)
     })
 
     it("collects errors through every promise barrier before returning", async () => {
@@ -486,7 +488,7 @@ describe("getErrors", () => {
         expect(chain._state.value).to.eql({ clean: true })
     })
 
-    it("reads terminal promises on frozen parents without indexing the parent", async () => {
+    it("reads terminal promises on frozen parents through mirrors", async () => {
         const pending = deferred()
         const frozen = Object.freeze({ pending: pending.promise })
 
@@ -496,6 +498,9 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be("frozen terminal")
+        expect(frozen.pending).to.be(pending.promise)
+        expect(metaOf(frozen).mirrors.pending.settled).to.be(true)
+        expect(getRefCounter(frozen)).to.be(undefined)
     })
 
     it("agrees with hasError synchronously on their shared path domain", () => {

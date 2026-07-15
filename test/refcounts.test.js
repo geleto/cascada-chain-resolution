@@ -171,7 +171,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("counts primitive, promise, Error, and valid frozen values", () => {
+    it("counts primitive, promise, Error, and non-extensible graphs", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
         const sharedChild = { value: 2 }
         const frozenDAG = Object.freeze({ left: sharedChild, right: sharedChild })
@@ -184,7 +184,10 @@ describe("subtree counters", () => {
         expect(buildRefIndex(frozen)).to.be(frozen)
         expect(buildRefIndex(frozenDAG)).to.be(frozenDAG)
         expectCounts(frozen, 0, 0)
+        expectCounts(frozen.nested, 0, 0)
         expectCounts(frozenDAG, 0, 0)
+        expectCounts(sharedChild, 0, 0)
+        expect(getRefCounter(sharedChild).parents.get(frozenDAG)).to.be(2)
         verifyRefCounts(frozen, frozenDAG)
     })
 
@@ -195,7 +198,7 @@ describe("subtree counters", () => {
         expect(failure.message).to.be("Ref counts require a ref-indexed value")
     })
 
-    it("revalidates indexed descendants beneath non-extensible ancestors", () => {
+    it("indexes descendants beneath non-extensible ancestors", () => {
         const pending = deferred()
         const child = { pending: pending.promise }
 
@@ -203,16 +206,15 @@ describe("subtree counters", () => {
 
         const wrapper = Object.preventExtensions({ child })
         importValue(wrapper, "frozen indexed child")
-        const failure = buildRefIndex(wrapper)
+        const indexed = buildRefIndex(wrapper)
 
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Frozen object cannot contain promises or errors (imported at: frozen indexed child)",
-        )
-        expect(getRefCounter(wrapper)).to.be(undefined)
+        expect(indexed).to.be(wrapper)
+        expectCounts(wrapper, 1, 0)
+        expect(getRefCounter(child).parents.get(wrapper)).to.be(1)
+        verifyRefCounts(wrapper)
     })
 
-    it("revalidates a DAG child reached later through a non-extensible ancestor", () => {
+    it("counts a DAG child reached through a non-extensible ancestor", () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         const wrapper = Object.preventExtensions({ child })
@@ -222,14 +224,23 @@ describe("subtree counters", () => {
         const indexed = buildRefIndex(root)
 
         expect(indexed).to.be(root)
-        expectCounts(root, 1, 1)
-        expect(getRefCounter(child)).not.to.be(undefined)
+        expectCounts(root, 2, 0)
+        expectCounts(wrapper, 1, 0)
+        expect(getRefCounter(child).parents.get(root)).to.be(1)
+        expect(getRefCounter(child).parents.get(wrapper)).to.be(1)
+        verifyRefCounts(root)
     })
 
     it("leaves no counters or mirrors when validation fails before commit", async () => {
         const pending = deferred()
         const earlier = { pending: pending.promise }
-        const invalid = Object.freeze({ bad: new Error("bad") })
+        const invalid = {}
+        Object.defineProperty(invalid, "__proto__", {
+            value: { unsafe: true },
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
         const root = { earlier, invalid }
 
         importValue(root, "transactional index")

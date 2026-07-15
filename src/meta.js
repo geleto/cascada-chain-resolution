@@ -27,7 +27,7 @@ function createMeta() {
 }
 
 // Inline storage falls back to the WeakMap when an object cannot accept the
-// Symbol. Both storage modes therefore behave identically for frozen imports.
+// Symbol. Both storage modes therefore behave identically for non-extensible nodes.
 function metaOf(value) {
     if (!isTracked(value)) return undefined
     if (!STORE_META_IN_WEAKMAP && hasOwn.call(value, META)) {
@@ -64,7 +64,7 @@ function hasSharedMark(value) {
 }
 
 function setSharedMark(value) {
-    if (!isTracked(value)) return value
+    if (!isTracked(value) || !Object.isExtensible(value)) return value
     ensureMeta(value).shared = true
     return value
 }
@@ -121,6 +121,5 @@ module.exports = {
     metaOf,
     nodeImportContext,
     setEdgeMark,
-    setSharedMark,
     STORE_META_IN_WEAKMAP,
 }

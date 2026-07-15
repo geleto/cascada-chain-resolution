@@ -8,6 +8,7 @@ const {
     deletePath,
     hasError,
     importValue,
+    metaOf,
     normalize,
     lookupPath,
     countPromiseRegistrations,
@@ -80,26 +81,31 @@ describe("hasError", () => {
         expect(branch.self).to.be(branch)
     })
 
-    it("validates non-extensible branches without attaching counters", () => {
+    it("indexes non-extensible branches uniformly", async () => {
         const clean = Object.freeze({ nested: { value: 1 } })
         const pending = Object.preventExtensions({ pending: Promise.resolve(1) })
-        const bad = Object.freeze({ nested: { bad: new Error("bad") } })
+        const error = new Error("bad")
+        const bad = Object.seal({ nested: { bad: error } })
 
         importValue(pending, "pending frozen probe")
         importValue(bad, "error frozen probe")
 
         expect(hasError(new Chain(clean), [])).to.be(false)
-        expect(hasError(new Chain(pending), [])).to.be(true)
+        const pendingResult = hasError(new Chain(pending), [])
         expect(hasError(new Chain(bad), [])).to.be(true)
 
-        expect(getRefCounter(clean)).to.be(undefined)
-        expect(getRefCounter(clean.nested)).to.be(undefined)
-        expect(getRefCounter(pending)).to.be(undefined)
-        expect(getRefCounter(bad)).to.be(undefined)
-        expect(getRefCounter(bad.nested)).to.be(undefined)
+        expect(getRefCounter(clean).errorCount).to.be(0)
+        expect(getRefCounter(clean.nested).errorCount).to.be(0)
+        expect(getRefCounter(pending).promiseCount).to.be(1)
+        expect(getRefCounter(bad).errorCount).to.be(1)
+        expect(getRefCounter(bad.nested).errorCount).to.be(1)
+        expect(await pendingResult).to.be(false)
+        expect(getRefCounter(pending).promiseCount).to.be(0)
+        expect(pending.pending instanceof Promise).to.be(true)
+        verifyRefCounts(clean, pending, bad)
     })
 
-    it("probes terminal promises on frozen parents without writeback", async () => {
+    it("probes terminal promises on frozen parents through mirrors without writeback", async () => {
         const cleanPending = deferred()
         const badPending = deferred()
         const cleanRoot = Object.freeze({ pending: cleanPending.promise })
@@ -115,6 +121,8 @@ describe("hasError", () => {
         expect(await badResult).to.be(true)
         expect(cleanRoot.pending).to.be(cleanPending.promise)
         expect(badRoot.pending).to.be(badPending.promise)
+        expect(metaOf(cleanRoot).mirrors.pending.settled).to.be(true)
+        expect(metaOf(badRoot).mirrors.pending.settled).to.be(true)
         expect(getRefCounter(cleanRoot)).to.be(undefined)
         expect(getRefCounter(badRoot)).to.be(undefined)
     })
@@ -133,7 +141,7 @@ describe("hasError", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("revalidates indexed descendants under a non-extensible branch", () => {
+    it("indexes pending descendants under a non-extensible branch", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
 
@@ -142,8 +150,17 @@ describe("hasError", () => {
         const wrapper = Object.preventExtensions({ child })
         importValue(wrapper, "indexed frozen probe")
 
-        expect(hasError(new Chain(wrapper), [])).to.be(true)
-        expect(getRefCounter(wrapper)).to.be(undefined)
+        const result = hasError(new Chain(wrapper), [])
+
+        expect(getRefCounter(wrapper).promiseCount).to.be(1)
+        expect(getRefCounter(child).promiseCount).to.be(1)
+
+        pending.resolve("done")
+
+        expect(await result).to.be(false)
+        expect(getRefCounter(wrapper).promiseCount).to.be(0)
+        expect(child.pending).to.be(pending.promise)
+        verifyRefCounts(wrapper)
     })
 
     it("returns true on indexed sync errors", () => {

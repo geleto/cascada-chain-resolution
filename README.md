@@ -100,7 +100,7 @@ Here is how the mirror produces the same answer without anyone waiting:
 1. When the promise resolves, its value lands in the mirror entry first.
 2. Waiting commands resume in order, each preparing its change on the entry's newest value, so each one sees every earlier command.
 3. While registered commands remain in line, the mirror is still considered pending. A later read joins that line instead of taking a half-finished value synchronously.
-4. When the line is fully drained, its final value is copied into the real property only if the mirror still owns that property and the holder belongs to Cascada. An imported host property is never rewritten.
+4. When the line is fully drained, its final value is copied into the real property only if the mirror still owns that property, the holder belongs to Cascada, and the holder is still extensible. Imported or non-extensible properties keep their raw Promise and expose the settled value through the mirror.
 5. Overwriting the property, as (3) does, *detaches* its mirror entry. Commands issued later cannot reach the old promise, while commands already in line keep their private reference and finish off to the side.
 
 So in the example: (3) replaces the property and detaches the entry. But (2) had already joined the line and still holds it. When the config loads, (2) completes its write on the entry's value, but the final live-edge check stops it there because the property has moved on. The write lands nowhere visible. Final state: `{ port: 9999 }` - the sequential answer, with no locks and no rollback. A superseded write simply finishes quietly off to the side.
@@ -158,6 +158,7 @@ A few notes, deliberately brief:
 - For ordinary copy-on-write, one mark at the top of a shared branch is enough: a write walking downward remembers "I'm inside a shared branch."
 - A pending promise can't be marked (its value hasn't arrived), so the runtime attaches one extra step to it: *when you resolve, mark whatever arrived.*
 - The root of `import`ed data is marked shared immediately. Descendant marks are added lazily only when a whole-branch operation needs them. We never write into someone else's objects; changing imported data always copies.
+- Frozen, sealed, and otherwise non-extensible nodes are implicitly shared. Writes COW them, while whole-branch queries index them through WeakMap metadata just like extensible nodes.
 - If an imported property contains a promise, the host property remains that same promise after settlement. Its mirror holds the logical settled value seen by Cascada.
 - If a copied node has a property still waiting on a promise, the copy gets its own mirror entry for it - from that moment the two trees receive the value independently and can diverge.
 
@@ -176,12 +177,12 @@ An imported cycle cannot be placed directly into this recursive counter graph. C
 
 With the counters in place:
 
-**`normalize`** hands out the branch's current state with every promise inside resolved. Its first move is to **freeze the branch**: it marks it shared - the same mark copy-on-write uses - so it cannot change underneath it. Later writes copy and go their own way; the frozen branch can only settle. All that's left is ***when***: when has every promise now inside settled, including any new ones their results bring along? The counter answers it - `normalize` subscribes to `promiseCount` reaching zero, and the zero *is* the completion signal:
+**`normalize`** hands out the branch's current state with every promise inside resolved. Its first move is to **pin the branch**: it marks it shared - the same mark copy-on-write uses - so it cannot change underneath it. Later writes copy and go their own way; the pinned branch can only settle. All that's left is ***when***: when has every promise now inside settled, including any new ones their results bring along? The counter answers it - `normalize` subscribes to `promiseCount` reaching zero, and the zero *is* the completion signal:
 
 ```js
 user.profile = fetchProfile()   // will resolve to { avatar: fetchAvatar() }
 let done = normalize(user)      // waits for fetchProfile - then fetchAvatar too
-user.stats = fetchStats()       // lands in a copy - the frozen branch never sees it
+user.stats = fetchStats()       // lands in a copy - the pinned branch never sees it
 ```
 
 Internal Cascada code may keep the normalized branch itself. A value leaving Cascada asks for a plain copy, which materializes logical mirror values, preserves aliases and cycles, and carries no runtime metadata.

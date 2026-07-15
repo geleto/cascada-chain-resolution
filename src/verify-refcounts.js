@@ -29,7 +29,7 @@ function verifyReachable(node, seen) {
 
         for (const key of Object.keys(node)) {
             const child = getCountedChild(node, key)
-            if (isTracked(child) && Object.isExtensible(child) && !getRefCounter(child)) {
+            if (isTracked(child) && !getRefCounter(child)) {
                 reportFatalError(new Error("Ref-indexed parent contains non-ref-indexed child"))
             }
             const counts = getPropertyRefCounts(node, key)
