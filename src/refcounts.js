@@ -6,12 +6,10 @@ const {
     isTracked,
     onInternalResolve,
 } = require("./helpers")
-const {
-    reportFatalError,
-    validationError,
-} = require("./error")
+const { reportFatalError } = require("./error")
 const {
     clearEdgeMark,
+    cycleEdgeMark,
     ensureMeta,
     markShared,
     metaOf,
@@ -40,10 +38,6 @@ function getRequiredRefCounter(node) {
         reportFatalError(new Error("Ref counts require a ref-indexed value"))
     }
     return counter
-}
-
-function isRefIndexed(node) {
-    return !!getRefCounter(node)
 }
 
 function getRefCounts(value) {
@@ -97,14 +91,8 @@ function buildRefIndex(value, inheritedImportContext = undefined, placement = un
 
         let closingEdgeMark = getResolvedPlacementMark(placement)
         if (placement && !closingEdgeMark &&
-            reachesProjected(value, placement.parent, preparedImport, new Set())) {
-            closingEdgeMark = {
-                kind: "cycle",
-                error: validationError(
-                    `Cyclic property "${String(placement.key)}"`,
-                    importContext,
-                ),
-            }
+            reachesProjected(value, placement.parent, preparedImport)) {
+            closingEdgeMark = cycleEdgeMark(placement.key, importContext)
         }
         commitImportedPreparation(preparedImport)
         if (closingEdgeMark) {
@@ -118,7 +106,7 @@ function buildRefIndex(value, inheritedImportContext = undefined, placement = un
         if (closingEdgeMark) return value
     }
 
-    if (isRefIndexed(value)) return value
+    if (getRefCounter(value)) return value
     commitRefIndex(value, importContext)
     return value
 }
@@ -183,12 +171,12 @@ function commitRefIndex(
         const childImportContext = mirror?.importContext ??
             nodeImportContext(child, importContext)
         if (childImportContext !== undefined && !preparedRecords?.has(child)) {
-            const result = buildRefIndex(child, childImportContext, {
+            buildRefIndex(child, childImportContext, {
                 parent: node,
                 key,
                 mirror,
             })
-            if (result !== child || getCommittedEdgeMark(node, key)) {
+            if (getCommittedEdgeMark(node, key)) {
                 errorCount++
                 continue
             }
@@ -259,17 +247,11 @@ function prepareEdgeTransition(
             prepared.errorCount = 1
             return prepared
         }
-        const closesCycle = reachesProjected(candidate, owner, imported, new Set())
+        const closesCycle = reachesProjected(candidate, owner, imported)
         commitImportedPreparation(imported)
         buildPreparedImportRefIndexes(imported)
         if (closesCycle) {
-            prepared.edgeMark = {
-                kind: "cycle",
-                error: validationError(
-                    `Cyclic property "${String(key)}"`,
-                    importContext,
-                ),
-            }
+            prepared.edgeMark = cycleEdgeMark(key, importContext)
             prepared.errorCount = 1
             return prepared
         }
@@ -282,7 +264,7 @@ function prepareEdgeTransition(
     return prepared
 }
 
-function reachesProjected(value, target, preparedImport, visited) {
+function reachesProjected(value, target, preparedImport, visited = new Set()) {
     if (value === target) return true
     if (!isTracked(value) || visited.has(value)) return false
     visited.add(value)
@@ -302,7 +284,6 @@ function reachesProjected(value, target, preparedImport, visited) {
 }
 
 function commitEdgeTransition(owner, key, mirror, prepared) {
-    const oldMirror = getPromiseMirror(owner, key)
     const nextChild = prepared.edgeMark || isPromise(prepared.value)
         ? undefined
         : prepared.value
@@ -315,7 +296,7 @@ function commitEdgeTransition(owner, key, mirror, prepared) {
             if (mirror) {
                 owner[key] = mirror.promise
                 clearEdgeMark(owner, key)
-                if (oldMirror !== mirror) installPromiseMirror(owner, key, mirror)
+                installPromiseMirror(owner, key, mirror)
                 mirror.edgeMark = prepared.edgeMark
             } else {
                 owner[key] = prepared.value

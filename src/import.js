@@ -6,9 +6,9 @@ const {
 const {
     forbiddenKeyError,
     reportFatalError,
-    validationError,
 } = require("./error")
 const {
+    cycleEdgeMark,
     ensureMeta,
     markImported,
     metaOf,
@@ -98,7 +98,7 @@ function prepareImportedData(
     }
 
     function discover(node, inheritedContext) {
-        if (failure || !isTracked(node)) return
+        if (!isTracked(node)) return
         if (node === writeTarget) return
 
         const context = nodeImportContext(node, inheritedContext)
@@ -132,7 +132,7 @@ function prepareImportedData(
             record.edges.push(edge)
             if (edge.edgeMark || isPromise(child) || !isTracked(child)) continue
 
-            discover(child, nodeImportContext(child, context))
+            discover(child, context)
             if (failure) return
         }
         record.state = "done"
@@ -184,13 +184,7 @@ function markCycleEdges(records) {
         for (const ownerRecord of component) {
             for (const edge of ownerRecord.edges) {
                 if (edge.edgeMark || !members.has(edge.value)) continue
-                edge.edgeMark = {
-                    kind: "cycle",
-                    error: validationError(
-                        `Cyclic property "${String(edge.key)}"`,
-                        ownerRecord.context,
-                    ),
-                }
+                edge.edgeMark = cycleEdgeMark(edge.key, ownerRecord.context)
             }
         }
     }

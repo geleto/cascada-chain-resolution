@@ -84,7 +84,7 @@ function setProperty(parent, key, value, importContext = undefined) {
     // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
     // mirror. Two assignments of the same promise are divergent worlds.
     const mirror = isPromise(value)
-        ? createAssignedPromiseMirror(parent, key, value, false)
+        ? createAssignedPromiseMirror(parent, key, value)
         : null
     const prepared = prepareEdgeTransition(parent, key, mirror, value)
     return commitEdgeTransition(parent, key, mirror, prepared)
@@ -312,35 +312,26 @@ function normalizeResolved(value, importContext, placement, sharedOwnership, pla
         // A private terminal cycle cut is the only raw tracked value that may
         // deliberately sit outside the projected ref index.
         if (!terminalCycle) getRequiredRefCounter(value)
-        return finishNormalize(
-            value,
-            importContext,
-            sharedOwnership,
-            plainCopy,
-            terminalCycle,
-        )
+    } else if (counter.promiseCount > 0) {
+        markResolvedValue(value, importContext, true) // pin regardless of sharedOwnership
+        return onInternalResolve(waitForSettlement(value), () => {
+            return finishNormalize(
+                value,
+                importContext,
+                sharedOwnership,
+                plainCopy,
+                terminalCycle,
+            )
+        })
     }
 
-    if (counter.promiseCount === 0) {
-        return finishNormalize(
-            value,
-            importContext,
-            sharedOwnership,
-            plainCopy,
-            terminalCycle,
-        )
-    }
-
-    markResolvedValue(value, importContext, true)     // pin regardless of sharedOwnership
-    return onInternalResolve(waitForSettlement(value), () => {
-        return finishNormalize(
-            value,
-            importContext,
-            sharedOwnership,
-            plainCopy,
-            terminalCycle,
-        )
-    })
+    return finishNormalize(
+        value,
+        importContext,
+        sharedOwnership,
+        plainCopy,
+        terminalCycle,
+    )
 }
 
 function finishNormalize(
@@ -502,13 +493,14 @@ function hasErrorAtPathValue(value, importContext, placement) {
     if (isError(indexed)) return true
     if (getResolvedPlacementMark(placement)) return true
 
-    return hasErrorInIndexedBranch(value, new WeakSet())
+    return hasErrorInIndexedBranch(value)
 }
 
 // The branch is already ref-indexed here: either hasErrorAtPathValue just
 // indexed the resolved path value, or a promise mirror writeback indexed the
 // resolved value before the hasError wait continuation ran.
-function hasErrorInIndexedBranch(value, visited) {
+function hasErrorInIndexedBranch(value) {
+    const visited = new WeakSet()
     const counter = getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
     if (counter.promiseCount === 0) return false
@@ -519,14 +511,7 @@ function hasErrorInIndexedBranch(value, visited) {
     })
     const cleanPromise = collectErrorSearchWaits(
         value,
-        mirror => {
-            return probeResolvedPromiseForErrors(
-                mirror.currentValue,
-                resolveError,
-                visited,
-                mirror.edgeMark,
-            )
-        },
+        probeResolvedMirror,
         visited,
     )
     // Promise.race aggregates hasError-internal waits, which are all
@@ -536,55 +521,28 @@ function hasErrorInIndexedBranch(value, visited) {
         errorPromise,
         onInternalResolve(cleanPromise, () => false),
     ])
-}
 
-// hasError's indexed-branch probe. Recursive promise waits rely on the mirror
-// writeback registered while indexing the parent branch: it is earlier in the
-// promise's FIFO list, so currentValue has already been prepared and indexed
-// before this continuation probes it.
-function probeIndexedBranchForErrors(
-    value,
-    resolveError,
-    visited,
-) {
-    const counter = getRequiredRefCounter(value)
-    if (counter.errorCount > 0) {
-        resolveError()
-        return undefined
+    function probeResolvedMirror(mirror) {
+        const currentValue = mirror.currentValue
+        if (mirror.edgeMark || isError(currentValue)) {
+            resolveError()
+            return undefined
+        }
+        if (!isTracked(currentValue)) return undefined
+        return probeIndexedBranch(currentValue)
     }
-    if (counter.promiseCount === 0) return undefined
 
-    return collectErrorSearchWaits(
-        value,
-        mirror => {
-            return probeResolvedPromiseForErrors(
-                mirror.currentValue,
-                resolveError,
-                visited,
-                mirror.edgeMark,
-            )
-        },
-        visited,
-    )
-}
-
-function probeResolvedPromiseForErrors(
-    value,
-    resolveError,
-    visited,
-    marker,
-) {
-    if (marker || isError(value)) {
-        resolveError()
-        return undefined
+    // Recursive waits rely on the mirror writeback registered while indexing
+    // the parent: it prepares and indexes currentValue before this probe runs.
+    function probeIndexedBranch(node) {
+        const nodeCounter = getRequiredRefCounter(node)
+        if (nodeCounter.errorCount > 0) {
+            resolveError()
+            return undefined
+        }
+        if (nodeCounter.promiseCount === 0) return undefined
+        return collectErrorSearchWaits(node, probeResolvedMirror, visited)
     }
-    if (!isTracked(value)) return undefined
-
-    return probeIndexedBranchForErrors(
-        value,
-        resolveError,
-        visited,
-    )
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
@@ -603,12 +561,10 @@ function getErrors(chain, path) {
 }
 
 function collectErrorsAtPathValue(value, importContext, placement, errors) {
-    if (placement) {
-        const edgeMark = getResolvedPlacementMark(placement)
-        if (edgeMark) {
-            errors.add(edgeMark.error)
-            return undefined
-        }
+    let edgeMark = getResolvedPlacementMark(placement)
+    if (edgeMark) {
+        errors.add(edgeMark.error)
+        return undefined
     }
     if (isError(value)) {
         errors.add(value)
@@ -621,12 +577,10 @@ function collectErrorsAtPathValue(value, importContext, placement, errors) {
         errors.add(indexed)
         return undefined
     }
-    if (placement) {
-        const edgeMark = getResolvedPlacementMark(placement)
-        if (edgeMark) {
-            errors.add(edgeMark.error)
-            return undefined
-        }
+    edgeMark = getResolvedPlacementMark(placement)
+    if (edgeMark) {
+        errors.add(edgeMark.error)
+        return undefined
     }
 
     return collectErrorsInIndexedBranch(value, errors, new WeakSet())
@@ -747,10 +701,7 @@ function walkObservationPath(chain, path, onResolved) {
     }
 
     function walkValue(value, index, importContext, placement) {
-        if (index === targetPath.length - 1) {
-            return onResolved(value, importContext, placement)
-        }
-        if (isError(value)) {
+        if (index === targetPath.length - 1 || isError(value)) {
             return onResolved(value, importContext, placement)
         }
         if (!isTracked(value)) {

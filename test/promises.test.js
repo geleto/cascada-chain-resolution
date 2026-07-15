@@ -398,7 +398,6 @@ describe("promise mirrors and lookupPath", () => {
             owner,
             "value",
             pending.promise,
-            false,
         )
         commitEdgeTransition(
             owner,

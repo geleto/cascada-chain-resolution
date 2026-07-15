@@ -3,7 +3,10 @@ const {
     isTracked,
     onValueResolve,
 } = require("./helpers")
-const { reportFatalError } = require("./error")
+const {
+    reportFatalError,
+    validationError,
+} = require("./error")
 
 const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
@@ -63,17 +66,13 @@ function hasSharedMark(value) {
         (metaOf(value)?.shared === true || !Object.isExtensible(value))
 }
 
-function setSharedMark(value) {
-    if (!isTracked(value) || !Object.isExtensible(value)) return value
-    ensureMeta(value).shared = true
-    return value
-}
-
 // Bare promises crossing an ownership boundary resolve to shared values.
 // Mirrored promise properties mark their prepared logical value instead.
 function markShared(value) {
     if (isPromise(value)) return onValueResolve(value, markShared)
-    return setSharedMark(value)
+    if (!isTracked(value) || !Object.isExtensible(value)) return value
+    ensureMeta(value).shared = true
+    return value
 }
 
 // An import marker belongs only to the boundary root. Descendants inherit its
@@ -100,6 +99,16 @@ function getEdgeMark(node, key) {
     return metaOf(node)?.edgeMarks?.[key]
 }
 
+function cycleEdgeMark(key, importContext) {
+    return {
+        kind: "cycle",
+        error: validationError(
+            `Cyclic property "${String(key)}"`,
+            importContext,
+        ),
+    }
+}
+
 function setEdgeMark(node, key, edgeMark) {
     const meta = ensureMeta(node)
     meta.edgeMarks ??= Object.create(null)
@@ -113,6 +122,7 @@ function clearEdgeMark(node, key) {
 
 module.exports = {
     clearEdgeMark,
+    cycleEdgeMark,
     ensureMeta,
     getEdgeMark,
     hasSharedMark,

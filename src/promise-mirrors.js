@@ -89,8 +89,9 @@ function createPromiseMirror(
 }
 
 // ASSIGN: always a fresh mirror. Reusing one would merge two divergent worlds.
-function createAssignedPromiseMirror(node, key, promise, install = true) {
-    return createPromiseMirror(node, key, promise, null, false, undefined, false, install)
+// It remains private until the assignment's live-edge commit publishes it.
+function createAssignedPromiseMirror(node, key, promise) {
+    return createPromiseMirror(node, key, promise, null, false, undefined, false, false)
 }
 
 // DISCOVERY: the physical Promise already occupies the imported/raw property.
