@@ -1,13 +1,13 @@
 let fatalReporter = () => {}
-const reportedErrors = new WeakSet()
+const reportedFatalErrors = new WeakSet()
 
 function isObjectLike(value) {
     return value !== null && (typeof value === "object" || typeof value === "function")
 }
 
 function reportFatalError(error) {
-    if (!isObjectLike(error) || !reportedErrors.has(error)) {
-        if (isObjectLike(error)) reportedErrors.add(error)
+    if (!isObjectLike(error) || !reportedFatalErrors.has(error)) {
+        if (isObjectLike(error)) reportedFatalErrors.add(error)
         try {
             fatalReporter(error)
         } catch {
