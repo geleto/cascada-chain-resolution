@@ -203,15 +203,17 @@ describe("getErrors", () => {
         const root = importValue({ branch }, "shared path branch")
 
         const result = getErrors(new Chain(root), ["branch"])
-        // Lazy import creates the mirror at indexing; the query is the second consumer.
-        expect(registrations()).to.be(2)
+        // Writeback, imported-path continuation, then the query wait.
+        expect(registrations()).to.be(3)
         expect(metaOf(branch).shared).to.be(undefined)
         expect(metaOf(child).shared).to.be(undefined)
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
-        expect(registrations()).to.be(2)
-        expect(metaOf(child).shared).to.be(undefined)
+        // The repeated child contributes two new import paths, but no second
+        // getErrors wait for the already-visited identity.
+        expect(registrations()).to.be(5)
+        expect(metaOf(child).shared).to.be(true)
 
         pending.reject("bad")
         const errors = await result
@@ -232,8 +234,8 @@ describe("getErrors", () => {
         const root = importValue(branch, "imported diamond")
         const result = getErrors(new Chain(root), [])
 
-        // One mirror writeback and one error-query wait.
-        expect(registrations()).to.be(2)
+        // One writeback, one imported-path continuation, and one query wait.
+        expect(registrations()).to.be(3)
         expect(metaOf(leaf).shared).to.be(true)
 
         pending.reject("diamond failure")
@@ -424,10 +426,10 @@ describe("getErrors", () => {
         verifyRefCounts(chain._state.value, privateBranch)
     })
 
-    it("collects attributed cycle Errors from revoked mirrors", async () => {
+    it("collects an imported cycle captured before a COW overwrite", async () => {
         const pending = deferred()
-        const branch = {}
-        branch.pending = importValue(pending.promise, "revoked getErrors")
+        const branch = { pending: pending.promise }
+        importValue(branch, "captured getErrors cycle")
         const chain = new Chain(branch)
 
         const result = getErrors(chain, [])
@@ -437,9 +439,10 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be(
-            'Cyclic property "pending" (imported at: revoked getErrors)',
+            'Cyclic property "pending" (imported at: captured getErrors cycle)',
         )
         expect(chain._state.value.pending).to.be("replacement")
+        expect(branch.pending).to.be(pending.promise)
     })
 
     it("resolves promised paths and root promises", async () => {

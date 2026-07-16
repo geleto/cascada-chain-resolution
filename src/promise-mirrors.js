@@ -159,13 +159,12 @@ function onPromiseMirrorResolve(mirror, fn) {
 function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
     const prepared = preparePropertyTransition(
         mirror.node,
-        mirror.key,
         mirror,
         value,
         markResolvedValueShared,
     )
     mirror.currentValue = prepared.value
-    mirror.cycleError = prepared.cycleError
+    mirror.cycleError = undefined
     mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
 }
 

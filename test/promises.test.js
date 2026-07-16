@@ -1,14 +1,9 @@
 const path = require("path")
 const { spawnSync } = require("child_process")
 const {
-    createAssignedPromiseMirror,
     onPromiseMirrorResolve,
 } = require("../src/promise-mirrors")
 const { getCommittedCycleError } = require("../src/import")
-const {
-    commitPropertyTransition,
-    preparePropertyTransition,
-} = require("../src/refcounts")
 
 const {
     Chain,
@@ -306,28 +301,6 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("cuts a self-resolving import when its owner is indexed during the drain", async () => {
-        const pending = deferred()
-        const root = {}
-
-        assignPath(
-            new Chain(root),
-            ["value"],
-            importValue(pending.promise, "self-resolving drain"),
-        )
-        const mirror = metaOf(root).mirrors.value
-        onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
-
-        pending.resolve(root)
-        await flushMicrotasks()
-
-        expect(mirror.cycleError.message).to.be(
-            'Cyclic property "value" (imported at: self-resolving drain)',
-        )
-        expectCounts(root, 0, 1)
-        verifyRefCounts(root)
-    })
-
     it("keeps a draining mirror cycle Error private until final commit", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
@@ -355,38 +328,28 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("moves a committed cycle Error exclusively into its replacement mirror", () => {
+    it("does not copy a committed cycle Error into a replacement mirror", () => {
         const owner = {}
-        const cyclic = importValue({ back: owner }, "marked mirror replacement")
+        owner.value = owner
+        importValue(owner, "marked mirror replacement")
         const pending = deferred()
+        const chain = new Chain(owner)
 
         buildRefIndex(owner)
-        commitPropertyTransition(
-            owner,
-            "value",
-            null,
-            preparePropertyTransition(owner, "value", null, cyclic),
-        )
         expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
 
-        const mirror = createAssignedPromiseMirror(
-            owner,
-            "value",
-            pending.promise,
-        )
-        commitPropertyTransition(
-            owner,
-            "value",
-            mirror,
-            preparePropertyTransition(owner, "value", mirror, pending.promise),
-        )
+        assignPath(chain, ["value"], pending.promise)
+        const copy = chain._state.value
+        const mirror = metaOf(copy).mirrors.value
 
-        expect(metaOf(owner).mirrors.value).to.be(mirror)
+        expect(copy).not.to.be(owner)
+        expect(metaOf(copy).mirrors.value).to.be(mirror)
         expect(mirror.promise).to.be(pending.promise)
         expect(mirror.cycleError).to.be(undefined)
-        expect(metaOf(owner).cycleErrors?.value).to.be(undefined)
-        expectCounts(owner, 1, 0)
-        verifyRefCounts(owner, cyclic)
+        expect(metaOf(copy).cycleErrors?.value).to.be(undefined)
+        expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
+        expectCounts(copy, 1, 0)
+        verifyRefCounts(owner, copy)
     })
 
     it("does not publish a mirror whose consumer throws a falsy fatal value", async () => {

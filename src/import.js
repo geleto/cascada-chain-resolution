@@ -17,6 +17,7 @@ const {
 const {
     getPromiseMirror,
     getOrCreatePromiseMirror,
+    onPromiseMirrorResolve,
     readLogicalProperty,
 } = require("./promise-mirrors")
 
@@ -54,12 +55,12 @@ function commitPlacementCycleError(
     commitEdge,
 ) {
     const { parent, key, mirror } = placement
+    if (getResolvedCycleError(placement)) return
+
     if (mirror?.pendingConsumerCount > 0) {
         mirror.cycleError = cycleError
         return
     }
-
-    if (getCommittedCycleError(parent, key) === cycleError) return
 
     const nextValue = mirror
         ? mirror.currentValue
@@ -97,49 +98,79 @@ function prepareImportedData(
     excludedMirror,
     commitCycleErrorEdge,
 ) {
-    const visited = new Set()
-    const currentPath = new Set()
-    walkImportedData(importBoundary.root, importBoundary)
+    // Each identity maps to the active ancestors already checked below it.
+    const visited = new WeakMap()
+    walk(importBoundary.root, importBoundary, new Set())
 
-    function walkImportedData(node, inheritedBoundary) {
-        if (node === writeTarget) return
+    function walk(value, inheritedBoundary, currentPath, placement) {
+        if (getResolvedCycleError(placement)) return
+        if (value === writeTarget) return
 
-        const boundary = nodeImportBoundary(node, inheritedBoundary)
-        visited.add(node)
-        currentPath.add(node)
-
-        for (const key of Object.keys(node)) {
-            if (getCommittedCycleError(node, key)) continue
-
-            const mirror = getPromiseMirror(node, key)
-            const child = readLogicalProperty(node, key)
-            if (isPromise(child)) {
-                if (mirror === excludedMirror) continue
-                if (mirror?.promise === child) {
-                    mirror.importBoundary ??= boundary
-                    mirror.ownerIsImportedOriginal = true
-                } else {
-                    getOrCreatePromiseMirror(node, key, child, boundary)
-                }
-                continue
+        if (isPromise(value)) {
+            const { parent, key } = placement
+            let { mirror } = placement
+            if (mirror && mirror === excludedMirror) return
+            if (mirror?.promise === value) {
+                mirror.importBoundary ??= inheritedBoundary
+                mirror.ownerIsImportedOriginal = true
+            } else {
+                mirror = getOrCreatePromiseMirror(
+                    parent,
+                    key,
+                    value,
+                    inheritedBoundary,
+                )
             }
-            if (!isTracked(child)) continue
-
-            if (child === writeTarget) continue
-            if (visited.has(child)) {
-                markShared(child)
-                if (currentPath.has(child)) {
-                    commitPlacementCycleError(
-                        { parent: node, key, mirror },
-                        createCycleError(key, boundary.errorContext),
-                        commitCycleErrorEdge,
-                    )
-                }
-                continue
-            }
-            walkImportedData(child, boundary)
+            const promisePath = new Set(currentPath)
+            onPromiseMirrorResolve(mirror, () => walk(
+                mirror.currentValue,
+                inheritedBoundary,
+                promisePath,
+                { parent, key, mirror },
+            ))
+            return
         }
-        currentPath.delete(node)
+        if (!isTracked(value)) return
+
+        if (currentPath.has(value)) {
+            markShared(value)
+            commitPlacementCycleError(
+                placement,
+                createCycleError(
+                    placement.key,
+                    inheritedBoundary.errorContext,
+                ),
+                commitCycleErrorEdge,
+            )
+            return
+        }
+        const checkedAncestors = visited.get(value)
+        if (checkedAncestors) {
+            markShared(value)
+            let hasNewAncestor = false
+            for (const ancestor of currentPath) {
+                if (checkedAncestors.has(ancestor)) continue
+                checkedAncestors.add(ancestor)
+                hasNewAncestor = true
+            }
+            // Re-enter only when this path can expose a new back-edge.
+            if (!hasNewAncestor) return
+        } else {
+            visited.set(value, new Set(currentPath))
+        }
+
+        const boundary = nodeImportBoundary(value, inheritedBoundary)
+        currentPath.add(value)
+        for (const key of Object.keys(value)) {
+            const mirror = getPromiseMirror(value, key)
+            walk(
+                readLogicalProperty(value, key),
+                boundary,
+                currentPath,
+                { parent: value, key, mirror },
+            )
+        }
+        currentPath.delete(value)
     }
 }
 
@@ -163,39 +194,29 @@ function buildImportedRefIndex(
         )
     }
 
-    let closingCycleError = getResolvedCycleError(placement)
-    if (atBoundaryRoot && placement && !closingCycleError) {
-        closingCycleError = scanForClosingCycleError(
-            value,
-            placement.parent,
-            placement.key,
-            importBoundary,
-        )
-    }
-    if (closingCycleError) {
+    const cycleError = getResolvedCycleError(placement)
+    if (cycleError) {
         commitPlacementCycleError(
             placement,
-            closingCycleError,
+            cycleError,
             commitCycleErrorEdge,
         )
     }
 
-    const privateCut = closingCycleError &&
+    const privateCut = cycleError &&
         placement.mirror && placement.mirror.pendingConsumerCount > 0
     // A draining mirror's cut is private until its final commit. Indexing
     // this branch now could follow the raw back-reference into its owner.
     if (prepareRoot && !privateCut) {
         commitRefIndex(importBoundary.root, importBoundary, true)
     }
-    if (!closingCycleError) {
+    if (!cycleError) {
         commitRefIndex(value, importBoundary, true)
     }
 }
 
 function prepareImportedPropertyTransition(
-    value,
     owner,
-    key,
     mirror,
     importBoundary,
     prepareRoot,
@@ -211,31 +232,6 @@ function prepareImportedPropertyTransition(
         )
         commitRefIndex(importBoundary.root, importBoundary, true)
     }
-    return scanForClosingCycleError(
-        value,
-        owner,
-        key,
-        importBoundary,
-    )
-}
-
-function scanForClosingCycleError(value, target, key, importBoundary) {
-    const visited = new Set()
-    if (!reaches(value)) return undefined
-    return createCycleError(key, importBoundary.errorContext)
-
-    function reaches(node) {
-        if (node === target) return true
-        if (!isTracked(node) || visited.has(node)) return false
-        visited.add(node)
-
-        for (const childKey of Object.keys(node)) {
-            if (getCommittedCycleError(node, childKey)) continue
-            const child = readLogicalProperty(node, childKey)
-            if (isTracked(child) && reaches(child)) return true
-        }
-        return false
-    }
 }
 
 module.exports = {
@@ -245,5 +241,4 @@ module.exports = {
     getResolvedCycleError,
     import: importValue,
     prepareImportedPropertyTransition,
-    setCycleError,
 }

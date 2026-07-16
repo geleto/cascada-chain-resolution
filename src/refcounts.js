@@ -28,7 +28,6 @@ const {
     clearCycleError,
     getCommittedCycleError,
     prepareImportedPropertyTransition,
-    setCycleError,
 } = require("./import")
 const { writeLanguageProperty } = require("./validate")
 
@@ -168,7 +167,6 @@ function commitRefIndex(
 
 function preparePropertyTransition(
     owner,
-    key,
     propertyMirror,
     newValue,
     markNewValueShared = false,
@@ -176,7 +174,6 @@ function preparePropertyTransition(
     const ownerCounter = getRefCounter(owner)
     const prepared = {
         value: newValue,
-        cycleError: undefined,
         preparedWhileOwnerIndexed: !!ownerCounter,
     }
     // The next FIFO consumer may mutate this private value before the mirror
@@ -197,19 +194,14 @@ function preparePropertyTransition(
     }
 
     if (importBoundary) {
-        prepared.cycleError = prepareImportedPropertyTransition(
-            newValue,
+        prepareImportedPropertyTransition(
             owner,
-            key,
             propertyMirror,
             importBoundary,
             !getRefCounter(importBoundary.root),
             commitRefIndex,
             commitCycleErrorEdge,
         )
-        if (prepared.cycleError) {
-            return prepared
-        }
     }
 
     buildRefIndex(newValue, importBoundary)
@@ -218,9 +210,9 @@ function preparePropertyTransition(
 
 function commitPropertyTransition(owner, key, propertyMirror, prepared) {
     const nextCounts = prepared.preparedWhileOwnerIndexed
-        ? (prepared.cycleError ? [0, 1] : getRefCounts(prepared.value))
+        ? getRefCounts(prepared.value)
         : undefined
-    const nextChild = prepared.cycleError || isPromise(prepared.value)
+    const nextChild = isPromise(prepared.value)
         ? undefined
         : prepared.value
     commitLiveEdge(
@@ -233,14 +225,10 @@ function commitPropertyTransition(owner, key, propertyMirror, prepared) {
                 writeLanguageProperty(owner, key, propertyMirror.promise)
                 clearCycleError(owner, key)
                 installPromiseMirror(owner, key, propertyMirror)
-                propertyMirror.cycleError = prepared.cycleError
             } else {
                 writeLanguageProperty(owner, key, prepared.value)
                 clearCycleError(owner, key)
                 clearPromiseMirror(owner, key)
-                if (prepared.cycleError) {
-                    setCycleError(owner, key, prepared.cycleError)
-                }
             }
         },
     )
@@ -251,18 +239,12 @@ function commitMirrorDrain(mirror) {
 
     const counter = getRefCounter(mirror.node)
     if (counter && !mirror.preparedWhileOwnerIndexed) {
-        const previousCycleError = mirror.cycleError
         const prepared = preparePropertyTransition(
             mirror.node,
-            mirror.key,
             mirror,
             mirror.currentValue,
         )
-        if (previousCycleError && prepared.cycleError) {
-            prepared.cycleError = previousCycleError
-        }
         mirror.currentValue = prepared.value
-        mirror.cycleError = prepared.cycleError
         mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
     }
 

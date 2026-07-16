@@ -280,18 +280,19 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("cuts an imported child back-reference without re-indexing its owner", async () => {
+    it("cuts an imported child back-reference during rooted preparation", async () => {
         const pending = deferred()
         const wrapper = { pending: pending.promise }
-        const child = importValue({ back: wrapper }, "nested imported back-reference")
+        const child = { back: wrapper }
         wrapper.child = child
+        importValue(wrapper, "nested imported back-reference")
 
         buildRefIndex(wrapper)
 
-        expect(metaOf(wrapper).cycleErrors.child.message).to.be(
-            'Cyclic property "child" (imported at: nested imported back-reference)',
+        expect(metaOf(child).cycleErrors.back.message).to.be(
+            'Cyclic property "back" (imported at: nested imported back-reference)',
         )
-        expect(metaOf(child).cycleErrors).to.be(undefined)
+        expect(metaOf(wrapper).cycleErrors).to.be(undefined)
         expectCounts(wrapper, 1, 1)
         verifyRefCounts(wrapper, child)
 
@@ -500,29 +501,6 @@ describe("subtree counters", () => {
 
         expect(getRefCounter(resolved).promiseCount).to.be(0)
         verifyRefCounts(root, resolved)
-    })
-
-    it("prepares a revoked mirror value against its indexed parent", async () => {
-        const pending = deferred()
-        const root = {
-            value: importValue(pending.promise, "revoked back-edge"),
-        }
-        const chain = new Chain(root)
-
-        buildRefIndex(root)
-        const mirror = metaOf(root).mirrors.value
-        assignPath(chain, ["value"], "fixed")
-
-        pending.resolve(root)
-        await flushMicrotasks()
-
-        expect(root.value).to.be("fixed")
-        expect(mirror.currentValue).to.be(root)
-        expect(mirror.cycleError.message).to.be(
-            'Cyclic property "value" (imported at: revoked back-edge)',
-        )
-        expectCounts(root, 0, 0)
-        verifyRefCounts(root)
     })
 
     it("keeps one count when the same promise is assigned again", async () => {

@@ -21,9 +21,8 @@ const {
 describe("normalize", () => {
     it("keeps a mirror pending when cycle normalization re-enters it", async () => {
         const pending = deferred()
-        const root = {
-            value: importValue(pending.promise, "re-entrant cycle"),
-        }
+        const root = { value: pending.promise }
+        importValue(root, "re-entrant cycle")
         const chain = new Chain(root)
         const normalized = normalize(chain, ["value"], false, true)
         const mirror = metaOf(root).mirrors.value
@@ -34,7 +33,8 @@ describe("normalize", () => {
 
         expect(copy.back.value).to.be(copy)
         expect(mirror.pendingConsumerCount).to.be(0)
-        expect(mirror.cycleError instanceof Error).to.be(true)
+        expect(mirror.cycleError).to.be(undefined)
+        expect(metaOf(resolved).cycleErrors.back instanceof Error).to.be(true)
         verifyRefCounts(root)
     })
 

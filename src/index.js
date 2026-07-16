@@ -84,7 +84,7 @@ function setProperty(parent, key, value, importBoundary = undefined) {
     const mirror = isPromise(value)
         ? createAssignedPromiseMirror(parent, key, value)
         : null
-    const prepared = preparePropertyTransition(parent, key, mirror, value)
+    const prepared = preparePropertyTransition(parent, mirror, value)
     commitPropertyTransition(parent, key, mirror, prepared)
 }
 
@@ -248,7 +248,7 @@ function normalize(chain, path, sharedOwnership = true, plainCopy = false) {
             sharedOwnership,
             plainCopy,
         )
-    })
+    }, true)
 }
 
 function normalizeResolved(value, importBoundary, placement, sharedOwnership, plainCopy) {
@@ -418,7 +418,7 @@ function markResolvedValue(value, importBoundary, sharedOwnership) {
 function hasError(chain, path) {
     return walkObservationPath(chain, path, (value, importBoundary, placement) => {
         return hasErrorAtPathValue(value, importBoundary, placement)
-    })
+    }, true)
 }
 
 // Entry for the value reached by hasError's path resolution. This boundary must
@@ -495,7 +495,7 @@ function getErrors(chain, path) {
         )
         if (!readiness) return [...errors]
         return onInternalResolve(readiness, () => [...errors])
-    })
+    }, true)
 
     function collectErrorsAtPathValue(value, importBoundary, placement) {
         let cycleError = getResolvedCycleError(placement)
@@ -591,7 +591,7 @@ function collectErrorSearchWaits(
 // decide whether the reached value escapes and therefore whether to mark it.
 // Every preceding value must be trackable; only the final target may be
 // missing, and an empty path targets the root.
-function walkObservationPath(chain, path, onResolved) {
+function walkObservationPath(chain, path, onResolved, prepareImportedParents = false) {
     const targetPath = ["value", ...path]
     return walkFromParent(chain._state, 0, undefined)
 
@@ -608,6 +608,10 @@ function walkObservationPath(chain, path, onResolved) {
         }
 
         const importBoundary = nodeImportBoundary(parent, inheritedImportBoundary)
+        if (prepareImportedParents && importBoundary &&
+            !getRefCounter(importBoundary.root)) {
+            buildRefIndex(parent, importBoundary)
+        }
         const key = targetPath[index]
         let mirror = getPromiseMirror(parent, key)
         const value = readLogicalProperty(parent, key)

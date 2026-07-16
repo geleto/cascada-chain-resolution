@@ -657,22 +657,21 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("observes revoked promise values validated against their indexed parent", async () => {
+    it("observes an imported promise cycle captured before a COW overwrite", async () => {
         const pending = deferred()
-        const root = {
-            branch: {
-                pending: importValue(pending.promise, "revoked hasError"),
-            },
-        }
+        const branch = { pending: pending.promise }
+        importValue(branch, "captured hasError cycle")
+        const root = { branch }
         const chain = new Chain(root)
 
         const result = hasError(chain, ["branch"])
         assignPath(chain, ["branch", "pending"], "fixed")
-        pending.resolve(root.branch)
+        pending.resolve(branch)
 
         expect(await result).to.be(true)
-        expect(root.branch.pending).to.be("fixed")
-        verifyRefCounts(root)
+        expect(chain._state.value.branch.pending).to.be("fixed")
+        expect(branch.pending).to.be(pending.promise)
+        verifyRefCounts(root, chain._state.value)
     })
 
     it("follows promises exposed by a mirror revoked before resolution", async () => {

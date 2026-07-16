@@ -72,11 +72,17 @@ Trusted language data follows the compiler's tree-shaped ownership contract,
 so `commitRefIndex` walks it directly without identity bookkeeping. When an
 import boundary is reached, `buildRefIndex` delegates the complete imported
 path to `buildImportedRefIndex`. Its private rooted walk starts from the stored
-boundary root, uses `visited` to mark repeated identities shared, and uses
-`currentPath` to cut properties that point back into the active path. It
-publishes mirrors and cycle Errors directly, then invokes ordinary
-`commitRefIndex` for the acyclic projection. No imported record graph or
-preparation flag is retained. See `docs/lazy-import.md`.
+boundary root, keeps one weak map of identities and the active path, and cuts
+properties that point back into that path. Repeated identities are marked
+shared and revisited only for active ancestors not checked earlier. It publishes
+mirrors and cycle Errors directly. At every Promise it copies the active path
+and registers a continuation at that FIFO position. After writeback prepares
+the latest logical mirror value, the continuation resumes the same walk with
+the copied path and operation-wide identity map. The synchronous prefix then
+invokes ordinary `commitRefIndex`; later Promise branches update that projection
+through normal mirror writeback and atomic cycle-edge commits. No
+imported record graph or preparation flag is retained. See
+`docs/lazy-import.md`.
 
 Frozen, sealed, and otherwise non-extensible nodes follow the same counter
 rules as extensible nodes. Once reached by a successful index build, each has a
@@ -91,9 +97,11 @@ multiplied accordingly. Cycle cuts never add reverse edges.
 
 New values are prepared before they enter the attached graph:
 
-- `preparePropertyTransition(owner, key, propertyMirror, newValue)` derives imported
-  preparation, cycle Errors, and child indexing without changing the attached
-  placement. Counts are read from that prepared state only when it is committed.
+- `preparePropertyTransition(owner, propertyMirror, newValue)` derives
+  imported preparation and child indexing without changing the attached
+  placement. Imported DFS consumers publish cycle Errors at the exact placement
+  they discover. Counts are read from prepared transition state only when it is
+  committed.
 - `commitPropertyTransition(owner, key, propertyMirror, prepared)` installs that state.
 
 Every live assignment, deletion, changed cycle Error, and successful mirror drain
@@ -124,6 +132,12 @@ Consumers prepare successive private values in FIFO order. The sole remaining
 consumer commits the final prepared value once if the mirror is still live,
 then decrements to zero. Zero is the settled state. A revoked mirror keeps only
 its private result.
+
+Imported preparation uses the same consumer. Each non-redundant active path is
+copied when its Promise is discovered, then the consumer resumes the import walk
+on `currentValue` and registers the same work on newly exposed Promise
+properties. This places cycle and alias discovery after earlier advances and
+before later operations without a separate Promise scheduler.
 
 This drain rule closes the settlement-to-writeback race. A read cannot use a
 settled fast path while an earlier registered mutation is still queued. A
