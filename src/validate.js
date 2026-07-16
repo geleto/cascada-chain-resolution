@@ -20,7 +20,7 @@ function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) 
 }
 
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
-// descriptor before candidate preparation can publish any imported state.
+// descriptor before new-value preparation can publish any imported state.
 function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = assertCanMutateLanguageProperty(
         parent,

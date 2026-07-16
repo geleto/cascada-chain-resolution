@@ -209,7 +209,7 @@ All the bookkeeping above - the shared flag, mirrors, counters, and imported-pro
     errorContext,
   },
   mirrors: {                 // one entry per promise-holding property -
-    db: { promise, currentValue, cycleError, settled, pendingConsumerCount },
+    db: { promise, currentValue, cycleError, pendingConsumerCount },
   },
   cycleErrors: {             // projected cuts, when present
     self: cycleError,

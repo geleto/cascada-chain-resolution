@@ -6,28 +6,32 @@ const {
     isTracked,
 } = require("./helpers")
 const {
-    createCycleError,
     reportFatalError,
 } = require("./error")
 const {
-    clearCycleError,
     ensureMeta,
     markImported,
     markShared,
     metaOf,
     nodeImportBoundary,
-    setCycleError,
 } = require("./meta")
 const {
     clearPromiseMirror,
-    getCommittedCycleError,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     installPromiseMirror,
     isLivePromiseMirror,
     readLogicalProperty,
 } = require("./promise-mirrors")
-const { prepareImportedData } = require("./import")
+const {
+    clearCycleError,
+    commitPlacementCycleError,
+    getCommittedCycleError,
+    getResolvedCycleError,
+    prepareImportedData,
+    scanForClosingCycleError,
+    setCycleError,
+} = require("./import")
 const { writeLanguageProperty } = require("./validate")
 
 function getRefCounter(node) {
@@ -52,22 +56,16 @@ function getRefCounts(value) {
     return [counter.promiseCount, counter.errorCount]
 }
 
-function getResolvedCycleError(placement) {
-    if (!placement) return undefined
-    if (placement.mirror) return placement.mirror.cycleError
-    return getCommittedCycleError(placement.parent, placement.key)
-}
-
 function getPropertyRefCounts(parent, key) {
     const mirror = getPromiseMirror(parent, key)
-    if (mirror && !mirror.settled) return [1, 0]
+    if (mirror && mirror.pendingConsumerCount > 0) return [1, 0]
     if (getCommittedCycleError(parent, key)) return [0, 1]
     return getRefCounts(readLogicalProperty(parent, key))
 }
 
 function getCountedChild(parent, key) {
     const mirror = getPromiseMirror(parent, key)
-    if (mirror && !mirror.settled) return undefined
+    if (mirror && mirror.pendingConsumerCount > 0) return undefined
     if (getCommittedCycleError(parent, key)) return undefined
     return readLogicalProperty(parent, key)
 }
@@ -90,18 +88,23 @@ function buildRefIndex(value, inheritedImportBoundary = undefined, placement = u
         }
 
         let closingCycleError = getResolvedCycleError(placement)
-        if (atBoundaryRoot && placement && !closingCycleError &&
-            reachesProjected(value, placement.parent)) {
-            closingCycleError = createCycleError(
+        if (atBoundaryRoot && placement && !closingCycleError) {
+            closingCycleError = scanForClosingCycleError(
+                value,
+                placement.parent,
                 placement.key,
-                importBoundary.errorContext,
+                importBoundary,
             )
         }
         if (closingCycleError) {
-            commitPlacementCycleError(placement, closingCycleError)
+            commitPlacementCycleError(
+                placement,
+                closingCycleError,
+                commitCycleErrorEdge,
+            )
         }
         const privateCut = closingCycleError &&
-            placement.mirror && !placement.mirror.settled
+            placement.mirror && placement.mirror.pendingConsumerCount > 0
         // A draining mirror's cut is private until its final commit. Indexing
         // this branch now could follow the raw back-reference into its owner.
         if (preparedImport && !privateCut) {
@@ -192,33 +195,33 @@ function commitRefIndex(
     return [promiseCount, errorCount]
 }
 
-function prepareEdgeTransition(
+function preparePropertyTransition(
     owner,
     key,
-    mirror,
-    candidate,
-    markCandidateShared = false,
+    propertyMirror,
+    newValue,
+    markNewValueShared = false,
 ) {
     const ownerCounter = getRefCounter(owner)
     const prepared = {
-        value: candidate,
+        value: newValue,
         cycleError: undefined,
-        promiseCount: isPromise(candidate) ? 1 : 0,
-        errorCount: isError(candidate) ? 1 : 0,
-        preparedForIndexedOwner: !!ownerCounter,
+        preparedWhileOwnerIndexed: !!ownerCounter,
     }
     // The next FIFO consumer may mutate this private value before the mirror
     // drains. Publish the irreversible sharing mark now so that advance COWs.
-    if (markCandidateShared) markShared(candidate)
+    if (markNewValueShared) markShared(newValue)
 
-    let importBoundary = nodeImportBoundary(candidate)
-    if (mirror?.importBoundary && !importBoundary) {
-        markImported(candidate, mirror.importBoundary.errorContext)
-        importBoundary = nodeImportBoundary(candidate)
+    let importBoundary = nodeImportBoundary(newValue)
+    if (propertyMirror?.importBoundary && !importBoundary) {
+        markImported(newValue, propertyMirror.importBoundary.errorContext)
+        importBoundary = nodeImportBoundary(newValue)
     }
-    if (mirror && importBoundary) mirror.importBoundary = importBoundary
+    if (propertyMirror && importBoundary) {
+        propertyMirror.importBoundary = importBoundary
+    }
 
-    if (!ownerCounter || !isTracked(candidate)) {
+    if (!ownerCounter || !isTracked(newValue)) {
         return prepared
     }
 
@@ -227,59 +230,44 @@ function prepareEdgeTransition(
             prepareImportedData(
                 importBoundary,
                 owner,
-                mirror,
+                propertyMirror,
                 commitCycleError,
             )
             commitRefIndex(importBoundary.root, importBoundary, true)
         }
-        const closesCycle = reachesProjected(candidate, owner)
-        if (closesCycle) {
-            prepared.cycleError = createCycleError(
-                key,
-                importBoundary.errorContext,
-            )
-            prepared.errorCount = 1
+        prepared.cycleError = scanForClosingCycleError(
+            newValue,
+            owner,
+            key,
+            importBoundary,
+        )
+        if (prepared.cycleError) {
             return prepared
         }
     }
 
-    buildRefIndex(candidate, importBoundary)
-    const counts = getRefCounts(candidate)
-    prepared.promiseCount = counts[0]
-    prepared.errorCount = counts[1]
+    buildRefIndex(newValue, importBoundary)
     return prepared
 }
 
-function reachesProjected(value, target, visited = new Set()) {
-    if (value === target) return true
-    if (!isTracked(value) || visited.has(value)) return false
-    visited.add(value)
-
-    for (const key of Object.keys(value)) {
-        if (getCommittedCycleError(value, key)) continue
-        const child = readLogicalProperty(value, key)
-        if (isTracked(child) && reachesProjected(child, target, visited)) {
-            return true
-        }
-    }
-    return false
-}
-
-function commitEdgeTransition(owner, key, mirror, prepared) {
+function commitPropertyTransition(owner, key, propertyMirror, prepared) {
+    const nextCounts = prepared.preparedWhileOwnerIndexed
+        ? (prepared.cycleError ? [0, 1] : getRefCounts(prepared.value))
+        : undefined
     const nextChild = prepared.cycleError || isPromise(prepared.value)
         ? undefined
         : prepared.value
     commitLiveEdge(
         owner,
         key,
-        [prepared.promiseCount, prepared.errorCount],
+        nextCounts,
         nextChild,
         () => {
-            if (mirror) {
-                writeLanguageProperty(owner, key, mirror.promise)
+            if (propertyMirror) {
+                writeLanguageProperty(owner, key, propertyMirror.promise)
                 clearCycleError(owner, key)
-                installPromiseMirror(owner, key, mirror)
-                mirror.cycleError = prepared.cycleError
+                installPromiseMirror(owner, key, propertyMirror)
+                propertyMirror.cycleError = prepared.cycleError
             } else {
                 writeLanguageProperty(owner, key, prepared.value)
                 clearCycleError(owner, key)
@@ -293,15 +281,12 @@ function commitEdgeTransition(owner, key, mirror, prepared) {
 }
 
 function commitMirrorDrain(mirror) {
-    if (!mirror.prepared || !isLivePromiseMirror(mirror.node, mirror.key, mirror)) return
+    if (!isLivePromiseMirror(mirror.node, mirror.key, mirror)) return
 
-    // settled is flipped by promise-mirrors immediately after this commit; the
-    // prepared counts are therefore supplied explicitly instead of rereading.
     const counter = getRefCounter(mirror.node)
-    let prepared = mirror.prepared
-    if (counter && !prepared.preparedForIndexedOwner) {
+    if (counter && !mirror.preparedWhileOwnerIndexed) {
         const previousCycleError = mirror.cycleError
-        prepared = prepareEdgeTransition(
+        const prepared = preparePropertyTransition(
             mirror.node,
             mirror.key,
             mirror,
@@ -310,19 +295,26 @@ function commitMirrorDrain(mirror) {
         if (previousCycleError && prepared.cycleError) {
             prepared.cycleError = previousCycleError
         }
-        mirror.prepared = prepared
         mirror.currentValue = prepared.value
         mirror.cycleError = prepared.cycleError
+        mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
     }
-    const nextChild = prepared.cycleError ? undefined : prepared.value
+
+    let nextCounts
+    if (counter) {
+        nextCounts = mirror.cycleError
+            ? [0, 1]
+            : getRefCounts(mirror.currentValue)
+    }
+    const nextChild = mirror.cycleError ? undefined : mirror.currentValue
     commitLiveEdge(
         mirror.node,
         mirror.key,
-        [prepared.promiseCount, prepared.errorCount],
+        nextCounts,
         nextChild,
         () => {
-            if (!mirror.externalHolder && Object.isExtensible(mirror.node)) {
-                writeLanguageProperty(mirror.node, mirror.key, prepared.value)
+            if (!mirror.ownerIsImportedOriginal && Object.isExtensible(mirror.node)) {
+                writeLanguageProperty(mirror.node, mirror.key, mirror.currentValue)
             }
             clearCycleError(mirror.node, mirror.key)
         },
@@ -333,50 +325,21 @@ function commitCycleError(parent, key, cycleError) {
     commitPlacementCycleError(
         { parent, key, mirror: getPromiseMirror(parent, key) },
         cycleError,
+        commitCycleErrorEdge,
     )
 }
 
-function commitPlacementCycleError(placement, cycleError) {
-    const { parent, key, mirror } = placement
-    if (mirror && (!mirror.settled || !isLivePromiseMirror(parent, key, mirror))) {
-        setMirrorCycleError(mirror, cycleError)
-        return
-    }
-
-    if (getCommittedCycleError(parent, key) === cycleError) return
-
+function commitCycleErrorEdge(parent, key, nextValue, cycleError, publish) {
     const counter = getRefCounter(parent)
     let nextCounts
     let nextChild
     if (counter) {
-        const nextValue = mirror ? mirror.currentValue : readLogicalProperty(parent, key)
         nextCounts = cycleError ? [0, 1] : getRefCounts(nextValue)
         nextChild = cycleError || isPromise(nextValue) || isError(nextValue)
             ? undefined
             : nextValue
     }
-    commitLiveEdge(parent, key, nextCounts, nextChild, () => {
-        if (mirror) {
-            setMirrorCycleError(mirror, cycleError, nextCounts)
-        } else {
-            clearCycleError(parent, key)
-            if (cycleError) setCycleError(parent, key, cycleError)
-        }
-    })
-}
-
-function setMirrorCycleError(mirror, cycleError, counts = undefined) {
-    mirror.cycleError = cycleError
-    if (mirror.prepared) {
-        mirror.prepared.cycleError = cycleError
-        if (cycleError) {
-            mirror.prepared.promiseCount = 0
-            mirror.prepared.errorCount = 1
-        } else if (counts) {
-            mirror.prepared.promiseCount = counts[0]
-            mirror.prepared.errorCount = counts[1]
-        }
-    }
+    commitLiveEdge(parent, key, nextCounts, nextChild, publish)
 }
 
 function deleteEdge(parent, key) {
@@ -462,7 +425,7 @@ function copyCounters(source, copy) {
 
 module.exports = {
     buildRefIndex,
-    commitEdgeTransition,
+    commitPropertyTransition,
     commitMirrorDrain,
     copyCounters,
     deleteEdge,
@@ -471,7 +434,6 @@ module.exports = {
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,
-    getResolvedCycleError,
-    prepareEdgeTransition,
+    preparePropertyTransition,
     waitForSettlement,
 }

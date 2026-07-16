@@ -22,9 +22,9 @@ const {
 } = require("./support")
 const { onPromiseMirrorResolve } = require("../src/promise-mirrors")
 const {
-    commitEdgeTransition,
+    commitPropertyTransition,
     deleteEdge,
-    prepareEdgeTransition,
+    preparePropertyTransition,
 } = require("../src/refcounts")
 
 describe("import", () => {
@@ -304,6 +304,26 @@ describe("import", () => {
         verifyRefCounts(wrapper, left, right)
     })
 
+    it("keeps a cycle cut when lookup re-roots a node inside the cycle", () => {
+        const first = { name: "first" }
+        const second = { name: "second" }
+        first.next = second
+        second.next = first
+        importValue(first, "cycle lookup")
+
+        const errors = getErrors(new Chain(first), [])
+        const extracted = lookupPath(new Chain(first), ["next"], false)
+
+        expect(extracted).to.be(second)
+        expect(lookupPath(
+            new Chain(extracted),
+            ["next", "next", "name"],
+            false,
+        )).to.be("second")
+        expect(getErrors(new Chain(extracted), [])).to.eql(errors)
+        expect(metaOf(second).cycleErrors.next).to.be(errors[0])
+    })
+
     it("distinguishes a discovered back-edge from an incremental closing edge", () => {
         const batchParent = {}
         const batchChild = { back: batchParent }
@@ -337,11 +357,11 @@ describe("import", () => {
         const secondCycle = importValue({ back: owner }, "second cycle transition")
         const clean = { clean: true }
         buildRefIndex(ancestor)
-        const replace = value => commitEdgeTransition(
+        const replace = value => commitPropertyTransition(
             owner,
             "value",
             null,
-            prepareEdgeTransition(owner, "value", null, value),
+            preparePropertyTransition(owner, "value", null, value),
         )
 
         replace(firstCycle)
@@ -823,7 +843,7 @@ describe("import", () => {
 
         expect(value).to.eql({ x: 1 })
         expect(root.value).to.be(deferredValue.promise)
-        expect(metaOf(root).mirrors.value.settled).to.be(true)
+        expect(metaOf(root).mirrors.value.pendingConsumerCount).to.be(0)
 
         const chain = new Chain(value)
         assignPath(chain, ["x"], 2)

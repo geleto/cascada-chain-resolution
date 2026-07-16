@@ -34,7 +34,6 @@ describe("normalize", () => {
 
         expect(copy.back.value).to.be(copy)
         expect(mirror.pendingConsumerCount).to.be(0)
-        expect(mirror.settled).to.be(true)
         expect(mirror.cycleError instanceof Error).to.be(true)
         verifyRefCounts(root)
     })

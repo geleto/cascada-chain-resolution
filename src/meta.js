@@ -83,31 +83,13 @@ function nodeImportBoundary(node, inherited) {
     return own === undefined ? inherited : own
 }
 
-function getCycleError(node, key) {
-    return metaOf(node)?.cycleErrors?.[key]
-}
-
 // Each cycle cut stores its attributed Error directly on the owner/key placement.
-function setCycleError(node, key, cycleError) {
-    const meta = ensureMeta(node)
-    meta.cycleErrors ??= Object.create(null)
-    meta.cycleErrors[key] = cycleError
-}
-
-function clearCycleError(node, key) {
-    const meta = metaOf(node)
-    if (meta?.cycleErrors) delete meta.cycleErrors[key]
-}
-
 module.exports = {
-    clearCycleError,
     ensureMeta,
-    getCycleError,
     hasSharedMark,
     markImported,
     markShared,
     metaOf,
     nodeImportBoundary,
-    setCycleError,
     STORE_META_IN_WEAKMAP,
 }

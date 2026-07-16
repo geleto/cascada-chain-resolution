@@ -2,12 +2,12 @@ const path = require("path")
 const { spawnSync } = require("child_process")
 const {
     createAssignedPromiseMirror,
-    getCommittedCycleError,
     onPromiseMirrorResolve,
 } = require("../src/promise-mirrors")
+const { getCommittedCycleError } = require("../src/import")
 const {
-    commitEdgeTransition,
-    prepareEdgeTransition,
+    commitPropertyTransition,
+    preparePropertyTransition,
 } = require("../src/refcounts")
 
 const {
@@ -273,7 +273,7 @@ describe("promise mirrors and lookupPath", () => {
 
             expect(root.value).to.be(pending.promise)
             expect(mirror.currentValue).to.be(value)
-            expect(mirror.settled).to.be(true)
+            expect(mirror.pendingConsumerCount).to.be(0)
             expectCounts(root, 0, 1)
             expect(hasError(new Chain(root), [])).to.be(true)
             expect(normalize(new Chain(root), []).message).to.be(
@@ -361,11 +361,11 @@ describe("promise mirrors and lookupPath", () => {
         const pending = deferred()
 
         buildRefIndex(owner)
-        commitEdgeTransition(
+        commitPropertyTransition(
             owner,
             "value",
             null,
-            prepareEdgeTransition(owner, "value", null, cyclic),
+            preparePropertyTransition(owner, "value", null, cyclic),
         )
         expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
 
@@ -374,11 +374,11 @@ describe("promise mirrors and lookupPath", () => {
             "value",
             pending.promise,
         )
-        commitEdgeTransition(
+        commitPropertyTransition(
             owner,
             "value",
             mirror,
-            prepareEdgeTransition(owner, "value", mirror, pending.promise),
+            preparePropertyTransition(owner, "value", mirror, pending.promise),
         )
 
         expect(metaOf(owner).mirrors.value).to.be(mirror)
@@ -415,8 +415,7 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(rejected).to.be(true)
         expect(reported).to.be(undefined)
-        expect(mirror.failedDrain).to.be(true)
-        expect(mirror.settled).to.be(false)
+        expect(mirror.pendingConsumerCount).to.be(1)
         expect(root.value).to.be(pending.promise)
     })
 
@@ -451,7 +450,6 @@ describe("promise mirrors and lookupPath", () => {
         expect(countsDuringGap).to.eql([1, 0])
         const mirror = metaOf(root).mirrors.branch
         expect(mirror.pendingConsumerCount).to.be(0)
-        expect(mirror.settled).to.be(true)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })

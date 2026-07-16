@@ -49,9 +49,9 @@ normal ref-index walk can preserve exact alias multiplicity without a second
 import-specific graph representation.
 
 The optional write target stops discovery at the language-owned parent into
-which a candidate is being installed. It prevents inherited import provenance
+which a new value is being installed. It prevents inherited import provenance
 from classifying the existing owner graph as external. Refcounting separately
-checks whether installing that candidate would close a cycle through the
+checks whether installing that value would close a cycle through the
 owner. The excluded mirror prevents preparation from rediscovering the exact
 promise placement currently being drained.
 
@@ -72,8 +72,8 @@ so parent propagation remains acyclic. Lookup and mutation continue through
 the raw value, while `hasError` and `getErrors` report the Error and normalize
 can reconstruct the original topology.
 
-An edge added later is handled incrementally. Candidate preparation discovers
-cycles internal to the candidate first. Refcounting then asks whether the
+An edge added later is handled incrementally. New-value preparation discovers
+cycles internal to the value first. Refcounting then asks whether the
 proposed owner/key edge can reach its owner through the projected graph. If it
 can, only that known closing edge gets a cycle Error. Existing cuts are never
 crossed by this reachability check.
@@ -106,11 +106,13 @@ extensible. All logical operations read through the mirror, and host output uses
 
 ## Module boundary
 
-`src/import.js` exports only:
+`src/import.js` owns:
 
 - `import`: the public root boundary.
 - `prepareImportedData`: the refcount layer's lazy preparation hook.
+- `scanForClosingCycleError`: the incremental import scan for a newly attached edge.
+- cycle-Error storage, read views, and publication sequencing.
 
 The rooted graph walk remains private. Generic metadata access stays in
-`src/meta.js`; edge transitions and projected counts stay in
-`src/refcounts.js`.
+`src/meta.js`, while `src/refcounts.js` supplies the atomic attached-edge count
+transaction initiated by cycle publication.

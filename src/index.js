@@ -10,9 +10,8 @@
 //   promise              : the exact promise instance assigned to this key
 //   currentValue         : the newest resolved value, V -> V' -> V''
 //   pendingConsumerCount : registered FIFO consumers not yet completed
-//   settled              : the source resolved and its consumers drained safely
 // Every mirror consumer registers at its program position. The mirror remains
-// pending until that FIFO consumer set drains, then publishes one final value.
+// pending while this count is positive, then publishes one final value.
 //
 // A mirror is born at ASSIGN, DISCOVERY, or FORK. ASSIGN and DISCOVERY seed from
 // the raw settled value. FORK seeds from the source mirror at the copier's FIFO
@@ -29,14 +28,13 @@ const {
 } = require("./error")
 const {
     buildRefIndex,
-    commitEdgeTransition,
+    commitPropertyTransition,
     commitMirrorDrain,
     copyCounters,
     deleteEdge,
     getRefCounter,
     getRequiredRefCounter,
-    getResolvedCycleError,
-    prepareEdgeTransition,
+    preparePropertyTransition,
     waitForSettlement,
 } = require("./refcounts")
 const {
@@ -52,9 +50,13 @@ const {
     nodeImportBoundary,
 } = require("./meta")
 const {
+    getCommittedCycleError,
+    getResolvedCycleError,
+    import: importValue,
+} = require("./import")
+const {
     createAssignedPromiseMirror,
     forkPromiseMirror,
-    getCommittedCycleError,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,
@@ -63,8 +65,6 @@ const {
     readLogicalProperty,
     setPromiseMirrorValue,
 } = require("./promise-mirrors")
-const { import: importValue } = require("./import")
-
 // Load-bearing helper contract:
 // Generic data promises use onValueResolve. Property-promise consumers use
 // onPromiseMirrorResolve so registration order and the drain counter advance
@@ -84,8 +84,8 @@ function setProperty(parent, key, value, importBoundary = undefined) {
     const mirror = isPromise(value)
         ? createAssignedPromiseMirror(parent, key, value)
         : null
-    const prepared = prepareEdgeTransition(parent, key, mirror, value)
-    commitEdgeTransition(parent, key, mirror, prepared)
+    const prepared = preparePropertyTransition(parent, key, mirror, value)
+    commitPropertyTransition(parent, key, mirror, prepared)
 }
 
 function deleteProperty(parent, key, importBoundary = undefined) {
@@ -93,16 +93,7 @@ function deleteProperty(parent, key, importBoundary = undefined) {
     deleteEdge(parent, key)
 }
 
-initPromiseMirrors(
-    (mirror, value, markValueShared) => prepareEdgeTransition(
-        mirror.node,
-        mirror.key,
-        mirror,
-        value,
-        markValueShared,
-    ),
-    commitMirrorDrain,
-)
+initPromiseMirrors(preparePropertyTransition, commitMirrorDrain)
 
 function shallowCopy(obj, pathKey, importBoundary) {
     const copy = Array.isArray(obj) ? new Array(obj.length) : {}

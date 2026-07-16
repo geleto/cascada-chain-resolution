@@ -56,6 +56,8 @@ must use these placement helpers rather than inspect the physical slot.
 mirror remains `[1,0]`. `getResolvedCycleError(placement)` lets an operation
 that captured a mirror see its private prepared Error. These views are distinct
 because private FIFO state must not leak into parent counters before drain.
+`src/import.js` owns both views and delegates attached publication to one atomic
+refcount edge transaction.
 
 Every ordinary tracked child below an indexed parent is itself indexed. A
 missing child counter is a fatal downward-closure violation, not a request for
@@ -86,12 +88,12 @@ multiplied accordingly. Cycle cuts never add reverse edges.
 
 ## Edge transitions
 
-Candidates are prepared before they enter the attached graph:
+New values are prepared before they enter the attached graph:
 
-- `prepareEdgeTransition(owner, key, mirror, candidate)` derives imported
-  preparation, cycle Errors, child indexing, and final counts without changing the
-  attached placement.
-- `commitEdgeTransition(owner, key, mirror, prepared)` installs that state.
+- `preparePropertyTransition(owner, key, propertyMirror, newValue)` derives imported
+  preparation, cycle Errors, and child indexing without changing the attached
+  placement. Counts are read from that prepared state only when it is committed.
+- `commitPropertyTransition(owner, key, propertyMirror, prepared)` installs that state.
 
 Every live assignment, deletion, changed cycle Error, and successful mirror drain
 then shares one synchronous commit primitive. It snapshots the old projected
@@ -99,7 +101,7 @@ counts and child, performs the already-validated placement update, swaps the
 reverse edge, and propagates exactly one delta from explicitly supplied next
 counts. Revoked mirror state is private and bypasses this attached-edge commit.
 Descriptor constraints that could block assignment or deletion are validated
-before candidate preparation. The physical mutation then occurs before mirror
+before new-value preparation. The physical mutation then occurs before mirror
 or cycle-Error metadata changes, so a failed mutation leaves the previous attached
 edge unchanged. A fatal preparation likewise leaves it unchanged. A newly
 assigned Promise is installed immediately as a fresh mirror contributing
@@ -112,24 +114,25 @@ placements. It never clones source totals, parent maps, or placement cycle Error
 
 Every callback that consumes a mirrored Promise registers through
 `onPromiseMirrorResolve`. Registration increments `pendingConsumerCount`
-synchronously. Completion decrements it after the callback's synchronous body
-has run.
+synchronously. A consumer decrements only after its synchronous body and any
+final drain commit succeed.
 
 The mandatory writeback is the mirror's first counted consumer. While any
-consumer remains, `settled` is false and the attached placement stays `[1, 0]`.
-Consumers prepare successive private values in FIFO order. The successful
-transition to zero consumers is the only drain point: the final prepared value
-is committed once if the mirror is still live. A revoked mirror keeps only its
-private result.
+consumer remains, the mirror is pending and the attached placement stays `[1, 0]`.
+Consumers prepare successive private values in FIFO order. The sole remaining
+consumer commits the final prepared value once if the mirror is still live,
+then decrements to zero. Zero is the settled state. A revoked mirror keeps only
+its private result.
 
 This drain rule closes the settlement-to-writeback race. A read cannot use a
 settled fast path while an earlier registered mutation is still queued. A
-synchronous fatal consumer marks the drain failed and prevents publication.
+synchronous fatal consumer leaves its count outstanding and prevents
+publication.
 
 `readLogicalProperty` therefore returns:
 
 - the original Promise for a live unresolved or draining mirror;
-- `mirror.currentValue` for a settled mirror;
+- `mirror.currentValue` when `pendingConsumerCount === 0`;
 - otherwise the own enumerable physical property.
 
 External imported holders and holders that become non-extensible retain their

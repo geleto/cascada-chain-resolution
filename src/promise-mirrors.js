@@ -1,43 +1,25 @@
 const { onValueResolve } = require("./helpers")
 const {
     ensureMeta,
-    getCycleError,
     metaOf,
 } = require("./meta")
 const { reportFatalError } = require("./error")
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-let prepareMirrorValue
+let preparePropertyTransition
 let commitMirrorDrain
 
-function initPromiseMirrors(prepareValue, commitDrain) {
-    prepareMirrorValue = prepareValue
-    commitMirrorDrain = commitDrain
-}
-
-function getPromiseMirrorMap(node) {
-    return metaOf(node)?.mirrors
-}
-
-function ensurePromiseMirrorMap(node) {
-    const meta = ensureMeta(node)
-    meta.mirrors ??= Object.create(null)
-    return meta.mirrors
+function initPromiseMirrors(
+    preparePropertyTransitionFn,
+    commitMirrorDrainFn,
+) {
+    preparePropertyTransition = preparePropertyTransitionFn
+    commitMirrorDrain = commitMirrorDrainFn
 }
 
 function getPromiseMirror(node, key) {
-    return getPromiseMirrorMap(node)?.[key]
-}
-
-// A mirrored placement stores its cycle Error only on the mirror; installation
-// and removal keep meta.cycleErrors[key] absent. Counters see only attached state,
-// so a draining mirror's private Error stays hidden until every consumer commits.
-function getCommittedCycleError(node, key) {
-    const mirror = getPromiseMirror(node, key)
-    return mirror
-        ? (mirror.settled ? mirror.cycleError : undefined)
-        : getCycleError(node, key)
+    return metaOf(node)?.mirrors?.[key]
 }
 
 function getRequiredPromiseMirror(node, key, promise) {
@@ -49,9 +31,13 @@ function getRequiredPromiseMirror(node, key, promise) {
 }
 
 function installPromiseMirror(node, key, mirror) {
-    ensurePromiseMirrorMap(node)[key] = mirror
+    const meta = ensureMeta(node)
+    meta.mirrors ??= Object.create(null)
+    meta.mirrors[key] = mirror
 }
 
+// Creation registers the mandatory consumer; callers publish the mirror only
+// when its owner/key placement represents this promise.
 function createPromiseMirror(
     node,
     key,
@@ -59,23 +45,26 @@ function createPromiseMirror(
     forkSourceMirror = null,
     markResolvedValueShared = false,
     importBoundary = undefined,
-    externalHolder = false,
-    install = true,
+    ownerIsImportedOriginal = false,
 ) {
     const mirror = {
         node,
         key,
+        // Mirrors are created for promise properties
         promise,
+        // Latest logical value produced by completed FIFO consumers.
         currentValue: undefined,
-        prepared: undefined,
+        // Whether currentValue was prepared while its owner had refcounts.
+        preparedWhileOwnerIndexed: false,
+        // Registered consumers not yet completed; zero exposes currentValue synchronously.
         pendingConsumerCount: 0,
-        settled: false,
-        failedDrain: false,
+        // Error queries see this instead of currentValue; other operations use currentValue.
         cycleError: undefined,
+        // Import provenance: { root, errorContext } for lazy preparation and attribution.
         importBoundary,
-        externalHolder,
+        // Original imported owners retain the physical Promise after settlement.
+        ownerIsImportedOriginal,
     }
-    if (install) installPromiseMirror(node, key, mirror)
 
     // The mandatory writeback is born first. Every later operation on this
     // placement registers through the same counted wrapper.
@@ -91,14 +80,14 @@ function createPromiseMirror(
 // ASSIGN: always a fresh mirror. Reusing one would merge two divergent worlds.
 // It remains private until the assignment's live-edge commit publishes it.
 function createAssignedPromiseMirror(node, key, promise) {
-    return createPromiseMirror(node, key, promise, null, false, undefined, false, false)
+    return createPromiseMirror(node, key, promise)
 }
 
 // DISCOVERY: the physical Promise already occupies the imported/raw property.
 function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined) {
     const existing = getPromiseMirror(node, key)
     if (existing?.promise === promise) return existing
-    return createPromiseMirror(
+    const mirror = createPromiseMirror(
         node,
         key,
         promise,
@@ -107,6 +96,8 @@ function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined
         importBoundary,
         importBoundary !== undefined,
     )
+    installPromiseMirror(node, key, mirror)
+    return mirror
 }
 
 // FORK: read the source mirror at this FIFO position, but prepare the value for
@@ -125,7 +116,7 @@ function forkPromiseMirror(
         promise,
         importBoundary,
     )
-    return createPromiseMirror(
+    const mirror = createPromiseMirror(
         copy,
         key,
         promise,
@@ -133,58 +124,58 @@ function forkPromiseMirror(
         markResolvedValueShared,
         importBoundary,
     )
+    installPromiseMirror(copy, key, mirror)
+    return mirror
 }
 
 function clearPromiseMirror(node, key) {
-    const map = getPromiseMirrorMap(node)
-    if (map) delete map[key]
+    const mirrors = metaOf(node)?.mirrors
+    if (mirrors) delete mirrors[key]
 }
 
+// Revoked mirrors leave the map but may remain referenced by earlier promise
+// consumers; only the current map entry may update the property.
 function isLivePromiseMirror(node, key, mirror) {
     return getPromiseMirror(node, key) === mirror
 }
 
-// Incrementing happens before registration. The completion hook runs after the
-// continuation's synchronous body, so a re-entrant registration keeps the edge
-// pending and a returned Promise does not delay this mirror's drain.
+// The completion hook runs after the continuation's synchronous body, so a
+// re-entrant registration keeps the edge pending and a returned Promise does
+// not delay this mirror's drain.
 function onPromiseMirrorResolve(mirror, fn) {
+    // Count every consumer synchronously, before its resolution callback is
+    // registered or can run.
     mirror.pendingConsumerCount++
     return onValueResolve(mirror.promise, value => {
-        let failed = true
-        try {
-            const result = fn(value)
-            failed = false
-            return result
-        } finally {
-            finishPromiseMirrorConsumer(mirror, failed)
-        }
+        const result = fn(value)
+        if (mirror.pendingConsumerCount === 1) commitMirrorDrain(mirror)
+        // A thrown consumer or drain commit never reaches this decrement, so
+        // its outstanding count permanently prevents publication.
+        mirror.pendingConsumerCount--
+        return result
     })
 }
 
-function finishPromiseMirrorConsumer(mirror, failed) {
-    if (failed) mirror.failedDrain = true
-    mirror.pendingConsumerCount--
-    if (mirror.pendingConsumerCount !== 0 || mirror.failedDrain) return
-
-    try {
-        commitMirrorDrain(mirror)
-        mirror.settled = true
-    } catch (error) {
-        mirror.failedDrain = true
-        throw error
-    }
-}
-
 function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
-    const prepared = prepareMirrorValue(mirror, value, markResolvedValueShared)
-    mirror.prepared = prepared
+    const prepared = preparePropertyTransition(
+        mirror.node,
+        mirror.key,
+        mirror,
+        value,
+        markResolvedValueShared,
+    )
     mirror.currentValue = prepared.value
     mirror.cycleError = prepared.cycleError
+    mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
 }
 
 function readLogicalProperty(node, key) {
     const mirror = getPromiseMirror(node, key)
-    if (mirror) return mirror.settled ? mirror.currentValue : mirror.promise
+    if (mirror) {
+        return mirror.pendingConsumerCount === 0
+            ? mirror.currentValue
+            : mirror.promise
+    }
     return propertyIsEnumerable.call(node, key) ? node[key] : undefined
 }
 
@@ -192,7 +183,6 @@ module.exports = {
     clearPromiseMirror,
     createAssignedPromiseMirror,
     forkPromiseMirror,
-    getCommittedCycleError,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,

@@ -498,7 +498,7 @@ describe("getErrors", () => {
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be("frozen terminal")
         expect(frozen.pending).to.be(pending.promise)
-        expect(metaOf(frozen).mirrors.pending.settled).to.be(true)
+        expect(metaOf(frozen).mirrors.pending.pendingConsumerCount).to.be(0)
         expect(getRefCounter(frozen)).to.be(undefined)
     })
 
