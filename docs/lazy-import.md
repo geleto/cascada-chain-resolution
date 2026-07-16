@@ -24,17 +24,19 @@ nor repeated tracked identities and need no graph table.
 
 ## Preparation
 
-`prepareImportedData(importBoundary, writeTarget, excludedMirror,
-commitCycleError)` is called only when exact counters are required. It always
-starts from `importBoundary.root`, even when the operation first reached a
-descendant. The occasional wider scan buys one deterministic rule and avoids
-having cycle placement depend on which subpath happened to be queried first.
+`buildImportedRefIndex` is the refcount layer's single entry for an imported
+value. It always prepares from `importBoundary.root`, even when the operation
+first reached a descendant, handles any closing placement edge, and commits the
+projected index. The occasional wider scan buys one deterministic rule and
+avoids having cycle placement depend on which subpath happened to be queried
+first.
 
-`prepareImportedData` creates one `visited` set and one `currentPath` set, then
-calls its private depth-first walker. On the first visit to a tracked identity,
-the walker descends into it. On a repeat, it marks that identity shared and does
-not descend again. If the repeated identity is also in `currentPath`, the
-property pointing back into the active path receives a cycle Error.
+Its private rooted preparation creates one `visited` set and one `currentPath`
+set, then calls its depth-first walker. On the first visit to a tracked
+identity, the walker descends into it. On a repeat, it marks that identity
+shared and does not descend again. If the repeated identity is also in
+`currentPath`, the property pointing back into the active path receives a cycle
+Error.
 
 The walk publishes each fact as it finds it: duplicate marks, promise mirrors,
 and cycle Errors. It builds no imported-node records and stores no preparation
@@ -50,10 +52,9 @@ import-specific graph representation.
 
 The optional write target stops discovery at the language-owned parent into
 which a new value is being installed. It prevents inherited import provenance
-from classifying the existing owner graph as external. Refcounting separately
-checks whether installing that value would close a cycle through the
-owner. The excluded mirror prevents preparation from rediscovering the exact
-promise placement currently being drained.
+from classifying the existing owner graph as external. The excluded mirror
+prevents preparation from rediscovering the exact promise placement currently
+being drained.
 
 Discovery and ref-index construction are recursive. Import itself remains
 O(1), but the first counter-based operation on a very deep imported graph is
@@ -72,11 +73,11 @@ so parent propagation remains acyclic. Lookup and mutation continue through
 the raw value, while `hasError` and `getErrors` report the Error and normalize
 can reconstruct the original topology.
 
-An edge added later is handled incrementally. New-value preparation discovers
-cycles internal to the value first. Refcounting then asks whether the
-proposed owner/key edge can reach its owner through the projected graph. If it
-can, only that known closing edge gets a cycle Error. Existing cuts are never
-crossed by this reachability check.
+An edge added later is handled incrementally. Rooted preparation discovers
+cycles internal to the value first. A private closing-edge scan then asks
+whether the proposed owner/key edge can reach its owner through the projected
+graph. If it can, only that known closing edge gets a fresh cycle Error.
+Existing cuts are never crossed by this reachability check.
 
 ## Enumerable `__proto__`
 
@@ -109,10 +110,11 @@ extensible. All logical operations read through the mirror, and host output uses
 `src/import.js` owns:
 
 - `import`: the public root boundary.
-- `prepareImportedData`: the refcount layer's lazy preparation hook.
-- `scanForClosingCycleError`: the incremental import scan for a newly attached edge.
+- `buildImportedRefIndex`: complete imported-value index orchestration.
+- `prepareImportedPropertyTransition`: imported value preparation for a new
+  indexed property placement.
 - cycle-Error storage, read views, and publication sequencing.
 
-The rooted graph walk remains private. Generic metadata access stays in
-`src/meta.js`, while `src/refcounts.js` supplies the atomic attached-edge count
-transaction initiated by cycle publication.
+The rooted graph walk and closing-edge scan remain private. Generic metadata
+access stays in `src/meta.js`, while `src/refcounts.js` supplies the generic
+index commit and atomic attached-edge count transaction.

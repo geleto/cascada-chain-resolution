@@ -24,12 +24,10 @@ const {
     readLogicalProperty,
 } = require("./promise-mirrors")
 const {
+    buildImportedRefIndex,
     clearCycleError,
-    commitPlacementCycleError,
     getCommittedCycleError,
-    getResolvedCycleError,
-    prepareImportedData,
-    scanForClosingCycleError,
+    prepareImportedPropertyTransition,
     setCycleError,
 } = require("./import")
 const { writeLanguageProperty } = require("./validate")
@@ -74,47 +72,20 @@ function buildRefIndex(value, inheritedImportBoundary = undefined, placement = u
     if (!isTracked(value)) return value
 
     const importBoundary = nodeImportBoundary(value, inheritedImportBoundary)
-    let preparedImport = false
     if (importBoundary) {
-        const atBoundaryRoot = importBoundary.root === value
-        if (!getRefCounter(importBoundary.root)) {
-            prepareImportedData(
-                importBoundary,
-                atBoundaryRoot ? placement?.parent : undefined,
-                atBoundaryRoot ? placement?.mirror : undefined,
-                commitCycleError,
-            )
-            preparedImport = true
-        }
-
-        let closingCycleError = getResolvedCycleError(placement)
-        if (atBoundaryRoot && placement && !closingCycleError) {
-            closingCycleError = scanForClosingCycleError(
-                value,
-                placement.parent,
-                placement.key,
-                importBoundary,
-            )
-        }
-        if (closingCycleError) {
-            commitPlacementCycleError(
-                placement,
-                closingCycleError,
-                commitCycleErrorEdge,
-            )
-        }
-        const privateCut = closingCycleError &&
-            placement.mirror && placement.mirror.pendingConsumerCount > 0
-        // A draining mirror's cut is private until its final commit. Indexing
-        // this branch now could follow the raw back-reference into its owner.
-        if (preparedImport && !privateCut) {
-            commitRefIndex(importBoundary.root, importBoundary, true)
-        }
-        if (closingCycleError) return value
+        buildImportedRefIndex(
+            value,
+            importBoundary,
+            placement,
+            !getRefCounter(importBoundary.root),
+            commitRefIndex,
+            commitCycleErrorEdge,
+        )
+        return value
     }
 
     if (getRefCounter(value)) return value
-    commitRefIndex(value, importBoundary, !!importBoundary)
+    commitRefIndex(value)
     return value
 }
 
@@ -226,20 +197,15 @@ function preparePropertyTransition(
     }
 
     if (importBoundary) {
-        if (!getRefCounter(importBoundary.root)) {
-            prepareImportedData(
-                importBoundary,
-                owner,
-                propertyMirror,
-                commitCycleError,
-            )
-            commitRefIndex(importBoundary.root, importBoundary, true)
-        }
-        prepared.cycleError = scanForClosingCycleError(
+        prepared.cycleError = prepareImportedPropertyTransition(
             newValue,
             owner,
             key,
+            propertyMirror,
             importBoundary,
+            !getRefCounter(importBoundary.root),
+            commitRefIndex,
+            commitCycleErrorEdge,
         )
         if (prepared.cycleError) {
             return prepared
@@ -318,14 +284,6 @@ function commitMirrorDrain(mirror) {
             }
             clearCycleError(mirror.node, mirror.key)
         },
-    )
-}
-
-function commitCycleError(parent, key, cycleError) {
-    commitPlacementCycleError(
-        { parent, key, mirror: getPromiseMirror(parent, key) },
-        cycleError,
-        commitCycleErrorEdge,
     )
 }
 

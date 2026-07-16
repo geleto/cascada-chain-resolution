@@ -95,7 +95,7 @@ function prepareImportedData(
     importBoundary,
     writeTarget,
     excludedMirror,
-    commitCycleError,
+    commitCycleErrorEdge,
 ) {
     const visited = new Set()
     const currentPath = new Set()
@@ -129,10 +129,10 @@ function prepareImportedData(
             if (visited.has(child)) {
                 markShared(child)
                 if (currentPath.has(child)) {
-                    commitCycleError(
-                        node,
-                        key,
+                    commitPlacementCycleError(
+                        { parent: node, key, mirror },
                         createCycleError(key, boundary.errorContext),
+                        commitCycleErrorEdge,
                     )
                 }
                 continue
@@ -141,6 +141,82 @@ function prepareImportedData(
         }
         currentPath.delete(node)
     }
+}
+
+// Imported ref-indexing is one import-owned operation. Refcounting supplies
+// only the generic index commit and atomic edge commit.
+function buildImportedRefIndex(
+    value,
+    importBoundary,
+    placement,
+    prepareRoot,
+    commitRefIndex,
+    commitCycleErrorEdge,
+) {
+    const atBoundaryRoot = importBoundary.root === value
+    if (prepareRoot) {
+        prepareImportedData(
+            importBoundary,
+            atBoundaryRoot ? placement?.parent : undefined,
+            atBoundaryRoot ? placement?.mirror : undefined,
+            commitCycleErrorEdge,
+        )
+    }
+
+    let closingCycleError = getResolvedCycleError(placement)
+    if (atBoundaryRoot && placement && !closingCycleError) {
+        closingCycleError = scanForClosingCycleError(
+            value,
+            placement.parent,
+            placement.key,
+            importBoundary,
+        )
+    }
+    if (closingCycleError) {
+        commitPlacementCycleError(
+            placement,
+            closingCycleError,
+            commitCycleErrorEdge,
+        )
+    }
+
+    const privateCut = closingCycleError &&
+        placement.mirror && placement.mirror.pendingConsumerCount > 0
+    // A draining mirror's cut is private until its final commit. Indexing
+    // this branch now could follow the raw back-reference into its owner.
+    if (prepareRoot && !privateCut) {
+        commitRefIndex(importBoundary.root, importBoundary, true)
+    }
+    if (!closingCycleError) {
+        commitRefIndex(value, importBoundary, true)
+    }
+}
+
+function prepareImportedPropertyTransition(
+    value,
+    owner,
+    key,
+    mirror,
+    importBoundary,
+    prepareRoot,
+    commitRefIndex,
+    commitCycleErrorEdge,
+) {
+    if (prepareRoot) {
+        prepareImportedData(
+            importBoundary,
+            owner,
+            mirror,
+            commitCycleErrorEdge,
+        )
+        commitRefIndex(importBoundary.root, importBoundary, true)
+    }
+    return scanForClosingCycleError(
+        value,
+        owner,
+        key,
+        importBoundary,
+    )
 }
 
 function scanForClosingCycleError(value, target, key, importBoundary) {
@@ -163,12 +239,11 @@ function scanForClosingCycleError(value, target, key, importBoundary) {
 }
 
 module.exports = {
+    buildImportedRefIndex,
     clearCycleError,
-    commitPlacementCycleError,
     getCommittedCycleError,
     getResolvedCycleError,
     import: importValue,
-    prepareImportedData,
-    scanForClosingCycleError,
+    prepareImportedPropertyTransition,
     setCycleError,
 }

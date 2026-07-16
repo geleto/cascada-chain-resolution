@@ -70,12 +70,13 @@ entry for initial indexing.
 
 Trusted language data follows the compiler's tree-shaped ownership contract,
 so `commitRefIndex` walks it directly without identity bookkeeping. When an
-import boundary is reached, `prepareImportedData` starts from that boundary's
-stored root. One depth-first walk uses `visited` to mark repeated identities
-shared and `currentPath` to cut properties that point back into the active
-path. It publishes mirrors and cycle Errors directly. Ordinary `commitRefIndex`
-then walks the resulting acyclic projection from the root; no imported record
-graph or preparation flag is retained. See `docs/lazy-import.md`.
+import boundary is reached, `buildRefIndex` delegates the complete imported
+path to `buildImportedRefIndex`. Its private rooted walk starts from the stored
+boundary root, uses `visited` to mark repeated identities shared, and uses
+`currentPath` to cut properties that point back into the active path. It
+publishes mirrors and cycle Errors directly, then invokes ordinary
+`commitRefIndex` for the acyclic projection. No imported record graph or
+preparation flag is retained. See `docs/lazy-import.md`.
 
 Frozen, sealed, and otherwise non-extensible nodes follow the same counter
 rules as extensible nodes. Once reached by a successful index build, each has a
