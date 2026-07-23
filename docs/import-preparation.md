@@ -1,168 +1,241 @@
 # Imported graph preparation
 
-`import(value, errorContext)` is the external-data boundary. It requires a
-truthy attribution context, marks the imported root, and immediately walks the
-detached external graph. The walk records cycle-closing properties and
-registers imported Promise continuations. For a promise root,
-`import` returns one derived promise that performs the same preparation before
-runtime consumers see its value. Import never builds subtree counters; those
-remain lazy until `normalize`, `hasError`, or `getErrors` needs them.
+`import(value, errorContext)` is the boundary for external data. It establishes
+shared ownership and attribution, prepares aliases and cycles in the reachable
+graph, and registers continuations for nested Promises. Subtree counters remain
+lazy until `normalize`, `hasError`, or `getErrors` needs them.
 
-## Import boundaries
+This document describes the implemented cycle-Error model. The chosen future
+cycle-cut model is specified separately in
+[`future/cycles-as-data.md`](future/cycles-as-data.md).
 
-A direct import boundary stores `{ root, errorContext }` and marks its root
-shared. Traversals carry that boundary through descendants without marking
-each one imported. Extraction or COW reuse can make a descendant independently
-usable and therefore creates a new direct boundary with the same attribution.
-A nested Promise result remains part of its existing imported graph and
-inherits that boundary. A root Promise result receives a boundary because it is
-itself the value entering through `import`.
+## Boundaries
 
-Trusted language-created data never enters imported preparation. The compiler
-gives a new value one owner, lookup marks values that escape, and mutation COWs
-shared branches. Under that contract, trusted branches contain neither cycles
-nor repeated tracked identities and need no graph table.
+A direct import boundary stores:
 
-## Preparation
+```js
+{ root, errorContext }
+```
 
-`prepareImportedData` owns detached graph preparation and runs once when a
-direct boundary is created. It creates one weak `visited` map shared by every
-Promise continuation. Each synchronous DFS segment has one identity token and
-one `currentPath`. A node already mapped to that segment token is skipped. A
-tracked identity already in `currentPath` closes a cycle: that property receives
-a cycle Error and is not followed.
+The context must be truthy. The boundary root is marked shared, and the first
+direct boundary on an identity remains its attribution source.
 
-At a Promise property, the walk creates or reuses its mirror, copies
-`currentPath`, and registers a preparation consumer at that FIFO position.
-After earlier consumers leave the latest `mirror.currentValue`, this consumer
-resumes the same detached walk with the inherited boundary, copied path,
-the preparation's `visited` map, and a fresh segment token. The copied path
-detects references back into the pre-Promise ancestry while the fresh token
-allows this segment to revisit nodes previously checked under another ancestry.
-Ordinary path growth detects cycles inside the resolved graph. Distinct Promise
-placements retain distinct copied paths because either one may close a
-different cycle.
+Descendants inherit the nearest boundary while a walk remains inside imported
+data; they do not all need direct boundary metadata. A value receives its own
+boundary when it becomes independently usable, including extraction and
+retention as an off-path COW child.
 
-The walk publishes promise mirrors and cycle Errors as it finds them. It builds
-no imported-node records and gives DAG aliases no permanent mark. Ordinary
-ref-indexing later starts at the already prepared boundary root, preserves
-structural alias multiplicity, and treats each pending mirror as `[1,0]`.
+A metadata-free host object first reached by detached preparation is marked as
+an imported original. Promise settlement never physically replaces a property
+on such an object. A node that already has runtime META is a previously
+prepared or runtime-owned island and is not reclassified as host-owned.
 
-`Object.keys` order, the stored root, copied Promise paths, and FIFO registration
-define the chosen cycle cuts. Every synchronous segment is an ordinary DFS, and
-every Promise continuation retains the ancestry needed to recognize a closing
-back-edge. Cutting those edges leaves a finite projected graph, and normal
-ref-indexing preserves exact alias multiplicity without an import-specific
-graph representation.
+Non-extensible nodes use the metadata WeakMap fallback and are implicitly
+shared.
 
-`prepareImportedData` starts with no containing parent and is scoped to the
-connected graph reached from one stored import root. A back-reference within
-that graph points into `currentPath`, so its closing property receives a cycle
-Error and is not entered. The walk follows nested direct import boundaries and
-uses the nearest boundary's attribution. Eager first discovery also fixes the
-first cycle attribution; a later direct import does not relocate an existing
-cut.
+## Root import
 
-Ordinary language assignment cannot connect imported data back into a
-language-owned parent: values exposed to host code are shared, and mutation
-COWs the path before placement. Assignment within imported data is checked by
-the separate attachment operation after that COW. An imported Promise may also
-expose more host data; its detached continuation starts with the imported path
-captured when the Promise property was discovered. Disconnected imports need
-no shared or global cycle state.
+For a non-Promise root, import:
 
-Discovery and ref-index construction are recursive. Import is O(n) in the
-synchronously reachable external graph, and each deeply nested synchronous or
-settled Promise branch is bounded by the JavaScript call stack. Each Promise
-continuation uses a fresh segment token with the preparation's weak visited map
-and its immutable copied ancestry.
+1. establishes the direct boundary;
+2. synchronously prepares the reachable graph; and
+3. returns the original value.
 
-Imported descendants remain protected by their inherited shared boundary;
-aliases need no permanent shared mark. A cycle target is marked shared because
-the new cyclic placement makes that identity reachable through another path.
-Non-extensible nodes are implicitly shared and use the metadata WeakMap fallback
-when they need mirrors, counters, or cycle Errors.
+For a Promise root, import returns one derived Promise. Its value-facing
+reaction converts rejection to a language Error when needed, establishes the
+resolved root boundary, performs the same preparation, and only then exposes
+the result.
 
-## Attachment
+Import preparation never builds subtree counters.
 
-`attachImportedDataToImportedData` is separate from detached preparation. It
-runs only when assignment places an already-imported value within an imported
-path. The mutation walk supplies the actual destination ancestry after any COW,
-so references to the pre-copy external owner do not become false cycles.
+## Detached preparation
 
-Attachment keeps that ancestry fixed. It does not add incoming nodes to the
-path or reuse detached preparation's visited map. Its own weak visited set
-suppresses every repeated tracked node because the comparison path never
-changes. A value equal to a destination ancestor closes a cycle at its owner/key
-placement.
+`prepareImportedData` performs an ordinary depth-first walk over logical own
+enumerable properties. Each synchronous segment owns:
 
-The operations remain distinct across Promise barriers. A Promise discovered
-by detached preparation resumes the detached walk with its copied current path.
-A Promise reached by attachment resumes the attachment walk with the same fixed
-destination path. Neither continuation invokes the other operation. Both use
-the placement's mirror and counted FIFO consumer, so all required imported
-classification finishes before the value is indexed.
+- `currentPath`, the active DFS ancestry; and
+- `visited`, identities already entered in that segment.
 
-## Cycles and DAGs
+For each tracked property value:
 
-A cycle Error belongs to one owner/key placement. The raw property is not
-changed. The projected counter graph cuts that edge and counts it as `[0, 1]`,
-so parent propagation remains acyclic. Lookup and mutation continue through
-the raw value, while `hasError` and `getErrors` report the Error and normalize
-can reconstruct the original topology.
+1. If the incoming property already has a cycle diagnostic, stop at it.
+2. If the value is on `currentPath`, the incoming property closes a cycle.
+   Mark the repeated identity shared, publish a cycle Error on that property,
+   and do not enter it.
+3. If the value is in `visited`, it is an alias already handled in this
+   segment. Mark it shared and stop.
+4. If the value already has META, treat it as a prepared/runtime-owned island.
+   Mark it shared and scan it only for references into the current ancestry.
+5. Otherwise create its META record, classify it as an imported original, add
+   it to both sets as appropriate, and walk its logical properties.
 
-Valid compiler-created transitions cannot add aliases or cycles: values that
-escape are marked shared and mutation COWs before placement. Imported data may
-contain a DAG, which refcounting represents with exact edge multiplicity without
-permanently marking duplicate descendants. Imported Promise results may expose
-new cycles. Their registered continuations resume detached preparation with the
-path captured at that FIFO position. A Promise that resolves directly to an
-ancestor marks the Promise placement; a resolved object containing that ancestor
-marks the actual property inside the object. Existing cuts are not traversed
-again.
+META presence is the durable prepared-identity signal. This is sound because
+external data reaches META-bearing runtime state only through import, and
+compiler-created data is acyclic under the single-owner/COW contract.
+
+`Object.keys` order gives deterministic discovery within one synchronous
+segment.
+
+## Prepared islands
+
+Re-entering a prepared identity under a new ancestry can create a cycle even
+though its own graph was prepared earlier. The fixed-path scanner checks that
+identity's logical graph against an immutable copy of the entering ancestry.
+
+The scanner:
+
+- keeps one weak visited set because its comparison path never changes;
+- stops at existing cycle diagnostics;
+- follows logical mirror values;
+- marks repeated identities shared; and
+- reports whether a synchronous route reaches the fixed path.
+
+A synchronous match belongs to the property that entered the prepared island.
+It must not be stored on an inner shared node: that cut depends on the entering
+placement and would survive as a phantom if that placement were later revoked.
+
+A Promise discovered inside the scanner is a new placement event. Its
+continuation resumes the same fixed-path check, and any match belongs to that
+Promise placement.
+
+## Promise continuation
+
+At a Promise property, preparation creates or reuses the property's mirror and
+registers an import consumer at that FIFO position.
+
+Detached preparation copies `currentPath` because the synchronous walk removes
+ancestors while unwinding. When the Promise settles, the continuation:
+
+1. starts from the latest logical value left by earlier mirror consumers;
+2. resumes detached preparation with the copied ancestry and a fresh segment
+   `visited` set;
+3. keeps intrinsic cycles in newly exposed data on their actual DFS
+   back-edges; and
+4. prepares/ref-indexes the resulting logical value only if the mirror owner is
+   already indexed.
+
+A fixed-path continuation instead retains only its immutable comparison path
+and scanner-local visited set.
+
+The original detached-preparation consumer is registered before a later
+fixed-path scan can discover the same Promise. FIFO therefore prepares fresh
+resolved data first. If both consumers find the same placement-dependent
+cycle, publication is idempotent and selects the Promise placement once.
+
+Each import consumer is part of the mirror's pending-consumer drain. Later
+operations cannot use the settled fast path until preparation at every earlier
+FIFO position has completed.
+
+## Imported attachment
+
+`attachImportedDataToImportedData` handles an already imported value installed
+within an imported mutation path. It is separate from detached preparation.
+
+The mutation walk supplies the actual post-COW destination ancestry. Attachment
+checks the entering value only against that fixed path:
+
+- it does not grow the path with incoming nodes;
+- it does not repeat detached preparation;
+- a synchronous route into the path publishes the cut at the new owner/key
+  placement; and
+- a Promise resumes the same fixed-path scan at its own mirror position.
+
+For an assigned pending attachment, the destination root is marked shared
+before continuation registration. Later language mutations therefore COW away
+and cannot change the captured ancestry.
+
+A retained Promise fork also checks the ancestry captured at fork creation.
+That internal classification does not create an observable pin.
+
+The destination ancestry is captured after COW. References to an external
+pre-copy owner therefore do not become false cycles in the new language-owned
+world.
+
+## Cycle projection
+
+A cycle Error belongs to one owner/key property. The raw logical value is not
+changed.
+
+In the projected ref-index:
+
+- the cut contributes `[0, 1]`;
+- indexing does not follow the raw target;
+- no reverse parent edge crosses the cut; and
+- every projected parent graph remains acyclic.
+
+Every raw directed imported cycle must contain at least one cut before
+ref-indexing. A feedback edge may break more than one overlapping cycle, and a
+strongly connected region may require several cuts.
+
+The cut is always visible to projected consumers:
+
+- a pending or draining mirror contributes `[1, 0]`;
+- a published cycle Error contributes `[0, 1]`; and
+- only `promiseCount === 0 && errorCount === 0` proves that the projected branch
+  contains no hidden frontier.
+
+The raw graph remains available where projection completeness is insufficient:
+
+- finite lookup and mutation paths follow raw values;
+- `getErrors` records the cycle Error and continues behind the cut;
+- `normalize` reconstructs aliases and cycles; and
+- raw traversal waits recursively for Promises found behind cuts.
+
+Re-rooting a tracked identity does not remove a cycle in the underlying graph.
+Replacing or deleting the exact cut property removes that placement's
+diagnostic and count contribution. COW copies do not inherit placement
+diagnostics blindly.
+
+## Physical host data
+
+Imported-original objects are physically unchanged by:
+
+- Promise settlement;
+- cycle discovery;
+- ref-index construction; and
+- language mutation.
+
+Their mirrors remain the authoritative logical property state after settlement.
+A runtime-owned extensible holder may receive the final mirror value
+physically. A non-extensible holder retains its physical Promise and also reads
+through the mirror.
+
+Native code receives tracked Cascada values only through `normalize`, whose
+output contains no runtime metadata or unresolved logical mirror state.
 
 ## Enumerable `__proto__`
 
-An own enumerable `__proto__` property is ordinary imported data. Discovery,
-mirrors, counters, error queries, and normalization all process it. The
-inherited legacy accessor and own non-enumerable properties are outside the
-language-visible property surface.
+An own enumerable `__proto__` property is ordinary language data. Preparation,
+cycle discovery, mirrors, refcounting, Error queries, and normalization all
+process it.
 
-Every physical language write defines a missing key as an own enumerable data
-property. COW, plain-copy normalization, assignment, and promise writeback can
-therefore create or replace `__proto__` without invoking JavaScript's legacy
-prototype setter or changing the object's prototype.
+Every missing language key is created with `Object.defineProperty` as an own
+enumerable data property. No runtime write invokes the inherited
+`Object.prototype.__proto__` setter.
 
-## Promises
+## Cost
 
-Preparation mints mirrors for pending imported properties at their discovery
-position. Each mirror carries the inherited import boundary and whether its
-holder is external. Its mandatory writeback remains first, but an imported
-mirror deliberately records only the raw logical value there. The following
-import consumers resume only their registering walks: detached preparation uses
-its copied path and attachment uses its fixed destination path.
-`importPreparationCount` delays indexing until all of them finish. Every import
-consumer participates in the same counted FIFO drain, so later operations cannot
-observe an unclassified intermediate value. Earlier consumers may change
-`currentValue`; each walk deliberately inspects that latest logical value rather
-than the raw settlement.
+Fresh detached preparation is O(n) in the synchronously reachable graph. A
+prepared-island encounter adds a fixed-path scan for that ancestry. Promise
+segments retain only the path and weak identity state required by their own
+continuation.
 
-An external holder keeps its exact physical Promise property after settlement;
-the mirror owns the logical settled value. A language-owned assigned or COW-fork
-holder writes the final drained value physically only while it remains
-extensible. All logical operations read through the mirror, and host output uses
-`normalize(..., plainCopy=true)` to materialize ordinary promise-free data.
+Recursive synchronous graphs are bounded by the JavaScript call stack.
+Permanently pending Promises may retain their continuation state, so identity
+tables retained across them are weak.
 
 ## Module boundary
 
 `src/import.js` owns:
 
-- `import`: the public root boundary.
-- `buildImportedRefIndex`: complete imported-value index orchestration.
-- `prepareImportedData`: private promise-recursive cycle preparation.
-- `attachImportedDataToImportedData`: fixed-path imported placement checking.
-- cycle-Error storage, read views, and publication sequencing.
+- the public import boundary;
+- detached preparation;
+- the private fixed-path scanner;
+- imported attachment;
+- cycle-Error storage and read views; and
+- imported Promise continuation registration.
 
-Both recursive walks remain private behind those operations. Generic metadata
-access stays in `src/meta.js`, while `src/refcounts.js` supplies the generic
-index commit and atomic attached-edge count transaction.
+`src/meta.js` owns generic metadata access and ownership marks.
+`src/promise-mirrors.js` owns mirror lifecycle and logical reads.
+`src/refcounts.js` consumes the prepared projection and owns attached
+count/parent transitions.

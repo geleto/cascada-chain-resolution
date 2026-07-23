@@ -1,195 +1,257 @@
 # Subtree counters
 
-Subtree counters are a lazy index over the runtime's projected logical graph.
-Each indexed node stores the number of pending Promise placements and Error
-placements reachable below it. They replace the former CLEAN flag:
+Subtree counters are a lazy index over the projected logical graph. Each
+indexed node stores the number of pending Promise placements and Error
+placements reachable below it:
 
 ```text
-clean <=> promiseCount + errorCount === 0
+clean <=> promiseCount === 0 && errorCount === 0
 ```
 
-Counters say what is pending or broken. The shared mark says who may observe a
-value. These concerns are independent.
+Counters describe pending and broken content. The shared mark describes
+ownership. Neither substitutes for the other.
 
-## Metadata
+## Counter metadata
 
-All per-node runtime state lives in the single META record:
+Ref-indexing adds three fields to the node's META record:
 
-- `promiseCount`, `errorCount`: exact projected subtree totals.
-- `parents`: reverse indexed edges with multiplicity. Its existence is the
-  ref-indexed marker; an empty Map is an indexed root.
-- `mirrors`: promise placements and their private logical state.
-- `cycleErrors`: property-level cycle Errors. Each one cuts its raw edge from the
-  projected counter graph while leaving that edge visible to path operations
-  and cycle-aware normalization.
-- `settlementPromise`, `settlementResolve`: normalize's optional shared wait
-  generation.
-- `shared`, `importBoundary`: ownership and import state. A direct boundary
-  stores `{ root, errorContext }`.
+- `promiseCount`: exact pending Promise placements in the projected subtree;
+- `errorCount`: exact Error placements in the projected subtree; and
+- `parents`: `Map<parentNode, edgeCount>` for reverse indexed edges.
 
-A META record starts empty. Each field is added by the subsystem that activates
-it: `shared` at the first ownership boundary, mirrors and cycle cuts on first
-placement, the counter trio on ref-indexing, settlement fields on a pending
-normalize, and the import boundary at direct import.
+`parents === undefined` means the node is not ref-indexed. An empty Map means it
+is indexed but currently has no indexed parent. Multiplicity matters: if one
+parent references the same child under two keys, the child records edge count
+two for that parent.
 
-Inline metadata uses one non-enumerable Symbol on extensible values. The same
-WeakMap used by WeakMap mode is the fallback for non-extensible values, so both
-storage modes have identical semantics.
+Other META fields belong to their own subsystems. Promise mirrors and cycle
+diagnostics affect property contributions, shared/import fields affect
+ownership and preparation, and settlement fields exist only while
+normalization waits.
 
-## Projected placements
+Inline metadata uses an own non-enumerable Symbol when possible. WeakMap mode,
+and inline mode's fallback for non-extensible nodes, provide identical
+semantics.
 
-Counts are placement-sensitive. `getPropertyRefCounts(parent, key)` applies
-these rules in order:
+## Property projection
 
-- An unresolved or draining live mirror contributes `[1, 0]`.
-- A settled cycle Error contributes `[0, 1]`.
-- An ordinary Promise contributes `[1, 0]`.
-- An ordinary Error contributes `[0, 1]`.
-- A tracked child contributes its indexed subtree totals.
-- A primitive contributes `[0, 0]`.
+Counts belong to owner/key placements, not blindly to physical values.
+`getPropertyRefCounts(parent, key)` returns:
 
-`getCountedChild(parent, key)` returns the child that owns a reverse parent edge,
-or nothing for a pending mirror or cycle cut. Code that changes a property
-must use these placement helpers rather than inspect the physical slot.
+| Logical property state | Contribution |
+| --- | --- |
+| Unresolved or draining live mirror | `[1, 0]` |
+| Published cycle Error | `[0, 1]` |
+| Ordinary Promise | `[1, 0]` |
+| Ordinary Error | `[0, 1]` |
+| Indexed tracked child | Child totals |
+| Primitive or missing value | `[0, 0]` |
 
-`getCommittedCycleError(parent, key)` reads only attached state, so a draining
-mirror remains `[1,0]`. `getResolvedCycleError(placement)` lets an operation
-that captured a mirror see its private prepared Error. These views are distinct
-because private FIFO state must not leak into parent counters before drain.
-`src/import.js` owns both views and delegates attached publication to one atomic
-refcount edge transaction.
+`getCountedChild(parent, key)` returns the tracked child that owns a reverse
+parent edge. Pending mirrors and cycle cuts return no child.
 
-Every ordinary tracked child below an indexed parent is itself indexed. A
-missing child counter is a fatal downward-closure violation, not a request for
-implicit repair.
+`getCycleError(parent, key)` reads only the state published by the live
+property:
+
+- a plain property reads its META entry;
+- a drained mirror reads its mirror entry; and
+- a draining mirror exposes no cycle Error because the property still
+  contributes `[1, 0]`.
+
+An operation that captured a mirror may read its private `mirror.cycleError`
+before publication. Private FIFO state never contributes to parent counters.
+
+Every ordinary tracked child below an indexed parent is indexed. A missing
+child counter is a fatal downward-closure violation.
 
 ## Building the index
 
-`buildRefIndex(value, inheritedImportBoundary, placement)` is the sole public
-entry for initial indexing.
+`buildRefIndex(value, inheritedImportBoundary)` is the entry for initial
+indexing.
 
-Trusted language data follows the compiler's tree-shaped ownership contract,
-so `commitRefIndex` walks it directly without identity bookkeeping. When an
-import boundary is reached, `buildRefIndex` delegates the complete imported
-path to `buildImportedRefIndex`. Its private rooted walk starts from the stored
-boundary root, keeps one weak map of identities and the active path, and cuts
-properties that point back into that path. Repeated identities are marked
-shared and revisited only for active ancestors not checked earlier. It publishes
-mirrors and cycle Errors directly. At every Promise it copies the active path
-and registers a continuation at that FIFO position. After writeback prepares
-the latest logical mirror value, the continuation resumes the same walk with
-the copied path and operation-wide identity map. The synchronous prefix then
-invokes ordinary `commitRefIndex`; later Promise branches update that projection
-through normal mirror writeback and atomic cycle-edge commits. No
-imported record graph or preparation flag is retained. See
-`docs/lazy-import.md`.
+Trusted compiler-created data is tree-shaped under the single-owner/COW
+contract and needs no cycle table. Imported data has already been prepared:
+cycle-closing properties are cut, aliases are marked shared, and pending
+properties have mirrors plus their import consumers. Details live in
+[`import-preparation.md`](import-preparation.md).
 
-Frozen, sealed, and otherwise non-extensible nodes follow the same counter
-rules as extensible nodes. Once reached by a successful index build, each has a
-counter in WeakMap metadata, and every ordinary tracked child below it is also
-indexed. Non-extensibility affects ownership and physical writeback, not counts.
+Index construction walks the prepared projection:
 
-Parent maps retain every structural edge. If one parent references a child at
-two keys, its map entry has multiplicity two and propagated deltas are
-multiplied accordingly. Cycle cuts never add reverse edges.
+1. A draining mirror contributes `[1, 0]` and is not entered.
+2. A cycle cut contributes `[0, 1]` and is not entered.
+3. An ordinary tracked child is indexed recursively and receives a reverse
+   parent edge.
+4. Existing compatible indexed subtrees may be connected without recounting
+   their descendants.
+5. Structural aliases add exact edge multiplicity.
 
-## Edge transitions
+The first counter operation reached inside an import boundary may begin at the
+stored boundary root so the complete projected ancestry is represented.
 
-New values are prepared before they enter the attached graph:
+Frozen, sealed, and otherwise non-extensible nodes use the same index rules.
+Only metadata storage and physical write policy differ.
 
-- `preparePropertyTransition(owner, propertyMirror, newValue)` derives
-  imported preparation and child indexing without changing the attached
-  placement. Imported DFS consumers publish cycle Errors at the exact placement
-  they discover. Counts are read from prepared transition state only when it is
-  committed.
-- `commitPropertyTransition(owner, key, propertyMirror, prepared)` installs that state.
+## Property transitions
 
-Every live assignment, deletion, changed cycle Error, and successful mirror drain
-then shares one synchronous commit primitive. It snapshots the old projected
-counts and child, performs the already-validated placement update, swaps the
-reverse edge, and propagates exactly one delta from explicitly supplied next
-counts. Revoked mirror state is private and bypasses this attached-edge commit.
-Descriptor constraints that could block assignment or deletion are validated
-before new-value preparation. The physical mutation then occurs before mirror
-or cycle-Error metadata changes, so a failed mutation leaves the previous attached
-edge unchanged. A fatal preparation likewise leaves it unchanged. A newly
-assigned Promise is installed immediately as a fresh mirror contributing
-`[1,0]`.
+New values are prepared before they enter an attached indexed graph.
+
+`preparePropertyTransition(owner, propertyMirror, newValue)` performs the
+non-publishing work:
+
+- preserve or establish import state;
+- prepare a child mirror value when applicable; and
+- build the entering child's index if the owner is already indexed.
+
+Descriptor failures are checked before preparation. A fatal preparation leaves
+the attached edge unchanged.
+
+Every live assignment, deletion, cycle-diagnostic change, and successful final
+mirror drain uses one synchronous commit transaction:
+
+1. Snapshot the old projected counts and counted child.
+2. Perform the validated physical/mirror/cycle update.
+3. Read the new projected counts and counted child.
+4. Remove and add reverse edges as needed.
+5. Propagate exactly one count delta.
+
+The commit is atomic in the JavaScript execution sense: no other operation can
+interleave with the synchronous transition. It does not attempt rollback after
+an internal fatal failure.
+
+A newly assigned Promise installs a fresh mirror and immediately contributes
+`[1, 0]`. Deletion removes only the old contribution. Revoked mirror state is
+private and never enters the former parent's transaction.
 
 `copyCounters` reconstructs an indexed COW copy from the copy's own logical
-placements. It never clones source totals, parent maps, or placement cycle Errors.
+properties. It never clones source totals, parent maps, or placement-specific
+cycle diagnostics.
 
-## Promise mirrors
+## Promise-mirror drain
 
-Every callback that consumes a mirrored Promise registers through
-`onPromiseMirrorResolve`. Registration increments `pendingConsumerCount`
-synchronously. A consumer decrements only after its synchronous body and any
-final drain commit succeed.
+One mirror represents one Promise-backed property version. Every consumer
+registers through `onPromiseMirrorResolve`.
 
-The mandatory writeback is the mirror's first counted consumer. While any
-consumer remains, the mirror is pending and the attached placement stays `[1, 0]`.
-Consumers prepare successive private values in FIFO order. The sole remaining
-consumer commits the final prepared value once if the mirror is still live,
-then decrements to zero. Zero is the settled state. A revoked mirror keeps only
-its private result.
+Registration:
 
-Imported preparation uses the same consumer. Each non-redundant active path is
-copied when its Promise is discovered, then the consumer resumes the import walk
-on `currentValue` and registers the same work on newly exposed Promise
-properties. This places cycle and alias discovery after earlier advances and
-before later operations without a separate Promise scheduler.
+1. increments `pendingConsumerCount` synchronously;
+2. registers directly on the raw source Promise at the caller's issue position;
+3. converts a source rejection to a language Error value;
+4. runs the consumer's synchronous body; and
+5. decrements after successful completion.
 
-This drain rule closes the settlement-to-writeback race. A read cannot use a
-settled fast path while an earlier registered mutation is still queued. A
-synchronous fatal consumer leaves its count outstanding and prevents
-publication.
+The mandatory writeback is the first consumer. Import preparation, mutation and
+observation continuations, COW forks, and Error-query waits use the same
+ordering mechanism.
 
-`readLogicalProperty` therefore returns:
+While `pendingConsumerCount > 0`, the attached placement remains `[1, 0]`.
+Consumers prepare successive private `currentValue` states in FIFO order, but
+the parent contribution does not bounce through intermediate values.
 
-- the original Promise for a live unresolved or draining mirror;
-- `mirror.currentValue` when `pendingConsumerCount === 0`;
-- otherwise the own enumerable physical property.
+The final successful consumer performs one drain:
 
-External imported holders and holders that become non-extensible retain their
-physical Promise permanently; the mirror remains the authoritative logical
-placement.
+1. capture the old `[1, 0]` contribution;
+2. refresh child preparation if the owner became indexed;
+3. commit the final logical value or cycle diagnostic if the mirror is live;
+4. decrement the count to zero inside that transition; and
+5. read and propagate the final property contribution.
 
-A mirrored placement stores its cycle Error exclusively in `mirror.cycleError`.
-Installing a mirror clears `meta.cycleErrors[key]`, and removing one clears both
-locations, so a stale cycle Error can never reappear after mirror removal.
+Zero means the source resolved, every registered consumer completed its
+synchronous work, and final publication succeeded. This closes the
+settlement-to-writeback race: a later read cannot use a synchronous settled
+value while an earlier registered mutation is still queued.
+
+A synchronous fatal consumer leaves its count outstanding and prevents final
+publication. A revoked mirror reaches its private final state but performs no
+attached-edge commit.
+
+## Logical reads
+
+`readLogicalProperty(parent, key)` returns:
+
+- the original Promise while a live mirror is draining;
+- `mirror.currentValue` after that mirror drains; or
+- the own enumerable physical property when no mirror exists.
+
+Returning the Promise while draining forces the caller to register behind every
+earlier consumer. Returning `currentValue` after drain also handles a legitimate
+settled `undefined`.
+
+Imported-original and non-extensible holders may retain their physical Promise
+permanently. Logical reads therefore remain mirror-aware after settlement.
+
+A mirrored property stores its cycle Error exclusively on the mirror.
+Installing or removing a mirror clears competing plain-property cycle metadata,
+so an old diagnostic cannot reappear after transition.
 
 ## Delta propagation
 
 `applyCountDelta(node, promiseDelta, errorDelta)` updates one indexed node and
-recursively propagates the delta through every parent, multiplied by edge
-count. The projected parent graph is acyclic: trusted data is tree-shaped,
-imported aliases retain multiplicity, and every imported cycle is cut by a
-cycle Error.
+propagates the delta through every reverse parent edge, multiplied by that
+edge's count.
 
-When `promiseCount` falls to zero, its optional normalize settlement generation
-is cleared and resolved immediately. Promise callbacks remain asynchronous;
-the mirror-drain invariant makes the zero exact by retaining `[1,0]` until all
-registered consumers have completed their synchronous work.
+The projected parent graph is acyclic:
+
+- trusted language data is tree-shaped;
+- imported aliases retain finite edge multiplicity;
+- Promise placements are frontiers while draining; and
+- every imported cycle has a cut with no reverse edge.
+
+Zero deltas stop immediately.
+
+## Settlement
+
+When normalization must wait, the reached indexed node receives one shared
+settlement generation:
+
+- `settlementPromise`; and
+- `settlementResolve`.
+
+Concurrent normalizations of that branch share the generation. When
+`promiseCount` reaches zero, `applyCountDelta` clears both fields and resolves
+the generation immediately.
+
+No extra verification microtask is needed. The mirror remains `[1, 0]` until
+all consumers at earlier FIFO positions have finished, so the zero crossing is
+already final for that issue-time world.
+
+`hasError` and `getErrors` do not use this shared settlement state. Each owns
+its captured Promise wait tree and does not pin the branch.
 
 ## Consumers
 
-- `normalize` indexes the reached path value, optionally waits for settlement,
-  and inspects projected Errors. Cycle-only branches are then traversed through
-  raw logical values with one identity map; a plain copy is constructed during
-  that same raw traversal.
-- `hasError` answers from `errorCount` immediately when possible and otherwise
-  follows only the captured pending mirror frontier.
-- `getErrors` uses counters to prune clean branches, collects Error identities
-  into one Set, and waits for the complete captured mirror frontier.
+### `normalize`
 
-Only the initial reached path value calls `buildRefIndex`. Resolved child
-branches are prepared and indexed by their mirror writeback before query
-continuations inspect them.
+Normalization indexes the reached path value and waits for `promiseCount` to
+reach zero when necessary. It then classifies projected Errors. Cycle-only
+branches use the raw logical walker to materialize a metadata-free copy and to
+wait for Promises hidden behind cuts.
+
+### `hasError`
+
+`errorCount > 0` answers `true` immediately. A settled zero-error branch answers
+`false`. Otherwise the operation follows only the pending mirrors captured at
+its issue position and resolves on the first Error or complete clean frontier.
+
+### `getErrors`
+
+Counters prune clean projected regions. Ordinary and cycle Errors enter one
+operation-local Set. At a cycle cut, the raw walker follows the logical value
+without requiring a child counter and recursively extends the Promise frontier.
+
+Only the initial value reached by path resolution calls `buildRefIndex`.
+Resolved child branches are prepared and, when required by downward closure,
+indexed by mirror processing before query continuations inspect them.
 
 ## Verification
 
-`verifyRefCounts` independently recounts logical placements, checks exact
-stored totals, reverse-edge multiplicity, and downward closure, and detects a
-cycle in the parent graph as a fatal invariant failure. A draining mirror is
-recounted as `[1, 0]`, regardless of its physical or currently prepared value.
-Verification reads no host-only metadata and never changes runtime state.
+`verifyRefCounts` independently:
+
+- recounts every projected logical placement;
+- compares exact stored totals;
+- checks reverse-edge multiplicity;
+- checks downward closure;
+- verifies mirror/plain cycle-state exclusivity; and
+- treats a cycle in the projected parents graph as a fatal invariant failure.
+
+A draining mirror always recounts as `[1, 0]`, regardless of its physical or
+private prepared value. Verification never changes runtime state.
