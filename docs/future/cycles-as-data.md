@@ -260,7 +260,8 @@ to rely on that import contract.
 - `src/promise-mirrors.js`: retain private Promise-placement cut state.
 - `src/refcounts.js`: count triples, parent transitions, propagation, COW
   reconstruction, and Promise-only settlement.
-- `src/index.js`: cycle-aware `hasError`, `getErrors`, and normalization policy.
+- `src/observations.js`: cycle-aware `hasError`, `getErrors`, and normalization
+  policy.
 - `src/raw-walk.js`: raw traversal through cuts and Promise frontier extension.
 - `src/verify-refcounts.js`: triple recount and cut invariants.
 

@@ -15,7 +15,7 @@ semantics.
   graph preparation, aliases, cycles, and Promise continuations.
 - [`docs/counters-implementation.md`](docs/counters-implementation.md) explains
   lazy subtree counters, Promise mirrors, settlement, and verification.
-- [`docs/issues.md`](docs/issues.md) tracks implemented and pending work.
+- [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
 - [`docs/future/cycles-as-data.md`](docs/future/cycles-as-data.md) is the chosen
   future design for treating imported cycles as valid data rather than Errors.
 - [`docs/future/normalize-error-set.md`](docs/future/normalize-error-set.md)
@@ -24,6 +24,21 @@ semantics.
 
 The first four documents describe the implemented runtime. Documents under
 `docs/future` describe planned end states and are not current behavior.
+
+## Source layout
+
+- `src/index.js` owns `Chain`, runtime initialization, and the public API.
+- `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
+- `src/observations.js` owns lookup, normalization, Error queries, and their
+  shared observational walkers.
+- `src/import.js` prepares imported graphs, aliases, cycles, and Promise
+  continuations.
+- `src/refcounts.js` owns lazy subtree counters, parent edges, settlement, and
+  atomic property transitions.
+- `src/promise-mirrors.js` owns Promise-backed property state and logical reads.
+- `src/raw-walk.js` owns metadata-free graph copying and raw Error traversal.
+- The remaining small modules own metadata, validation, fatal errors, helpers,
+  and refcount verification.
 
 ## Runtime model
 

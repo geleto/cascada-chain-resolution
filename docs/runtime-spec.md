@@ -99,7 +99,7 @@ The copy contains only language-visible keys:
 
 Current generic copying does not preserve a class instance's prototype,
 private fields, or internal slots. Explicit class adapters are tracked as
-future work in `issues.md`.
+future work in `plan.md`.
 
 Imported provenance remains attached to retained external children. Newly
 copied path nodes are language-owned. If the copied source was already
