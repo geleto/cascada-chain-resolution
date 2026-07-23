@@ -53,8 +53,8 @@ describe("export", () => {
 
         expect(copy.back.value).to.be(copy)
         expect(mirror.pendingConsumerCount).to.be(0)
-        expect(mirror.cycleError).to.be(undefined)
-        expect(metaOf(resolved).cycleErrors.back instanceof Error).to.be(true)
+        expect(mirror.cycleCut).to.be(false)
+        expect(metaOf(resolved).cycleCuts.has("back")).to.be(true)
         verifyRefCounts(root)
     })
 
@@ -73,8 +73,8 @@ describe("export", () => {
         expect(copy.left).not.to.be(shared)
         expect(metaOf(copy)).to.be(undefined)
         expect(metaOf(copy.left)).to.be(undefined)
-        expect(hasError(chain, [])).to.be(true)
-        expect(getErrors(chain, []).length).to.be(1)
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
         verifyRefCounts(root)
     })
 
@@ -105,6 +105,23 @@ describe("export", () => {
         verifyRefCounts(left, right)
     })
 
+    it("detects an Error resolved behind a cycle cut", async () => {
+        const pending = deferred()
+        const error = new Error("hidden behind Promise")
+        const first = { pending: pending.promise }
+        const second = { back: first }
+        first.next = second
+        importValue(first, "hidden promised Error")
+
+        const result = exportValue(new Chain(second), [])
+        pending.resolve({ error })
+
+        const exported = await result
+        expect(exported instanceof Error).to.be(true)
+        expect(exported.message).to.be("export: branch contains errors")
+        verifyRefCounts(first, second)
+    })
+
     it("lets an ordinary Error behind a cycle cut poison export", () => {
         const left = {}
         const right = { bad: new Error("hidden") }
@@ -118,7 +135,7 @@ describe("export", () => {
         expect(result.message).to.be("export: branch contains errors")
     })
 
-    it("returns counted terminal-cycle Errors without waiting for the raw frontier", async () => {
+    it("returns counted ordinary Errors without waiting for a raw cycle frontier", async () => {
         const pending = deferred()
         const branch = { bad: new Error("known") }
         const root = { branch, pending: pending.promise }
@@ -128,7 +145,7 @@ describe("export", () => {
 
         const result = exportValue(new Chain(root), ["branch"])
 
-        expect(metaOf(branch).cycleErrors.back instanceof Error).to.be(true)
+        expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
         expect(getRefCounter(branch)).not.to.be(undefined)
         expect(result instanceof Error).to.be(true)
         expect(result.message).to.be("export: branch contains errors")
@@ -148,7 +165,7 @@ describe("export", () => {
 
         expect(clean).to.eql(root.child.clean)
         expect(clean).not.to.be(root.child.clean)
-        expect(hasError(chain, [])).to.be(true)
+        expect(hasError(chain, [])).to.be(false)
         expect(hasError(chain, ["child", "clean"])).to.be(false)
     })
 
@@ -247,11 +264,8 @@ describe("export", () => {
 
         importValue(output, "exported round trip")
 
-        const errors = getErrors(new Chain(output), [])
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            'Cyclic property "back" (imported at: exported round trip)',
-        )
+        expect(getErrors(new Chain(output), [])).to.eql([])
+        expect(metaOf(output.value).cycleCuts.has("back")).to.be(true)
     })
 
     it("copies sparse arrays and preserves DAG identity", () => {
@@ -683,7 +697,7 @@ describe("export", () => {
         verifyRefCounts(original, current)
     })
 
-    it("preserves cyclic imports while exposing their diagnostics separately", () => {
+    it("preserves cyclic imports without exposing cycle diagnostics", () => {
         const cyclic = {}
         cyclic.self = cyclic
         const branch = { cyclic }
@@ -696,19 +710,20 @@ describe("export", () => {
 
         expect(value).not.to.be(branch)
         expect(value.cyclic.self).to.be(value.cyclic)
-        expect(hasError(new Chain(root), ["branch"])).to.be(true)
+        expect(hasError(new Chain(root), ["branch"])).to.be(false)
         expect(metaOf(branch).shared).to.be(undefined)
         expect(metaOf(branch).importBoundary).to.be(undefined)
-        expect(getRefCounter(branch).errorCount).to.be(1)
+        expect(getRefCounter(branch).errorCount).to.be(0)
+        expect(getRefCounter(branch).cycleCutCount).to.be(1)
     })
 
-    it("does not pin synchronous imported cycle failures", () => {
+    it("does not pin a synchronous Error found in a cyclic import", () => {
         const cyclic = { bad: new Error("hidden") }
         cyclic.self = cyclic
         const branch = { cyclic }
         const root = { branch }
 
-        importValue(root, "synchronous cycle failure")
+        importValue(root, "synchronous cyclic Error")
         const result = exportValue(new Chain(root), ["branch"])
 
         expect(result instanceof Error).to.be(true)

@@ -1,7 +1,7 @@
 # Export with the complete Error set
 
-**Status:** Planned after
-[`cycles-as-data.md`](cycles-as-data.md); not implemented.
+**Status:** Planned; depends on the implemented
+[`cycles-as-data.md`](../cycles-as-data.md) model.
 
 The target behavior is:
 

@@ -33,8 +33,12 @@ function countPromiseRegistrations(promise) {
     return () => count
 }
 
-function expectCounts(value, promiseCount, errorCount) {
-    expect(refcounts.getRefCounts(value)).to.eql([promiseCount, errorCount])
+function expectCounts(value, promiseCount, errorCount, cycleCutCount = 0) {
+    expect(refcounts.getRefCounts(value)).to.eql([
+        promiseCount,
+        errorCount,
+        cycleCutCount,
+    ])
 }
 
 function thrownBy(fn) {

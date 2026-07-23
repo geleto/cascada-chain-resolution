@@ -275,8 +275,24 @@ describe("subtree counters", () => {
         expect(root.branch).to.be(imported)
         expect(imported.child).to.be(cycle)
         expect(cycle.next.back).to.be(cycle)
-        expectCounts(root, 0, 1)
-        expect(getRefCounter(imported).errorCount).to.be(1)
+        expectCounts(root, 0, 0, 1)
+        expect(getRefCounter(imported).errorCount).to.be(0)
+        expect(getRefCounter(imported).cycleCutCount).to.be(1)
+        verifyRefCounts(root)
+    })
+
+    it("propagates cycle-cut multiplicity through aliases", () => {
+        const cyclic = {}
+        cyclic.self = cyclic
+        const root = { left: cyclic, right: cyclic }
+        importValue(root, "aliased cycle")
+
+        buildRefIndex(root)
+
+        expectCounts(cyclic, 0, 0, 1)
+        expectCounts(root, 0, 0, 2)
+        expect(getRefCounter(cyclic).parents.get(root)).to.be(2)
+        expect(hasError(new Chain(root), [])).to.be(false)
         verifyRefCounts(root)
     })
 
@@ -289,18 +305,50 @@ describe("subtree counters", () => {
 
         buildRefIndex(wrapper)
 
-        expect(metaOf(child).cycleErrors.back.message).to.be(
-            'Cyclic property "back" (imported at: nested imported back-reference)',
-        )
-        expect(metaOf(wrapper).cycleErrors).to.be(undefined)
-        expectCounts(wrapper, 1, 1)
+        expect(metaOf(child).cycleCuts.has("back")).to.be(true)
+        expect(metaOf(wrapper).cycleCuts).to.be(undefined)
+        expectCounts(wrapper, 1, 0, 1)
         verifyRefCounts(wrapper, child)
 
         pending.resolve("done")
         await flushMicrotasks()
 
-        expectCounts(wrapper, 0, 1)
+        expectCounts(wrapper, 0, 0, 1)
         verifyRefCounts(wrapper, child)
+    })
+
+    it("propagates a cut-to-Promise transition through indexed ancestors", async () => {
+        const cyclic = {}
+        cyclic.self = cyclic
+        const imported = { branch: cyclic }
+        importValue(imported, "cut-to-Promise transition")
+        const chain = new Chain(imported)
+        buildRefIndex(chain._state)
+
+        expectCounts(cyclic, 0, 0, 1)
+        expectCounts(imported, 0, 0, 1)
+        expectCounts(chain._state, 0, 0, 1)
+
+        const pending = deferred()
+        assignPath(chain, ["branch", "self"], pending.promise)
+        const next = chain._state.value
+
+        expect(next).not.to.be(imported)
+        expect(next.branch).not.to.be(cyclic)
+        expectCounts(next.branch, 1, 0, 0)
+        expectCounts(next, 1, 0, 0)
+        expectCounts(chain._state, 1, 0, 0)
+        expectCounts(imported, 0, 0, 1)
+        verifyRefCounts(chain._state, imported)
+
+        pending.resolve("settled")
+        await flushMicrotasks()
+
+        expectCounts(next.branch, 0, 0, 0)
+        expectCounts(next, 0, 0, 0)
+        expectCounts(chain._state, 0, 0, 0)
+        expectCounts(imported, 0, 0, 1)
+        verifyRefCounts(chain._state, imported)
     })
 
     it("verifies indexed islands reached through unindexed wrappers", () => {
@@ -314,6 +362,65 @@ describe("subtree counters", () => {
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Counter totals are inconsistent")
+    })
+
+    it("detects invalid cycle cuts and cut counts", () => {
+        const wrongCount = {}
+        wrongCount.self = wrongCount
+        importValue(wrongCount, "wrong cut count")
+        buildRefIndex(wrongCount)
+        getRefCounter(wrongCount).cycleCutCount = 0
+        expect(thrownBy(() => verifyRefCounts(wrongCount)).message).to.be(
+            "Counter totals are inconsistent",
+        )
+
+        const missing = {}
+        missing.self = missing
+        importValue(missing, "missing cut property")
+        delete missing.self
+        expect(thrownBy(() => verifyRefCounts(missing)).message).to.be(
+            "Cycle cut names a missing or non-enumerable property",
+        )
+
+        const primitive = {}
+        primitive.self = primitive
+        importValue(primitive, "primitive cut value")
+        primitive.self = 1
+        expect(thrownBy(() => verifyRefCounts(primitive)).message).to.be(
+            "Cycle cut must contain a tracked value",
+        )
+
+        const nonStringKey = { 1: {} }
+        buildRefIndex(nonStringKey)
+        metaOf(nonStringKey).cycleCuts = new Set([1])
+        expect(thrownBy(() => verifyRefCounts(nonStringKey)).message).to.be(
+            "Cycle cut keys must be strings",
+        )
+
+        const pending = deferred()
+        const mirrored = { pending: pending.promise }
+        buildRefIndex(mirrored)
+        metaOf(mirrored).cycleCuts = new Set(["pending"])
+        expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
+            "Mirrored property also has a plain cycle cut",
+        )
+
+        delete metaOf(mirrored).cycleCuts
+        metaOf(mirrored).mirrors.pending.cycleCut = true
+        expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
+            "Promise cycle cut must contain a prepared tracked value",
+        )
+
+        const stalePending = deferred()
+        const stale = { pending: stalePending.promise }
+        buildRefIndex(stale)
+        const staleMirror = metaOf(stale).mirrors.pending
+        staleMirror.currentValue = {}
+        staleMirror.cycleCut = true
+        delete stale.pending
+        expect(thrownBy(() => verifyRefCounts(stale)).message).to.be(
+            "Promise cycle cut names a missing or non-enumerable property",
+        )
     })
 
     it("detects every parent-edge consistency failure", () => {
@@ -644,7 +751,7 @@ describe("subtree counters", () => {
 
         expect(root.pending).to.be(cyclic)
         expect(value).to.be(root.pending)
-        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(false)
         expect(cyclic.self).to.be(cyclic)
         verifyRefCounts(root)
     })

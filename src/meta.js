@@ -11,8 +11,8 @@ function createMeta() {
         // An empty record can also mean imported preparation visited the node.
         // shared: added when ownership first becomes shared.
         // mirrors: added when the first promise mirror is installed.
-        // cycleErrors: added when the first cycle cut is published.
-        // promiseCount, errorCount, parents: added together by ref-indexing.
+        // cycleCuts: added when the first plain-property cut is published.
+        // promiseCount, errorCount, cycleCutCount, parents: added by ref-indexing.
         // settlementPromise, settlementResolve: added by a pending export.
         // importBoundary: added at a direct import boundary.
         // importedOriginal: added to objects owned by imported host data.
@@ -92,7 +92,6 @@ function nodeImportBoundary(node, inherited) {
     return own === undefined ? inherited : own
 }
 
-// Each cycle cut stores its attributed Error directly on the owner/key property.
 export {
     ensureMeta,
     hasSharedMark,

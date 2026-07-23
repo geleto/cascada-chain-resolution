@@ -321,7 +321,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(mirror.currentValue).to.be(replacement)
-        expect(mirror.cycleError).to.be(undefined)
+        expect(mirror.cycleCut).to.be(false)
         expectCounts(root, 0, 0)
         verifyRefCounts(root, replacement)
     })
@@ -338,13 +338,10 @@ describe("import", () => {
         pending.resolve(bridge)
         await flushMicrotasks()
 
-        expect(hasError(new Chain(root), [])).to.be(true)
-        const cycleError = metaOf(shared).mirrors.pending.cycleError
-        expect(cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: asynchronous bridge)',
-        )
-        expect(metaOf(bridge).cycleErrors).to.be(undefined)
-        expect(getErrors(new Chain(root), [])).to.eql([cycleError])
+        expect(hasError(new Chain(root), [])).to.be(false)
+        expect(metaOf(shared).mirrors.pending.cycleCut).to.be(true)
+        expect(metaOf(bridge).cycleCuts).to.be(undefined)
+        expect(getErrors(new Chain(root), [])).to.eql([])
         verifyRefCounts(root, shared, bridge)
     })
 
@@ -361,12 +358,9 @@ describe("import", () => {
         pending.resolve(bridge)
         await flushMicrotasks()
 
-        const cycleError = metaOf(ancestor).mirrors.pending.cycleError
-        expect(cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: asynchronous subtree bridge)',
-        )
-        expect(metaOf(tail).cycleErrors).to.be(undefined)
-        expect(getErrors(new Chain(root), [])).to.eql([cycleError])
+        expect(metaOf(ancestor).mirrors.pending.cycleCut).to.be(true)
+        expect(metaOf(tail).cycleCuts).to.be(undefined)
+        expect(getErrors(new Chain(root), [])).to.eql([])
         verifyRefCounts(root, ancestor, bridge, tail)
     })
 
@@ -385,22 +379,11 @@ describe("import", () => {
         await flushMicrotasks()
 
         const promiseMirror = metaOf(ancestor).mirrors.pending
-        const internalError = metaOf(internal).cycleErrors.self
-        const ancestorError = metaOf(resolved).cycleErrors.back
-
-        expect(internalError.message).to.be(
-            'Cyclic property "self" (imported at: split preparation)',
-        )
-        expect(ancestorError.message).to.be(
-            'Cyclic property "back" (imported at: split preparation)',
-        )
-        expect(promiseMirror.cycleError).to.be(undefined)
+        expect(metaOf(internal).cycleCuts.has("self")).to.be(true)
+        expect(metaOf(resolved).cycleCuts.has("back")).to.be(true)
+        expect(promiseMirror.cycleCut).to.be(false)
         expect(metaOf(unique).shared).to.be(undefined)
-
-        const errors = getErrors(new Chain(root), [])
-        expect(errors.length).to.be(2)
-        expect(errors.includes(internalError)).to.be(true)
-        expect(errors.includes(ancestorError)).to.be(true)
+        expect(getErrors(new Chain(root), [])).to.eql([])
         verifyRefCounts(root)
     })
 
@@ -409,13 +392,14 @@ describe("import", () => {
         root.self = root
 
         const imported = importValue(root, "cycle import")
-        expect(metaOf(root).cycleErrors.self instanceof Error).to.be(true)
+        expect(metaOf(root).cycleCuts.has("self")).to.be(true)
         expect(getRefCounter(root)).to.be(undefined)
         const indexed = buildRefIndex(root)
 
         expect(imported).to.be(root)
         expect(indexed).to.be(root)
-        expect(getRefCounter(root).errorCount).to.be(1)
+        expect(getRefCounter(root).errorCount).to.be(0)
+        expect(getRefCounter(root).cycleCutCount).to.be(1)
         expect(root.self).to.be(root)
     })
 
@@ -425,13 +409,10 @@ describe("import", () => {
         root.branch = branch
         importValue(root, "rooted preparation")
 
-        expect(metaOf(branch).cycleErrors.back instanceof Error).to.be(true)
-        expect(hasError(new Chain(root), ["branch"])).to.be(true)
+        expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
+        expect(hasError(new Chain(root), ["branch"])).to.be(false)
 
-        expect(metaOf(root).cycleErrors).to.be(undefined)
-        expect(metaOf(branch).cycleErrors.back.message).to.be(
-            'Cyclic property "back" (imported at: rooted preparation)',
-        )
+        expect(metaOf(root).cycleCuts).to.be(undefined)
         expect(metaOf(branch).importBoundary).to.be(undefined)
         verifyRefCounts(root, branch)
     })
@@ -446,12 +427,10 @@ describe("import", () => {
         const chain = new Chain({})
         assignPath(chain, ["branch"], extracted)
 
-        expect(hasError(chain, ["branch"])).to.be(true)
+        expect(hasError(chain, ["branch"])).to.be(false)
         expect(metaOf(branch).importBoundary.root).to.be(branch)
-        expect(metaOf(branch).cycleErrors.back.message).to.be(
-            'Cyclic property "back" (imported at: rerooted branch)',
-        )
-        expect(metaOf(root).cycleErrors).to.be(undefined)
+        expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
+        expect(metaOf(root).cycleCuts).to.be(undefined)
         verifyRefCounts(root, branch)
     })
 
@@ -463,24 +442,88 @@ describe("import", () => {
         right.self = right
         importValue(left, "interlocking cycles")
 
-        expect(hasError(new Chain(left), [])).to.be(true)
-
-        const rightError = metaOf(right).cycleErrors.left
-        const selfError = metaOf(right).cycleErrors.self
-        expect(metaOf(left).cycleErrors).to.be(undefined)
-        expect(rightError.message).to.be(
-            'Cyclic property "left" (imported at: interlocking cycles)',
-        )
-        expect(selfError).not.to.be(rightError)
-        expect(getErrors(new Chain(right), []).includes(rightError)).to.be(true)
-        expect(metaOf(right).cycleErrors.left).to.be(rightError)
+        expect(hasError(new Chain(left), [])).to.be(false)
+        expect(metaOf(left).cycleCuts).to.be(undefined)
+        expect(metaOf(right).cycleCuts.has("left")).to.be(true)
+        expect(metaOf(right).cycleCuts.has("self")).to.be(true)
+        expect(getErrors(new Chain(right), [])).to.eql([])
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
-        expect(metaOf(right).cycleErrors.left).to.be(rightError)
-        expectCounts(left, 0, 2)
-        expectCounts(right, 0, 2)
-        expectCounts(wrapper, 0, 2)
+        expect(metaOf(right).cycleCuts.has("left")).to.be(true)
+        expectCounts(left, 0, 0, 2)
+        expectCounts(right, 0, 0, 2)
+        expectCounts(wrapper, 0, 0, 2)
         verifyRefCounts(wrapper, left, right)
+    })
+
+    it("reuses cuts inside a cycle and cuts an alternate route", () => {
+        const b = {}
+        const c = {}
+        const x = {}
+        const d = {}
+        b.c = c
+        b.alternate = x
+        c.x = x
+        x.d = d
+        d.b = b
+
+        importValue(x, "covered cycle")
+        expect(metaOf(c).cycleCuts.has("x")).to.be(true)
+        expect(metaOf(b).cycleCuts.has("alternate")).to.be(true)
+        expect(metaOf(d).cycleCuts).to.be(undefined)
+
+        importValue(b, "re-rooted covered cycle")
+        buildRefIndex(b)
+
+        expect(metaOf(d).cycleCuts).to.be(undefined)
+        expectCounts(b, 0, 0, 2)
+        expect(hasError(new Chain(b), [])).to.be(false)
+        expect(getErrors(new Chain(b), [])).to.eql([])
+        verifyRefCounts(b, x)
+    })
+
+    it("keeps observations and counts coherent from different imported roots", async () => {
+        const leftPending = deferred()
+        const rightPending = deferred()
+        const leftError = new Error("left")
+        const rightError = new Error("right")
+        const left = { error: leftError, pending: leftPending.promise }
+        const right = { error: rightError, pending: rightPending.promise }
+        left.right = right
+        right.left = left
+
+        importValue(left, "left cycle root")
+        importValue(right, "right cycle root")
+        buildRefIndex(left)
+        buildRefIndex(right)
+
+        expectCounts(left, 2, 2, 1)
+        expectCounts(right, 1, 1, 1)
+        expect(hasError(new Chain(left), [])).to.be(true)
+        expect(hasError(new Chain(right), [])).to.be(true)
+
+        const leftResult = getErrors(new Chain(left), [])
+        const rightResult = getErrors(new Chain(right), [])
+        const leftResolvedError = new Error("left resolved")
+        const rightResolvedError = new Error("right resolved")
+        leftPending.resolve({ error: leftResolvedError })
+        rightPending.resolve({ error: rightResolvedError })
+
+        const expectedErrors = [
+            leftError,
+            rightError,
+            leftResolvedError,
+            rightResolvedError,
+        ]
+        for (const errors of [await leftResult, await rightResult]) {
+            expect(errors.length).to.be(expectedErrors.length)
+            for (const error of expectedErrors) {
+                expect(errors.includes(error)).to.be(true)
+            }
+        }
+        expectCounts(left, 0, 4, 1)
+        expectCounts(right, 0, 2, 1)
+        verifyRefCounts(left, right)
     })
 
     it("keeps a cycle cut when lookup re-roots a node inside the cycle", () => {
@@ -490,7 +533,6 @@ describe("import", () => {
         second.next = first
         importValue(first, "cycle lookup")
 
-        const errors = getErrors(new Chain(first), [])
         const extracted = lookupPath(new Chain(first), ["next"], false)
 
         expect(extracted).to.be(second)
@@ -499,8 +541,8 @@ describe("import", () => {
             ["next", "next", "name"],
             false,
         )).to.be("second")
-        expect(getErrors(new Chain(extracted), [])).to.eql(errors)
-        expect(metaOf(second).cycleErrors.next).to.be(errors[0])
+        expect(getErrors(new Chain(extracted), [])).to.eql([])
+        expect(metaOf(second).cycleCuts.has("next")).to.be(true)
     })
 
     it("marks the imported property that closes a discovered cycle", () => {
@@ -510,8 +552,8 @@ describe("import", () => {
         importValue(batchParent, "batch cycle")
         buildRefIndex(batchParent)
 
-        expect(metaOf(batchParent).cycleErrors).to.be(undefined)
-        expect(metaOf(batchChild).cycleErrors.back instanceof Error).to.be(true)
+        expect(metaOf(batchParent).cycleCuts).to.be(undefined)
+        expect(metaOf(batchChild).cycleCuts.has("back")).to.be(true)
     })
 
     it("COWs before attaching imported data that references an escaped owner", () => {
@@ -580,10 +622,10 @@ describe("import", () => {
 
         pending.resolve(destination)
 
-        expect(await hasErrorResult).to.be(true)
-        const cycleError = metaOf(incoming).mirrors.pending.cycleError
-        expect(await getErrorsResult).to.eql([cycleError])
-        expect(metaOf(destination).cycleErrors?.value).to.be(undefined)
+        expect(await hasErrorResult).to.be(false)
+        expect(await getErrorsResult).to.eql([])
+        expect(metaOf(incoming).mirrors.pending.cycleCut).to.be(true)
+        expect(metaOf(destination).cycleCuts).to.be(undefined)
         expect(hasError(chain, [])).to.be(false)
         verifyRefCounts(destination, incoming)
     })
@@ -604,13 +646,10 @@ describe("import", () => {
         pending.resolve(destination)
         await flushMicrotasks()
 
-        const cycleError = metaOf(incoming).mirrors.pending.cycleError
-        expect(cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: attached Promise cycle)',
-        )
-        expect(metaOf(destination).cycleErrors?.value).to.be(undefined)
-        expect(hasError(chain, [])).to.be(true)
-        expect(getErrors(chain, [])).to.eql([cycleError])
+        expect(metaOf(incoming).mirrors.pending.cycleCut).to.be(true)
+        expect(metaOf(destination).cycleCuts).to.be(undefined)
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
         verifyRefCounts(destination, incoming)
 
         assignPath(chain, ["value"], null)
@@ -642,7 +681,7 @@ describe("import", () => {
 
         pending.resolve(destination)
 
-        expect(await result).to.be(true)
+        expect(await result).to.be(false)
         expect(hasError(chain, [])).to.be(false)
     })
 
@@ -670,7 +709,7 @@ describe("import", () => {
 
         pending.resolve(destination)
 
-        expect(await result).to.be(true)
+        expect(await result).to.be(false)
         expect(hasError(chain, [])).to.be(false)
     })
 
@@ -689,12 +728,11 @@ describe("import", () => {
         pending.resolve(cyclic)
         await flushMicrotasks()
 
-        const cycleError = metaOf(cyclic).cycleErrors.self
-        expect(cycleError instanceof Error).to.be(true)
-        expect(getErrors(new Chain(incoming), [])).to.eql([cycleError])
+        expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
+        expect(getErrors(new Chain(incoming), [])).to.eql([])
     })
 
-    it("stores cycle metadata for frozen imports in both metadata modes", () => {
+    it("stores cycle cuts for frozen imports in both metadata modes", () => {
         const frozen = {}
         frozen.self = frozen
         Object.freeze(frozen)
@@ -702,29 +740,27 @@ describe("import", () => {
 
         buildRefIndex(frozen)
 
-        expect(metaOf(frozen).cycleErrors.self.message).to.be(
-            'Cyclic property "self" (imported at: frozen cycle)',
-        )
-        expectCounts(frozen, 0, 1)
+        expect(metaOf(frozen).cycleCuts.has("self")).to.be(true)
+        expectCounts(frozen, 0, 0, 1)
         const exported = exportValue(new Chain(frozen), [])
         expect(exported).not.to.be(frozen)
         expect(exported.self).to.be(exported)
         verifyRefCounts(frozen)
     })
 
-    it("propagates descendant cycle Errors through frozen imports", () => {
+    it("propagates descendant cycle cuts through frozen imports", () => {
         const child = {}
         child.self = child
         const root = Object.freeze({ child })
         const chain = new Chain(importValue(root, "nested frozen cycle"))
 
-        expect(hasError(chain, [])).to.be(true)
-        expect(getErrors(chain, []).length).to.be(1)
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
         const copy = exportValue(chain, [])
         expect(copy).not.to.be(root)
         expect(copy.child.self).to.be(copy.child)
-        expectCounts(root, 0, 1)
-        expectCounts(child, 0, 1)
+        expectCounts(root, 0, 0, 1)
+        expectCounts(child, 0, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -735,11 +771,8 @@ describe("import", () => {
         importValue(root, "first import")
         importValue(root, "second import")
         buildRefIndex(root)
-        const errors = getErrors(new Chain(root), [])
-
-        expect(errors[0].message).to.be(
-            'Cyclic property "self" (imported at: first import)',
-        )
+        expect(metaOf(root).importBoundary.errorContext).to.be("first import")
+        expect(metaOf(root).cycleCuts.has("self")).to.be(true)
     })
 
     it("uses the nearest nested import boundary", () => {
@@ -749,13 +782,12 @@ describe("import", () => {
         const root = importValue({ child }, "parent import")
 
         buildRefIndex(root)
-        const errors = getErrors(new Chain(root), [])
-
-        expect(errors[0].message).to.be(
-            'Cyclic property "self" (imported at: child import)',
-        )
-        expect(getRefCounter(root).errorCount).to.be(1)
-        expect(getRefCounter(child).errorCount).to.be(1)
+        expect(metaOf(child).importBoundary.errorContext).to.be("child import")
+        expect(metaOf(child).cycleCuts.has("self")).to.be(true)
+        expect(getRefCounter(root).errorCount).to.be(0)
+        expect(getRefCounter(root).cycleCutCount).to.be(1)
+        expect(getRefCounter(child).errorCount).to.be(0)
+        expect(getRefCounter(child).cycleCutCount).to.be(1)
     })
 
     it("checks an existing imported identity against new ancestry", async () => {
@@ -787,11 +819,9 @@ describe("import", () => {
 
         buildRefIndex(parent)
 
-        expect(metaOf(child).cycleErrors.back.message).to.be(
-            'Cyclic property "back" (imported at: parent import)',
-        )
-        expectCounts(parent, 0, 1)
-        expectCounts(child, 0, 1)
+        expect(metaOf(child).cycleCuts.has("back")).to.be(true)
+        expectCounts(parent, 0, 0, 1)
+        expectCounts(child, 0, 0, 1)
         verifyRefCounts(parent, child)
     })
 
@@ -807,10 +837,9 @@ describe("import", () => {
         expect(await second).to.be(cyclic)
 
         buildRefIndex(cyclic)
-        const errors = getErrors(new Chain(cyclic), [])
-        expect(errors[0].message).to.be(
-            'Cyclic property "self" (imported at: first async import)',
-        )
+        expect(getErrors(new Chain(cyclic), [])).to.eql([])
+        expect(metaOf(cyclic).importBoundary.errorContext).to.be("first async import")
+        expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
     })
 
     it("recovers from a cycle after a COW repair", () => {
@@ -819,8 +848,9 @@ describe("import", () => {
         importValue(root, "repairable import")
         const chain = new Chain(root)
 
-        expect(hasError(chain, [])).to.be(true)
-        expect(getRefCounter(root).errorCount).to.be(1)
+        expect(hasError(chain, [])).to.be(false)
+        expect(getRefCounter(root).errorCount).to.be(0)
+        expect(getRefCounter(root).cycleCutCount).to.be(1)
 
         deletePath(chain, ["self"])
         const repaired = chain._state.value
@@ -893,6 +923,33 @@ describe("import", () => {
         expect(hasError(new Chain(array), [])).to.be(false)
         expect(getErrors(new Chain(array), [])).to.eql([])
         expectCounts(array, 0, 0)
+        verifyRefCounts(array)
+    })
+
+    it("indexes and observes cyclic arrays", async () => {
+        const pending = deferred()
+        const directError = new Error("array direct")
+        const array = []
+        array[0] = array
+        array[1] = directError
+        array[2] = pending.promise
+
+        importValue(array, "cyclic array")
+        buildRefIndex(array)
+
+        expect(metaOf(array).cycleCuts.has("0")).to.be(true)
+        expectCounts(array, 1, 1, 1)
+        expect(hasError(new Chain(array), [])).to.be(true)
+
+        const result = getErrors(new Chain(array), [])
+        const resolvedError = new Error("array resolved")
+        pending.resolve({ error: resolvedError })
+
+        const errors = await result
+        expect(errors.length).to.be(2)
+        expect(errors.includes(directError)).to.be(true)
+        expect(errors.includes(resolvedError)).to.be(true)
+        expectCounts(array, 0, 2, 1)
         verifyRefCounts(array)
     })
 
@@ -1005,13 +1062,9 @@ describe("import", () => {
         importValue(root, "proto cycle")
 
         buildRefIndex(root)
-        const cycleError = metaOf(root).cycleErrors.__proto__
-
-        expect(cycleError.message).to.be(
-            'Cyclic property "__proto__" (imported at: proto cycle)',
-        )
-        expect(hasError(new Chain(root), [])).to.be(true)
-        expect(getErrors(new Chain(root), [])).to.eql([cycleError])
+        expect(metaOf(root).cycleCuts.has("__proto__")).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(false)
+        expect(getErrors(new Chain(root), [])).to.eql([])
         const exported = exportValue(new Chain(root), [])
         expect(exported).not.to.be(root)
         expect(Object.getOwnPropertyDescriptor(exported, "__proto__").value).to.be(
@@ -1019,7 +1072,7 @@ describe("import", () => {
         )
         expect(root.__proto__).to.be(root)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
-        expectCounts(root, 0, 1)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -1053,7 +1106,7 @@ describe("import", () => {
             exportedValue,
             "__proto__",
         ).value).to.be("hidden")
-        expect(mirror.cycleError).to.be(undefined)
+        expect(mirror.cycleCut).to.be(false)
         expect(lookupPath(new Chain(resolved), ["__proto__"], false)).to.be("hidden")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, resolved)
@@ -1346,7 +1399,7 @@ describe("import", () => {
         expect(next.branch).not.to.be(branch)
         expect(next.branch.self).to.be(branch)
         expect(indexed).to.be(next.branch)
-        expect(hasError(new Chain(next.branch), [])).to.be(true)
+        expect(hasError(new Chain(next.branch), [])).to.be(false)
     })
 
     it("discovers imported promise keys before the branch is counted", async () => {
@@ -1483,7 +1536,7 @@ describe("import", () => {
 
         expect(root.value).to.be("fixed")
         expect(mirror.currentValue).to.be(errorValue)
-        expect(mirror.cycleError).to.be(undefined)
+        expect(mirror.cycleCut).to.be(false)
         expectCounts(errorValue, 0, 1)
         expect(getErrors(new Chain(errorValue), [])[0]).to.be(errorValue.bad)
         expectCounts(root, 0, 0)
@@ -1508,16 +1561,14 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value).to.be(deferredValue.promise)
-        expect(metaOf(root.nested).mirrors.value.cycleError.message).to.be(
-            'Cyclic property "value" (imported at: writeback back-edge)',
-        )
-        expectCounts(root, 1, 1)
+        expect(metaOf(root.nested).mirrors.value.cycleCut).to.be(true)
+        expectCounts(root, 1, 0, 1)
         verifyRefCounts(root)
 
         pendingSibling.resolve("done")
         await flushMicrotasks()
 
-        expectCounts(root, 0, 1)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -1533,15 +1584,12 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.nested.value).to.be(deferredValue.promise)
-        const cycleError = getErrors(new Chain(root), [])[0]
-        expect(cycleError.message).to.be(
-            'Cyclic property "target" (imported at: containing back-edge)',
-        )
-        expect(metaOf(resolved).cycleErrors.target).to.be(cycleError)
-        expect(metaOf(root.nested).mirrors.value.cycleError).to.be(undefined)
+        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(metaOf(resolved).cycleCuts.has("target")).to.be(true)
+        expect(metaOf(root.nested).mirrors.value.cycleCut).to.be(false)
         expect(metaOf(resolved).shared).to.be(undefined)
         expect(metaOf(resolved).importBoundary).to.be(undefined)
-        expectCounts(root, 0, 1)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -1582,14 +1630,11 @@ describe("import", () => {
         deferredValue.resolve(next)
         await flushMicrotasks()
 
-        const cycleError = metaOf(next).mirrors.self.cycleError
-        expect(cycleError.message).to.be(
-            'Cyclic property "self" (imported at: assigned destination)',
-        )
+        expect(metaOf(next).mirrors.self.cycleCut).to.be(true)
         expect(next.self).to.be(next)
         expect(lookupPath(chain, ["self"], false)).to.be(next)
-        expect(hasError(chain, [])).to.be(true)
-        expect(getErrors(chain, [])).to.eql([cycleError])
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
         verifyRefCounts(next)
     })
 
@@ -1610,14 +1655,12 @@ describe("import", () => {
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expect(sourceMirror.cycleError).to.be(undefined)
-        expect(forkMirror.cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: fork destination)',
-        )
+        expect(sourceMirror.cycleCut).to.be(false)
+        expect(forkMirror.cycleCut).to.be(true)
         expect(root.pending).to.be(pending.promise)
         expect(copy.pending).to.be(copy)
-        expect(hasError(chain, [])).to.be(true)
-        expect(getErrors(chain, [])).to.eql([forkMirror.cycleError])
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
         verifyRefCounts(root, copy)
     })
 
@@ -1639,8 +1682,8 @@ describe("import", () => {
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expectCounts(copy, 0, 1)
-        expect(forkMirror.cycleError instanceof Error).to.be(true)
+        expectCounts(copy, 0, 0, 1)
+        expect(forkMirror.cycleCut).to.be(true)
         expect(copy.pending).to.be(copy)
         verifyRefCounts(root, copy)
     })
@@ -1662,8 +1705,8 @@ describe("import", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(sourceMirror.cycleError instanceof Error).to.be(true)
-        expect(forkMirror.cycleError).to.be(undefined)
+        expect(sourceMirror.cycleCut).to.be(true)
+        expect(forkMirror.cycleCut).to.be(false)
         expect(root.pending).to.be(pending.promise)
         expect(copy.pending).to.be(root)
         verifyRefCounts(root, copy)
@@ -1687,11 +1730,9 @@ describe("import", () => {
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expect(forkMirror.cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: nested fork ancestor)',
-        )
+        expect(forkMirror.cycleCut).to.be(true)
         expect(copy.branch.pending).to.be(copy)
-        expect(hasError(chain, [])).to.be(true)
+        expect(hasError(chain, [])).to.be(false)
         verifyRefCounts(root, copy)
     })
 
@@ -1711,7 +1752,7 @@ describe("import", () => {
         pending.resolve(copy.branch)
         await flushMicrotasks()
 
-        expect(forkMirror.cycleError).to.be(undefined)
+        expect(forkMirror.cycleCut).to.be(false)
         expect(copy.pending).to.be(copy.branch)
         expect(hasError(chain, [])).to.be(false)
         verifyRefCounts(root, copy)
@@ -1733,7 +1774,7 @@ describe("import", () => {
 
         pending.resolve(captured)
 
-        expect(await result).to.be(true)
+        expect(await result).to.be(false)
         expect(hasError(chain, [])).to.be(false)
         expect(chain._state.value.pending).to.be(null)
     })
@@ -1747,14 +1788,14 @@ describe("import", () => {
         deferredValue.resolve(root.nested)
         await flushMicrotasks()
 
-        expect(metaOf(root.nested).mirrors.value.cycleError instanceof Error).to.be(true)
+        expect(metaOf(root.nested).mirrors.value.cycleCut).to.be(true)
         expect(getRefCounter(root)).to.be(undefined)
         const indexed = buildRefIndex(root)
 
         expect(root.nested.value).to.be(deferredValue.promise)
         expect(lookupPath(new Chain(root), ["nested", "value"], false)).to.be(root.nested)
         expect(indexed).to.be(root)
-        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(hasError(new Chain(root), [])).to.be(false)
     })
 
     it("prepares cyclic imported promise roots before returning them", async () => {
@@ -1765,13 +1806,13 @@ describe("import", () => {
 
         deferredValue.resolve(cyclic)
         const value = await imported
-        expect(metaOf(value).cycleErrors.self instanceof Error).to.be(true)
+        expect(metaOf(value).cycleCuts.has("self")).to.be(true)
         expect(getRefCounter(value)).to.be(undefined)
         const indexed = buildRefIndex(value)
 
         expect(value).to.be(cyclic)
         expect(indexed).to.be(cyclic)
-        expect(hasError(new Chain(value), [])).to.be(true)
+        expect(hasError(new Chain(value), [])).to.be(false)
     })
 
     it("keeps the import boundary when promise roots resolve to frozen values", async () => {

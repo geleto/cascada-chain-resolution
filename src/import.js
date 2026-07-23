@@ -1,5 +1,6 @@
 import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
+import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 
@@ -30,66 +31,47 @@ function importResolvedValue(value, errorContext) {
     return value
 }
 
-// Returns the cycle Error currently published by this property:
-// - without a mirror, the Error in META (or undefined);
-// - with a drained mirror, the mirror's Error (or undefined);
-// - with a draining mirror, undefined because the property is still pending.
-// An operation that captured the mirror reads mirror.cycleError directly when
-// it needs that private pre-publication state.
-function getCycleError(node, key) {
+// Returns only public property state. A consumer that captured a draining or
+// revoked mirror reads mirror.cycleCut directly.
+function hasPublishedCycleCut(node, key) {
     const mirror = promiseMirrors.getPromiseMirror(node, key)
     return mirror
-        ? (mirror.isDrained() ? mirror.cycleError : undefined)
-        : metadata.metaOf(node)?.cycleErrors?.[key]
+        ? mirror.isDrained() && mirror.cycleCut
+        : metadata.metaOf(node)?.cycleCuts?.has(key) === true
 }
 
-// Detection decides when a cut is needed. Attached publication delegates one
-// atomic parent-edge/count transaction to the refcount layer.
-function setMetaCycleError(parent, key, importBoundary) {
-    if (getCycleError(parent, key)) return
+function setPlainCycleCut(parent, key) {
+    if (hasPublishedCycleCut(parent, key)) return
 
     commitLiveEdge(parent, key, () => {
         const meta = metadata.ensureMeta(parent)
-        meta.cycleErrors ??= Object.create(null)
-        meta.cycleErrors[key] = errorUtils.createCycleError(
-            key,
-            importBoundary.errorContext,
-        )
+        meta.cycleCuts ??= new Set()
+        meta.cycleCuts.add(key)
     })
 }
 
-function setMirrorCycleError(mirror, importBoundary) {
-    if (mirror.cycleError) return
-
-    const cycleError = errorUtils.createCycleError(
-        mirror.key,
-        importBoundary.errorContext,
-    )
+function setMirrorCycleCut(mirror) {
+    if (mirror.cycleCut) return
     if (!mirror.isDrained()) {
-        mirror.cycleError = cycleError
+        mirror.cycleCut = true
         return
     }
 
     commitLiveEdge(mirror.node, mirror.key, () => {
-        mirror.cycleError = cycleError
+        mirror.cycleCut = true
     })
 }
 
-function clearMetaCycleError(node, key) {
+function clearPlainCycleCut(node, key) {
     const meta = metadata.metaOf(node)
-    if (meta?.cycleErrors) delete meta.cycleErrors[key]
-}
-
-function getPropertyMirror(parent, key, value, inheritedBoundary) {
-    const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror || !helpers.isPromise(value)) return mirror
-    return promiseMirrors.getOrCreatePromiseMirror(parent, key, value, inheritedBoundary)
+    if (!meta?.cycleCuts) return
+    meta.cycleCuts.delete(key)
+    if (meta.cycleCuts.size === 0) delete meta.cycleCuts
 }
 
 // Imported cycles are the graph fact trusted data cannot contain. The raw edge
-// stays accessible to lookup and mutation; error queries see the cycle overlay,
-// and getErrors also inspects the raw branch behind it. This preparation walk
-// never performs attachment checking.
+// remains ordinary data; its cut only keeps the projected refcount graph acyclic.
+// This preparation walk never performs attachment checking.
 function prepareImportedData(importBoundary) {
     // META persists first preparation globally. The segment-local set remains
     // useful: it lets one DFS skip an ordinary alias without launching the
@@ -101,18 +83,23 @@ function prepareImportedData(importBoundary) {
     )
 
     function walkProperty(parent, key, value, inheritedBoundary, segment) {
-        if (getCycleError(parent, key)) return
+        if (hasPublishedCycleCut(parent, key)) return
 
-        const mirror = getPropertyMirror(parent, key, value, inheritedBoundary)
+        const mirror = promiseMirrors.getOrCreateMirrorForValue(
+            parent,
+            key,
+            value,
+            inheritedBoundary,
+        )
         if (mirror) {
             walkMirror(mirror, value, inheritedBoundary, segment)
         } else if (walkValue(value, inheritedBoundary, segment)) {
-            setMetaCycleError(parent, key, inheritedBoundary)
+            setPlainCycleCut(parent, key)
         }
     }
 
     function walkMirror(mirror, value, inheritedBoundary, segment) {
-        if (mirror.cycleError) return
+        if (mirror.cycleCut) return
         const importBoundary = mirror.importBoundary ?? inheritedBoundary
 
         if (helpers.isPromise(value)) {
@@ -135,7 +122,7 @@ function prepareImportedData(importBoundary) {
                 )
             })
         } else if (walkValue(value, importBoundary, segment)) {
-            setMirrorCycleError(mirror, importBoundary)
+            setMirrorCycleCut(mirror)
         }
     }
 
@@ -176,7 +163,7 @@ function prepareImportedData(importBoundary) {
             walkProperty(
                 value,
                 key,
-                promiseMirrors.readLogicalProperty(value, key),
+                languageProperties.readLanguageProperty(value, key),
                 valueImportBoundary,
                 segment,
             )
@@ -203,9 +190,14 @@ function scanFixedPathCycles(
     return walkValue(value, inheritedBoundary)
 
     function walkProperty(parent, key, value, inheritedBoundary) {
-        if (getCycleError(parent, key)) return false
+        if (hasPublishedCycleCut(parent, key)) return false
 
-        const mirror = getPropertyMirror(parent, key, value, inheritedBoundary)
+        const mirror = promiseMirrors.getOrCreateMirrorForValue(
+            parent,
+            key,
+            value,
+            inheritedBoundary,
+        )
         if (mirror) {
             return walkMirror(mirror, value, inheritedBoundary)
         }
@@ -213,7 +205,7 @@ function scanFixedPathCycles(
     }
 
     function walkMirror(mirror, value, inheritedBoundary) {
-        if (mirror.cycleError) return false
+        if (mirror.cycleCut) return false
         const importBoundary = mirror.importBoundary ?? inheritedBoundary
 
         if (helpers.isPromise(value)) {
@@ -223,7 +215,7 @@ function scanFixedPathCycles(
                 resolvedBoundary,
             ) => {
                 if (walkMirror(mirror, resolvedValue, resolvedBoundary)) {
-                    setMirrorCycleError(mirror, resolvedBoundary)
+                    setMirrorCycleCut(mirror)
                 }
             })
             return false
@@ -248,7 +240,7 @@ function scanFixedPathCycles(
             if (walkProperty(
                 value,
                 key,
-                promiseMirrors.readLogicalProperty(value, key),
+                languageProperties.readLanguageProperty(value, key),
                 importBoundary,
             )) return true
         }
@@ -266,7 +258,7 @@ function attachImportedDataToImportedData(
     pathRootToPin,
 ) {
     const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    const value = promiseMirrors.readLogicalProperty(parent, key)
+    const value = languageProperties.readLanguageProperty(parent, key)
     const importBoundary = mirror?.importBoundary ?? metadata.nodeImportBoundary(value)
     if (!importBoundary) return
 
@@ -285,7 +277,7 @@ function attachImportedDataToImportedData(
                 fixedPath,
                 pathRootToPin,
             )) {
-                setMirrorCycleError(mirror, resolvedBoundary)
+                setMirrorCycleCut(mirror)
             }
         })
         return
@@ -298,9 +290,9 @@ function attachImportedDataToImportedData(
         attachmentPath.root,
     )) {
         if (mirror) {
-            setMirrorCycleError(mirror, importBoundary)
+            setMirrorCycleCut(mirror)
         } else {
-            setMetaCycleError(parent, key, importBoundary)
+            setPlainCycleCut(parent, key)
         }
     }
 }
@@ -324,8 +316,8 @@ function onImportedPromiseResolve(mirror, inheritedBoundary, onResolved) {
 
 export {
     attachImportedDataToImportedData,
-    clearMetaCycleError,
-    getCycleError,
+    clearPlainCycleCut,
+    hasPublishedCycleCut,
     initImport,
     importValue as import,
 }

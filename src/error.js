@@ -24,13 +24,6 @@ function validationError(message, errorContext = undefined) {
     return new Error(`${message} (imported at: ${String(errorContext)})`)
 }
 
-function createCycleError(key, errorContext) {
-    return validationError(
-        `Cyclic property "${String(key)}"`,
-        errorContext,
-    )
-}
-
 function pathAccessError() {
     return new Error("Cannot access property through missing or primitive value")
 }
@@ -40,7 +33,6 @@ function errorFromRejection(reason) {
 }
 
 export {
-    createCycleError,
     errorFromRejection,
     pathAccessError,
     reportFatalError,

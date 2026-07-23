@@ -55,7 +55,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
     // counters, and marks never enter the copy. The source keeps its own marks.
     // Reused children from a shared branch are marked shared so their shared
-    // references stay protected — except the path key, which the walk's
+    // references stay protected -- except the path key, which the walk's
     // inherited state protects until it is replaced or copied. Every tracked
     // child of an imported node receives its own import boundary. A path
     // child's next shallow copy omits that META, so every new path node remains
@@ -64,7 +64,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
         const isPathKey = key === pathKeyString
         const retainedOffPath = !isPathKey
         const sourceMirror = promiseMirrors.getPromiseMirror(obj, key)
-        const value = promiseMirrors.readLogicalProperty(obj, key)
+        const value = languageProperties.readLanguageProperty(obj, key)
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or refcounts.copyCounters reconstructs its indexed edges.
@@ -175,15 +175,14 @@ function walkMutationPath(rootHolder, path, onTarget) {
             valueImportBoundary?.errorContext,
         )
 
-        let mirror = promiseMirrors.getPromiseMirror(parent, key)
-        const child = promiseMirrors.readLogicalProperty(parent, key)
+        const child = languageProperties.readLanguageProperty(parent, key)
+        const mirror = promiseMirrors.getOrCreateMirrorForValue(
+            parent,
+            key,
+            child,
+            valueImportBoundary,
+        )
         if (helpers.isPromise(child)) {
-            mirror ??= promiseMirrors.getOrCreatePromiseMirror(
-                parent,
-                key,
-                child,
-                valueImportBoundary,
-            )
             mirror.onResolve(() => {
                 const childImportBoundary = mirror.importBoundary ?? valueImportBoundary
                 const next = walk(

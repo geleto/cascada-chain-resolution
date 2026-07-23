@@ -36,15 +36,15 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
   graph preparation, aliases, cycles, and Promise continuations.
 - [`docs/counters-implementation.md`](docs/counters-implementation.md) explains
   lazy subtree counters, Promise mirrors, settlement, and verification.
+- [`docs/cycles-as-data.md`](docs/cycles-as-data.md) defines cycle cuts and the
+  projected/raw traversal boundary.
 - [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
-- [`docs/future/cycles-as-data.md`](docs/future/cycles-as-data.md) is the chosen
-  future design for treating imported cycles as valid data rather than Errors.
 - [`docs/future/export-error-set.md`](docs/future/export-error-set.md)
-  specifies complete Error results for export after cycles become valid
-  data.
+  specifies a future complete Error result for export.
 
-The first four documents describe the implemented runtime. Documents under
-`docs/future` describe planned end states and are not current behavior.
+The first four documents describe the implemented runtime. `docs/plan.md`
+tracks both completed and pending work; documents under `docs/future` describe
+planned end states and are not current behavior.
 
 ## Source layout
 
@@ -97,14 +97,10 @@ external value enters through `import(value, errorContext)`, which:
 - leaves subtree counters lazy until a branch query needs them.
 
 Imported host objects are not physically changed. Logical settled Promise
-values and cycle diagnostics live in runtime metadata. Language mutation first
-copies the imported path.
-
-The implemented runtime represents each imported cycle-closing property with
-an attributed cycle Error in the projected graph while retaining the raw value
-for finite path operations and export. The chosen future design replaces
-that diagnostic with a non-Error cycle cut; see
-[`cycles-as-data.md`](docs/future/cycles-as-data.md).
+values and cycle cuts live in runtime metadata. Language mutation first copies
+the imported path. A cut is structural bookkeeping, not an Error: finite paths
+cross it normally, Error queries ignore it as data, and export reconstructs the
+original cyclic topology.
 
 Host code receives tracked Cascada data only through `export`, which returns
 a metadata-free deep copy with logical Promise values materialized. Internal
@@ -147,7 +143,7 @@ property version and stores:
 - the original Promise;
 - the latest logical value prepared by registered consumers;
 - the number of consumers that still have synchronous work to perform; and
-- any private or published cycle diagnostic for that placement.
+- any private or published cycle cut for that placement.
 
 The mandatory writeback is the first consumer. Every later operation that
 needs the property registers through the same mirror and increments its
@@ -197,7 +193,8 @@ lazy ref index for the reached branch.
 Each indexed node stores:
 
 - `promiseCount`: pending Promise placements in its projected subtree;
-- `errorCount`: Error placements in its projected subtree; and
+- `errorCount`: Error placements in its projected subtree;
+- `cycleCutCount`: cycle-cut placements in its projected subtree; and
 - reverse parent edges with exact structural multiplicity.
 
 Every committed property transition computes the old and new contribution,
@@ -205,36 +202,35 @@ updates the reverse edge, and propagates one delta through indexed parents.
 Unqueried branches pay no counter maintenance cost.
 
 Imported cycles cannot participate directly in recursive parent propagation.
-The implemented cycle Error cuts the closing edge from the projected graph,
-contributes one Error, and installs no reverse parent edge. Operations requiring
-raw completeness can cross that cut with an identity-aware walk.
+A cycle cut contributes only to `cycleCutCount` and installs no reverse parent
+edge. Operations requiring complete raw data cross cuts with an identity-aware
+walk.
 
 ## Branch observations
 
-**`hasError`** returns `true` immediately when the reached indexed branch has a
-positive `errorCount`, and `false` immediately when both the Error answer and
-Promise frontier are settled. Otherwise it follows only the Promises captured
-at its issue position and resolves on the first Error or when that frontier is
-clean. It does not pin or mark the branch.
+**`hasError`** returns `true` immediately for a positive `errorCount`. A
+cut-free branch uses counter-pruned Promise traversal; a branch with cuts uses
+one raw identity-aware traversal and reports only ordinary Errors. It does not
+pin or mark the branch.
 
 **`getErrors`** returns each reachable Error identity once. Counters prune clean
-projected regions. At a cycle cut, it records the cycle Error and follows the
-raw logical value so ordinary Errors or Promises hidden behind the projection
-are still included. It waits for the complete Promise frontier captured and
-recursively exposed at its issue position.
+cut-free regions. A branch containing cuts is walked raw so ordinary Errors and
+Promises hidden behind the projection remain visible. Cuts themselves add
+nothing. It waits for the complete Promise frontier captured and recursively
+exposed at its issue position.
 
 **`export`** produces a metadata-free deep copy. If settlement is required,
 it marks the reached branch shared so later writes copy away, then waits for
 `promiseCount` to reach zero after every earlier mirror consumer drains.
-Ordinary Errors collapse the current sandbox result to one Error. A branch
-containing only imported cycle diagnostics is copied through its raw graph, so
-aliases and cycles are reconstructed in the output.
+Ordinary Errors collapse the current sandbox result to one Error. The final
+copy always walks the raw graph, so aliases and cycles are reconstructed and
+Promises hidden behind cuts are included.
 
 ## Metadata
 
 One META record per tracked node contains only the fields whose subsystems have
 become active: ownership marks, import state, Promise mirrors, cycle
-diagnostics, counters, reverse parents, and optional export settlement
+cuts, counters, reverse parents, and optional export settlement
 state.
 
 Inline mode stores META in an own non-enumerable Symbol property when possible.

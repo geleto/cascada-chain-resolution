@@ -1,7 +1,7 @@
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
-import { getCycleError } from "../src/import.js"
+import { hasPublishedCycleCut } from "../src/import.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -335,34 +335,34 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps a draining mirror cycle Error private until final commit", async () => {
+    it("keeps a draining mirror cycle cut private until final commit", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
         importValue(root, "private draining mark")
         buildRefIndex(root)
         const mirror = metaOf(root).mirrors.value
-        let privateCycleError
-        let publishedCycleError
+        let privateCycleCut
+        let publishedCycleCut
         let countsDuringDrain
 
         mirror.onResolve(() => {
-            privateCycleError = mirror.cycleError
-            publishedCycleError = getCycleError(root, "value")
+            privateCycleCut = mirror.cycleCut
+            publishedCycleCut = hasPublishedCycleCut(root, "value")
             countsDuringDrain = getRefCounts(root)
         })
 
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(privateCycleError instanceof Error).to.be(true)
-        expect(publishedCycleError).to.be(undefined)
-        expect(countsDuringDrain).to.eql([1, 0])
-        expect(getCycleError(root, "value")).to.be(privateCycleError)
-        expectCounts(root, 0, 1)
+        expect(privateCycleCut).to.be(true)
+        expect(publishedCycleCut).to.be(false)
+        expect(countsDuringDrain).to.eql([1, 0, 0])
+        expect(hasPublishedCycleCut(root, "value")).to.be(true)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 
-    it("does not copy a committed cycle Error into a replacement mirror", () => {
+    it("does not copy a committed cycle cut into a replacement mirror", () => {
         const owner = {}
         owner.value = owner
         importValue(owner, "marked mirror replacement")
@@ -370,7 +370,7 @@ describe("promise mirrors and lookupPath", () => {
         const chain = new Chain(owner)
 
         buildRefIndex(owner)
-        expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
+        expect(metaOf(owner).cycleCuts.has("value")).to.be(true)
 
         assignPath(chain, ["value"], pending.promise)
         const copy = chain._state.value
@@ -379,9 +379,9 @@ describe("promise mirrors and lookupPath", () => {
         expect(copy).not.to.be(owner)
         expect(metaOf(copy).mirrors.value).to.be(mirror)
         expect(mirror.promise).to.be(pending.promise)
-        expect(mirror.cycleError).to.be(undefined)
-        expect(metaOf(copy).cycleErrors?.value).to.be(undefined)
-        expect(metaOf(owner).cycleErrors.value instanceof Error).to.be(true)
+        expect(mirror.cycleCut).to.be(false)
+        expect(metaOf(copy).cycleCuts).to.be(undefined)
+        expect(metaOf(owner).cycleCuts.has("value")).to.be(true)
         expectCounts(copy, 1, 0)
         verifyRefCounts(owner, copy)
     })
@@ -444,7 +444,7 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(await read).to.be(1)
         expect(await exported).to.eql({ x: 1 })
-        expect(countsDuringGap).to.eql([1, 0])
+        expect(countsDuringGap).to.eql([1, 0, 0])
         const mirror = metaOf(root).mirrors.branch
         expect(mirror.pendingConsumerCount).to.be(0)
         expectCounts(root, 0, 0)
@@ -1220,9 +1220,9 @@ describe("promise mirrors and lookupPath", () => {
         const exportedValue = await exported
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.again).to.be(exportedValue.value)
-        expect(await foundError).to.be(true)
+        expect(await foundError).to.be(false)
         expect(resolved.again).to.be(pending.promise)
-        expectCounts(root, 0, 1)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -1244,9 +1244,9 @@ describe("promise mirrors and lookupPath", () => {
         const exportedValue = await exported
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.next.back).to.be(exportedValue.value)
-        expect(await foundError).to.be(true)
+        expect(await foundError).to.be(false)
         expect(firstValue.next).to.be(second.promise)
-        expectCounts(root, 0, 1)
+        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 })

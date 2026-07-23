@@ -2,8 +2,6 @@ import * as helpers from "./helpers.js"
 import * as metadata from "./meta.js"
 import * as errorUtils from "./error.js"
 
-const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
-
 let preparePropertyTransition
 let commitMirrorDrain
 
@@ -42,9 +40,8 @@ class PromiseMirror {
         this.currentValue = undefined
         // Registered consumers not yet completed; zero exposes currentValue.
         this.pendingConsumerCount = 0
-        // Cycle-aware observations consult this diagnostic; raw traversal,
-        // lookup, and mutation continue through currentValue.
-        this.cycleError = undefined
+        // Ref-indexing stops here; raw observations continue through currentValue.
+        this.cycleCut = false
         // Imported boundary root and error context used for preparation/attribution.
         this.importBoundary = importBoundary
         // Set when import must classify the initial value before generic preparation.
@@ -96,7 +93,7 @@ class PromiseMirror {
             )
         }
         this.currentValue = value
-        this.cycleError = undefined
+        this.cycleCut = false
     }
 }
 
@@ -153,6 +150,12 @@ function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined
     return mirror
 }
 
+function getOrCreateMirrorForValue(node, key, value, importBoundary = undefined) {
+    const mirror = getPromiseMirror(node, key)
+    if (mirror || !helpers.isPromise(value)) return mirror
+    return getOrCreatePromiseMirror(node, key, value, importBoundary)
+}
+
 // FORK: read the source mirror at this FIFO position, but prepare the value for
 // the copy's own owner/key property. A fork is language-owned, never external.
 function forkPromiseMirror(
@@ -190,24 +193,14 @@ function clearPromiseMirror(node, key) {
     if (mirrors) delete mirrors[key]
 }
 
-function readLogicalProperty(node, key) {
-    const mirror = getPromiseMirror(node, key)
-    if (mirror) {
-        return mirror.isDrained()
-            ? mirror.currentValue
-            : mirror.promise
-    }
-    return propertyIsEnumerable.call(node, key) ? node[key] : undefined
-}
-
 export {
     clearPromiseMirror,
     createAssignedPromiseMirror,
     forkPromiseMirror,
+    getOrCreateMirrorForValue,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,
     initPromiseMirrors,
     installPromiseMirror,
-    readLogicalProperty,
 }

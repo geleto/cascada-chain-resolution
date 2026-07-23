@@ -1,53 +1,50 @@
 import * as helpers from "./helpers.js"
-import * as imports from "./import.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as languageProperties from "./language-properties.js"
 
-// One logical traversal serves metadata-free export copying and
-// exhaustive Error collection behind cycle cuts. Callers supply operation-local
-// identity state; getErrors shares its visited set with the counted collector.
+// Raw traversal deliberately ignores cycle cuts. Identity state makes cycles
+// finite and spans every Promise continuation captured by this operation.
 function copyRawBranch(value, importBoundary) {
+    const inspection = {
+        hasOrdinaryError: false,
+        readiness: undefined,
+        value: undefined,
+    }
     const state = {
         copies: new Map(),
-        hasOrdinaryError: false,
+        onError() {
+            inspection.hasOrdinaryError = true
+        },
     }
-    const result = walkRawBranch(value, importBoundary, undefined, state)
-    return {
-        hasOrdinaryError: state.hasOrdinaryError,
-        readiness: result.readiness,
-        value: result.value,
-    }
+    const result = walkRawBranch(value, importBoundary, state)
+    inspection.readiness = result.readiness
+    inspection.value = result.value
+    return inspection
 }
 
-function collectRawErrors(
+function collectRawErrorWaits(
     value,
     importBoundary,
-    cycleError,
-    errors,
-    visited,
+    state,
 ) {
-    const state = { errors, visited }
-    return walkRawBranch(value, importBoundary, cycleError, state).readiness
+    return walkRawBranch(value, importBoundary, state).readiness
 }
 
-function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
-    if (cycleError && state.errors) state.errors.add(cycleError)
-
+function walkRawBranch(value, inheritedImportBoundary, state) {
+    if (state.rawStopped) return { value, readiness: undefined }
     if (helpers.isError(value)) {
-        if (state.errors) {
-            state.errors.add(value)
-        } else {
-            state.hasOrdinaryError = true
-        }
+        state.onError(value)
+        if (state.firstErrorOnly) state.rawStopped = true
         return { value, readiness: undefined }
     }
     if (!helpers.isTracked(value)) return { value, readiness: undefined }
 
     if (state.copies) {
-        const copy = state.copies.get(value)
-        if (copy) return { value: copy, readiness: undefined }
-    } else if (state.visited.has(value)) {
+        if (state.copies.has(value)) {
+            return { value: state.copies.get(value), readiness: undefined }
+        }
+    } else if (state.rawVisited.has(value)) {
         return { value, readiness: undefined }
     }
 
@@ -57,34 +54,28 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
     if (state.copies) {
         state.copies.set(value, output)
     } else {
-        state.visited.add(value)
+        state.rawVisited.add(value)
     }
 
     const importBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
     const waits = []
-    // Sanctioned write bypass: plain-copy output stays outside the runtime
-    // graph, so these writes have no metadata or counters to bookkeep.
+    // Sanctioned write bypass: export output stays outside the runtime graph.
     for (const key of Object.keys(value)) {
-        let mirror = promiseMirrors.getPromiseMirror(value, key)
-        const child = promiseMirrors.readLogicalProperty(value, key)
+        if (state.rawStopped) break
+        const child = languageProperties.readLanguageProperty(value, key)
+        const mirror = promiseMirrors.getOrCreateMirrorForValue(
+            value,
+            key,
+            child,
+            importBoundary,
+        )
         const propertyImportBoundary = mirror?.importBoundary ?? importBoundary
-        const childCycleError = mirror
-            ? mirror.cycleError
-            : imports.getCycleError(value, key)
 
         if (helpers.isPromise(child)) {
-            mirror ??= promiseMirrors.getOrCreatePromiseMirror(
-                value,
-                key,
-                child,
-                importBoundary,
-            )
             waits.push(mirror.onResolve(() => {
-                const resolvedImportBoundary = mirror.importBoundary ?? importBoundary
                 const nested = walkRawBranch(
                     mirror.currentValue,
-                    resolvedImportBoundary,
-                    mirror.cycleError,
+                    mirror.importBoundary ?? importBoundary,
                     state,
                 )
                 if (state.copies) {
@@ -99,12 +90,7 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
             continue
         }
 
-        const nested = walkRawBranch(
-            child,
-            propertyImportBoundary,
-            childCycleError,
-            state,
-        )
+        const nested = walkRawBranch(child, propertyImportBoundary, state)
         if (state.copies) {
             languageProperties.writeLanguageProperty(output, key, nested.value)
         }
@@ -117,4 +103,4 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
     }
 }
 
-export { collectRawErrors, copyRawBranch }
+export { collectRawErrorWaits, copyRawBranch }

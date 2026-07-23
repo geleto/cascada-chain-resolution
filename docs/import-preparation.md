@@ -5,9 +5,8 @@ shared ownership and attribution, prepares aliases and cycles in the reachable
 graph, and registers continuations for nested Promises. Subtree counters remain
 lazy until `export`, `hasError`, or `getErrors` needs them.
 
-This document describes the implemented cycle-Error model. The chosen future
-cycle-cut model is specified separately in
-[`future/cycles-as-data.md`](future/cycles-as-data.md).
+The refcount and observation semantics of the resulting cuts are specified in
+[`cycles-as-data.md`](cycles-as-data.md).
 
 ## Boundaries
 
@@ -58,9 +57,9 @@ enumerable properties. Each synchronous segment owns:
 
 For each tracked property value:
 
-1. If the incoming property already has a cycle diagnostic, stop at it.
+1. If the incoming property already has a cycle cut, stop at it.
 2. If the value is on `currentPath`, the incoming property closes a cycle.
-   Mark the repeated identity shared, publish a cycle Error on that property,
+   Mark the repeated identity shared, publish a boolean cut on that property,
    and do not enter it.
 3. If the value is in `visited`, it is an alias already handled in this
    segment. Mark it shared and stop.
@@ -85,7 +84,7 @@ identity's logical graph against an immutable copy of the entering ancestry.
 The scanner:
 
 - keeps one weak visited set because its comparison path never changes;
-- stops at existing cycle diagnostics;
+- stops at existing cycle cuts;
 - follows logical mirror values;
 - marks repeated identities shared; and
 - reports whether a synchronous route reaches the fixed path.
@@ -153,12 +152,12 @@ world.
 
 ## Cycle projection
 
-A cycle Error belongs to one owner/key property. The raw logical value is not
-changed.
+A cycle cut belongs to one owner/key property. The raw logical value is not
+changed, and the cut is not an Error.
 
 In the projected ref-index:
 
-- the cut contributes `[0, 1]`;
+- the cut contributes `[0, 0, 1]`;
 - indexing does not follow the raw target;
 - no reverse parent edge crosses the cut; and
 - every projected parent graph remains acyclic.
@@ -169,22 +168,23 @@ strongly connected region may require several cuts.
 
 The cut is always visible to projected consumers:
 
-- a pending or draining mirror contributes `[1, 0]`;
-- a published cycle Error contributes `[0, 1]`; and
-- only `promiseCount === 0 && errorCount === 0` proves that the projected branch
-  contains no hidden frontier.
+- a pending or draining mirror contributes `[1, 0, 0]`;
+- a published cut contributes `[0, 0, 1]`; and
+- only `promiseCount === 0 && cycleCutCount === 0` proves that no unresolved or
+  raw frontier is hidden from projection.
 
 The raw graph remains available where projection completeness is insufficient:
 
 - finite lookup and mutation paths follow raw values;
-- `getErrors` records the cycle Error and continues behind the cut;
+- Error queries raw-walk a reached branch containing cuts and report only
+  ordinary Errors;
 - `export` reconstructs aliases and cycles; and
 - raw traversal waits recursively for Promises found behind cuts.
 
 Re-rooting a tracked identity does not remove a cycle in the underlying graph.
 Replacing or deleting the exact cut property removes that placement's
-diagnostic and count contribution. COW copies do not inherit placement
-diagnostics blindly.
+cut and count contribution. COW copies reconstruct their placements instead of
+inheriting cuts blindly.
 
 ## Physical host data
 
@@ -232,7 +232,7 @@ tables retained across them are weak.
 - detached preparation;
 - the private fixed-path scanner;
 - imported attachment;
-- cycle-Error storage and read views; and
+- cycle-cut storage and read views; and
 - imported Promise continuation registration.
 
 `src/meta.js` owns generic metadata access and ownership marks.

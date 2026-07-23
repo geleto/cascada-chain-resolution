@@ -16,7 +16,7 @@ import {
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
-import { collectRawErrors } from "../src/raw-walk.js"
+import { collectRawErrorWaits } from "../src/raw-walk.js"
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)
@@ -53,18 +53,16 @@ describe("getErrors", () => {
         const chain = new Chain(left)
 
         const errors = getErrors(chain, [])
-        const cycleError = metaOf(right).cycleErrors.left
-
-        expect(cycleError instanceof Error).to.be(true)
-        expectErrors(errors, [siblingError, hiddenError, cycleError])
+        expect(metaOf(right).cycleCuts.has("left")).to.be(true)
+        expectErrors(errors, [siblingError, hiddenError])
         expect(hasError(chain, [])).to.be(true)
         expectErrors(
             getErrors(chain, ["right"]),
-            [siblingError, hiddenError, cycleError],
+            [siblingError, hiddenError],
         )
         expectErrors(
             getErrors(new Chain(right), []),
-            [siblingError, hiddenError, cycleError],
+            [siblingError, hiddenError],
         )
     })
 
@@ -85,8 +83,6 @@ describe("getErrors", () => {
         first.next = second
         importValue(first, "raw error collection")
         const chain = new Chain(second)
-        const cycleError = metaOf(second).cycleErrors.back
-
         expect(hasError(chain, [])).to.be(true)
         const result = getErrors(chain, [])
         let settled = false
@@ -101,8 +97,32 @@ describe("getErrors", () => {
         visible.resolve({ visibleError })
         expectErrors(
             await result,
-            [hiddenError, promisedError, visibleError, cycleError],
+            [hiddenError, promisedError, visibleError],
         )
+    })
+
+    it("answers hasError immediately but exhausts a hidden raw Promise frontier", async () => {
+        const pending = deferred()
+        const visibleError = new Error("visible")
+        const hiddenError = new Error("hidden")
+        const first = { pending: pending.promise }
+        const second = { visibleError, back: first }
+        first.next = second
+        importValue(first, "mixed projected and raw errors")
+        const chain = new Chain(second)
+
+        expect(hasError(chain, [])).to.be(true)
+        const result = getErrors(chain, [])
+        let settled = false
+        result.then(() => {
+            settled = true
+        })
+        await flushMicrotasks()
+        expect(settled).to.be(false)
+
+        pending.resolve({ hiddenError })
+        expectErrors(await result, [visibleError, hiddenError])
+        verifyRefCounts(first, second)
     })
 
     it("collects behind a private mid-branch mirror cut", async () => {
@@ -119,11 +139,8 @@ describe("getErrors", () => {
         pending.resolve(root)
 
         const errors = await result
-        const cycleError = metaOf(root.branch).mirrors.pending.cycleError
-        expectErrors(errors, [hiddenError, cycleError])
-        expect(cycleError.message).to.be(
-            'Cyclic property "pending" (imported at: private mid-branch cycle)',
-        )
+        expectErrors(errors, [hiddenError])
+        expect(metaOf(root.branch).mirrors.pending.cycleCut).to.be(true)
         verifyRefCounts(root)
     })
 
@@ -145,7 +162,7 @@ describe("getErrors", () => {
 
         expectErrors(
             await result,
-            [directError, promisedError, metaOf(second).cycleErrors.back],
+            [directError, promisedError],
         )
         expect(frozen.pending).to.be(pending.promise)
         verifyRefCounts(second)
@@ -168,7 +185,7 @@ describe("getErrors", () => {
         pending.reject(rejection)
         expectErrors(
             await result,
-            [rejection, metaOf(second).cycleErrors.back],
+            [rejection],
         )
         verifyRefCounts(second)
     })
@@ -250,7 +267,7 @@ describe("getErrors", () => {
         verifyRefCounts(branch)
     })
 
-    it("returns cycle diagnostics and preserves Errors in frozen data", () => {
+    it("treats cycles as data and preserves Errors in frozen data", () => {
         const cyclic = {}
         cyclic.self = cyclic
         importValue(cyclic, "cyclic getErrors")
@@ -262,10 +279,7 @@ describe("getErrors", () => {
         const cyclicErrors = getErrors(new Chain(cyclic), [])
         const frozenErrors = getErrors(new Chain(frozen), [])
 
-        expect(cyclicErrors.length).to.be(1)
-        expect(cyclicErrors[0].message).to.be(
-            'Cyclic property "self" (imported at: cyclic getErrors)',
-        )
+        expect(cyclicErrors).to.eql([])
         expect(frozenErrors.length).to.be(1)
         expect(frozenErrors[0]).to.be(frozenError)
     })
@@ -566,7 +580,7 @@ describe("getErrors", () => {
         verifyRefCounts(chain._state.value, privateBranch)
     })
 
-    it("collects an imported cycle captured before a COW overwrite", async () => {
+    it("does not report an imported cycle captured before a COW overwrite", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         importValue(branch, "captured getErrors cycle")
@@ -577,15 +591,12 @@ describe("getErrors", () => {
         pending.resolve(branch)
 
         const errors = await result
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            'Cyclic property "pending" (imported at: captured getErrors cycle)',
-        )
+        expect(errors).to.eql([])
         expect(chain._state.value.pending).to.be("replacement")
         expect(branch.pending).to.be(pending.promise)
     })
 
-    it("collects a private terminal cycle after a COW overwrite", async () => {
+    it("does not report a private terminal cycle after a COW overwrite", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         importValue(branch, "private terminal cycle")
@@ -596,14 +607,11 @@ describe("getErrors", () => {
         pending.resolve(branch)
 
         const errors = await result
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
-            'Cyclic property "pending" (imported at: private terminal cycle)',
-        )
+        expect(errors).to.eql([])
         expect(chain._state.value.pending).to.be("replacement")
     })
 
-    it("collects raw cycle errors without requiring counters", () => {
+    it("collects raw errors behind cuts without requiring counters", () => {
         const hidden = new Error("hidden raw error")
         const first = { hidden }
         const second = { back: first }
@@ -611,18 +619,21 @@ describe("getErrors", () => {
         importValue(first, "counterless raw cycle")
 
         const errors = new Set()
-        const readiness = collectRawErrors(
+        const readiness = collectRawErrorWaits(
             first,
             metaOf(first).importBoundary,
-            metaOf(second).cycleErrors.back,
-            errors,
-            new WeakSet(),
+            {
+                onError: error => errors.add(error),
+                firstErrorOnly: false,
+                rawVisited: new WeakSet(),
+                rawStopped: false,
+            },
         )
 
         expect(readiness).to.be(undefined)
         expectErrors(
             [...errors],
-            [hidden, metaOf(second).cycleErrors.back],
+            [hidden],
         )
         expect(getRefCounter(first)).to.be(undefined)
         expect(getRefCounter(second)).to.be(undefined)
@@ -639,7 +650,7 @@ describe("getErrors", () => {
 
         expectErrors(
             errors,
-            [hidden, metaOf(second).cycleErrors.back],
+            [hidden],
         )
         expect(getRefCounter(first)).to.be(undefined)
     })

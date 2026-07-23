@@ -142,23 +142,20 @@ metadata-bearing identity.
 
 ## Imported cycles
 
-The implemented runtime retains the raw cyclic property and publishes one
-attributed cycle Error for the property selected as the cycle cut.
+The runtime retains each raw cyclic property and publishes a boolean marker on
+selected owner/key placements that cut every imported cycle from the projected
+refcount graph.
 
 - Finite lookup and mutation paths follow the raw value.
-- Ref-indexing does not cross the cut, counts it as one Error, and installs no
-  reverse parent edge through it.
-- `hasError` reports the cut.
-- `getErrors` includes the cycle Error and follows the raw value to find
-  ordinary Errors and Promises behind it.
-- `export` treats a cycle-only branch as valid raw topology and reconstructs
-  its aliases and cycles in the output.
+- Ref-indexing does not cross the cut, contributes one `cycleCutCount`, and
+  installs no reverse parent edge through it.
+- `hasError` and `getErrors` report only ordinary Errors, including those
+  reached through the raw graph behind a cut.
+- `export` reconstructs aliases and cycles in metadata-free output.
 
 Replacing or deleting the selected property removes that placement's cycle
-diagnostic. Copy-on-write does not blindly copy placement diagnostics.
-
-The chosen future model keeps the cut but removes its Error semantics; see
-[`future/cycles-as-data.md`](future/cycles-as-data.md).
+cut. Copy-on-write reconstructs placement state instead of copying cuts
+blindly. See [`cycles-as-data.md`](cycles-as-data.md).
 
 ## Path rules
 
@@ -277,7 +274,7 @@ Returns host-ready data for the branch captured at its issue position.
   holes, aliases, cycles, enumerable `__proto__`, and logical mirror values.
 - An ordinary Error reachable after settlement collapses the sandbox result to
   one new export Error.
-- Cycle diagnostics alone do not prevent successful output.
+- Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise.
 
@@ -288,9 +285,10 @@ Returns whether an Error is reachable in the issue-time branch.
 - A broken required prefix or existing path Error returns `true`.
 - A missing or primitive terminal returns `false`.
 - A positive indexed `errorCount` returns `true` immediately.
-- A settled zero-error branch returns `false` immediately.
-- Otherwise it follows the captured pending Promise frontier and resolves on
-  the first Error or when the complete frontier is clean.
+- A cut-free settled zero-error branch returns `false` immediately.
+- A cut-free pending branch follows its projected Promise frontier.
+- A cut-bearing branch uses raw identity-aware traversal and resolves on the
+  first ordinary Error or when its complete Promise frontier is clean.
 
 The operation never marks or pins the branch.
 
@@ -300,9 +298,8 @@ Returns an array containing each reachable Error identity once.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and primitive terminals return `[]`.
-- Counters prune clean projected regions.
-- A cycle cut contributes its cycle Error and raw traversal continues behind
-  it.
+- Counters prune clean cut-free projected regions.
+- A cut-bearing branch is walked raw, and the cut itself contributes nothing.
 - Promise waits recursively extend the captured issue-time frontier.
 
 The operation never marks or pins the branch. It returns the array directly
@@ -315,9 +312,10 @@ Subtree counters are created lazily at the path value reached by `export`,
 ordinary tracked property. A pending Promise placement and a cycle cut are
 frontiers and do not install reverse child edges.
 
-All later transitions below an indexed parent maintain exact counts and parent
-multiplicity. Missing counters below an ordinary indexed edge are a fatal
-invariant failure.
+Each indexed node stores exact `promiseCount`, `errorCount`, and
+`cycleCutCount` totals. All later transitions below an indexed parent maintain
+those totals and exact parent multiplicity. Missing counters below an ordinary
+indexed edge are a fatal invariant failure.
 
 The complete implementation is specified in
 [`counters-implementation.md`](counters-implementation.md).

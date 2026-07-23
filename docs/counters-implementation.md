@@ -1,11 +1,14 @@
 # Subtree counters
 
 Subtree counters are a lazy index over the projected logical graph. Each
-indexed node stores the number of pending Promise placements and Error
-placements reachable below it:
+indexed node stores independent totals for pending Promises, ordinary Errors,
+and cycle cuts.
 
 ```text
-clean <=> promiseCount === 0 && errorCount === 0
+cut-free complete <=> promiseCount === 0 && cycleCutCount === 0
+cut-free clean    <=> promiseCount === 0 &&
+                      errorCount === 0 &&
+                      cycleCutCount === 0
 ```
 
 Counters describe pending and broken content. The shared mark describes
@@ -13,10 +16,11 @@ ownership. Neither substitutes for the other.
 
 ## Counter metadata
 
-Ref-indexing adds three fields to the node's META record:
+Ref-indexing adds four fields to the node's META record:
 
 - `promiseCount`: exact pending Promise placements in the projected subtree;
 - `errorCount`: exact Error placements in the projected subtree; and
+- `cycleCutCount`: exact projected cycle-cut placements; and
 - `parents`: `Map<parentNode, edgeCount>` for reverse indexed edges.
 
 `parents === undefined` means the node is not ref-indexed. An empty Map means it
@@ -25,7 +29,7 @@ parent references the same child under two keys, the child records edge count
 two for that parent.
 
 Other META fields belong to their own subsystems. Promise mirrors and cycle
-diagnostics affect property contributions, shared/import fields affect
+cuts affect property contributions, shared/import fields affect
 ownership and preparation, and settlement fields exist only while
 export waits.
 
@@ -36,29 +40,30 @@ semantics.
 ## Property projection
 
 Counts belong to owner/key placements, not blindly to physical values.
-`getPropertyRefCounts(parent, key)` returns:
+`getPropertyRefState(parent, key)` returns the placement's `counts` contribution
+and its logical `child` for reverse-edge bookkeeping:
 
 | Logical property state | Contribution |
 | --- | --- |
-| Unresolved or draining live mirror | `[1, 0]` |
-| Published cycle Error | `[0, 1]` |
-| Ordinary Promise | `[1, 0]` |
-| Ordinary Error | `[0, 1]` |
+| Unresolved or draining live mirror | `[1, 0, 0]` |
+| Published cycle cut | `[0, 0, 1]` |
+| Ordinary Promise | `[1, 0, 0]` |
+| Ordinary Error | `[0, 1, 0]` |
 | Indexed tracked child | Child totals |
-| Primitive or missing value | `[0, 0]` |
+| Primitive or missing value | `[0, 0, 0]` |
 
-`getCountedChild(parent, key)` returns the tracked child that owns a reverse
-parent edge. Pending mirrors and cycle cuts return no child.
+Pending mirrors and cycle cuts return no child. Other states return their
+logical value; only a tracked child receives a reverse parent edge.
 
-`getCycleError(parent, key)` reads only the state published by the live
+`hasPublishedCycleCut(parent, key)` reads only the state published by the live
 property:
 
-- a plain property reads its META entry;
-- a drained mirror reads its mirror entry; and
-- a draining mirror exposes no cycle Error because the property still
-  contributes `[1, 0]`.
+- a plain property checks `meta.cycleCuts`;
+- a drained mirror reads `mirror.cycleCut`; and
+- a draining mirror returns `false` because the property still contributes
+  `[1, 0, 0]`.
 
-An operation that captured a mirror may read its private `mirror.cycleError`
+An operation that captured a mirror may read its private `mirror.cycleCut`
 before publication. Private FIFO state never contributes to parent counters.
 
 Every ordinary tracked child below an indexed parent is indexed. A missing
@@ -77,8 +82,8 @@ properties have mirrors plus their import consumers. Details live in
 
 Index construction walks the prepared projection:
 
-1. A draining mirror contributes `[1, 0]` and is not entered.
-2. A cycle cut contributes `[0, 1]` and is not entered.
+1. A draining mirror contributes `[1, 0, 0]` and is not entered.
+2. A cycle cut contributes `[0, 0, 1]` and is not entered.
 3. An ordinary tracked child is indexed recursively and receives a reverse
    parent edge.
 4. Existing compatible indexed subtrees may be connected without recounting
@@ -105,7 +110,7 @@ non-publishing work:
 Descriptor failures are checked before preparation. A fatal preparation leaves
 the attached edge unchanged.
 
-Every live assignment, deletion, cycle-diagnostic change, and successful final
+Every live assignment, deletion, cycle-cut change, and successful final
 mirror drain uses one synchronous commit transaction:
 
 1. Snapshot the old projected counts and counted child.
@@ -119,12 +124,12 @@ interleave with the synchronous transition. It does not attempt rollback after
 an internal fatal failure.
 
 A newly assigned Promise installs a fresh mirror and immediately contributes
-`[1, 0]`. Deletion removes only the old contribution. Revoked mirror state is
+`[1, 0, 0]`. Deletion removes only the old contribution. Revoked mirror state is
 private and never enters the former parent's transaction.
 
 `copyCounters` reconstructs an indexed COW copy from the copy's own logical
 properties. It never clones source totals, parent maps, or placement-specific
-cycle diagnostics.
+cycle cuts.
 
 ## Promise-mirror drain
 
@@ -145,15 +150,15 @@ The mandatory writeback is the first consumer. Import preparation, mutation and
 observation continuations, COW forks, and Error-query waits use the same
 ordering mechanism.
 
-While `pendingConsumerCount > 0`, the attached placement remains `[1, 0]`.
+While `pendingConsumerCount > 0`, the attached placement remains `[1, 0, 0]`.
 Consumers prepare successive private `currentValue` states in FIFO order, but
 the parent contribution does not bounce through intermediate values.
 
 The final successful consumer performs one drain:
 
-1. capture the old `[1, 0]` contribution;
+1. capture the old `[1, 0, 0]` contribution;
 2. refresh child preparation if the owner became indexed;
-3. commit the final logical value or cycle diagnostic if the mirror is live;
+3. commit the final logical value or cycle cut if the mirror is live;
 4. decrement the count to zero inside that transition; and
 5. read and propagate the final property contribution.
 
@@ -168,7 +173,7 @@ attached-edge commit.
 
 ## Logical reads
 
-`readLogicalProperty(parent, key)` returns:
+`readLanguageProperty(parent, key)` returns:
 
 - the original Promise while a live mirror is draining;
 - `mirror.currentValue` after that mirror drains; or
@@ -181,15 +186,15 @@ settled `undefined`.
 Imported-original and non-extensible holders may retain their physical Promise
 permanently. Logical reads therefore remain mirror-aware after settlement.
 
-A mirrored property stores its cycle Error exclusively on the mirror.
+A mirrored property stores its cycle cut exclusively on the mirror.
 Installing or removing a mirror clears competing plain-property cycle metadata,
-so an old diagnostic cannot reappear after transition.
+so an old cut cannot reappear after transition.
 
 ## Delta propagation
 
-`applyCountDelta(node, promiseDelta, errorDelta)` updates one indexed node and
-propagates the delta through every reverse parent edge, multiplied by that
-edge's count.
+`applyCountDelta(node, promiseDelta, errorDelta, cycleCutDelta)` updates one
+indexed node and propagates all three deltas through every reverse parent edge,
+multiplied by that edge's count.
 
 The projected parent graph is acyclic:
 
@@ -212,7 +217,7 @@ Concurrent exports of that branch share the generation. When
 `promiseCount` reaches zero, `applyCountDelta` clears both fields and resolves
 the generation immediately.
 
-No extra verification microtask is needed. The mirror remains `[1, 0]` until
+No extra verification microtask is needed. The mirror remains `[1, 0, 0]` until
 all consumers at earlier FIFO positions have finished, so the zero crossing is
 already final for that issue-time world.
 
@@ -223,22 +228,23 @@ its captured Promise wait tree and does not pin the branch.
 
 ### `export`
 
-Export indexes the reached path value and waits for `promiseCount` to
-reach zero when necessary. It then classifies projected Errors. Cycle-only
-branches use the raw logical walker to materialize a metadata-free copy and to
-wait for Promises hidden behind cuts.
+Export indexes the reached path value and waits for `promiseCount` to reach
+zero when necessary. A positive `errorCount` then takes the Error fast path.
+Otherwise one raw identity-aware walk creates the metadata-free copy and finds
+Promises or Errors hidden behind cuts.
 
 ### `hasError`
 
-`errorCount > 0` answers `true` immediately. A settled zero-error branch answers
-`false`. Otherwise the operation follows only the pending mirrors captured at
-its issue position and resolves on the first Error or complete clean frontier.
+`errorCount > 0` answers `true` immediately. With `cycleCutCount === 0`, the
+operation follows only relevant projected Promises. With a positive cut count,
+it raw-walks the complete reached branch and resolves on the first ordinary
+Error or complete clean frontier.
 
 ### `getErrors`
 
-Counters prune clean projected regions. Ordinary and cycle Errors enter one
-operation-local Set. At a cycle cut, the raw walker follows the logical value
-without requiring a child counter and recursively extends the Promise frontier.
+Counters prune clean cut-free projected regions. A positive `cycleCutCount`
+switches the complete reached branch to raw traversal. Ordinary Error
+identities enter one operation-local Set; cuts add nothing.
 
 Only the initial value reached by path resolution calls `buildRefIndex`.
 Resolved child branches are prepared and, when required by downward closure,
@@ -249,11 +255,11 @@ indexed by mirror processing before query continuations inspect them.
 `verifyRefCounts` independently:
 
 - recounts every projected logical placement;
-- compares exact stored totals;
+- compares exact Promise, Error, and cycle-cut totals;
 - checks reverse-edge multiplicity;
 - checks downward closure;
-- verifies mirror/plain cycle-state exclusivity; and
+- verifies cut shape and mirror/plain exclusivity; and
 - treats a cycle in the projected parents graph as a fatal invariant failure.
 
-A draining mirror always recounts as `[1, 0]`, regardless of its physical or
+A draining mirror always recounts as `[1, 0, 0]`, regardless of its physical or
 private prepared value. Verification never changes runtime state.

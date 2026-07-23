@@ -19,26 +19,28 @@ function getRequiredRefCounter(node) {
 }
 
 function getRefCounts(value) {
-    if (helpers.isPromise(value)) return [1, 0]
-    if (helpers.isError(value)) return [0, 1]
-    if (!helpers.isTracked(value)) return [0, 0]
+    if (helpers.isPromise(value)) return [1, 0, 0]
+    if (helpers.isError(value)) return [0, 1, 0]
+    if (!helpers.isTracked(value)) return [0, 0, 0]
 
     const counter = getRequiredRefCounter(value)
-    return [counter.promiseCount, counter.errorCount]
+    return [
+        counter.promiseCount,
+        counter.errorCount,
+        counter.cycleCutCount,
+    ]
 }
 
-function getPropertyRefCounts(parent, key) {
+function getPropertyRefState(parent, key) {
     const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror && !mirror.isDrained()) return [1, 0]
-    if (imports.getCycleError(parent, key)) return [0, 1]
-    return getRefCounts(promiseMirrors.readLogicalProperty(parent, key))
-}
-
-function getCountedChild(parent, key) {
-    const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror && !mirror.isDrained()) return undefined
-    if (imports.getCycleError(parent, key)) return undefined
-    return promiseMirrors.readLogicalProperty(parent, key)
+    if (mirror && !mirror.isDrained()) {
+        return { child: undefined, counts: [1, 0, 0] }
+    }
+    if (imports.hasPublishedCycleCut(parent, key)) {
+        return { child: undefined, counts: [0, 0, 1] }
+    }
+    const child = languageProperties.readLanguageProperty(parent, key)
+    return { child, counts: getRefCounts(child) }
 }
 
 function buildRefIndex(value, inheritedImportBoundary = undefined) {
@@ -63,27 +65,38 @@ function commitRefIndex(
     inheritedImportBoundary,
     importGraphPrepared = false,
 ) {
-    if (!helpers.isTracked(node)) return [0, 0]
+    if (!helpers.isTracked(node)) return [0, 0, 0]
 
     const existing = getRefCounter(node)
-    if (existing) return [existing.promiseCount, existing.errorCount]
+    if (existing) {
+        return [
+            existing.promiseCount,
+            existing.errorCount,
+            existing.cycleCutCount,
+        ]
+    }
 
     const importBoundary = metadata.nodeImportBoundary(node, inheritedImportBoundary)
 
     let promiseCount = 0
     let errorCount = 0
+    let cycleCutCount = 0
     const childNodes = []
 
     for (const key of Object.keys(node)) {
-        if (imports.getCycleError(node, key)) {
-            errorCount++
+        if (imports.hasPublishedCycleCut(node, key)) {
+            cycleCutCount++
             continue
         }
 
-        let mirror = promiseMirrors.getPromiseMirror(node, key)
-        const child = promiseMirrors.readLogicalProperty(node, key)
+        const child = languageProperties.readLanguageProperty(node, key)
+        const mirror = promiseMirrors.getOrCreateMirrorForValue(
+            node,
+            key,
+            child,
+            importBoundary,
+        )
         if (helpers.isPromise(child)) {
-            mirror ??= promiseMirrors.getOrCreatePromiseMirror(node, key, child, importBoundary)
             promiseCount++
             continue
         }
@@ -107,6 +120,7 @@ function commitRefIndex(
         )
         promiseCount += childCounts[0]
         errorCount += childCounts[1]
+        cycleCutCount += childCounts[2]
         childNodes.push(child)
     }
 
@@ -116,15 +130,20 @@ function commitRefIndex(
     // duplicate its child edges and overwrite its totals.
     const completedDuringWalk = getRefCounter(node)
     if (completedDuringWalk) {
-        return [completedDuringWalk.promiseCount, completedDuringWalk.errorCount]
+        return [
+            completedDuringWalk.promiseCount,
+            completedDuringWalk.errorCount,
+            completedDuringWalk.cycleCutCount,
+        ]
     }
 
     const counter = metadata.ensureMeta(node)
     counter.promiseCount = promiseCount
     counter.errorCount = errorCount
+    counter.cycleCutCount = cycleCutCount
     counter.parents = new Map()
     for (const child of childNodes) addParentEdge(child, node)
-    return [promiseCount, errorCount]
+    return [promiseCount, errorCount, cycleCutCount]
 }
 
 function preparePropertyTransition(
@@ -144,7 +163,9 @@ function preparePropertyTransition(
         propertyMirror.importBoundary = importBoundary
     }
 
-    if (getRefCounter(owner) && helpers.isTracked(newValue)) {
+    if (getRefCounter(owner) &&
+        !propertyMirror?.cycleCut &&
+        helpers.isTracked(newValue)) {
         buildRefIndex(newValue, importBoundary)
     }
 }
@@ -160,11 +181,11 @@ function commitPropertyTransition(owner, key, propertyMirror, newValue) {
                     key,
                     propertyMirror.promise,
                 )
-                imports.clearMetaCycleError(owner, key)
+                imports.clearPlainCycleCut(owner, key)
                 promiseMirrors.installPromiseMirror(owner, key, propertyMirror)
             } else {
                 languageProperties.writeLanguageProperty(owner, key, newValue)
-                imports.clearMetaCycleError(owner, key)
+                imports.clearPlainCycleCut(owner, key)
                 promiseMirrors.clearPromiseMirror(owner, key)
             }
         },
@@ -178,7 +199,7 @@ function commitMirrorDrain(mirror) {
     }
 
     if (getRefCounter(mirror.node) &&
-        !mirror.cycleError &&
+        !mirror.cycleCut &&
         helpers.isTracked(mirror.currentValue) &&
         !getRefCounter(mirror.currentValue)) {
         buildRefIndex(mirror.currentValue, mirror.importBoundary)
@@ -196,7 +217,7 @@ function commitMirrorDrain(mirror) {
                     mirror.currentValue,
                 )
             }
-            imports.clearMetaCycleError(mirror.node, mirror.key)
+            imports.clearPlainCycleCut(mirror.node, mirror.key)
             mirror.pendingConsumerCount--
         },
     )
@@ -206,26 +227,25 @@ function deleteEdge(parent, key) {
     commitLiveEdge(parent, key, () => {
         delete parent[key]
         promiseMirrors.clearPromiseMirror(parent, key)
-        imports.clearMetaCycleError(parent, key)
+        imports.clearPlainCycleCut(parent, key)
     })
 }
 
 function commitLiveEdge(owner, key, updateProperty) {
     const counter = getRefCounter(owner)
-    const oldCounts = counter ? getPropertyRefCounts(owner, key) : undefined
-    const oldChild = counter ? getCountedChild(owner, key) : undefined
+    const oldState = counter ? getPropertyRefState(owner, key) : undefined
 
     updateProperty()
     if (!counter) return
 
-    const nextCounts = getPropertyRefCounts(owner, key)
-    const nextChild = getCountedChild(owner, key)
-    removeParentEdge(oldChild, owner)
-    addParentEdge(nextChild, owner)
+    const nextState = getPropertyRefState(owner, key)
+    removeParentEdge(oldState.child, owner)
+    addParentEdge(nextState.child, owner)
     applyCountDelta(
         owner,
-        nextCounts[0] - oldCounts[0],
-        nextCounts[1] - oldCounts[1],
+        nextState.counts[0] - oldState.counts[0],
+        nextState.counts[1] - oldState.counts[1],
+        nextState.counts[2] - oldState.counts[2],
     )
 }
 
@@ -246,14 +266,15 @@ function removeParentEdge(value, parent) {
     }
 }
 
-function applyCountDelta(node, promiseDelta, errorDelta) {
-    if (promiseDelta === 0 && errorDelta === 0) return
+function applyCountDelta(node, promiseDelta, errorDelta, cycleCutDelta) {
+    if (promiseDelta === 0 && errorDelta === 0 && cycleCutDelta === 0) return
 
     const counter = getRequiredRefCounter(node)
     const oldPromiseCount = counter.promiseCount
     counter.promiseCount += promiseDelta
     counter.errorCount += errorDelta
-    // A mirror retains [1,0] until every registered consumer drains, so this
+    counter.cycleCutCount += cycleCutDelta
+    // A mirror retains [1,0,0] until every registered consumer drains, so this
     // zero is final for the pinned settlement generation.
     if (
         oldPromiseCount > 0 &&
@@ -266,7 +287,12 @@ function applyCountDelta(node, promiseDelta, errorDelta) {
         resolve()
     }
     for (const [parent, multiplicity] of counter.parents) {
-        applyCountDelta(parent, promiseDelta * multiplicity, errorDelta * multiplicity)
+        applyCountDelta(
+            parent,
+            promiseDelta * multiplicity,
+            errorDelta * multiplicity,
+            cycleCutDelta * multiplicity,
+        )
     }
 }
 
@@ -299,8 +325,6 @@ export {
     commitMirrorDrain,
     copyCounters,
     deleteEdge,
-    getCountedChild,
-    getPropertyRefCounts,
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,

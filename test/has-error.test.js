@@ -76,9 +76,28 @@ describe("hasError", () => {
 
         importValue(root, "hasError import")
 
-        expect(hasError(new Chain(root), ["branch"])).to.be(true)
-        expect(getRefCounter(branch).errorCount).to.be(1)
+        expect(hasError(new Chain(root), ["branch"])).to.be(false)
+        expect(getRefCounter(branch).errorCount).to.be(0)
+        expect(getRefCounter(branch).cycleCutCount).to.be(1)
         expect(branch.self).to.be(branch)
+    })
+
+    it("stops a raw terminal-cut search at the first Error", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const root = {}
+        root.self = root
+        root.bad = new Error("found")
+        root.pending = pending.promise
+        importValue(root, "raw first Error")
+        const beforeQuery = registrations()
+
+        expect(hasError(new Chain(root), ["self"])).to.be(true)
+        expect(registrations()).to.be(beforeQuery)
+
+        pending.resolve("done")
+        await flushMicrotasks()
+        verifyRefCounts(root)
     })
 
     it("indexes non-extensible branches uniformly", async () => {
@@ -658,7 +677,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("observes an imported promise cycle captured before a COW overwrite", async () => {
+    it("does not report an imported promise cycle captured before a COW overwrite", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         importValue(branch, "captured hasError cycle")
@@ -669,7 +688,7 @@ describe("hasError", () => {
         assignPath(chain, ["branch", "pending"], "fixed")
         pending.resolve(branch)
 
-        expect(await result).to.be(true)
+        expect(await result).to.be(false)
         expect(chain._state.value.branch.pending).to.be("fixed")
         expect(branch.pending).to.be(pending.promise)
         verifyRefCounts(root, chain._state.value)
