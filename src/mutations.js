@@ -230,7 +230,4 @@ function deletePath(chain, path) {
     })
 }
 
-export {
-    assignPath,
-    deletePath,
-}
+export { assignPath, deletePath }

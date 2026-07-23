@@ -411,9 +411,4 @@ function walkObservationPath(
     }
 }
 
-export {
-    getErrors,
-    hasError,
-    lookupPath,
-    normalize,
-}
+export { getErrors, hasError, lookupPath, normalize }

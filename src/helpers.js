@@ -70,10 +70,4 @@ function onInternalResolve(promise, fn) {
     )
 }
 
-export {
-    isError,
-    isPromise,
-    isTracked,
-    onInternalResolve,
-    onValueResolve,
-}
+export { isError, isPromise, isTracked, onInternalResolve, onValueResolve }

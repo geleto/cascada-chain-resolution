@@ -90,6 +90,4 @@ function verifyParentGraph(node, states) {
     states.set(node, "done")
 }
 
-export {
-    verifyRefCounts,
-}
+export { verifyRefCounts }

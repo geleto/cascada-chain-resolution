@@ -117,7 +117,4 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
     }
 }
 
-export {
-    collectRawErrors,
-    copyRawBranch,
-}
+export { collectRawErrors, copyRawBranch }
