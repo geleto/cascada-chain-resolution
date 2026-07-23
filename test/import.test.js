@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     runtime,
@@ -19,12 +19,12 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
-} = require("./support")
-const {
+} from "./support.js"
+import {
     getOrCreatePromiseMirror,
     onPromiseMirrorResolve,
     setPromiseMirrorValue,
-} = require("../src/promise-mirrors")
+} from "../src/promise-mirrors.js"
 
 describe("import", () => {
     it("requires a truthy error context", () => {

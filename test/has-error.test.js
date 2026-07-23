@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     buildRefIndex,
@@ -14,7 +14,7 @@ const {
     countPromiseRegistrations,
     deferred,
     flushMicrotasks,
-} = require("./support")
+} from "./support.js"
 
 describe("hasError", () => {
     it("answers immediate path cases synchronously", () => {

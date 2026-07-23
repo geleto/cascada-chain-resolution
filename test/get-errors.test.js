@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     assignPath,
     buildRefIndex,
@@ -15,8 +15,8 @@ const {
     normalize,
     thrownBy,
     verifyRefCounts,
-} = require("./support")
-const { collectRawErrors } = require("../src/raw-walk")
+} from "./support.js"
+import { collectRawErrors } from "../src/raw-walk.js"
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)

@@ -1,43 +1,12 @@
 "use strict"
 
-const {
-    isError,
-    isPromise,
-    isTracked,
-} = require("./helpers")
-const {
-    pathAccessError,
-} = require("./error")
-const {
-    commitPropertyTransition,
-    copyCounters,
-    deleteEdge,
-    preparePropertyTransition,
-} = require("./refcounts")
-const {
-    assertCanDeleteLanguageProperty,
-    assertCanMutateLanguageProperty,
-    assertCanSetLanguageProperty,
-    writeLanguageProperty,
-} = require("./validate")
-const {
-    hasSharedMark,
-    markShared,
-    nodeImportBoundary,
-} = require("./meta")
-const {
-    attachImportedDataToImportedData,
-    import: importValue,
-} = require("./import")
-const {
-    createAssignedPromiseMirror,
-    forkPromiseMirror,
-    getOrCreatePromiseMirror,
-    getPromiseMirror,
-    onPromiseMirrorResolve,
-    readLogicalProperty,
-    setPromiseMirrorValue,
-} = require("./promise-mirrors")
+import * as helpers from "./helpers.js"
+import * as errorUtils from "./error.js"
+import * as refcounts from "./refcounts.js"
+import * as languageProperties from "./language-properties.js"
+import * as metadata from "./meta.js"
+import * as imports from "./import.js"
+import * as promiseMirrors from "./promise-mirrors.js"
 
 function setProperty(
     parent,
@@ -46,16 +15,20 @@ function setProperty(
     importBoundary = undefined,
     attachmentPath = undefined,
 ) {
-    assertCanSetLanguageProperty(parent, key, importBoundary?.errorContext)
+    languageProperties.assertCanSetLanguageProperty(
+        parent,
+        key,
+        importBoundary?.errorContext,
+    )
     // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
     // mirror. Two assignments of the same promise are divergent worlds.
-    const mirror = isPromise(value)
-        ? createAssignedPromiseMirror(parent, key, value)
+    const mirror = helpers.isPromise(value)
+        ? promiseMirrors.createAssignedPromiseMirror(parent, key, value)
         : null
-    preparePropertyTransition(parent, mirror, value)
-    commitPropertyTransition(parent, key, mirror, value)
+    refcounts.preparePropertyTransition(parent, mirror, value)
+    refcounts.commitPropertyTransition(parent, key, mirror, value)
     if (attachmentPath) {
-        attachImportedDataToImportedData(
+        imports.attachImportedDataToImportedData(
             parent,
             key,
             attachmentPath,
@@ -65,8 +38,12 @@ function setProperty(
 }
 
 function deleteProperty(parent, key, importBoundary = undefined) {
-    assertCanDeleteLanguageProperty(parent, key, importBoundary?.errorContext)
-    deleteEdge(parent, key)
+    languageProperties.assertCanDeleteLanguageProperty(
+        parent,
+        key,
+        importBoundary?.errorContext,
+    )
+    refcounts.deleteEdge(parent, key)
 }
 
 function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
@@ -88,13 +65,13 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     for (const key of keys) {
         const isPathKey = key === pathKeyString
         const retainedOffPath = !isPathKey
-        const sourceMirror = getPromiseMirror(obj, key)
-        const value = readLogicalProperty(obj, key)
+        const sourceMirror = promiseMirrors.getPromiseMirror(obj, key)
+        const value = promiseMirrors.readLogicalProperty(obj, key)
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
-        // through setProperty, or copyCounters reconstructs its indexed edges.
-        writeLanguageProperty(copy, key, value)
-        if (isPromise(value)) {
+        // through setProperty, or refcounts.copyCounters reconstructs its indexed edges.
+        languageProperties.writeLanguageProperty(copy, key, value)
+        if (helpers.isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
             //
@@ -112,7 +89,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
             // so the first advance on either side must COW. The path key itself
             // is protected by the walk's inherited state if we enter it, and
             // may simply be replaced/deleted at the target.
-            forkPromiseMirror(
+            promiseMirrors.forkPromiseMirror(
                 obj,
                 copy,
                 key,
@@ -121,21 +98,21 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
                 propertyImportBoundary,
             )
             if (retainedOffPath && propertyImportBoundary) {
-                attachImportedDataToImportedData(
+                imports.attachImportedDataToImportedData(
                     copy,
                     key,
                     attachmentPath,
                 )
             }
-        } else if (propertyImportBoundary && isTracked(value)) {
+        } else if (propertyImportBoundary && helpers.isTracked(value)) {
             // The source child remains external; a later shallow copy of a path
             // child drops this boundary together with its other META.
-            importValue(value, propertyImportBoundary.errorContext)
-        } else if (retainedOffPath && isTracked(value)) {
-            markShared(value)
+            imports.import(value, propertyImportBoundary.errorContext)
+        } else if (retainedOffPath && helpers.isTracked(value)) {
+            metadata.markShared(value)
         }
     }
-    copyCounters(obj, copy)
+    refcounts.copyCounters(obj, copy)
     return copy
 }
 
@@ -165,14 +142,14 @@ function walkMutationPath(rootHolder, path, onTarget) {
         inheritedImportBoundary,
         attachmentPath,
     ) {
-        if (isError(value)) return value
-        if (!isTracked(value)) return pathAccessError()
+        if (helpers.isError(value)) return value
+        if (!helpers.isTracked(value)) return errorUtils.pathAccessError()
 
         // Root-only import attribution is inherited until a nested boundary
         // overrides it; the shared-branch bit independently drives path COW.
-        const valueImportBoundary = nodeImportBoundary(value, inheritedImportBoundary)
+        const valueImportBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
         let parent = value
-        const parentInsideSharedBranch = inheritedSharedBranch || hasSharedMark(value)
+        const parentInsideSharedBranch = inheritedSharedBranch || metadata.hasSharedMark(value)
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
@@ -194,22 +171,22 @@ function walkMutationPath(rootHolder, path, onTarget) {
 
         // Asserted after the COW: copies carry only own enumerable keys, so
         // this fires only on genuinely un-shadowable intermediate shapes.
-        assertCanMutateLanguageProperty(
+        languageProperties.assertCanMutateLanguageProperty(
             parent,
             key,
             valueImportBoundary?.errorContext,
         )
 
-        let mirror = getPromiseMirror(parent, key)
-        const child = readLogicalProperty(parent, key)
-        if (isPromise(child)) {
-            mirror ??= getOrCreatePromiseMirror(
+        let mirror = promiseMirrors.getPromiseMirror(parent, key)
+        const child = promiseMirrors.readLogicalProperty(parent, key)
+        if (helpers.isPromise(child)) {
+            mirror ??= promiseMirrors.getOrCreatePromiseMirror(
                 parent,
                 key,
                 child,
                 valueImportBoundary,
             )
-            onPromiseMirrorResolve(mirror, () => {
+            promiseMirrors.onPromiseMirrorResolve(mirror, () => {
                 const childImportBoundary = mirror.importBoundary ?? valueImportBoundary
                 const next = walk(
                     mirror.currentValue,
@@ -221,7 +198,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
                 // The active path has now produced an owned value. Unlike an
                 // off-path fork, this placement no longer carries provenance.
                 mirror.importBoundary = undefined
-                setPromiseMirrorValue(mirror, next)
+                promiseMirrors.setPromiseMirrorValue(mirror, next)
             })
             return parent
         }
@@ -253,7 +230,7 @@ function deletePath(chain, path) {
     })
 }
 
-module.exports = {
+export {
     assignPath,
     deletePath,
 }

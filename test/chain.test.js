@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     metaOf,
@@ -8,7 +8,7 @@ const {
     normalize,
     deferred,
     flushMicrotasks,
-} = require("./support")
+} from "./support.js"
 
 describe("Chain root state", () => {
     it("keeps host fields outside the language graph", () => {

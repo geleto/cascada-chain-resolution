@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     assignPath,
@@ -8,7 +8,7 @@ const {
     deferred,
     flushMicrotasks,
     thrownBy,
-} = require("./support")
+} from "./support.js"
 
 describe("path assignment", () => {
     it("replaces the root for an empty assignment path", () => {

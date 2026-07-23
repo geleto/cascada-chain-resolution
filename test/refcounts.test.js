@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     buildRefIndex,
@@ -16,7 +16,7 @@ const {
     flushMicrotasks,
     expectCounts,
     thrownBy,
-} = require("./support")
+} from "./support.js"
 
 describe("subtree counters", () => {
     it("keeps inline metadata visible after a node becomes non-extensible", () => {

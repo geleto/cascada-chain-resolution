@@ -1,11 +1,14 @@
-const path = require("path")
-const { spawnSync } = require("child_process")
-const {
+import * as path from "path"
+import { spawnSync } from "child_process"
+import { fileURLToPath } from "url"
+import {
     onPromiseMirrorResolve,
-} = require("../src/promise-mirrors")
-const { getCycleError } = require("../src/import")
+} from "../src/promise-mirrors.js"
+import { getCycleError } from "../src/import.js"
 
-const {
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+import {
     Chain,
     expect,
     reportFatalError,
@@ -26,7 +29,7 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
-} = require("./support")
+} from "./support.js"
 
 describe("promise helpers", () => {
     it("keeps value and internal reactions in registration order", async () => {

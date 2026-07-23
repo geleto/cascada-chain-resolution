@@ -1,10 +1,6 @@
-const { onValueResolve } = require("./helpers")
-const {
-    ensureMeta,
-    markShared,
-    metaOf,
-} = require("./meta")
-const { reportFatalError } = require("./error")
+import * as helpers from "./helpers.js"
+import * as metadata from "./meta.js"
+import * as errorUtils from "./error.js"
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
@@ -20,19 +16,19 @@ function initPromiseMirrors(
 }
 
 function getPromiseMirror(node, key) {
-    return metaOf(node)?.mirrors?.[key]
+    return metadata.metaOf(node)?.mirrors?.[key]
 }
 
 function getRequiredPromiseMirror(node, key, promise) {
     const mirror = getPromiseMirror(node, key)
     if (!mirror || mirror.promise !== promise) {
-        reportFatalError(new Error("Indexed promise property has no matching mirror"))
+        errorUtils.reportFatalError(new Error("Indexed promise property has no matching mirror"))
     }
     return mirror
 }
 
 function installPromiseMirror(node, key, mirror) {
-    const meta = ensureMeta(node)
+    const meta = metadata.ensureMeta(node)
     meta.mirrors ??= Object.create(null)
     meta.mirrors[key] = mirror
 }
@@ -80,7 +76,7 @@ function createPromiseMirror(
         if (mirror.importPreparationRegistered) {
             // Import's next FIFO consumer must classify cycles before this
             // resolved branch can be ref-indexed.
-            if (markResolvedValueShared) markShared(value)
+            if (markResolvedValueShared) metadata.markShared(value)
             mirror.currentValue = value
             mirror.cycleError = undefined
         } else {
@@ -146,7 +142,7 @@ function forkPromiseMirror(
 }
 
 function clearPromiseMirror(node, key) {
-    const mirrors = metaOf(node)?.mirrors
+    const mirrors = metadata.metaOf(node)?.mirrors
     if (mirrors) delete mirrors[key]
 }
 
@@ -163,7 +159,7 @@ function onPromiseMirrorResolve(mirror, fn) {
     // Count every consumer synchronously, before its resolution callback is
     // registered or can run.
     mirror.pendingConsumerCount++
-    return onValueResolve(mirror.promise, value => {
+    return helpers.onValueResolve(mirror.promise, value => {
         const result = fn(value)
         if (mirror.pendingConsumerCount === 1) {
             // The drain decrements inside its live-edge update, after the old
@@ -199,7 +195,7 @@ function readLogicalProperty(node, key) {
     return propertyIsEnumerable.call(node, key) ? node[key] : undefined
 }
 
-module.exports = {
+export {
     clearPromiseMirror,
     createAssignedPromiseMirror,
     forkPromiseMirror,

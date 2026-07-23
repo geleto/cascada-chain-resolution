@@ -7,6 +7,33 @@ Promises, and the result must still match sequential program order.
 This repository is a sandbox for the runtime kernel that provides those
 semantics.
 
+## Usage
+
+The package is native ESM and runs directly in Node without compilation:
+
+```js
+import {
+    Chain,
+    assignPath,
+    deletePath,
+    getErrors,
+    hasError,
+    import as importValue,
+    lookupPath,
+    normalize,
+} from "cascada-chain-resolution"
+```
+
+Internal modules group helper functions under a namespace:
+
+```js
+import * as helpers from "./helpers.js"
+
+if (helpers.isError(value) || helpers.isPromise(value)) {
+    // ...
+}
+```
+
 ## Documentation
 
 - [`docs/runtime-spec.md`](docs/runtime-spec.md) defines the current observable
@@ -37,8 +64,10 @@ The first four documents describe the implemented runtime. Documents under
   atomic property transitions.
 - `src/promise-mirrors.js` owns Promise-backed property state and logical reads.
 - `src/raw-walk.js` owns metadata-free graph copying and raw Error traversal.
-- The remaining small modules own metadata, validation, fatal errors, helpers,
-  and refcount verification.
+- `src/language-properties.js` owns descriptor validation and safe physical
+  writes for language-visible properties.
+- The remaining small modules own metadata, fatal errors, helpers, and refcount
+  verification.
 
 ## Runtime model
 

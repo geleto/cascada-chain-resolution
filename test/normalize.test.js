@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     metaOf,
@@ -16,7 +16,7 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
-} = require("./support")
+} from "./support.js"
 
 describe("normalize", () => {
     it("keeps a mirror pending when cycle normalization re-enters it", async () => {

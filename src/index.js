@@ -17,26 +17,11 @@
 // the raw settled value. FORK seeds from the source mirror at the copier's FIFO
 // position, so the copied world diverges at exactly that program point.
 
-const {
-    commitMirrorDrain,
-    preparePropertyTransition,
-} = require("./refcounts")
-const {
-    import: importValue,
-} = require("./import")
-const {
-    initPromiseMirrors,
-} = require("./promise-mirrors")
-const {
-    assignPath,
-    deletePath,
-} = require("./mutations")
-const {
-    getErrors,
-    hasError,
-    lookupPath,
-    normalize,
-} = require("./observations")
+import * as refcounts from "./refcounts.js"
+import * as imports from "./import.js"
+import * as promiseMirrors from "./promise-mirrors.js"
+import * as mutations from "./mutations.js"
+import * as observations from "./observations.js"
 
 // Load-bearing helper contract:
 // Generic data promises use onValueResolve. Property-promise consumers use
@@ -50,15 +35,24 @@ class Chain {
     }
 }
 
-initPromiseMirrors(preparePropertyTransition, commitMirrorDrain)
+promiseMirrors.initPromiseMirrors(
+    refcounts.preparePropertyTransition,
+    refcounts.commitMirrorDrain,
+)
 
-module.exports = {
-    Chain,
+export { Chain }
+
+export const {
     assignPath,
     deletePath,
+} = mutations
+
+export const {
     getErrors,
     hasError,
-    import: importValue,
     lookupPath,
     normalize,
-}
+} = observations
+
+const importValue = imports.import
+export { importValue as import }

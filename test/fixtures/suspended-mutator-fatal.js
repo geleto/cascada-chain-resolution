@@ -1,5 +1,5 @@
-const runtime = require("../../src")
-const { setFatalErrorReporter } = require("../../src/error")
+import * as runtime from "../../src/index.js"
+import { setFatalErrorReporter } from "../../src/error.js"
 
 const reported = []
 const unhandled = []

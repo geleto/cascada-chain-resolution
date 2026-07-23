@@ -1,17 +1,17 @@
 "use strict"
 
-const {
-    reportFatalError,
-    validationError,
-} = require("./error")
+import * as errorUtils from "./error.js"
 
 const hasOwn = Object.prototype.hasOwnProperty
+
+// This module owns the descriptor policy for language-visible properties and
+// the corresponding safe physical write operation.
 
 // Language data is own enumerable string keys only.
 function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = Object.getOwnPropertyDescriptor(parent, key)
     if (descriptor && !descriptor.enumerable) {
-        reportFatalError(validationError(
+        errorUtils.reportFatalError(errorUtils.validationError(
             "Cannot mutate non-enumerable property",
             errorContext,
         ))
@@ -29,13 +29,13 @@ function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
     )
 
     if (descriptor && !("value" in descriptor)) {
-        reportFatalError(validationError(
+        errorUtils.reportFatalError(errorUtils.validationError(
             "Cannot assign to accessor property",
             errorContext,
         ))
     }
     if (descriptor && !descriptor.writable) {
-        reportFatalError(validationError(
+        errorUtils.reportFatalError(errorUtils.validationError(
             "Cannot assign to non-writable property",
             errorContext,
         ))
@@ -49,7 +49,7 @@ function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) 
         errorContext,
     )
     if (descriptor && !descriptor.configurable) {
-        reportFatalError(validationError(
+        errorUtils.reportFatalError(errorUtils.validationError(
             "Cannot delete non-configurable property",
             errorContext,
         ))
@@ -71,7 +71,7 @@ function writeLanguageProperty(parent, key, value) {
     })
 }
 
-module.exports = {
+export {
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
     assertCanSetLanguageProperty,

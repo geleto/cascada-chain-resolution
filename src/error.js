@@ -39,7 +39,7 @@ function errorFromRejection(reason) {
     return reason instanceof Error ? reason : new Error(String(reason))
 }
 
-module.exports = {
+export {
     createCycleError,
     errorFromRejection,
     pathAccessError,

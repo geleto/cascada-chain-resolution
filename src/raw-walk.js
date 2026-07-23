@@ -1,21 +1,8 @@
-const {
-    isError,
-    isPromise,
-    isTracked,
-} = require("./helpers")
-const {
-    getCycleError,
-} = require("./import")
-const {
-    nodeImportBoundary,
-} = require("./meta")
-const {
-    getOrCreatePromiseMirror,
-    getPromiseMirror,
-    onPromiseMirrorResolve,
-    readLogicalProperty,
-} = require("./promise-mirrors")
-const { writeLanguageProperty } = require("./validate")
+import * as helpers from "./helpers.js"
+import * as imports from "./import.js"
+import * as metadata from "./meta.js"
+import * as promiseMirrors from "./promise-mirrors.js"
+import * as languageProperties from "./language-properties.js"
 
 // One logical traversal serves metadata-free normalization copying and
 // exhaustive Error collection behind cycle cuts. Callers supply operation-local
@@ -47,7 +34,7 @@ function collectRawErrors(
 function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
     if (cycleError && state.errors) state.errors.add(cycleError)
 
-    if (isError(value)) {
+    if (helpers.isError(value)) {
         if (state.errors) {
             state.errors.add(value)
         } else {
@@ -55,7 +42,7 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
         }
         return { value, readiness: undefined }
     }
-    if (!isTracked(value)) return { value, readiness: undefined }
+    if (!helpers.isTracked(value)) return { value, readiness: undefined }
 
     if (state.copies) {
         const copy = state.copies.get(value)
@@ -73,26 +60,26 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
         state.visited.add(value)
     }
 
-    const importBoundary = nodeImportBoundary(value, inheritedImportBoundary)
+    const importBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
     const waits = []
     // Sanctioned write bypass: plain-copy output stays outside the runtime
     // graph, so these writes have no metadata or counters to bookkeep.
     for (const key of Object.keys(value)) {
-        let mirror = getPromiseMirror(value, key)
-        const child = readLogicalProperty(value, key)
+        let mirror = promiseMirrors.getPromiseMirror(value, key)
+        const child = promiseMirrors.readLogicalProperty(value, key)
         const propertyImportBoundary = mirror?.importBoundary ?? importBoundary
         const childCycleError = mirror
             ? mirror.cycleError
-            : getCycleError(value, key)
+            : imports.getCycleError(value, key)
 
-        if (isPromise(child)) {
-            mirror ??= getOrCreatePromiseMirror(
+        if (helpers.isPromise(child)) {
+            mirror ??= promiseMirrors.getOrCreatePromiseMirror(
                 value,
                 key,
                 child,
                 importBoundary,
             )
-            waits.push(onPromiseMirrorResolve(mirror, () => {
+            waits.push(promiseMirrors.onPromiseMirrorResolve(mirror, () => {
                 const resolvedImportBoundary = mirror.importBoundary ?? importBoundary
                 const nested = walkRawBranch(
                     mirror.currentValue,
@@ -101,7 +88,11 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
                     state,
                 )
                 if (state.copies) {
-                    writeLanguageProperty(output, key, nested.value)
+                    languageProperties.writeLanguageProperty(
+                        output,
+                        key,
+                        nested.value,
+                    )
                 }
                 return nested.readiness
             }))
@@ -115,7 +106,7 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
             state,
         )
         if (state.copies) {
-            writeLanguageProperty(output, key, nested.value)
+            languageProperties.writeLanguageProperty(output, key, nested.value)
         }
         if (nested.readiness) waits.push(nested.readiness)
     }
@@ -126,7 +117,7 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
     }
 }
 
-module.exports = {
+export {
     collectRawErrors,
     copyRawBranch,
 }

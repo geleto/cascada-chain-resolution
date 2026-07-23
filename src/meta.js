@@ -1,9 +1,5 @@
-const {
-    isPromise,
-    isTracked,
-    onValueResolve,
-} = require("./helpers")
-const { reportFatalError } = require("./error")
+import * as helpers from "./helpers.js"
+import * as errorUtils from "./error.js"
 
 const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
@@ -26,7 +22,7 @@ function createMeta() {
 // Inline storage falls back to the WeakMap when an object cannot accept the
 // Symbol. Both storage modes therefore behave identically for non-extensible nodes.
 function metaOf(value) {
-    if (!isTracked(value)) return undefined
+    if (!helpers.isTracked(value)) return undefined
     if (!STORE_META_IN_WEAKMAP && hasOwn.call(value, META)) {
         return value[META]
     }
@@ -34,8 +30,10 @@ function metaOf(value) {
 }
 
 function ensureMeta(value) {
-    if (!isTracked(value)) {
-        reportFatalError(new TypeError("Cannot attach metadata to this value"))
+    if (!helpers.isTracked(value)) {
+        errorUtils.reportFatalError(
+            new TypeError("Cannot attach metadata to this value"),
+        )
     }
 
     let meta = metaOf(value)
@@ -56,15 +54,15 @@ function ensureMeta(value) {
 }
 
 function hasSharedMark(value) {
-    return isTracked(value) &&
+    return helpers.isTracked(value) &&
         (metaOf(value)?.shared === true || !Object.isExtensible(value))
 }
 
 // Bare promises crossing an ownership boundary resolve to shared values.
 // Mirrored promise properties mark their prepared logical value instead.
 function markShared(value) {
-    if (isPromise(value)) return onValueResolve(value, markShared)
-    if (!isTracked(value) || !Object.isExtensible(value)) return value
+    if (helpers.isPromise(value)) return helpers.onValueResolve(value, markShared)
+    if (!helpers.isTracked(value) || !Object.isExtensible(value)) return value
     ensureMeta(value).shared = true
     return value
 }
@@ -74,7 +72,7 @@ function markShared(value) {
 // data; existing META identifies a trusted runtime island. Descendants inherit
 // the boundary until independent use creates another one.
 function markImported(value, errorContext) {
-    if (!isTracked(value)) return false
+    if (!helpers.isTracked(value)) return false
 
     let meta = metaOf(value)
     if (!meta) {
@@ -95,7 +93,7 @@ function nodeImportBoundary(node, inherited) {
 }
 
 // Each cycle cut stores its attributed Error directly on the owner/key property.
-module.exports = {
+export {
     ensureMeta,
     hasSharedMark,
     markImported,

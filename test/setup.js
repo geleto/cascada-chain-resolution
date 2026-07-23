@@ -1,5 +1,5 @@
-const expect = require("expect.js")
-const { setFatalErrorReporter } = require("../src/error")
+import expect from "expect.js"
+import { setFatalErrorReporter } from "../src/error.js"
 
 const unhandledRejections = []
 
@@ -7,7 +7,7 @@ function onUnhandledRejection(reason) {
     unhandledRejections.push(reason)
 }
 
-exports.mochaHooks = {
+export const mochaHooks = {
     beforeAll() {
         process.on("unhandledRejection", onUnhandledRejection)
     },

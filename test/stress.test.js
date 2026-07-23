@@ -1,4 +1,4 @@
-const {
+import {
     Chain,
     expect,
     buildRefIndex,
@@ -13,7 +13,7 @@ const {
     deferred,
     flushMicrotasks,
     expectCounts,
-} = require("./support")
+} from "./support.js"
 
 describe("bounded stress", () => {
     it("indexes, probes, settles, and copies a deep branch", async () => {

@@ -1,7 +1,4 @@
-const {
-    errorFromRejection,
-    reportFatalError,
-} = require("./error")
+import * as errorUtils from "./error.js"
 
 // Promise registration is part of the algorithm, not a convenience wrapper:
 // - onValueResolve registers its handler synchronously at call time.
@@ -39,11 +36,11 @@ function runFatal(fn, value) {
     try {
         result = fn(value)
     } catch (error) {
-        return reportFatalError(error)
+        return errorUtils.reportFatalError(error)
     }
 
     return isPromise(result)
-        ? Promise.resolve(result).then(value => value, reportFatalError)
+        ? Promise.resolve(result).then(value => value, errorUtils.reportFatalError)
         : result
 }
 
@@ -55,9 +52,9 @@ function onValueResolve(promise, fn) {
         reason => {
             let value
             try {
-                value = errorFromRejection(reason)
+                value = errorUtils.errorFromRejection(reason)
             } catch (error) {
-                return reportFatalError(error)
+                return errorUtils.reportFatalError(error)
             }
             return runFatal(fn, value)
         },
@@ -69,11 +66,11 @@ function onValueResolve(promise, fn) {
 function onInternalResolve(promise, fn) {
     return Promise.resolve(promise).then(
         value => runFatal(fn, value),
-        reportFatalError,
+        errorUtils.reportFatalError,
     )
 }
 
-module.exports = {
+export {
     isError,
     isPromise,
     isTracked,

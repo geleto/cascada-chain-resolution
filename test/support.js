@@ -1,11 +1,11 @@
-const expect = require("expect.js")
+import expect from "expect.js"
 
-const runtime = require("../src")
-const helpers = require("../src/helpers")
-const error = require("../src/error")
-const refcounts = require("../src/refcounts")
-const meta = require("../src/meta")
-const verifyRefcounts = require("../src/verify-refcounts")
+import * as runtime from "../src/index.js"
+import * as helpers from "../src/helpers.js"
+import * as error from "../src/error.js"
+import * as refcounts from "../src/refcounts.js"
+import * as meta from "../src/meta.js"
+import * as verifyRefcounts from "../src/verify-refcounts.js"
 
 function importValue(value, context = "test import") {
     return runtime.import(value, context)
@@ -50,26 +50,45 @@ function thrownBy(fn) {
     return undefined
 }
 
-module.exports = {
-    Chain: runtime.Chain,
+const {
+    Chain,
+    assignPath,
+    deletePath,
+    getErrors,
+    hasError,
+    lookupPath,
+    normalize,
+} = runtime
+const { reportFatalError, setFatalErrorReporter } = error
+const { onInternalResolve, onValueResolve } = helpers
+const {
+    buildRefIndex,
+    getRefCounter,
+    getRefCounts,
+} = refcounts
+const { metaOf, STORE_META_IN_WEAKMAP } = meta
+const { verifyRefCounts } = verifyRefcounts
+
+export {
+    Chain,
     expect,
     runtime,
-    reportFatalError: error.reportFatalError,
-    setFatalErrorReporter: error.setFatalErrorReporter,
-    onInternalResolve: helpers.onInternalResolve,
-    onValueResolve: helpers.onValueResolve,
-    buildRefIndex: refcounts.buildRefIndex,
-    getRefCounter: refcounts.getRefCounter,
-    getRefCounts: refcounts.getRefCounts,
-    metaOf: meta.metaOf,
-    STORE_META_IN_WEAKMAP: meta.STORE_META_IN_WEAKMAP,
-    verifyRefCounts: verifyRefcounts.verifyRefCounts,
-    assignPath: runtime.assignPath,
-    deletePath: runtime.deletePath,
-    getErrors: runtime.getErrors,
-    hasError: runtime.hasError,
-    lookupPath: runtime.lookupPath,
-    normalize: runtime.normalize,
+    reportFatalError,
+    setFatalErrorReporter,
+    onInternalResolve,
+    onValueResolve,
+    buildRefIndex,
+    getRefCounter,
+    getRefCounts,
+    metaOf,
+    STORE_META_IN_WEAKMAP,
+    verifyRefCounts,
+    assignPath,
+    deletePath,
+    getErrors,
+    hasError,
+    lookupPath,
+    normalize,
     importValue,
     countPromiseRegistrations,
     deferred,
