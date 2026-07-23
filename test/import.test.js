@@ -13,7 +13,7 @@ import {
     getErrors,
     hasError,
     lookupPath,
-    normalize,
+    exportValue,
     importValue,
     countPromiseRegistrations,
     deferred,
@@ -22,8 +22,6 @@ import {
 } from "./support.js"
 import {
     getOrCreatePromiseMirror,
-    onPromiseMirrorResolve,
-    setPromiseMirrorValue,
 } from "../src/promise-mirrors.js"
 
 describe("import", () => {
@@ -314,8 +312,8 @@ describe("import", () => {
             pending.promise,
             importBoundary,
         )
-        onPromiseMirrorResolve(mirror, () => {
-            setPromiseMirrorValue(mirror, replacement)
+        mirror.onResolve(() => {
+            mirror.setValue(replacement)
         })
         buildRefIndex(root)
 
@@ -708,9 +706,9 @@ describe("import", () => {
             'Cyclic property "self" (imported at: frozen cycle)',
         )
         expectCounts(frozen, 0, 1)
-        const normalized = normalize(new Chain(frozen), [])
-        expect(normalized).not.to.be(frozen)
-        expect(normalized.self).to.be(normalized)
+        const exported = exportValue(new Chain(frozen), [])
+        expect(exported).not.to.be(frozen)
+        expect(exported.self).to.be(exported)
         verifyRefCounts(frozen)
     })
 
@@ -722,7 +720,7 @@ describe("import", () => {
 
         expect(hasError(chain, [])).to.be(true)
         expect(getErrors(chain, []).length).to.be(1)
-        const copy = normalize(chain, [])
+        const copy = exportValue(chain, [])
         expect(copy).not.to.be(root)
         expect(copy.child.self).to.be(copy.child)
         expectCounts(root, 0, 1)
@@ -830,7 +828,7 @@ describe("import", () => {
         expect(repaired).not.to.be(root)
         expect(repaired).to.eql({})
         expect(root.self).to.be(root)
-        expect(normalize(chain, [])).to.eql(repaired)
+        expect(exportValue(chain, [])).to.eql(repaired)
         expect(hasError(chain, [])).to.be(false)
         verifyRefCounts(repaired)
     })
@@ -873,21 +871,21 @@ describe("import", () => {
         verifyRefCounts(frozenPromise, nestedFrozenPromise, frozenError)
     })
 
-    it("normalizes pending elements in a non-extensible array", async () => {
+    it("exports pending elements in a non-extensible array", async () => {
         const first = deferred()
         const second = deferred()
         const nested = Object.seal({ pending: second.promise })
         const array = Object.freeze([first.promise, nested])
 
         importValue(array, "frozen array")
-        const normalized = normalize(new Chain(array), [])
+        const exported = exportValue(new Chain(array), [])
 
         expectCounts(array, 2, 0)
         expectCounts(nested, 1, 0)
 
         first.resolve({ x: 1 })
         second.resolve(2)
-        const copy = await normalized
+        const copy = await exported
 
         expect(copy).to.eql([{ x: 1 }, { pending: 2 }])
         expect(array[0]).to.be(first.promise)
@@ -966,7 +964,7 @@ describe("import", () => {
         expect(first.pending).to.be(firstPromise)
         expect(second.bad).to.be(secondError)
         expect(hasError(chain, ["first", "clean"])).to.be(false)
-        expect(normalize(chain, ["first", "clean"])).to.be(1)
+        expect(exportValue(chain, ["first", "clean"])).to.be(1)
 
         assignPath(chain, ["first", "clean"], 2)
         expect(chain._state.value.first.clean).to.be(2)
@@ -1014,10 +1012,10 @@ describe("import", () => {
         )
         expect(hasError(new Chain(root), [])).to.be(true)
         expect(getErrors(new Chain(root), [])).to.eql([cycleError])
-        const normalized = normalize(new Chain(root), [])
-        expect(normalized).not.to.be(root)
-        expect(Object.getOwnPropertyDescriptor(normalized, "__proto__").value).to.be(
-            normalized,
+        const exported = exportValue(new Chain(root), [])
+        expect(exported).not.to.be(root)
+        expect(Object.getOwnPropertyDescriptor(exported, "__proto__").value).to.be(
+            exported,
         )
         expect(root.__proto__).to.be(root)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
@@ -1033,9 +1031,9 @@ describe("import", () => {
         const chain = new Chain(root)
         const found = hasError(chain, ["value"])
         const collected = getErrors(chain, ["value"])
-        const normalized = normalize(chain, ["value"])
+        const exported = exportValue(chain, ["value"])
         const mirror = metaOf(root).mirrors.value
-        onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
+        mirror.onResolve(() => buildRefIndex(root))
         const resolved = { clean: true }
         Object.defineProperty(resolved, "__proto__", {
             value: Promise.resolve("hidden"),
@@ -1048,11 +1046,11 @@ describe("import", () => {
 
         expect(await found).to.be(false)
         expect(await collected).to.eql([])
-        const normalizedValue = await normalized
-        expect(normalizedValue).not.to.be(resolved)
-        expect(normalizedValue.clean).to.be(true)
+        const exportedValue = await exported
+        expect(exportedValue).not.to.be(resolved)
+        expect(exportedValue.clean).to.be(true)
         expect(Object.getOwnPropertyDescriptor(
-            normalizedValue,
+            exportedValue,
             "__proto__",
         ).value).to.be("hidden")
         expect(mirror.cycleError).to.be(undefined)
@@ -1076,7 +1074,7 @@ describe("import", () => {
         assignPath(chain, ["branch", "value"], 2)
         const copy = chain._state.value
         const errors = await getErrors(chain, [])
-        const normalized = await normalize(chain, [])
+        const exported = await exportValue(chain, [])
 
         expect(copy).not.to.be(external)
         expect(Object.getOwnPropertyDescriptor(external, "__proto__").value).to.be(hidden)
@@ -1084,8 +1082,8 @@ describe("import", () => {
         expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
         expect(await hasError(chain, [])).to.be(false)
         expect(errors).to.eql([])
-        expect(Object.getOwnPropertyDescriptor(normalized, "__proto__").value).to.be("hidden")
-        expect(Object.getPrototypeOf(normalized)).to.be(Object.prototype)
+        expect(Object.getOwnPropertyDescriptor(exported, "__proto__").value).to.be("hidden")
+        expect(Object.getPrototypeOf(exported)).to.be(Object.prototype)
         expect(external.branch.value).to.be(1)
         expect(copy.branch.value).to.be(2)
         verifyRefCounts(copy)

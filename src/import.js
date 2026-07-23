@@ -39,7 +39,7 @@ function importResolvedValue(value, errorContext) {
 function getCycleError(node, key) {
     const mirror = promiseMirrors.getPromiseMirror(node, key)
     return mirror
-        ? (mirror.pendingConsumerCount === 0 ? mirror.cycleError : undefined)
+        ? (mirror.isDrained() ? mirror.cycleError : undefined)
         : metadata.metaOf(node)?.cycleErrors?.[key]
 }
 
@@ -65,7 +65,7 @@ function setMirrorCycleError(mirror, importBoundary) {
         mirror.key,
         importBoundary.errorContext,
     )
-    if (mirror.pendingConsumerCount > 0) {
+    if (!mirror.isDrained()) {
         mirror.cycleError = cycleError
         return
     }
@@ -309,12 +309,13 @@ function attachImportedDataToImportedData(
 // installs a fresh mirror; an earlier walk intentionally keeps this captured one.
 function onImportedPromiseResolve(mirror, inheritedBoundary, onResolved) {
     mirror.importPreparationRegistered = true
-    promiseMirrors.onPromiseMirrorResolve(mirror, () => {
+    mirror.onResolve(() => {
         const importBoundary = mirror.importBoundary ?? inheritedBoundary
         if (importBoundary) {
             mirror.importBoundary = importBoundary
             onResolved(mirror.currentValue, importBoundary)
         }
+        mirror.importPreparationRegistered = false
         // This builds a child index only when the owner is already indexed.
         // A later walk may still publish additional path-dependent cuts.
         prepareImportedMirrorValue(mirror)

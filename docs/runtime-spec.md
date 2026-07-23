@@ -35,7 +35,7 @@ An empty path targets `_state.value`. This stable parent/key location lets a
 root Promise use the same Promise-mirror machinery as any nested property.
 
 Mutating operations change the `Chain` and return `undefined`. Values are
-observed only through `lookupPath`, `normalize`, `hasError`, and `getErrors`.
+observed only through `lookupPath`, `export`, `hasError`, and `getErrors`.
 
 ## Program order
 
@@ -137,7 +137,7 @@ settlement and cycle classification update logical runtime state, not the host
 object's properties.
 
 External code must not mutate an imported graph after import. Native code must
-receive tracked Cascada data through `normalize`, not through a direct
+receive tracked Cascada data through `export`, not through a direct
 metadata-bearing identity.
 
 ## Imported cycles
@@ -151,7 +151,7 @@ attributed cycle Error for the property selected as the cycle cut.
 - `hasError` reports the cut.
 - `getErrors` includes the cycle Error and follows the raw value to find
   ordinary Errors and Promises behind it.
-- `normalize` treats a cycle-only branch as valid raw topology and reconstructs
+- `export` treats a cycle-only branch as valid raw topology and reconstructs
   its aliases and cycles in the output.
 
 Replacing or deleting the selected property removes that placement's cycle
@@ -178,7 +178,7 @@ and stops. Observations return the Error.
 
 The final target has operation-specific behavior:
 
-| Target state | Assignment | Deletion | Lookup / normalize | `hasError` | `getErrors` |
+| Target state | Assignment | Deletion | Lookup / export | `hasError` | `getErrors` |
 | --- | --- | --- | --- | --- | --- |
 | Missing | Create it | No-op | `undefined` | `false` | `[]` |
 | Primitive or `null` | Replace it | Delete it | Return it | `false` | `[]` |
@@ -213,6 +213,11 @@ language Error values.
 
 One mirror represents one Promise-backed property version. Assigning the same
 Promise again creates a new mirror.
+
+Each mirror is an internal `PromiseMirror` instance. `onResolve` owns counted
+FIFO registration, `setValue` owns prepared logical-value updates,
+`isDrained` controls synchronous visibility, and `isLive` distinguishes the
+installed property version from a revoked version retained by older operations.
 
 The mirror's mandatory writeback and every waiting operation register directly
 on the source Promise in issue order. A mirror remains logically pending until
@@ -260,7 +265,7 @@ Returns the logical value at the path. The default marks a returned tracked
 value shared. The result is synchronous unless path resolution crosses a
 Promise.
 
-### `normalize(chain, path)`
+### `export(chain, path)`
 
 Returns host-ready data for the branch captured at its issue position.
 
@@ -271,7 +276,7 @@ Returns host-ready data for the branch captured at its issue position.
 - A successful result is always a metadata-free deep copy preserving arrays,
   holes, aliases, cycles, enumerable `__proto__`, and logical mirror values.
 - An ordinary Error reachable after settlement collapses the sandbox result to
-  one new normalization Error.
+  one new export Error.
 - Cycle diagnostics alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise.
@@ -305,7 +310,7 @@ when no wait is required and otherwise returns a Promise for that array.
 
 ## Ref-index contract
 
-Subtree counters are created lazily at the path value reached by `normalize`,
+Subtree counters are created lazily at the path value reached by `export`,
 `hasError`, or `getErrors`. Indexed regions are downward-closed through every
 ordinary tracked property. A pending Promise placement and a cycle cut are
 frontiers and do not install reverse child edges.
@@ -325,7 +330,7 @@ The compiler and host layer must:
 - establish shared ownership whenever an existing tracked value gains another
   owner or escapes;
 - use non-sharing lookup only for internal inspection or proven final transfer;
-- send tracked output to native code only through `normalize`;
+- send tracked output to native code only through `export`;
 - evaluate assignment right-hand sides before mutating their destinations; and
 - treat fatal kernel exceptions as integration/runtime failures rather than
   language Error values.

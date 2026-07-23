@@ -1,5 +1,3 @@
-"use strict"
-
 import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as refcounts from "./refcounts.js"
@@ -20,14 +18,14 @@ function lookupPath(chain, path, sharedOwnership = true) {
     })
 }
 
-// --- normalize : host-ready settled snapshot of a branch --------------------
+// --- export : host-ready settled snapshot of a branch -----------------------
 // Returns a metadata-free deep copy directly when the answer is available in
 // the synchronous prefix, or a promise when path resolution/settlement suspends.
-function normalize(chain, path) {
-    return walkObservationPath(chain, path, normalizeAtPathValue, true)
+function exportValue(chain, path) {
+    return walkObservationPath(chain, path, exportAtPathValue, true)
 }
 
-function normalizeAtPathValue(value, importBoundary, cycleError, cycleIsPrivate) {
+function exportAtPathValue(value, importBoundary, cycleError, cycleIsPrivate) {
     const terminalCycle = !!cycleError
     if (helpers.isError(value) || !helpers.isTracked(value)) return value
 
@@ -49,21 +47,21 @@ function normalizeAtPathValue(value, importBoundary, cycleError, cycleIsPrivate)
         // earlier consumers drain and later mutations COW away.
         metadata.markShared(value)
         return helpers.onInternalResolve(refcounts.waitForSettlement(value), () => {
-            return finishNormalize(value, importBoundary, terminalCycle)
+            return finishExport(value, importBoundary, terminalCycle)
         })
     }
 
-    return finishNormalize(value, importBoundary, terminalCycle)
+    return finishExport(value, importBoundary, terminalCycle)
 }
 
-function finishNormalize(value, importBoundary, terminalCycle) {
+function finishExport(value, importBoundary, terminalCycle) {
     // A private terminal cycle may deliberately be counterless. Counted
     // terminal cycles still classify first so an ordinary Error wins without
     // waiting for promises reachable only through the raw cycle frontier.
     if (!terminalCycle || refcounts.getRefCounter(value)) {
         const classification = classifyProjectedErrors(value)
         if (classification.hasOrdinaryError) {
-            return new Error("normalize: branch contains errors")
+            return new Error("export: branch contains errors")
         }
         if (!classification.hasCycleError) {
             return rawWalk.copyRawBranch(value, importBoundary).value
@@ -73,7 +71,7 @@ function finishNormalize(value, importBoundary, terminalCycle) {
     const inspection = rawWalk.copyRawBranch(value, importBoundary)
     const finish = () => {
         if (inspection.hasOrdinaryError) {
-            return new Error("normalize: branch contains errors")
+            return new Error("export: branch contains errors")
         }
         return inspection.value
     }
@@ -310,7 +308,7 @@ function collectErrorSearchWaits(
                 if (errors) errors.add(child)
             } else if (helpers.isPromise(child)) {
                 mirror ??= promiseMirrors.getRequiredPromiseMirror(node, key, child)
-                waitPromises.push(promiseMirrors.onPromiseMirrorResolve(mirror, () => {
+                waitPromises.push(mirror.onResolve(() => {
                     return onPromiseValue(
                         mirror,
                         errors
@@ -360,7 +358,7 @@ function walkObservationPath(
         const value = promiseMirrors.readLogicalProperty(parent, key)
         if (helpers.isPromise(value)) {
             mirror ??= promiseMirrors.getOrCreatePromiseMirror(parent, key, value, importBoundary)
-            return promiseMirrors.onPromiseMirrorResolve(mirror, () => {
+            return mirror.onResolve(() => {
                 const propertyImportBoundary = mirror.importBoundary ?? importBoundary
                 return walkValue(
                     mirror.currentValue,
@@ -370,7 +368,7 @@ function walkObservationPath(
                         resolvedValue,
                         propertyImportBoundary,
                         mirror.cycleError,
-                        mirror.pendingConsumerCount > 0,
+                        !mirror.isDrained(),
                     ),
                 )
             })
@@ -382,7 +380,7 @@ function walkObservationPath(
                     resolvedValue,
                     propertyImportBoundary,
                     mirror.cycleError,
-                    mirror.pendingConsumerCount > 0,
+                    !mirror.isDrained(),
                 )
             })
         }
@@ -411,4 +409,4 @@ function walkObservationPath(
     }
 }
 
-export { getErrors, hasError, lookupPath, normalize }
+export { exportValue, getErrors, hasError, lookupPath }

@@ -12,16 +12,10 @@ semantics.
 The package is native ESM and runs directly in Node without compilation:
 
 ```js
-import {
-    Chain,
-    assignPath,
-    deletePath,
-    getErrors,
-    hasError,
-    import as importValue,
-    lookupPath,
-    normalize,
-} from "cascada-chain-resolution"
+import * as runtime from "cascada-chain-resolution"
+
+const chain = new runtime.Chain({ ready: true })
+const output = runtime.export(chain, [])
 ```
 
 Internal modules group helper functions under a namespace:
@@ -45,8 +39,8 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
 - [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
 - [`docs/future/cycles-as-data.md`](docs/future/cycles-as-data.md) is the chosen
   future design for treating imported cycles as valid data rather than Errors.
-- [`docs/future/normalize-error-set.md`](docs/future/normalize-error-set.md)
-  specifies complete Error results for normalization after cycles become valid
+- [`docs/future/export-error-set.md`](docs/future/export-error-set.md)
+  specifies complete Error results for export after cycles become valid
   data.
 
 The first four documents describe the implemented runtime. Documents under
@@ -56,13 +50,13 @@ The first four documents describe the implemented runtime. Documents under
 
 - `src/index.js` owns `Chain`, runtime initialization, and the public API.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
-- `src/observations.js` owns lookup, normalization, Error queries, and their
+- `src/observations.js` owns lookup, export, Error queries, and their
   shared observational walkers.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise
   continuations.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, settlement, and
   atomic property transitions.
-- `src/promise-mirrors.js` owns Promise-backed property state and logical reads.
+- `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle and logical reads.
 - `src/raw-walk.js` owns metadata-free graph copying and raw Error traversal.
 - `src/language-properties.js` owns descriptor validation and safe physical
   writes for language-visible properties.
@@ -108,11 +102,11 @@ copies the imported path.
 
 The implemented runtime represents each imported cycle-closing property with
 an attributed cycle Error in the projected graph while retaining the raw value
-for finite path operations and normalization. The chosen future design replaces
+for finite path operations and export. The chosen future design replaces
 that diagnostic with a non-Error cycle cut; see
 [`cycles-as-data.md`](docs/future/cycles-as-data.md).
 
-Host code receives tracked Cascada data only through `normalize`, which returns
+Host code receives tracked Cascada data only through `export`, which returns
 a metadata-free deep copy with logical Promise values materialized. Internal
 code may use non-sharing lookup only when it does not expose the returned
 tracked value to mutable host code.
@@ -127,7 +121,7 @@ The public operations are:
 | `deletePath(chain, path)` | Delete a path value |
 | `lookupPath(chain, path, sharedOwnership)` | Read a path value |
 | `import(value, errorContext)` | Admit external data |
-| `normalize(chain, path)` | Produce settled metadata-free output |
+| `export(chain, path)` | Produce settled metadata-free output |
 | `hasError(chain, path)` | Test for a reachable Error |
 | `getErrors(chain, path)` | Collect distinct reachable Errors |
 
@@ -143,7 +137,7 @@ registration out of the operation's issue position.
 
 Observations describe the branch captured at their own issue position. A later
 assignment or deletion may change the live `Chain`, but it cannot change what
-an earlier lookup, normalization, or Error query observes.
+an earlier lookup, export, or Error query observes.
 
 ## Promise mirrors
 
@@ -196,7 +190,7 @@ and is reconstructed only where needed; it is never copied as language data.
 
 ## Subtree counters
 
-`hasError`, `getErrors`, and `normalize` ask questions about complete branches.
+`hasError`, `getErrors`, and `export` ask questions about complete branches.
 Repeated full scans would be expensive, so the first such operation builds a
 lazy ref index for the reached branch.
 
@@ -229,7 +223,7 @@ raw logical value so ordinary Errors or Promises hidden behind the projection
 are still included. It waits for the complete Promise frontier captured and
 recursively exposed at its issue position.
 
-**`normalize`** produces a metadata-free deep copy. If settlement is required,
+**`export`** produces a metadata-free deep copy. If settlement is required,
 it marks the reached branch shared so later writes copy away, then waits for
 `promiseCount` to reach zero after every earlier mirror consumer drains.
 Ordinary Errors collapse the current sandbox result to one Error. A branch
@@ -240,7 +234,7 @@ aliases and cycles are reconstructed in the output.
 
 One META record per tracked node contains only the fields whose subsystems have
 become active: ownership marks, import state, Promise mirrors, cycle
-diagnostics, counters, reverse parents, and optional normalization settlement
+diagnostics, counters, reverse parents, and optional export settlement
 state.
 
 Inline mode stores META in an own non-enumerable Symbol property when possible.

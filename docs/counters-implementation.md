@@ -27,7 +27,7 @@ two for that parent.
 Other META fields belong to their own subsystems. Promise mirrors and cycle
 diagnostics affect property contributions, shared/import fields affect
 ownership and preparation, and settlement fields exist only while
-normalization waits.
+export waits.
 
 Inline metadata uses an own non-enumerable Symbol when possible. WeakMap mode,
 and inline mode's fallback for non-extensible nodes, provide identical
@@ -128,8 +128,10 @@ cycle diagnostics.
 
 ## Promise-mirror drain
 
-One mirror represents one Promise-backed property version. Every consumer
-registers through `onPromiseMirrorResolve`.
+One internal `PromiseMirror` represents one Promise-backed property version.
+Every consumer registers through `mirror.onResolve(...)`; `isDrained()` and
+`isLive()` keep pending visibility independent from property liveness, while
+`setValue(...)` owns prepared logical-value updates.
 
 Registration:
 
@@ -200,13 +202,13 @@ Zero deltas stop immediately.
 
 ## Settlement
 
-When normalization must wait, the reached indexed node receives one shared
+When export must wait, the reached indexed node receives one shared
 settlement generation:
 
 - `settlementPromise`; and
 - `settlementResolve`.
 
-Concurrent normalizations of that branch share the generation. When
+Concurrent exports of that branch share the generation. When
 `promiseCount` reaches zero, `applyCountDelta` clears both fields and resolves
 the generation immediately.
 
@@ -219,9 +221,9 @@ its captured Promise wait tree and does not pin the branch.
 
 ## Consumers
 
-### `normalize`
+### `export`
 
-Normalization indexes the reached path value and waits for `promiseCount` to
+Export indexes the reached path value and waits for `promiseCount` to
 reach zero when necessary. It then classifies projected Errors. Cycle-only
 branches use the raw logical walker to materialize a metadata-free copy and to
 wait for Promises hidden behind cuts.

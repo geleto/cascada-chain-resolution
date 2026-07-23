@@ -3,7 +3,7 @@
 `import(value, errorContext)` is the boundary for external data. It establishes
 shared ownership and attribution, prepares aliases and cycles in the reachable
 graph, and registers continuations for nested Promises. Subtree counters remain
-lazy until `normalize`, `hasError`, or `getErrors` needs them.
+lazy until `export`, `hasError`, or `getErrors` needs them.
 
 This document describes the implemented cycle-Error model. The chosen future
 cycle-cut model is specified separately in
@@ -178,7 +178,7 @@ The raw graph remains available where projection completeness is insufficient:
 
 - finite lookup and mutation paths follow raw values;
 - `getErrors` records the cycle Error and continues behind the cut;
-- `normalize` reconstructs aliases and cycles; and
+- `export` reconstructs aliases and cycles; and
 - raw traversal waits recursively for Promises found behind cuts.
 
 Re-rooting a tracked identity does not remove a cycle in the underlying graph.
@@ -200,13 +200,13 @@ A runtime-owned extensible holder may receive the final mirror value
 physically. A non-extensible holder retains its physical Promise and also reads
 through the mirror.
 
-Native code receives tracked Cascada values only through `normalize`, whose
+Native code receives tracked Cascada values only through `export`, whose
 output contains no runtime metadata or unresolved logical mirror state.
 
 ## Enumerable `__proto__`
 
 An own enumerable `__proto__` property is ordinary language data. Preparation,
-cycle discovery, mirrors, refcounting, Error queries, and normalization all
+cycle discovery, mirrors, refcounting, Error queries, and export all
 process it.
 
 Every missing language key is created with `Object.defineProperty` as an own

@@ -9,7 +9,7 @@ import {
     hasError,
     importValue,
     metaOf,
-    normalize,
+    exportValue,
     lookupPath,
     countPromiseRegistrations,
     deferred,
@@ -441,32 +441,32 @@ describe("hasError", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("coexists with normalize on the same pending branch", async () => {
+    it("coexists with export on the same pending branch", async () => {
         const bad = deferred()
         const slow = deferred()
         const root = { branch: { bad: bad.promise, slow: slow.promise } }
-        let normalized = false
+        let exported = false
 
-        const normalizedBranch = normalize(new Chain(root), ["branch"])
-        normalizedBranch.then(() => {
-            normalized = true
+        const exportedBranch = exportValue(new Chain(root), ["branch"])
+        exportedBranch.then(() => {
+            exported = true
         })
         const branchHasError = hasError(new Chain(root), ["branch"])
 
         bad.reject("bad")
 
         expect(await branchHasError).to.be(true)
-        expect(normalized).to.be(false)
+        expect(exported).to.be(false)
 
         slow.resolve("done")
 
-        const normalizedValue = await normalizedBranch
-        expect(normalizedValue instanceof Error).to.be(true)
-        expect(normalized).to.be(true)
+        const exportedValue = await exportedBranch
+        expect(exportedValue instanceof Error).to.be(true)
+        expect(exported).to.be(true)
         verifyRefCounts(root)
     })
 
-    it("coexists with ancestor normalization when hasError is issued first", async () => {
+    it("coexists with ancestor export when hasError is issued first", async () => {
         const bad = deferred()
         const slow = deferred()
         const child = { bad: bad.promise }
@@ -475,7 +475,7 @@ describe("hasError", () => {
 
         const childHasError = hasError(chain, ["child"])
         const rootHasError = hasError(chain, [])
-        const normalizedRoot = normalize(chain, [])
+        const exportedRoot = exportValue(chain, [])
 
         bad.reject("bad")
 
@@ -483,8 +483,8 @@ describe("hasError", () => {
         expect(await rootHasError).to.be(true)
 
         slow.resolve("done")
-        const normalized = await normalizedRoot
-        expect(normalized instanceof Error).to.be(true)
+        const exported = await exportedRoot
+        expect(exported instanceof Error).to.be(true)
         verifyRefCounts(root)
     })
 

@@ -1,25 +1,25 @@
-# Normalize with the complete Error set
+# Export with the complete Error set
 
 **Status:** Planned after
 [`cycles-as-data.md`](cycles-as-data.md); not implemented.
 
 The target behavior is:
 
-- a successful `normalize` returns the metadata-free settled branch; and
+- a successful `export` returns the metadata-free settled branch; and
 - a branch containing ordinary Errors returns the same complete set of distinct
   Error identities as `getErrors` at the corresponding captured position.
 
 Cycles are valid data under the prerequisite design. They never enter the Error
-result, but normalization and Error collection both follow cycle cuts so
+result, but export and Error collection both follow cycle cuts so
 ordinary Errors and Promises behind them remain visible.
 
 ## Do not compose public operations
 
-Implementing this as `getErrors` followed by `normalize` would be incorrect:
+Implementing this as `getErrors` followed by `export` would be incorrect:
 
 - the second operation would register at a later program position;
 - a later-issued mutation could fall between the two captures;
-- `getErrors` is unpinned while normalization pins when it must wait; and
+- `getErrors` is unpinned while export pins when it must wait; and
 - the branch would be resolved, indexed, and walked twice.
 
 One operation must own one synchronous prefix, issue-time world, settlement
@@ -127,13 +127,13 @@ kernel's traversal, settlement, or collection algorithm.
 The fused traversal should reuse:
 
 - path resolution and initial `buildRefIndex`;
-- normalization's settlement generation and pin;
+- export's settlement generation and pin;
 - `getErrors`' distinct Error Set policy;
 - the shared projected Error/Promise frontier walker; and
 - `src/raw-walk.js` for identity-preserving copy plus raw frontier extension.
 
-Operation-specific policy remains in the normalization shell. Do not implement
-normalization by calling the public `getErrors` operation.
+Operation-specific policy remains in the export shell. Do not implement
+export by calling the public `getErrors` operation.
 
 ## Required coverage
 
@@ -146,7 +146,7 @@ Run under inline and WeakMap metadata storage:
 - clean cyclic output preserving topology;
 - ordinary Errors and Promises reachable only through cycle cuts;
 - alternating Promise and cycle frontiers;
-- concurrent normalization calls sharing settlement but owning independent
+- concurrent export calls sharing settlement but owning independent
   output/Error state;
 - later-issued mutation COW after pinning;
 - metadata-free output on every successful path; and
@@ -159,5 +159,5 @@ At one captured program position:
 hasError(chain, path) === (getErrors(chain, path).length > 0)
 ```
 
-Normalization succeeds exactly when both sides are false and otherwise returns
+Export succeeds exactly when both sides are false and otherwise returns
 the same distinct Error identities.

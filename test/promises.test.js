@@ -1,9 +1,6 @@
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
-import {
-    onPromiseMirrorResolve,
-} from "../src/promise-mirrors.js"
 import { getCycleError } from "../src/import.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -23,7 +20,7 @@ import {
     deletePath,
     hasError,
     lookupPath,
-    normalize,
+    exportValue,
     importValue,
     countPromiseRegistrations,
     deferred,
@@ -249,6 +246,40 @@ describe("promise helpers", () => {
 })
 
 describe("promise mirrors and lookupPath", () => {
+    it("keeps drain and liveness as independent mirror states", async () => {
+        const livePending = deferred()
+        const liveRoot = {}
+        assignPath(new Chain(liveRoot), ["value"], livePending.promise)
+        const liveMirror = metaOf(liveRoot).mirrors.value
+
+        expect(liveMirror.constructor.name).to.be("PromiseMirror")
+        expect(liveMirror.isLive()).to.be(true)
+        expect(liveMirror.isDrained()).to.be(false)
+
+        livePending.resolve("live")
+        await flushMicrotasks()
+
+        expect(liveMirror.isLive()).to.be(true)
+        expect(liveMirror.isDrained()).to.be(true)
+
+        const revokedPending = deferred()
+        const revokedRoot = {}
+        const revokedChain = new Chain(revokedRoot)
+        assignPath(revokedChain, ["value"], revokedPending.promise)
+        const revokedMirror = metaOf(revokedRoot).mirrors.value
+        assignPath(revokedChain, ["value"], "replacement")
+
+        expect(revokedMirror.isLive()).to.be(false)
+        expect(revokedMirror.isDrained()).to.be(false)
+
+        revokedPending.resolve("revoked")
+        await flushMicrotasks()
+
+        expect(revokedMirror.isLive()).to.be(false)
+        expect(revokedMirror.isDrained()).to.be(true)
+        expect(revokedRoot.value).to.be("replacement")
+    })
+
     it("keeps physical promises when holders become non-extensible during drain", async () => {
         for (const makeNonExtensible of [Object.seal, Object.freeze]) {
             const pending = deferred()
@@ -274,8 +305,8 @@ describe("promise mirrors and lookupPath", () => {
             expect(mirror.pendingConsumerCount).to.be(0)
             expectCounts(root, 0, 1)
             expect(hasError(new Chain(root), [])).to.be(true)
-            expect(normalize(new Chain(root), []).message).to.be(
-                "normalize: branch contains errors",
+            expect(exportValue(new Chain(root), []).message).to.be(
+                "export: branch contains errors",
             )
             verifyRefCounts(root)
         }
@@ -288,7 +319,7 @@ describe("promise mirrors and lookupPath", () => {
 
         assignPath(new Chain(root), ["value"], pending.promise)
         const mirror = metaOf(root).mirrors.value
-        onPromiseMirrorResolve(mirror, () => buildRefIndex(root))
+        mirror.onResolve(() => buildRefIndex(root))
 
         pending.resolve({ bad: new Error("bad"), nested: nested.promise })
         await flushMicrotasks()
@@ -314,7 +345,7 @@ describe("promise mirrors and lookupPath", () => {
         let publishedCycleError
         let countsDuringDrain
 
-        onPromiseMirrorResolve(mirror, () => {
+        mirror.onResolve(() => {
             privateCycleError = mirror.cycleError
             publishedCycleError = getCycleError(root, "value")
             countsDuringDrain = getRefCounts(root)
@@ -366,7 +397,7 @@ describe("promise mirrors and lookupPath", () => {
         setFatalErrorReporter(error => {
             reported = error
         })
-        const failedConsumer = onPromiseMirrorResolve(mirror, () => {
+        const failedConsumer = mirror.onResolve(() => {
             throw undefined
         }).then(
             () => undefined,
@@ -392,7 +423,7 @@ describe("promise mirrors and lookupPath", () => {
         const root = { branch: source.promise }
         const chain = new Chain(root)
         let read
-        let normalized
+        let exported
         let countsDuringGap
 
         buildRefIndex(root)
@@ -402,7 +433,7 @@ describe("promise mirrors and lookupPath", () => {
         })
         onInternalResolve(readJob.promise, () => {
             read = lookupPath(chain, ["branch", "x"], false)
-            normalized = normalize(chain, ["branch"])
+            exported = exportValue(chain, ["branch"])
             countsDuringGap = getRefCounts(root)
             verifyRefCounts(root)
         })
@@ -412,7 +443,7 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(await read).to.be(1)
-        expect(await normalized).to.eql({ x: 1 })
+        expect(await exported).to.eql({ x: 1 })
         expect(countsDuringGap).to.eql([1, 0])
         const mirror = metaOf(root).mirrors.branch
         expect(mirror.pendingConsumerCount).to.be(0)
@@ -1154,16 +1185,16 @@ describe("promise mirrors and lookupPath", () => {
         buildRefIndex(root)
         assignPath(chain, ["left", "x"], 1)
         assignPath(chain, ["right", "y"], 2)
-        const normalized = normalize(chain, [])
+        const exported = exportValue(chain, [])
         const foundError = hasError(chain, [])
 
         expectCounts(root, 2, 0)
         pending.resolve({})
 
         expect(await foundError).to.be(false)
-        const normalizedValue = await normalized
-        expect(normalizedValue).not.to.be(root)
-        expect(normalizedValue).to.eql({
+        const exportedValue = await exported
+        expect(exportedValue).not.to.be(root)
+        expect(exportedValue).to.eql({
             left: { x: 1 },
             right: { y: 2 },
         })
@@ -1180,15 +1211,15 @@ describe("promise mirrors and lookupPath", () => {
             value: importValue(pending.promise, "self promise"),
         }
         const chain = new Chain(root)
-        const normalized = normalize(chain, [])
+        const exported = exportValue(chain, [])
         const foundError = hasError(chain, [])
         const resolved = { again: pending.promise }
 
         pending.resolve(resolved)
 
-        const normalizedValue = await normalized
-        expect(normalizedValue).not.to.be(root)
-        expect(normalizedValue.value.again).to.be(normalizedValue.value)
+        const exportedValue = await exported
+        expect(exportedValue).not.to.be(root)
+        expect(exportedValue.value.again).to.be(exportedValue.value)
         expect(await foundError).to.be(true)
         expect(resolved.again).to.be(pending.promise)
         expectCounts(root, 0, 1)
@@ -1202,7 +1233,7 @@ describe("promise mirrors and lookupPath", () => {
             value: importValue(first.promise, "two-promise cycle"),
         }
         const chain = new Chain(root)
-        const normalized = normalize(chain, [])
+        const exported = exportValue(chain, [])
         const foundError = hasError(chain, [])
         const firstValue = { next: second.promise }
         const secondValue = { back: firstValue }
@@ -1210,9 +1241,9 @@ describe("promise mirrors and lookupPath", () => {
         first.resolve(firstValue)
         second.resolve(secondValue)
 
-        const normalizedValue = await normalized
-        expect(normalizedValue).not.to.be(root)
-        expect(normalizedValue.value.next.back).to.be(normalizedValue.value)
+        const exportedValue = await exported
+        expect(exportedValue).not.to.be(root)
+        expect(exportedValue.value.next.back).to.be(exportedValue.value)
         expect(await foundError).to.be(true)
         expect(firstValue.next).to.be(second.promise)
         expectCounts(root, 0, 1)

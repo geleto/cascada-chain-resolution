@@ -13,7 +13,7 @@ function createMeta() {
         // mirrors: added when the first promise mirror is installed.
         // cycleErrors: added when the first cycle cut is published.
         // promiseCount, errorCount, parents: added together by ref-indexing.
-        // settlementPromise, settlementResolve: added by a pending normalize.
+        // settlementPromise, settlementResolve: added by a pending export.
         // importBoundary: added at a direct import boundary.
         // importedOriginal: added to objects owned by imported host data.
     }

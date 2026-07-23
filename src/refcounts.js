@@ -1,5 +1,3 @@
-"use strict"
-
 import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
@@ -31,14 +29,14 @@ function getRefCounts(value) {
 
 function getPropertyRefCounts(parent, key) {
     const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror && mirror.pendingConsumerCount > 0) return [1, 0]
+    if (mirror && !mirror.isDrained()) return [1, 0]
     if (imports.getCycleError(parent, key)) return [0, 1]
     return getRefCounts(promiseMirrors.readLogicalProperty(parent, key))
 }
 
 function getCountedChild(parent, key) {
     const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror && mirror.pendingConsumerCount > 0) return undefined
+    if (mirror && !mirror.isDrained()) return undefined
     if (imports.getCycleError(parent, key)) return undefined
     return promiseMirrors.readLogicalProperty(parent, key)
 }
@@ -174,7 +172,7 @@ function commitPropertyTransition(owner, key, propertyMirror, newValue) {
 }
 
 function commitMirrorDrain(mirror) {
-    if (!promiseMirrors.isLivePromiseMirror(mirror.node, mirror.key, mirror)) {
+    if (!mirror.isLive()) {
         mirror.pendingConsumerCount--
         return
     }

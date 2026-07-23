@@ -4,7 +4,7 @@ import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as languageProperties from "./language-properties.js"
 
-// One logical traversal serves metadata-free normalization copying and
+// One logical traversal serves metadata-free export copying and
 // exhaustive Error collection behind cycle cuts. Callers supply operation-local
 // identity state; getErrors shares its visited set with the counted collector.
 function copyRawBranch(value, importBoundary) {
@@ -79,7 +79,7 @@ function walkRawBranch(value, inheritedImportBoundary, cycleError, state) {
                 child,
                 importBoundary,
             )
-            waits.push(promiseMirrors.onPromiseMirrorResolve(mirror, () => {
+            waits.push(mirror.onResolve(() => {
                 const resolvedImportBoundary = mirror.importBoundary ?? importBoundary
                 const nested = walkRawBranch(
                     mirror.currentValue,

@@ -1,11 +1,7 @@
 import expect from "expect.js"
 
 import * as runtime from "../src/index.js"
-import * as helpers from "../src/helpers.js"
-import * as error from "../src/error.js"
 import * as refcounts from "../src/refcounts.js"
-import * as meta from "../src/meta.js"
-import * as verifyRefcounts from "../src/verify-refcounts.js"
 
 function importValue(value, context = "test import") {
     return runtime.import(value, context)
@@ -50,45 +46,42 @@ function thrownBy(fn) {
     return undefined
 }
 
-const {
-    Chain,
-    assignPath,
-    deletePath,
-    getErrors,
-    hasError,
-    lookupPath,
-    normalize,
-} = runtime
-const { reportFatalError, setFatalErrorReporter } = error
-const { onInternalResolve, onValueResolve } = helpers
-const {
-    buildRefIndex,
-    getRefCounter,
-    getRefCounts,
-} = refcounts
-const { metaOf, STORE_META_IN_WEAKMAP } = meta
-const { verifyRefCounts } = verifyRefcounts
-
 export {
     Chain,
-    expect,
-    runtime,
-    reportFatalError,
-    setFatalErrorReporter,
-    onInternalResolve,
-    onValueResolve,
-    buildRefIndex,
-    getRefCounter,
-    getRefCounts,
-    metaOf,
-    STORE_META_IN_WEAKMAP,
-    verifyRefCounts,
     assignPath,
     deletePath,
+    export as exportValue,
     getErrors,
     hasError,
     lookupPath,
-    normalize,
+} from "../src/index.js"
+
+export {
+    reportFatalError,
+    setFatalErrorReporter,
+} from "../src/error.js"
+
+export {
+    onInternalResolve,
+    onValueResolve,
+} from "../src/helpers.js"
+
+export {
+    buildRefIndex,
+    getRefCounter,
+    getRefCounts,
+} from "../src/refcounts.js"
+
+export {
+    metaOf,
+    STORE_META_IN_WEAKMAP,
+} from "../src/meta.js"
+
+export { verifyRefCounts } from "../src/verify-refcounts.js"
+
+export {
+    expect,
+    runtime,
     importValue,
     countPromiseRegistrations,
     deferred,

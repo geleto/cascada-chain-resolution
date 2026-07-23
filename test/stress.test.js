@@ -8,7 +8,7 @@ import {
     deletePath,
     hasError,
     lookupPath,
-    normalize,
+    exportValue,
     importValue,
     deferred,
     flushMicrotasks,
@@ -27,12 +27,12 @@ describe("bounded stress", () => {
         const chain = new Chain(root)
 
         const foundError = hasError(chain, [])
-        const normalized = normalize(chain, [])
+        const exported = exportValue(chain, [])
 
         pending.resolve("done")
 
         expect(await foundError).to.be(false)
-        const copy = await normalized
+        const copy = await exported
         expect(copy).not.to.be(root)
 
         let sourceNode = root
@@ -86,7 +86,7 @@ describe("bounded stress", () => {
         const chain = new Chain(root)
 
         const foundError = hasError(chain, [])
-        const normalized = normalize(chain, [])
+        const exported = exportValue(chain, [])
 
         for (let i = 0; i < depth - 1; i++) {
             pending[i].resolve({ next: pending[i + 1].promise })
@@ -94,10 +94,10 @@ describe("bounded stress", () => {
         pending[depth - 1].resolve({ done: true })
 
         expect(await foundError).to.be(false)
-        const normalizedValue = await normalized
-        expect(normalizedValue).not.to.be(root)
+        const exportedValue = await exported
+        expect(exportedValue).not.to.be(root)
 
-        let node = normalizedValue.value
+        let node = exportedValue.value
         for (let i = 0; i < depth - 1; i++) {
             node = node.next
         }

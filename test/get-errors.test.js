@@ -12,7 +12,7 @@ import {
     hasError,
     importValue,
     metaOf,
-    normalize,
+    exportValue,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -375,7 +375,7 @@ describe("getErrors", () => {
         expectErrors(await result, [error])
     })
 
-    it("does not mark or create a normalize settlement wait", async () => {
+    it("does not mark or create an export settlement wait", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
 
@@ -437,19 +437,19 @@ describe("getErrors", () => {
         }
     })
 
-    it("coexists with normalize on the same pinned branch", async () => {
+    it("coexists with export on the same pinned branch", async () => {
         const bad = deferred()
         const slow = deferred()
         const error = new Error("bad")
         const branch = { bad: bad.promise, slow: slow.promise }
         const chain = new Chain({ branch })
-        let normalizeSettled = false
+        let exportSettled = false
         let getErrorsSettled = false
 
-        const normalized = normalize(chain, ["branch"])
+        const exported = exportValue(chain, ["branch"])
         const settlementPromise = metaOf(branch).settlementPromise
-        normalized.then(() => {
-            normalizeSettled = true
+        exported.then(() => {
+            exportSettled = true
         })
 
         const collected = getErrors(chain, ["branch"])
@@ -461,13 +461,13 @@ describe("getErrors", () => {
         bad.reject(error)
         await flushMicrotasks()
 
-        expect(normalizeSettled).to.be(false)
+        expect(exportSettled).to.be(false)
         expect(getErrorsSettled).to.be(false)
 
         slow.resolve("clean")
-        const [normalizedValue, errors] = await Promise.all([normalized, collected])
+        const [exportedValue, errors] = await Promise.all([exported, collected])
 
-        expect(normalizedValue instanceof Error).to.be(true)
+        expect(exportedValue instanceof Error).to.be(true)
         expectErrors(errors, [error])
         expect(metaOf(branch).settlementPromise).to.be(undefined)
         verifyRefCounts(chain._state.value)

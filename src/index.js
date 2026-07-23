@@ -1,5 +1,3 @@
-"use strict"
-
 // --- Notation ---------------------------------------------------------------
 //   a.k.y = 1   -> assignPath(a, ["k", "y"], 1)
 //   = a.k.y     -> lookupPath(a, ["k", "y"])
@@ -18,17 +16,14 @@
 // position, so the copied world diverges at exactly that program point.
 
 import * as refcounts from "./refcounts.js"
-import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
-import * as mutations from "./mutations.js"
-import * as observations from "./observations.js"
 
 // Load-bearing helper contract:
 // Generic data promises use onValueResolve. Property-promise consumers use
-// onPromiseMirrorResolve so registration order and the drain counter advance
+// PromiseMirror.onResolve so registration order and the drain counter advance
 // together. Rejection becomes a language Error before either continuation runs.
 
-class Chain {
+export class Chain {
     constructor(initialValue) {
         this._state = { value: initialValue }
         this._commands = []
@@ -40,19 +35,16 @@ promiseMirrors.initPromiseMirrors(
     refcounts.commitMirrorDrain,
 )
 
-export { Chain }
-
-export const {
+export {
     assignPath,
     deletePath,
-} = mutations
+} from "./mutations.js"
 
-export const {
+export {
+    exportValue as export,
     getErrors,
     hasError,
     lookupPath,
-    normalize,
-} = observations
+} from "./observations.js"
 
-const importValue = imports.import
-export { importValue as import }
+export { import } from "./import.js"

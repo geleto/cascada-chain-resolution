@@ -1,5 +1,3 @@
-"use strict"
-
 import * as errorUtils from "./error.js"
 
 const hasOwn = Object.prototype.hasOwnProperty

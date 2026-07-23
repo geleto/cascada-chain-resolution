@@ -33,6 +33,73 @@ function installPromiseMirror(node, key, mirror) {
     meta.mirrors[key] = mirror
 }
 
+class PromiseMirror {
+    constructor(node, key, promise, importBoundary) {
+        this.node = node
+        this.key = key
+        this.promise = promise
+        // Latest logical value produced by completed FIFO consumers.
+        this.currentValue = undefined
+        // Registered consumers not yet completed; zero exposes currentValue.
+        this.pendingConsumerCount = 0
+        // Cycle-aware observations consult this diagnostic; raw traversal,
+        // lookup, and mutation continue through currentValue.
+        this.cycleError = undefined
+        // Imported boundary root and error context used for preparation/attribution.
+        this.importBoundary = importBoundary
+        // Set when import must classify the initial value before generic preparation.
+        this.importPreparationRegistered = false
+    }
+
+    isDrained() {
+        return this.pendingConsumerCount === 0
+    }
+
+    // Revoked mirrors leave the map but remain valid for captured consumers.
+    isLive() {
+        return getPromiseMirror(this.node, this.key) === this
+    }
+
+    // Count registration synchronously so FIFO order and pending visibility agree.
+    // Only fn's synchronous body counts: re-entrant registration extends the
+    // drain, while a Promise returned by fn does not delay it.
+    onResolve(fn) {
+        this.pendingConsumerCount++
+        return helpers.onValueResolve(this.promise, value => {
+            const result = fn(value)
+            if (this.pendingConsumerCount === 1) {
+                // The drain decrements inside its live-edge update, after the old
+                // pending projection is captured and before the new one is read.
+                commitMirrorDrain(this)
+            } else {
+                this.pendingConsumerCount--
+            }
+            // A thrown consumer or drain failure before its property update
+            // leaves an outstanding count and prevents publication.
+            return result
+        })
+    }
+
+    setValue(value, shouldMarkResolvedValueShared = false) {
+        if (this.importPreparationRegistered) {
+            // Import registers its classifier directly after mandatory writeback,
+            // so no later FIFO consumer can observe this flag.
+            // Import's next FIFO consumer classifies cycles before this branch
+            // may be ref-indexed.
+            if (shouldMarkResolvedValueShared) metadata.markShared(value)
+        } else {
+            preparePropertyTransition(
+                this.node,
+                this,
+                value,
+                shouldMarkResolvedValueShared,
+            )
+        }
+        this.currentValue = value
+        this.cycleError = undefined
+    }
+}
+
 // Creation registers the mandatory consumer; callers publish the mirror only
 // when its owner/key property represents this promise.
 function createPromiseMirror(
@@ -43,28 +110,13 @@ function createPromiseMirror(
     markResolvedValueShared = false,
     importBoundary = undefined,
 ) {
-    const mirror = {
-        node,
-        key,
-        // Mirrors are created for promise properties
-        promise,
-        // Latest logical value produced by completed FIFO consumers.
-        currentValue: undefined,
-        // Registered consumers not yet completed; zero exposes currentValue synchronously.
-        pendingConsumerCount: 0,
-        // Error queries see this instead of currentValue; other operations use currentValue.
-        cycleError: undefined,
-        // Import provenance: { root, errorContext } for preparation and attribution.
-        importBoundary,
-        // Added synchronously when import must classify before generic preparation.
-        importPreparationRegistered: false,
-    }
+    const mirror = new PromiseMirror(node, key, promise, importBoundary)
 
     // The mandatory writeback is born first. Every later operation on this
     // property registers through the same counted wrapper.
-    onPromiseMirrorResolve(mirror, settledValueOrError => {
+    mirror.onResolve(settledValueOrError => {
         if (forkSourceMirror !== null) {
-            // Import provenance is sampled at the same FIFO position as the
+            // Import attribution is sampled at the same FIFO position as the
             // source value. An earlier path consumer may have consumed it.
             mirror.importBoundary = markResolvedValueShared
                 ? forkSourceMirror.importBoundary
@@ -73,15 +125,7 @@ function createPromiseMirror(
         const value = forkSourceMirror === null
             ? settledValueOrError
             : forkSourceMirror.currentValue
-        if (mirror.importPreparationRegistered) {
-            // Import's next FIFO consumer must classify cycles before this
-            // resolved branch can be ref-indexed.
-            if (markResolvedValueShared) metadata.markShared(value)
-            mirror.currentValue = value
-            mirror.cycleError = undefined
-        } else {
-            setPromiseMirrorValue(mirror, value, markResolvedValueShared)
-        }
+        mirror.setValue(value, markResolvedValueShared)
     })
     return mirror
 }
@@ -146,49 +190,10 @@ function clearPromiseMirror(node, key) {
     if (mirrors) delete mirrors[key]
 }
 
-// Revoked mirrors leave the map but may remain referenced by earlier promise
-// consumers; only the current map entry may update the property.
-function isLivePromiseMirror(node, key, mirror) {
-    return getPromiseMirror(node, key) === mirror
-}
-
-// The completion hook runs after the continuation's synchronous body, so a
-// re-entrant registration keeps the edge pending and a returned Promise does
-// not delay this mirror's drain.
-function onPromiseMirrorResolve(mirror, fn) {
-    // Count every consumer synchronously, before its resolution callback is
-    // registered or can run.
-    mirror.pendingConsumerCount++
-    return helpers.onValueResolve(mirror.promise, value => {
-        const result = fn(value)
-        if (mirror.pendingConsumerCount === 1) {
-            // The drain decrements inside its live-edge update, after the old
-            // pending projection is captured and before the new one is read.
-            commitMirrorDrain(mirror)
-        } else {
-            mirror.pendingConsumerCount--
-        }
-        // A thrown consumer or a drain failure before its property update
-        // leaves an outstanding count and prevents publication.
-        return result
-    })
-}
-
-function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
-    preparePropertyTransition(
-        mirror.node,
-        mirror,
-        value,
-        markResolvedValueShared,
-    )
-    mirror.currentValue = value
-    mirror.cycleError = undefined
-}
-
 function readLogicalProperty(node, key) {
     const mirror = getPromiseMirror(node, key)
     if (mirror) {
-        return mirror.pendingConsumerCount === 0
+        return mirror.isDrained()
             ? mirror.currentValue
             : mirror.promise
     }
@@ -204,8 +209,5 @@ export {
     getRequiredPromiseMirror,
     initPromiseMirrors,
     installPromiseMirror,
-    isLivePromiseMirror,
-    onPromiseMirrorResolve,
     readLogicalProperty,
-    setPromiseMirrorValue,
 }

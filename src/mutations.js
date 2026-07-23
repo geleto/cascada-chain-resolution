@@ -1,5 +1,3 @@
-"use strict"
-
 import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as refcounts from "./refcounts.js"
@@ -186,7 +184,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
                 child,
                 valueImportBoundary,
             )
-            promiseMirrors.onPromiseMirrorResolve(mirror, () => {
+            mirror.onResolve(() => {
                 const childImportBoundary = mirror.importBoundary ?? valueImportBoundary
                 const next = walk(
                     mirror.currentValue,
@@ -196,9 +194,9 @@ function walkMutationPath(rootHolder, path, onTarget) {
                     attachmentPath,
                 )
                 // The active path has now produced an owned value. Unlike an
-                // off-path fork, this placement no longer carries provenance.
+                // off-path fork, this placement no longer carries import attribution.
                 mirror.importBoundary = undefined
-                promiseMirrors.setPromiseMirrorValue(mirror, next)
+                mirror.setValue(next)
             })
             return parent
         }

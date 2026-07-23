@@ -5,7 +5,7 @@ import {
     assignPath,
     hasError,
     lookupPath,
-    normalize,
+    exportValue,
     deferred,
     flushMicrotasks,
 } from "./support.js"
@@ -16,7 +16,7 @@ describe("Chain root state", () => {
         chain._commands.push(new Error("host error"))
 
         expect(hasError(chain, [])).to.be(false)
-        expect(normalize(chain, [])).to.eql({ clean: true })
+        expect(exportValue(chain, [])).to.eql({ clean: true })
         expect(metaOf(chain)).to.be(undefined)
     })
 
@@ -75,15 +75,15 @@ describe("Chain root state", () => {
         expect(await read).to.eql({ observed: true })
         expect(lookupChain._state.value).to.eql({ replacement: "lookup" })
 
-        const normalizeRoot = deferred()
-        const normalizeChain = new Chain(normalizeRoot.promise)
-        const normalized = normalize(normalizeChain, [])
+        const exportRoot = deferred()
+        const exportChain = new Chain(exportRoot.promise)
+        const exported = exportValue(exportChain, [])
 
-        normalizeRoot.resolve({ normalized: true })
-        assignPath(normalizeChain, [], { replacement: "normalize" })
+        exportRoot.resolve({ exported: true })
+        assignPath(exportChain, [], { replacement: "export" })
 
-        expect(await normalized).to.eql({ normalized: true })
-        expect(normalizeChain._state.value).to.eql({ replacement: "normalize" })
+        expect(await exported).to.eql({ exported: true })
+        expect(exportChain._state.value).to.eql({ replacement: "export" })
     })
 
     it("captures observation paths before a pending root settles", async () => {
@@ -93,11 +93,11 @@ describe("Chain root state", () => {
         lookupSegments[0] = "after"
         lookupRoot.resolve({ before: 1, after: 2 })
 
-        const normalizeRoot = deferred()
-        const normalizeSegments = ["before"]
-        const normalized = normalize(new Chain(normalizeRoot.promise), normalizeSegments)
-        normalizeSegments[0] = "after"
-        normalizeRoot.resolve({ before: { selected: true }, after: { selected: false } })
+        const exportRoot = deferred()
+        const exportSegments = ["before"]
+        const exported = exportValue(new Chain(exportRoot.promise), exportSegments)
+        exportSegments[0] = "after"
+        exportRoot.resolve({ before: { selected: true }, after: { selected: false } })
 
         const errorRoot = deferred()
         const errorSegments = ["before"]
@@ -106,7 +106,7 @@ describe("Chain root state", () => {
         errorRoot.resolve({ before: new Error("selected"), after: { clean: true } })
 
         expect(await read).to.be(1)
-        expect(await normalized).to.eql({ selected: true })
+        expect(await exported).to.eql({ selected: true })
         expect(await foundError).to.be(true)
     })
 })

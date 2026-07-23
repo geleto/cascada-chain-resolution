@@ -20,7 +20,7 @@ operations and cycle-aware observations continue through their raw values.
 - Lookup and mutation follow cycle-closing properties normally.
 - A cycle containing no ordinary Error makes `hasError` return `false`.
 - `getErrors` never includes a diagnostic merely because a cycle exists.
-- `normalize` preserves cycles and aliases in its metadata-free output.
+- `export` preserves cycles and aliases in its metadata-free output.
 - Promises reachable only through a cut are still observed when an operation
   requires complete branch knowledge.
 - Imported host objects remain physically unchanged.
@@ -38,7 +38,7 @@ const chain = new runtime.Chain(value)
 runtime.hasError(chain, [])       // false
 runtime.getErrors(chain, [])      // []
 
-const copy = runtime.normalize(chain, [])
+const copy = runtime.export(chain, [])
 copy.self === copy                // true
 ```
 
@@ -111,7 +111,7 @@ after:  promiseCount=0, cycleCutCount=1
 ```
 
 The derived frontier remains one, but all Promise work has settled.
-Normalization's settlement generation must resolve at this transition.
+Export's settlement generation must resolve at this transition.
 
 Therefore:
 
@@ -209,9 +209,9 @@ as the cut.
 A child is prunable only when its `errorCount`, `promiseCount`, and
 `cycleCutCount` are all irrelevant to the remaining search.
 
-## `normalize`
+## `export`
 
-Normalization continues to produce a metadata-free graph copy with one raw
+Export continues to produce a metadata-free graph copy with one raw
 identity map.
 
 - `promiseCount` controls the shared settlement generation.
@@ -221,10 +221,10 @@ identity map.
   beyond the projected frontier.
 - A synchronous cycle containing no Promise requires no pin merely because it
   is cyclic.
-- Ordinary Errors retain normalization's implemented Error behavior until the
+- Ordinary Errors retain export's implemented Error behavior until the
   separate complete-error-set plan is implemented.
 
-If raw traversal captures a Promise, normalization pins the issue-time branch
+If raw traversal captures a Promise, export pins the issue-time branch
 before returning its readiness Promise.
 
 ## Path operations and ownership
@@ -260,7 +260,7 @@ to rely on that import contract.
 - `src/promise-mirrors.js`: retain private Promise-placement cut state.
 - `src/refcounts.js`: count triples, parent transitions, propagation, COW
   reconstruction, and Promise-only settlement.
-- `src/observations.js`: cycle-aware `hasError`, `getErrors`, and normalization
+- `src/observations.js`: cycle-aware `hasError`, `getErrors`, and export
   policy.
 - `src/raw-walk.js`: raw traversal through cuts and Promise frontier extension.
 - `src/verify-refcounts.js`: triple recount and cut invariants.
@@ -274,7 +274,7 @@ The counter tuple width and cycle semantics must land atomically:
    COW reconstruction, and verification.
 3. Keep settlement keyed exclusively to `promiseCount`.
 4. Make Error queries follow Promise and cycle frontiers without reporting cuts.
-5. Remove cycle-only Error classification from normalization.
+5. Remove cycle-only Error classification from export.
 6. Update import preparation, Promise drain, attachment, replacement, and
    deletion to publish or clear cuts.
 7. Remove cycle Error creation, attribution, and identity expectations.
