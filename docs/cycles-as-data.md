@@ -336,7 +336,7 @@ to rely on that import contract.
   policy, including branch-level projected/raw dispatch.
 - `src/raw-walk.js`: marker-independent raw copying and Error traversal with
   Promise frontier extension.
-- `src/verify-refcounts.js`: independent triple recount and cut invariants.
+- `test/verify-refcounts.js`: test-only independent triple recount and cut invariants.
 
 ## Required coverage
 

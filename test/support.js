@@ -81,7 +81,7 @@ export {
     STORE_META_IN_WEAKMAP,
 } from "../src/meta.js"
 
-export { verifyRefCounts } from "../src/verify-refcounts.js"
+export { verifyRefCounts } from "./verify-refcounts.js"
 
 export {
     expect,

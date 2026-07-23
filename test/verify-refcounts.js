@@ -1,10 +1,10 @@
 // Test-only consistency oracle. It independently recounts projected
 // placements, verifies cycle-cut shape and both parent-edge directions, and
 // rejects cycles in the projected parent graph.
-import * as helpers from "./helpers.js"
-import * as errorUtils from "./error.js"
-import * as metadata from "./meta.js"
-import * as promiseMirrors from "./promise-mirrors.js"
+import * as helpers from "../src/helpers.js"
+import * as errorUtils from "../src/error.js"
+import * as metadata from "../src/meta.js"
+import * as promiseMirrors from "../src/promise-mirrors.js"
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
