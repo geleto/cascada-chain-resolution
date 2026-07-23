@@ -27,12 +27,16 @@ generation, raw frontier, copy, and Error Set.
 
 ## Operation shape
 
-Path resolution and initial ref-indexing remain unchanged.
+Path resolution remains unchanged. An ordinary tracked terminal is ref-indexed;
+a path ending directly at a published or private cycle cut enters raw traversal
+without requiring the cut target to have a counter.
 
 ### Direct terminal
 
 - A path-blocking or terminal Error produces a one-element Error result.
 - A primitive or missing terminal returns directly as a successful value.
+- A terminal cycle cut starts the same raw copy-and-Error traversal used for a
+  counted branch with cuts.
 
 ### Cut-free tracked branch
 
@@ -55,13 +59,17 @@ If `promiseCount > 0`, pin the branch and wait for the projected settlement
 generation first. The pin keeps later mutations in a different COW world while
 the counted mirrors drain.
 
-At projected settlement, run one cycle-aware raw traversal that:
+At projected settlement, run one identity-aware raw traversal that:
 
 - constructs the metadata-free output graph;
 - preserves aliases and cycles through one identity map;
 - collects each ordinary Error identity into one Set;
-- follows every cycle cut without adding a diagnostic; and
+- follows raw logical values without adding a cycle diagnostic; and
 - recursively captures Promises found beyond projected frontiers.
+
+Once raw mode starts, traversal does not inspect cut metadata. Its identity map
+terminates cycles; `cycleCutCount` is only the indexed branch-level signal that
+raw mode is required.
 
 If projected settlement was synchronous and the raw prefix captures hidden
 Promises, pin the issue-time branch before returning the readiness Promise. If
@@ -129,7 +137,7 @@ The fused traversal should reuse:
 - path resolution and initial `buildRefIndex`;
 - export's settlement generation and pin;
 - `getErrors`' distinct Error Set policy;
-- the shared projected Error/Promise frontier walker; and
+- Step 17's branch-level projected/raw Error dispatch; and
 - `src/raw-walk.js` for identity-preserving copy plus raw frontier extension.
 
 Operation-specific policy remains in the export shell. Do not implement
