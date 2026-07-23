@@ -45,13 +45,12 @@ const {
 } = require("./validate")
 const {
     hasSharedMark,
-    markImported,
     markShared,
     nodeImportBoundary,
 } = require("./meta")
 const {
-    getCommittedCycleError,
-    getResolvedCycleError,
+    attachImportedDataToImportedData,
+    getCycleError,
     import: importValue,
 } = require("./import")
 const {
@@ -65,6 +64,10 @@ const {
     readLogicalProperty,
     setPromiseMirrorValue,
 } = require("./promise-mirrors")
+const {
+    collectRawErrors,
+    copyRawBranch,
+} = require("./raw-walk")
 // Load-bearing helper contract:
 // Generic data promises use onValueResolve. Property-promise consumers use
 // onPromiseMirrorResolve so registration order and the drain counter advance
@@ -77,15 +80,29 @@ class Chain {
     }
 }
 
-function setProperty(parent, key, value, importBoundary = undefined) {
+function setProperty(
+    parent,
+    key,
+    value,
+    importBoundary = undefined,
+    attachmentPath = undefined,
+) {
     assertCanSetLanguageProperty(parent, key, importBoundary?.errorContext)
     // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
     // mirror. Two assignments of the same promise are divergent worlds.
     const mirror = isPromise(value)
         ? createAssignedPromiseMirror(parent, key, value)
         : null
-    const prepared = preparePropertyTransition(parent, mirror, value)
-    commitPropertyTransition(parent, key, mirror, prepared)
+    preparePropertyTransition(parent, mirror, value)
+    commitPropertyTransition(parent, key, mirror, value)
+    if (attachmentPath) {
+        attachImportedDataToImportedData(
+            parent,
+            key,
+            attachmentPath,
+            attachmentPath.root,
+        )
+    }
 }
 
 function deleteProperty(parent, key, importBoundary = undefined) {
@@ -95,23 +112,28 @@ function deleteProperty(parent, key, importBoundary = undefined) {
 
 initPromiseMirrors(preparePropertyTransition, commitMirrorDrain)
 
-function shallowCopy(obj, pathKey, importBoundary) {
+function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     const copy = Array.isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = String(pathKey)
     const keys = Object.keys(obj)
+    attachmentPath.root ??= copy
+    attachmentPath.ancestors.add(copy)
 
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
     // counters, and marks never enter the copy. The source keeps its own marks.
     // Reused children from a shared branch are marked shared so their shared
     // references stay protected — except the path key, which the walk's
-    // inherited shared state covers. Reused children of an imported node are
-    // marked imported instead, path key included: provenance is about origin,
-    // not aliasing, and imported data must COW regardless.
+    // inherited state protects until it is replaced or copied. Every tracked
+    // child of an imported node receives its own import boundary. A path
+    // child's next shallow copy omits that META, so every new path node remains
+    // language-owned without a separate path exception here.
     for (const key of keys) {
         const isPathKey = key === pathKeyString
-        const markCopiedValueShared = !isPathKey
+        const retainedOffPath = !isPathKey
+        const sourceMirror = getPromiseMirror(obj, key)
         const value = readLogicalProperty(obj, key)
+        const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or copyCounters reconstructs its indexed edges.
         writeLanguageProperty(copy, key, value)
@@ -131,16 +153,28 @@ function shallowCopy(obj, pathKey, importBoundary) {
             //
             // Why mark non-path captured values: they are reused by two worlds,
             // so the first advance on either side must COW. The path key itself
-            // is protected by the walk's inherited shared state if we enter it,
-            // and may simply be replaced/deleted at the target. Imported
-            // captures are marked imported (which implies shared) regardless of
-            // path position — provenance must survive the copy.
-            forkPromiseMirror(obj, copy, key, value, markCopiedValueShared, importBoundary)
-        } else if (importBoundary && isTracked(value)) {
-            // A retained external child becomes the boundary through which the
-            // language-owned copy can reach the host graph.
-            markImported(value, importBoundary.errorContext)
-        } else if (markCopiedValueShared && isTracked(value)) {
+            // is protected by the walk's inherited state if we enter it, and
+            // may simply be replaced/deleted at the target.
+            forkPromiseMirror(
+                obj,
+                copy,
+                key,
+                value,
+                retainedOffPath,
+                propertyImportBoundary,
+            )
+            if (retainedOffPath && propertyImportBoundary) {
+                attachImportedDataToImportedData(
+                    copy,
+                    key,
+                    attachmentPath,
+                )
+            }
+        } else if (propertyImportBoundary && isTracked(value)) {
+            // The source child remains external; a later shallow copy of a path
+            // child drops this boundary together with its other META.
+            importValue(value, propertyImportBoundary.errorContext)
+        } else if (retainedOffPath && isTracked(value)) {
             markShared(value)
         }
     }
@@ -150,8 +184,13 @@ function shallowCopy(obj, pathKey, importBoundary) {
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(chain, path, value) {
-    walkMutationPath(chain._state, path, (parent, key, importBoundary) => {
-        setProperty(parent, key, value, importBoundary)
+    walkMutationPath(chain._state, path, (
+        parent,
+        key,
+        importBoundary,
+        attachmentPath,
+    ) => {
+        setProperty(parent, key, value, importBoundary, attachmentPath)
     })
 }
 
@@ -160,9 +199,15 @@ function assignPath(chain, path, value) {
 // install copied branches back into their key.
 function walkMutationPath(rootHolder, path, onTarget) {
     const targetPath = ["value", ...path]
-    return walk(rootHolder, 0, false, undefined)
+    return walk(rootHolder, 0, false, undefined, undefined)
 
-    function walk(value, index, inheritedSharedBranch, inheritedImportBoundary) {
+    function walk(
+        value,
+        index,
+        inheritedSharedBranch,
+        inheritedImportBoundary,
+        attachmentPath,
+    ) {
         if (isError(value)) return value
         if (!isTracked(value)) return pathAccessError()
 
@@ -174,10 +219,19 @@ function walkMutationPath(rootHolder, path, onTarget) {
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
-            parent = shallowCopy(parent, key, valueImportBoundary)
+            attachmentPath ??= {
+                root: undefined,
+                ancestors: new Set(),
+            }
+            parent = shallowCopy(
+                parent,
+                key,
+                valueImportBoundary,
+                attachmentPath,
+            )
         }
         if (index === targetPath.length - 1) {
-            onTarget(parent, key, valueImportBoundary)
+            onTarget(parent, key, valueImportBoundary, attachmentPath)
             return parent
         }
 
@@ -189,31 +243,39 @@ function walkMutationPath(rootHolder, path, onTarget) {
             valueImportBoundary?.errorContext,
         )
 
+        let mirror = getPromiseMirror(parent, key)
         const child = readLogicalProperty(parent, key)
         if (isPromise(child)) {
-            const mirror = getOrCreatePromiseMirror(
+            mirror ??= getOrCreatePromiseMirror(
                 parent,
                 key,
                 child,
                 valueImportBoundary,
             )
             onPromiseMirrorResolve(mirror, () => {
+                const childImportBoundary = mirror.importBoundary ?? valueImportBoundary
                 const next = walk(
                     mirror.currentValue,
                     index + 1,
                     parentInsideSharedBranch,
-                    valueImportBoundary,
+                    childImportBoundary,
+                    attachmentPath,
                 )
+                // The active path has now produced an owned value. Unlike an
+                // off-path fork, this placement no longer carries provenance.
+                mirror.importBoundary = undefined
                 setPromiseMirrorValue(mirror, next)
             })
             return parent
         }
 
+        const childImportBoundary = mirror?.importBoundary ?? valueImportBoundary
         const next = walk(
             child,
             index + 1,
             parentInsideSharedBranch,
-            valueImportBoundary,
+            childImportBoundary,
+            attachmentPath,
         )
         if (next !== child) {
             setProperty(parent, key, next, valueImportBoundary)
@@ -234,31 +296,24 @@ function lookupPath(chain, path, sharedOwnership = true) {
     })
 }
 
-// --- normalize : settled snapshot of a branch -------------------------------
-// Returns a direct value when the answer is available in the synchronous prefix;
-// returns a promise only when path resolution or branch settlement must suspend.
-// sharedOwnership matches lookupPath for settled returns; pending branches still
-// mark to pin the snapshot while promises settle.
-function normalize(chain, path, sharedOwnership = true, plainCopy = false) {
-    return walkObservationPath(chain, path, (value, importBoundary, placement) => {
-        return normalizeResolved(
-            value,
-            importBoundary,
-            placement,
-            sharedOwnership,
-            plainCopy,
-        )
-    }, true)
+// --- normalize : host-ready settled snapshot of a branch --------------------
+// Returns a metadata-free deep copy directly when the answer is available in
+// the synchronous prefix, or a promise when path resolution/settlement suspends.
+function normalize(chain, path) {
+    return walkObservationPath(chain, path, normalizeAtPathValue, true)
 }
 
-function normalizeResolved(value, importBoundary, placement, sharedOwnership, plainCopy) {
-    let cycleError = getResolvedCycleError(placement)
-    let terminalCycle = !!cycleError
+function normalizeAtPathValue(value, importBoundary, cycleError, cycleIsPrivate) {
+    const terminalCycle = !!cycleError
     if (isError(value) || !isTracked(value)) return value
 
-    buildRefIndex(value, importBoundary, placement)
-    cycleError = getResolvedCycleError(placement)
-    terminalCycle ||= !!cycleError
+    if (!terminalCycle) {
+        buildRefIndex(value, importBoundary)
+    } else if (!cycleIsPrivate && !getRefCounter(importBoundary.root)) {
+        // The attached projection can be indexed safely because its cycle edge
+        // is already cut. A draining mirror's private cut cannot protect it yet.
+        buildRefIndex(importBoundary.root, importBoundary)
+    }
 
     const counter = getRefCounter(value)
     if (!counter) {
@@ -266,34 +321,18 @@ function normalizeResolved(value, importBoundary, placement, sharedOwnership, pl
         // deliberately sit outside the projected ref index.
         if (!terminalCycle) getRequiredRefCounter(value)
     } else if (counter.promiseCount > 0) {
-        markResolvedValue(value, importBoundary, true) // pin regardless of sharedOwnership
+        // The copy cannot be completed yet, so pin this issue-time branch while
+        // earlier consumers drain and later mutations COW away.
+        markShared(value)
         return onInternalResolve(waitForSettlement(value), () => {
-            return finishNormalize(
-                value,
-                importBoundary,
-                sharedOwnership,
-                plainCopy,
-                terminalCycle,
-            )
+            return finishNormalize(value, importBoundary, terminalCycle)
         })
     }
 
-    return finishNormalize(
-        value,
-        importBoundary,
-        sharedOwnership,
-        plainCopy,
-        terminalCycle,
-    )
+    return finishNormalize(value, importBoundary, terminalCycle)
 }
 
-function finishNormalize(
-    value,
-    importBoundary,
-    sharedOwnership,
-    plainCopy,
-    terminalCycle,
-) {
+function finishNormalize(value, importBoundary, terminalCycle) {
     // A private terminal cycle may deliberately be counterless. Counted
     // terminal cycles still classify first so an ordinary Error wins without
     // waiting for promises reachable only through the raw cycle frontier.
@@ -303,23 +342,23 @@ function finishNormalize(
             return new Error("normalize: branch contains errors")
         }
         if (!classification.hasCycleError) {
-            if (plainCopy) return copyToPlainValue(value)
-            markResolvedValue(value, importBoundary, sharedOwnership)
-            return value
+            return copyRawBranch(value, importBoundary).value
         }
     }
 
-    markResolvedValue(value, importBoundary, true)
-    const inspection = inspectRawCycleBranch(value, plainCopy)
+    const inspection = copyRawBranch(value, importBoundary)
     const finish = () => {
         if (inspection.hasOrdinaryError) {
             return new Error("normalize: branch contains errors")
         }
         return inspection.value
     }
-    return inspection.readiness
-        ? onInternalResolve(inspection.readiness, finish)
-        : finish()
+    if (!inspection.readiness) return finish()
+
+    // Raw cycle traversal found a Promise, so preserve this issue-time branch
+    // while its already-registered consumers complete the copy.
+    markShared(value)
+    return onInternalResolve(inspection.readiness, finish)
 }
 
 function classifyProjectedErrors(value) {
@@ -338,7 +377,7 @@ function classifyProjectedErrors(value) {
         if (counter.errorCount === 0) return
 
         for (const key of Object.keys(node)) {
-            const cycleError = getCommittedCycleError(node, key)
+            const cycleError = getCycleError(node, key)
             if (cycleError) {
                 hasCycleError = true
                 continue
@@ -354,60 +393,9 @@ function classifyProjectedErrors(value) {
     }
 }
 
-function inspectRawCycleBranch(value, plainCopy) {
-    const visited = new Map()
-    const result = {
-        hasOrdinaryError: false,
-        readiness: undefined,
-        value: undefined,
-    }
-    const root = walk(value)
-    result.value = root.value
-    result.readiness = root.readiness
-    return result
-
-    function walk(node) {
-        if (isError(node)) {
-            result.hasOrdinaryError = true
-            return { value: node, readiness: undefined }
-        }
-        if (!isTracked(node)) return { value: node, readiness: undefined }
-
-        const existing = visited.get(node)
-        if (existing) return { value: existing, readiness: undefined }
-
-        const output = plainCopy
-            ? (Array.isArray(node) ? new Array(node.length) : {})
-            : node
-        visited.set(node, output)
-        const keys = Object.keys(node)
-
-        const waits = []
-        for (const key of keys) {
-            const child = readLogicalProperty(node, key)
-            if (isPromise(child)) {
-                const mirror = getRequiredPromiseMirror(node, key, child)
-                waits.push(onPromiseMirrorResolve(mirror, () => {
-                    const nested = walk(mirror.currentValue)
-                    if (plainCopy) writeLanguageProperty(output, key, nested.value)
-                    return nested.readiness
-                }))
-            } else {
-                const nested = walk(child)
-                if (plainCopy) writeLanguageProperty(output, key, nested.value)
-                if (nested.readiness) waits.push(nested.readiness)
-            }
-        }
-        return {
-            value: output,
-            readiness: waits.length === 0 ? undefined : Promise.all(waits),
-        }
-    }
-}
-
 function markResolvedValue(value, importBoundary, sharedOwnership) {
     if (importBoundary) {
-        markImported(value, importBoundary.errorContext)
+        importValue(value, importBoundary.errorContext)
     } else if (sharedOwnership) {
         markShared(value)
     }
@@ -416,21 +404,17 @@ function markResolvedValue(value, importBoundary, sharedOwnership) {
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path) {
-    return walkObservationPath(chain, path, (value, importBoundary, placement) => {
-        return hasErrorAtPathValue(value, importBoundary, placement)
-    }, true)
+    return walkObservationPath(chain, path, hasErrorAtPathValue, true)
 }
 
 // Entry for the value reached by hasError's path resolution. This boundary must
 // build the index because its parent need not have been ref-indexed.
-function hasErrorAtPathValue(value, importBoundary, placement) {
-    if (getResolvedCycleError(placement)) return true
+function hasErrorAtPathValue(value, importBoundary, cycleError) {
+    if (cycleError) return true
     if (isError(value)) return true
     if (!isTracked(value)) return false
 
-    buildRefIndex(value, importBoundary, placement)
-    if (getResolvedCycleError(placement)) return true
-
+    buildRefIndex(value, importBoundary)
     return hasErrorInIndexedBranch(value)
 }
 
@@ -479,64 +463,74 @@ function hasErrorInIndexedBranch(value) {
             return undefined
         }
         if (nodeCounter.promiseCount === 0) return undefined
-        return collectErrorSearchWaits(node, probeResolvedMirror, visited)
+        return collectErrorSearchWaits(
+            node,
+            probeResolvedMirror,
+            visited,
+        )
     }
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path) {
     const errors = new Set()
-    let visited
-    return walkObservationPath(chain, path, (value, importBoundary, placement) => {
-        const readiness = collectErrorsAtPathValue(
-            value,
-            importBoundary,
-            placement,
-        )
+    const visited = new WeakSet()
+    return walkObservationPath(chain, path, finish, true)
+
+    function finish(value, importBoundary, cycleError) {
+        const readiness = collectErrorsAtPathValue(value, importBoundary, cycleError)
         if (!readiness) return [...errors]
         return onInternalResolve(readiness, () => [...errors])
-    }, true)
-
-    function collectErrorsAtPathValue(value, importBoundary, placement) {
-        let cycleError = getResolvedCycleError(placement)
-        if (cycleError) {
-            errors.add(cycleError)
-            return undefined
-        }
-        if (isError(value)) {
-            errors.add(value)
-            return undefined
-        }
-        if (!isTracked(value)) return undefined
-
-        buildRefIndex(value, importBoundary, placement)
-        cycleError = getResolvedCycleError(placement)
-        if (cycleError) {
-            errors.add(cycleError)
-            return undefined
-        }
-
-        visited = new WeakSet()
-        return collectErrorsInIndexedBranch(value)
     }
 
-    function collectErrorsInIndexedBranch(value) {
+    function collectErrorsAtPathValue(value, importBoundary, cycleError) {
+        // A cut target is always tracked, so it skips directly to raw collection.
+        if (!cycleError) {
+            if (isError(value)) {
+                errors.add(value)
+                return undefined
+            }
+            if (!isTracked(value)) return undefined
+            buildRefIndex(value, importBoundary)
+        }
+        if (cycleError) {
+            return collectRawErrors(
+                value,
+                importBoundary,
+                cycleError,
+                errors,
+                visited,
+            )
+        }
+        return collectErrorsInIndexedBranch(value, importBoundary)
+    }
+
+    function collectErrorsInIndexedBranch(value, importBoundary) {
         return collectErrorSearchWaits(
             value,
-            mirror => {
+            (mirror, inheritedImportBoundary) => {
                 if (mirror.cycleError) {
-                    errors.add(mirror.cycleError)
-                    return undefined
+                    return collectRawErrors(
+                        mirror.currentValue,
+                        inheritedImportBoundary,
+                        mirror.cycleError,
+                        errors,
+                        visited,
+                    )
                 }
                 if (isError(mirror.currentValue)) {
                     errors.add(mirror.currentValue)
                     return undefined
                 }
                 if (!isTracked(mirror.currentValue)) return undefined
-                return collectErrorsInIndexedBranch(mirror.currentValue)
+                return collectErrorsInIndexedBranch(
+                    mirror.currentValue,
+                    inheritedImportBoundary,
+                )
             },
             visited,
             errors,
+            importBoundary,
         )
     }
 }
@@ -548,25 +542,42 @@ function collectErrorSearchWaits(
     onPromiseValue,
     visited,
     errors = undefined,
+    inheritedImportBoundary = undefined,
 ) {
     const waitPromises = []
-    walk(value)
+    walk(value, inheritedImportBoundary)
     return waitPromises.length === 0 ? undefined : Promise.all(waitPromises)
 
-    function walk(node) {
+    function walk(node, inheritedBoundary) {
         // Query-local identity is enough here: repeated paths reach the same
         // logical node, while each query still owns an independent frontier.
         if (visited.has(node)) return
         visited.add(node)
 
+        const importBoundary = errors
+            ? nodeImportBoundary(node, inheritedBoundary)
+            : undefined
         const counter = getRequiredRefCounter(node)
         if (counter.promiseCount === 0 &&
             (!errors || counter.errorCount === 0)) return
 
         for (const key of Object.keys(node)) {
-            const cycleError = getCommittedCycleError(node, key)
+            let mirror = getPromiseMirror(node, key)
+            const propertyImportBoundary = errors
+                ? mirror?.importBoundary ?? importBoundary
+                : undefined
+            const cycleError = getCycleError(node, key)
             if (cycleError) {
-                if (errors) errors.add(cycleError)
+                if (errors) {
+                    const readiness = collectRawErrors(
+                        readLogicalProperty(node, key),
+                        propertyImportBoundary,
+                        cycleError,
+                        errors,
+                        visited,
+                    )
+                    if (readiness) waitPromises.push(readiness)
+                }
                 continue
             }
 
@@ -574,13 +585,20 @@ function collectErrorSearchWaits(
             if (isError(child)) {
                 if (errors) errors.add(child)
             } else if (isPromise(child)) {
-                const mirror = getRequiredPromiseMirror(node, key, child)
-                waitPromises.push(onPromiseMirrorResolve(mirror, () => onPromiseValue(mirror)))
+                mirror ??= getRequiredPromiseMirror(node, key, child)
+                waitPromises.push(onPromiseMirrorResolve(mirror, () => {
+                    return onPromiseValue(
+                        mirror,
+                        errors
+                            ? mirror.importBoundary ?? importBoundary
+                            : undefined,
+                    )
+                }))
             } else if (isTracked(child)) {
                 const childCounter = getRequiredRefCounter(child)
                 if (childCounter.promiseCount > 0 ||
                     (errors && childCounter.errorCount > 0)) {
-                    walk(child)
+                    walk(child, propertyImportBoundary)
                 }
             }
         }
@@ -590,8 +608,14 @@ function collectErrorSearchWaits(
 // Observational path resolution through the Chain's private root holder. Callers
 // decide whether the reached value escapes and therefore whether to mark it.
 // Every preceding value must be trackable; only the final target may be
-// missing, and an empty path targets the root.
-function walkObservationPath(chain, path, onResolved, prepareImportedParents = false) {
+// missing, and an empty path targets the root. The terminal callback receives
+// cycle state from either the plain property or the exact captured mirror.
+function walkObservationPath(
+    chain,
+    path,
+    onResolved,
+    prepareImportedParents = false,
+) {
     const targetPath = ["value", ...path]
     return walkFromParent(chain._state, 0, undefined)
 
@@ -600,14 +624,9 @@ function walkObservationPath(chain, path, onResolved, prepareImportedParents = f
         index,
         inheritedImportBoundary,
     ) {
-        if (isError(parent)) {
-            return onResolved(parent, inheritedImportBoundary)
-        }
-        if (!isTracked(parent)) {
-            return onResolved(pathAccessError(), inheritedImportBoundary)
-        }
-
         const importBoundary = nodeImportBoundary(parent, inheritedImportBoundary)
+        // Counter-based observations index from the prepared boundary root before
+        // entering a mid-path imported value, preserving downward counter closure.
         if (prepareImportedParents && importBoundary &&
             !getRefCounter(importBoundary.root)) {
             buildRefIndex(parent, importBoundary)
@@ -618,23 +637,47 @@ function walkObservationPath(chain, path, onResolved, prepareImportedParents = f
         if (isPromise(value)) {
             mirror ??= getOrCreatePromiseMirror(parent, key, value, importBoundary)
             return onPromiseMirrorResolve(mirror, () => {
+                const propertyImportBoundary = mirror.importBoundary ?? importBoundary
                 return walkValue(
                     mirror.currentValue,
                     index,
-                    mirror.importBoundary ?? importBoundary,
-                    { parent, key, mirror },
+                    propertyImportBoundary,
+                    resolvedValue => onResolved(
+                        resolvedValue,
+                        propertyImportBoundary,
+                        mirror.cycleError,
+                        mirror.pendingConsumerCount > 0,
+                    ),
                 )
             })
         }
-        return walkValue(value, index, importBoundary, { parent, key, mirror })
+        if (mirror) {
+            const propertyImportBoundary = mirror.importBoundary ?? importBoundary
+            return walkValue(value, index, propertyImportBoundary, resolvedValue => {
+                return onResolved(
+                    resolvedValue,
+                    propertyImportBoundary,
+                    mirror.cycleError,
+                    mirror.pendingConsumerCount > 0,
+                )
+            })
+        }
+        return walkValue(value, index, importBoundary, resolvedValue => {
+            return onResolved(
+                resolvedValue,
+                importBoundary,
+                getCycleError(parent, key),
+                false,
+            )
+        })
     }
 
-    function walkValue(value, index, importBoundary, placement) {
+    function walkValue(value, index, importBoundary, onTerminal) {
         if (index === targetPath.length - 1 || isError(value)) {
-            return onResolved(value, importBoundary, placement)
+            return onTerminal(value)
         }
         if (!isTracked(value)) {
-            return onResolved(pathAccessError(), importBoundary, placement)
+            return onTerminal(pathAccessError())
         }
         return walkFromParent(
             value,
@@ -642,24 +685,6 @@ function walkObservationPath(chain, path, onResolved, prepareImportedParents = f
             importBoundary,
         )
     }
-}
-
-function copyToPlainValue(value, copies = new Map()) {
-    if (!isTracked(value)) return value
-
-    const existing = copies.get(value)
-    if (existing) return existing
-
-    const copy = Array.isArray(value) ? new Array(value.length) : {}
-    copies.set(value, copy)
-
-    for (const key of Object.keys(value)) {
-        // Sanctioned write bypass: normalize(..., plainCopy) creates output data
-        // outside the runtime graph, so there is no metadata to bookkeep.
-        const child = readLogicalProperty(value, key)
-        writeLanguageProperty(copy, key, copyToPlainValue(child, copies))
-    }
-    return copy
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------

@@ -21,224 +21,328 @@ const {
     readLogicalProperty,
 } = require("./promise-mirrors")
 
+let commitLiveEdge
+let prepareImportedMirrorValue
+
+function initImport(commitLiveEdgeFn, prepareImportedMirrorValueFn) {
+    commitLiveEdge = commitLiveEdgeFn
+    prepareImportedMirrorValue = prepareImportedMirrorValueFn
+}
+
 function importValue(value, errorContext) {
     if (!errorContext) {
         reportFatalError(new Error("import requires an error context"))
     }
     if (isPromise(value)) {
-        return onValueResolve(value, settled => markImported(settled, errorContext))
+        return onValueResolve(value, settled => importResolvedValue(settled, errorContext))
     }
-    return markImported(value, errorContext)
+    return importResolvedValue(value, errorContext)
 }
 
-// Counters and queries see only attached cycle state. A draining mirror keeps
-// its prepared Error private until every consumer has completed.
-function getCommittedCycleError(node, key) {
+function importResolvedValue(value, errorContext) {
+    const createdBoundary = markImported(value, errorContext)
+    const importBoundary = nodeImportBoundary(value)
+    if (createdBoundary) {
+        prepareImportedData(importBoundary)
+    }
+    return value
+}
+
+// Returns the cycle Error currently published by this property:
+// - without a mirror, the Error in META (or undefined);
+// - with a drained mirror, the mirror's Error (or undefined);
+// - with a draining mirror, undefined because the property is still pending.
+// An operation that captured the mirror reads mirror.cycleError directly when
+// it needs that private pre-publication state.
+function getCycleError(node, key) {
     const mirror = getPromiseMirror(node, key)
     return mirror
         ? (mirror.pendingConsumerCount === 0 ? mirror.cycleError : undefined)
         : metaOf(node)?.cycleErrors?.[key]
 }
 
-// The operation that captured a placement may see its mirror's private state.
-function getResolvedCycleError(placement) {
-    if (!placement) return undefined
-    if (placement.mirror) return placement.mirror.cycleError
-    return getCommittedCycleError(placement.parent, placement.key)
-}
-
 // Detection decides when a cut is needed. Attached publication delegates one
 // atomic parent-edge/count transaction to the refcount layer.
-function commitPlacementCycleError(
-    placement,
-    cycleError,
-    commitEdge,
-) {
-    const { parent, key, mirror } = placement
-    if (getResolvedCycleError(placement)) return
+function setMetaCycleError(parent, key, importBoundary) {
+    if (getCycleError(parent, key)) return
 
-    if (mirror?.pendingConsumerCount > 0) {
+    commitLiveEdge(parent, key, () => {
+        const meta = ensureMeta(parent)
+        meta.cycleErrors ??= Object.create(null)
+        meta.cycleErrors[key] = createCycleError(
+            key,
+            importBoundary.errorContext,
+        )
+    })
+}
+
+function setMirrorCycleError(mirror, importBoundary) {
+    if (mirror.cycleError) return
+
+    const cycleError = createCycleError(
+        mirror.key,
+        importBoundary.errorContext,
+    )
+    if (mirror.pendingConsumerCount > 0) {
         mirror.cycleError = cycleError
         return
     }
 
-    const nextValue = mirror
-        ? mirror.currentValue
-        : readLogicalProperty(parent, key)
-    commitEdge(parent, key, nextValue, cycleError, () => {
-        if (mirror) {
-            mirror.cycleError = cycleError
-        } else {
-            clearCycleError(parent, key)
-            if (cycleError) setCycleError(parent, key, cycleError)
-        }
+    commitLiveEdge(mirror.node, mirror.key, () => {
+        mirror.cycleError = cycleError
     })
 }
 
-function setCycleError(node, key, cycleError) {
-    const meta = ensureMeta(node)
-    meta.cycleErrors ??= Object.create(null)
-    meta.cycleErrors[key] = cycleError
-}
-
-function clearCycleError(node, key) {
+function clearMetaCycleError(node, key) {
     const meta = metaOf(node)
     if (meta?.cycleErrors) delete meta.cycleErrors[key]
 }
 
-// Imported aliases and cycles are the only graph facts trusted data cannot
-// contain. One depth-first walk marks repeated identities shared and overlays
-// every detected cycle edge with one Error. The raw edge stays accessible to
-// lookup and mutation; error queries see the overlay and do not enter the cycle.
-// Cuts belong to owner/key placements, so extracting a value from inside a
-// cycle does not invalidate or relocate the existing cut.
-function prepareImportedData(
-    importBoundary,
-    writeTarget,
-    excludedMirror,
-    commitCycleErrorEdge,
-) {
-    // Each identity maps to the active ancestors already checked below it.
-    const visited = new WeakMap()
-    walk(importBoundary.root, importBoundary, new Set())
+function getPropertyMirror(parent, key, value, inheritedBoundary) {
+    const mirror = getPromiseMirror(parent, key)
+    if (mirror || !isPromise(value)) return mirror
+    return getOrCreatePromiseMirror(parent, key, value, inheritedBoundary)
+}
 
-    function walk(value, inheritedBoundary, currentPath, placement) {
-        if (getResolvedCycleError(placement)) return
-        if (value === writeTarget) return
+// Imported cycles are the graph fact trusted data cannot contain. The raw edge
+// stays accessible to lookup and mutation; error queries see the cycle overlay,
+// and getErrors also inspects the raw branch behind it. This preparation walk
+// never performs attachment checking.
+function prepareImportedData(importBoundary) {
+    // META persists first preparation globally. The segment-local set remains
+    // useful: it lets one DFS skip an ordinary alias without launching the
+    // fixed-path scan needed for an identity prepared in an earlier segment.
+    walkValue(
+        importBoundary.root,
+        importBoundary,
+        { currentPath: new Set(), visited: new WeakSet() },
+    )
+
+    function walkProperty(parent, key, value, inheritedBoundary, segment) {
+        if (getCycleError(parent, key)) return
+
+        const mirror = getPropertyMirror(parent, key, value, inheritedBoundary)
+        if (mirror) {
+            walkMirror(mirror, value, inheritedBoundary, segment)
+        } else if (walkValue(value, inheritedBoundary, segment)) {
+            setMetaCycleError(parent, key, inheritedBoundary)
+        }
+    }
+
+    function walkMirror(mirror, value, inheritedBoundary, segment) {
+        if (mirror.cycleError) return
+        const importBoundary = mirror.importBoundary ?? inheritedBoundary
 
         if (isPromise(value)) {
-            const { parent, key } = placement
-            let { mirror } = placement
-            if (mirror && mirror === excludedMirror) return
-            if (mirror?.promise === value) {
-                mirror.importBoundary ??= inheritedBoundary
-                mirror.ownerIsImportedOriginal = true
-            } else {
-                mirror = getOrCreatePromiseMirror(
-                    parent,
-                    key,
-                    value,
-                    inheritedBoundary,
+            // The synchronous walk removes ancestors while unwinding, so a
+            // Promise continuation keeps its captured path. Its fresh segment
+            // set distinguishes new work from nodes prepared before settlement.
+            const resumedSegment = {
+                currentPath: new Set(segment.currentPath),
+                visited: new WeakSet(),
+            }
+            onImportedPromiseResolve(mirror, importBoundary, (
+                resolvedValue,
+                resolvedBoundary,
+            ) => {
+                walkMirror(
+                    mirror,
+                    resolvedValue,
+                    resolvedBoundary,
+                    resumedSegment,
                 )
-            }
-            const promisePath = new Set(currentPath)
-            onPromiseMirrorResolve(mirror, () => walk(
-                mirror.currentValue,
+            })
+        } else if (walkValue(value, importBoundary, segment)) {
+            setMirrorCycleError(mirror, importBoundary)
+        }
+    }
+
+    // Returns true only when this value closes the current path, telling the
+    // caller to mark its incoming property. Deeper cuts are handled in place
+    // and do not propagate upward.
+    function walkValue(value, inheritedBoundary, segment) {
+        if (!isTracked(value)) return false
+        if (segment.currentPath.has(value)) {
+            markShared(value)
+            return true
+        }
+        if (segment.visited.has(value)) {
+            markShared(value)
+            return false
+        }
+        segment.visited.add(value)
+
+        // Every first preparation creates META. A later META hit therefore
+        // identifies a repeated imported identity globally, not just within
+        // this import call. Check its prepared graph against this segment's
+        // ancestry without repeating full preparation.
+        if (value !== importBoundary.root && metaOf(value)) {
+            markShared(value)
+            return scanFixedPathCycles(
+                value,
                 inheritedBoundary,
-                promisePath,
-                { parent, key, mirror },
-            ))
-            return
-        }
-        if (!isTracked(value)) return
-
-        if (currentPath.has(value)) {
-            markShared(value)
-            commitPlacementCycleError(
-                placement,
-                createCycleError(
-                    placement.key,
-                    inheritedBoundary.errorContext,
-                ),
-                commitCycleErrorEdge,
+                new Set(segment.currentPath),
             )
-            return
         }
-        const checkedAncestors = visited.get(value)
-        if (checkedAncestors) {
-            markShared(value)
-            let hasNewAncestor = false
-            for (const ancestor of currentPath) {
-                if (checkedAncestors.has(ancestor)) continue
-                checkedAncestors.add(ancestor)
-                hasNewAncestor = true
-            }
-            // Re-enter only when this path can expose a new back-edge.
-            if (!hasNewAncestor) return
-        } else {
-            visited.set(value, new Set(currentPath))
-        }
+        const meta = ensureMeta(value)
+        // markImported already classified the boundary root before adding META.
+        if (value !== importBoundary.root) meta.importedOriginal = true
 
-        const boundary = nodeImportBoundary(value, inheritedBoundary)
-        currentPath.add(value)
+        const valueImportBoundary = nodeImportBoundary(value, inheritedBoundary)
+        segment.currentPath.add(value)
         for (const key of Object.keys(value)) {
-            const mirror = getPromiseMirror(value, key)
-            walk(
+            walkProperty(
+                value,
+                key,
                 readLogicalProperty(value, key),
-                boundary,
-                currentPath,
-                { parent: value, key, mirror },
+                valueImportBoundary,
+                segment,
             )
         }
-        currentPath.delete(value)
+        segment.currentPath.delete(value)
+        return false
     }
 }
 
-// Imported ref-indexing is one import-owned operation. Refcounting supplies
-// only the generic index commit and atomic edge commit.
-function buildImportedRefIndex(
+// Search an already prepared graph only for references into one fixed path.
+// A synchronous match propagates to the placement that entered this graph:
+// storing a path-dependent cut on a shared inner node would leave a phantom if
+// that placement were revoked. A Promise reached during the scan resumes later
+// and owns its own placement cut. The immutable path needs one local visited set.
+function scanFixedPathCycles(
     value,
-    importBoundary,
-    placement,
-    prepareRoot,
-    commitRefIndex,
-    commitCycleErrorEdge,
+    inheritedBoundary,
+    fixedPath,
+    pathRootToPin = undefined,
 ) {
-    const atBoundaryRoot = importBoundary.root === value
-    if (prepareRoot) {
-        prepareImportedData(
-            importBoundary,
-            atBoundaryRoot ? placement?.parent : undefined,
-            atBoundaryRoot ? placement?.mirror : undefined,
-            commitCycleErrorEdge,
-        )
+    // A permanently pending Promise can retain this walk indefinitely, so its
+    // membership table must not keep the already visited graph alive.
+    const visited = new WeakSet()
+    return walkValue(value, inheritedBoundary)
+
+    function walkProperty(parent, key, value, inheritedBoundary) {
+        if (getCycleError(parent, key)) return false
+
+        const mirror = getPropertyMirror(parent, key, value, inheritedBoundary)
+        if (mirror) {
+            return walkMirror(mirror, value, inheritedBoundary)
+        }
+        return walkValue(value, inheritedBoundary)
     }
 
-    const cycleError = getResolvedCycleError(placement)
-    if (cycleError) {
-        commitPlacementCycleError(
-            placement,
-            cycleError,
-            commitCycleErrorEdge,
-        )
+    function walkMirror(mirror, value, inheritedBoundary) {
+        if (mirror.cycleError) return false
+        const importBoundary = mirror.importBoundary ?? inheritedBoundary
+
+        if (isPromise(value)) {
+            if (pathRootToPin) markShared(pathRootToPin)
+            onImportedPromiseResolve(mirror, importBoundary, (
+                resolvedValue,
+                resolvedBoundary,
+            ) => {
+                if (walkMirror(mirror, resolvedValue, resolvedBoundary)) {
+                    setMirrorCycleError(mirror, resolvedBoundary)
+                }
+            })
+            return false
+        }
+        return walkValue(value, importBoundary)
     }
 
-    const privateCut = cycleError &&
-        placement.mirror && placement.mirror.pendingConsumerCount > 0
-    // A draining mirror's cut is private until its final commit. Indexing
-    // this branch now could follow the raw back-reference into its owner.
-    if (prepareRoot && !privateCut) {
-        commitRefIndex(importBoundary.root, importBoundary, true)
-    }
-    if (!cycleError) {
-        commitRefIndex(value, importBoundary, true)
+    function walkValue(value, inheritedBoundary) {
+        if (!isTracked(value)) return false
+        if (fixedPath.has(value)) {
+            markShared(value)
+            return true
+        }
+        if (visited.has(value)) {
+            markShared(value)
+            return false
+        }
+        visited.add(value)
+
+        const importBoundary = nodeImportBoundary(value, inheritedBoundary)
+        for (const key of Object.keys(value)) {
+            if (walkProperty(
+                value,
+                key,
+                readLogicalProperty(value, key),
+                importBoundary,
+            )) return true
+        }
+        return false
     }
 }
 
-function prepareImportedPropertyTransition(
-    owner,
-    mirror,
-    importBoundary,
-    prepareRoot,
-    commitRefIndex,
-    commitCycleErrorEdge,
+// Assignment supplies the fixed post-COW destination path. Root placement and
+// asynchronous path retention are attachment-specific; recursive checking is
+// shared with META-bearing nodes reached by full-preparation continuations.
+function attachImportedDataToImportedData(
+    parent,
+    key,
+    attachmentPath,
+    pathRootToPin,
 ) {
-    if (prepareRoot) {
-        prepareImportedData(
-            importBoundary,
-            owner,
-            mirror,
-            commitCycleErrorEdge,
-        )
-        commitRefIndex(importBoundary.root, importBoundary, true)
+    const mirror = getPromiseMirror(parent, key)
+    const value = readLogicalProperty(parent, key)
+    const importBoundary = mirror?.importBoundary ?? nodeImportBoundary(value)
+    if (!importBoundary) return
+
+    // Later COW descent may extend attachmentPath; this property's owner can
+    // cycle only to the ancestors that already exist at its attachment point.
+    const fixedPath = new Set(attachmentPath.ancestors)
+    if (mirror && isPromise(value)) {
+        if (pathRootToPin) markShared(pathRootToPin)
+        onImportedPromiseResolve(mirror, undefined, (
+            resolvedValue,
+            resolvedBoundary,
+        ) => {
+            if (resolvedBoundary && scanFixedPathCycles(
+                resolvedValue,
+                resolvedBoundary,
+                fixedPath,
+                pathRootToPin,
+            )) {
+                setMirrorCycleError(mirror, resolvedBoundary)
+            }
+        })
+        return
     }
+
+    if (scanFixedPathCycles(
+        value,
+        importBoundary,
+        fixedPath,
+        attachmentPath.root,
+    )) {
+        if (mirror) {
+            setMirrorCycleError(mirror, importBoundary)
+        } else {
+            setMetaCycleError(parent, key, importBoundary)
+        }
+    }
+}
+
+// The mirror object is the property-version identity. Same-Promise assignment
+// installs a fresh mirror; an earlier walk intentionally keeps this captured one.
+function onImportedPromiseResolve(mirror, inheritedBoundary, onResolved) {
+    mirror.importPreparationRegistered = true
+    onPromiseMirrorResolve(mirror, () => {
+        const importBoundary = mirror.importBoundary ?? inheritedBoundary
+        if (importBoundary) {
+            mirror.importBoundary = importBoundary
+            onResolved(mirror.currentValue, importBoundary)
+        }
+        // This builds a child index only when the owner is already indexed.
+        // A later walk may still publish additional path-dependent cuts.
+        prepareImportedMirrorValue(mirror)
+    })
 }
 
 module.exports = {
-    buildImportedRefIndex,
-    clearCycleError,
-    getCommittedCycleError,
-    getResolvedCycleError,
+    attachImportedDataToImportedData,
+    clearMetaCycleError,
+    getCycleError,
+    initImport,
     import: importValue,
-    prepareImportedPropertyTransition,
 }

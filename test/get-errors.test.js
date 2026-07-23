@@ -16,6 +16,7 @@ const {
     thrownBy,
     verifyRefCounts,
 } = require("./support")
+const { collectRawErrors } = require("../src/raw-walk")
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)
@@ -41,7 +42,7 @@ describe("getErrors", () => {
         }
     })
 
-    it("stops at cycle cuts while collecting ordinary sibling Errors", () => {
+    it("continues through cycle cuts while collecting ordinary Errors", () => {
         const siblingError = new Error("sibling")
         const hiddenError = new Error("hidden")
         const left = { siblingError }
@@ -57,8 +58,119 @@ describe("getErrors", () => {
         expect(cycleError instanceof Error).to.be(true)
         expectErrors(errors, [siblingError, hiddenError, cycleError])
         expect(hasError(chain, [])).to.be(true)
-        expectErrors(getErrors(chain, ["right"]), [hiddenError, cycleError])
-        expectErrors(getErrors(new Chain(right), []), [hiddenError, cycleError])
+        expectErrors(
+            getErrors(chain, ["right"]),
+            [siblingError, hiddenError, cycleError],
+        )
+        expectErrors(
+            getErrors(new Chain(right), []),
+            [siblingError, hiddenError, cycleError],
+        )
+    })
+
+    it("waits for errors reachable only behind a cycle cut", async () => {
+        const pending = deferred()
+        const visible = deferred()
+        const hiddenError = new Error("hidden")
+        const promisedError = new Error("promised")
+        const visibleError = new Error("visible")
+        const first = {
+            hiddenError,
+            pending: pending.promise,
+        }
+        const second = {
+            back: first,
+            visible: visible.promise,
+        }
+        first.next = second
+        importValue(first, "raw error collection")
+        const chain = new Chain(second)
+        const cycleError = metaOf(second).cycleErrors.back
+
+        expect(hasError(chain, [])).to.be(true)
+        const result = getErrors(chain, [])
+        let settled = false
+        result.then(() => {
+            settled = true
+        })
+
+        await flushMicrotasks()
+        expect(settled).to.be(false)
+
+        pending.resolve({ promisedError })
+        visible.resolve({ visibleError })
+        expectErrors(
+            await result,
+            [hiddenError, promisedError, visibleError, cycleError],
+        )
+    })
+
+    it("collects behind a private mid-branch mirror cut", async () => {
+        const pending = deferred()
+        const hiddenError = new Error("outside queried branch")
+        const root = {
+            hiddenError,
+            branch: { pending: pending.promise },
+        }
+        importValue(root, "private mid-branch cycle")
+        const chain = new Chain(root)
+
+        const result = getErrors(chain, ["branch"])
+        pending.resolve(root)
+
+        const errors = await result
+        const cycleError = metaOf(root.branch).mirrors.pending.cycleError
+        expectErrors(errors, [hiddenError, cycleError])
+        expect(cycleError.message).to.be(
+            'Cyclic property "pending" (imported at: private mid-branch cycle)',
+        )
+        verifyRefCounts(root)
+    })
+
+    it("walks non-extensible values behind a cycle cut", async () => {
+        const pending = deferred()
+        const directError = new Error("frozen direct")
+        const promisedError = new Error("frozen promised")
+        const frozen = Object.freeze({
+            directError,
+            pending: pending.promise,
+        })
+        const first = { frozen }
+        const second = { back: first }
+        first.next = second
+        importValue(first, "frozen raw cycle")
+
+        const result = getErrors(new Chain(second), [])
+        pending.resolve({ promisedError })
+
+        expectErrors(
+            await result,
+            [directError, promisedError, metaOf(second).cycleErrors.back],
+        )
+        expect(frozen.pending).to.be(pending.promise)
+        verifyRefCounts(second)
+    })
+
+    it("visits a pending island once across counted and raw paths", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const rejection = new Error("shared pending island")
+        const island = { pending: pending.promise }
+        const first = { island }
+        const second = { back: first, island }
+        first.next = second
+        importValue(first, "counted and raw dedup")
+        const registrationsBeforeQuery = registrations()
+
+        const result = getErrors(new Chain(second), [])
+
+        expect(registrations()).to.be(registrationsBeforeQuery + 1)
+        pending.reject(rejection)
+        expectErrors(
+            await result,
+            [rejection, metaOf(second).cycleErrors.back],
+        )
+        verifyRefCounts(second)
     })
 
     it("returns immediate path results synchronously", () => {
@@ -210,9 +322,9 @@ describe("getErrors", () => {
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
-        // The repeated child contributes two new import paths, but no second
-        // getErrors wait for the already-visited identity.
-        expect(registrations()).to.be(5)
+        // The repeated child adds one fixed-path continuation but no second
+        // query wait.
+        expect(registrations()).to.be(4)
         expect(metaOf(child).shared).to.be(true)
 
         pending.reject("bad")
@@ -295,6 +407,34 @@ describe("getErrors", () => {
         later.reject(laterError)
         expect(await foundAfter).to.be(true)
         verifyRefCounts(chain._state.value)
+    })
+
+    it("indexes imported promise values between preparation consumers", async () => {
+        for (const query of [hasError, getErrors]) {
+            const late = deferred()
+            const bridge = deferred()
+            const error = new Error("late imported error")
+            const shared = { late: late.promise }
+            const root = importValue(
+                { shared, bridge: bridge.promise },
+                "interleaved import preparation",
+            )
+            const result = query(new Chain(root), [])
+
+            // Revisiting shared through bridge registers another preparation
+            // consumer after the query has already registered on late.
+            bridge.resolve(shared)
+            await flushMicrotasks()
+            late.resolve({ bad: error })
+
+            const answer = await result
+            if (query === hasError) {
+                expect(answer).to.be(true)
+            } else {
+                expectErrors(answer, [error])
+            }
+            verifyRefCounts(root)
+        }
     })
 
     it("coexists with normalize on the same pinned branch", async () => {
@@ -443,6 +583,65 @@ describe("getErrors", () => {
         )
         expect(chain._state.value.pending).to.be("replacement")
         expect(branch.pending).to.be(pending.promise)
+    })
+
+    it("collects a private terminal cycle after a COW overwrite", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        importValue(branch, "private terminal cycle")
+        const chain = new Chain(branch)
+
+        const result = getErrors(chain, ["pending"])
+        assignPath(chain, ["pending"], "replacement")
+        pending.resolve(branch)
+
+        const errors = await result
+        expect(errors.length).to.be(1)
+        expect(errors[0].message).to.be(
+            'Cyclic property "pending" (imported at: private terminal cycle)',
+        )
+        expect(chain._state.value.pending).to.be("replacement")
+    })
+
+    it("collects raw cycle errors without requiring counters", () => {
+        const hidden = new Error("hidden raw error")
+        const first = { hidden }
+        const second = { back: first }
+        first.next = second
+        importValue(first, "counterless raw cycle")
+
+        const errors = new Set()
+        const readiness = collectRawErrors(
+            first,
+            metaOf(first).importBoundary,
+            metaOf(second).cycleErrors.back,
+            errors,
+            new WeakSet(),
+        )
+
+        expect(readiness).to.be(undefined)
+        expectErrors(
+            [...errors],
+            [hidden, metaOf(second).cycleErrors.back],
+        )
+        expect(getRefCounter(first)).to.be(undefined)
+        expect(getRefCounter(second)).to.be(undefined)
+    })
+
+    it("collects a committed terminal cut through the public API", () => {
+        const hidden = new Error("public counterless raw error")
+        const first = { hidden }
+        const second = { back: first }
+        first.next = second
+        importValue(first, "public counterless cycle")
+
+        const errors = getErrors(new Chain(second), ["back"])
+
+        expectErrors(
+            errors,
+            [hidden, metaOf(second).cycleErrors.back],
+        )
+        expect(getRefCounter(first)).to.be(undefined)
     })
 
     it("resolves promised paths and root promises", async () => {

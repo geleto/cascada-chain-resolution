@@ -3,7 +3,7 @@ const { spawnSync } = require("child_process")
 const {
     onPromiseMirrorResolve,
 } = require("../src/promise-mirrors")
-const { getCommittedCycleError } = require("../src/import")
+const { getCycleError } = require("../src/import")
 
 const {
     Chain,
@@ -308,12 +308,12 @@ describe("promise mirrors and lookupPath", () => {
         buildRefIndex(root)
         const mirror = metaOf(root).mirrors.value
         let privateCycleError
-        let committedCycleError
+        let publishedCycleError
         let countsDuringDrain
 
         onPromiseMirrorResolve(mirror, () => {
             privateCycleError = mirror.cycleError
-            committedCycleError = getCommittedCycleError(root, "value")
+            publishedCycleError = getCycleError(root, "value")
             countsDuringDrain = getRefCounts(root)
         })
 
@@ -321,9 +321,9 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(privateCycleError instanceof Error).to.be(true)
-        expect(committedCycleError).to.be(undefined)
+        expect(publishedCycleError).to.be(undefined)
         expect(countsDuringDrain).to.eql([1, 0])
-        expect(getCommittedCycleError(root, "value")).to.be(privateCycleError)
+        expect(getCycleError(root, "value")).to.be(privateCycleError)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -399,7 +399,7 @@ describe("promise mirrors and lookupPath", () => {
         })
         onInternalResolve(readJob.promise, () => {
             read = lookupPath(chain, ["branch", "x"], false)
-            normalized = normalize(chain, ["branch"], false)
+            normalized = normalize(chain, ["branch"])
             countsDuringGap = getRefCounts(root)
             verifyRefCounts(root)
         })
@@ -751,8 +751,12 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
 
+        // The pre-existing mirror makes root a trusted runtime island, so its
+        // language-owned property receives the rejection Error physically.
         expect(root.branch instanceof Error).to.be(true)
-        expect(root.branch.message).to.be("fork boom")
+        const rootError = lookupPath(new Chain(root), ["branch"], false)
+        expect(rootError instanceof Error).to.be(true)
+        expect(rootError.message).to.be("fork boom")
         expect(left.branch instanceof Error).to.be(true)
         expect(left.branch.message).to.be("fork boom")
         expect(right.branch instanceof Error).to.be(true)
@@ -1154,7 +1158,12 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve({})
 
         expect(await foundError).to.be(false)
-        expect(await normalized).to.be(root)
+        const normalizedValue = await normalized
+        expect(normalizedValue).not.to.be(root)
+        expect(normalizedValue).to.eql({
+            left: { x: 1 },
+            right: { y: 2 },
+        })
         expect(root.left).to.eql({ x: 1 })
         expect(root.right).to.eql({ y: 2 })
         expect(root.left).not.to.be(root.right)
@@ -1175,7 +1184,8 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(resolved)
 
         const normalizedValue = await normalized
-        expect(normalizedValue).to.be(root)
+        expect(normalizedValue).not.to.be(root)
+        expect(normalizedValue.value.again).to.be(normalizedValue.value)
         expect(await foundError).to.be(true)
         expect(resolved.again).to.be(pending.promise)
         expectCounts(root, 0, 1)
@@ -1198,7 +1208,8 @@ describe("promise mirrors and lookupPath", () => {
         second.resolve(secondValue)
 
         const normalizedValue = await normalized
-        expect(normalizedValue).to.be(root)
+        expect(normalizedValue).not.to.be(root)
+        expect(normalizedValue.value.next.back).to.be(normalizedValue.value)
         expect(await foundError).to.be(true)
         expect(firstValue.next).to.be(second.promise)
         expectCounts(root, 0, 1)

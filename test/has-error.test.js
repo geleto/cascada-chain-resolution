@@ -141,7 +141,7 @@ describe("hasError", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("indexes pending descendants under a non-extensible branch", async () => {
+    it("reuses indexed descendants under a non-extensible branch", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
 
@@ -159,7 +159,8 @@ describe("hasError", () => {
 
         expect(await result).to.be(false)
         expect(getRefCounter(wrapper).promiseCount).to.be(0)
-        expect(child.pending).to.be(pending.promise)
+        expect(child.pending).to.be("done")
+        expect(lookupPath(new Chain(child), ["pending"], false)).to.be("done")
         verifyRefCounts(wrapper)
     })
 

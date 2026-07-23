@@ -12,12 +12,14 @@ const hasOwn = Object.prototype.hasOwnProperty
 
 function createMeta() {
     return {
+        // An empty record can also mean imported preparation visited the node.
         // shared: added when ownership first becomes shared.
         // mirrors: added when the first promise mirror is installed.
         // cycleErrors: added when the first cycle cut is published.
         // promiseCount, errorCount, parents: added together by ref-indexing.
         // settlementPromise, settlementResolve: added by a pending normalize.
         // importBoundary: added at a direct import boundary.
+        // importedOriginal: added to objects owned by imported host data.
     }
 }
 
@@ -67,15 +69,24 @@ function markShared(value) {
     return value
 }
 
-// A direct mark makes the value the root of its own imported boundary.
-// Descendants inherit that boundary until independent use creates another one.
+// A direct mark makes the value the root of its own imported boundary and
+// returns whether that boundary was created. A metadata-free root is new host
+// data; existing META identifies a trusted runtime island. Descendants inherit
+// the boundary until independent use creates another one.
 function markImported(value, errorContext) {
-    if (!isTracked(value)) return value
+    if (!isTracked(value)) return false
 
-    const meta = ensureMeta(value)
-    meta.importBoundary ??= { root: value, errorContext }
+    let meta = metaOf(value)
+    if (!meta) {
+        meta = ensureMeta(value)
+        meta.importedOriginal = true
+    }
+    const createdBoundary = !meta.importBoundary
+    if (createdBoundary) {
+        meta.importBoundary = { root: value, errorContext }
+    }
     meta.shared = true
-    return value
+    return createdBoundary
 }
 
 function nodeImportBoundary(node, inherited) {
@@ -83,7 +94,7 @@ function nodeImportBoundary(node, inherited) {
     return own === undefined ? inherited : own
 }
 
-// Each cycle cut stores its attributed Error directly on the owner/key placement.
+// Each cycle cut stores its attributed Error directly on the owner/key property.
 module.exports = {
     ensureMeta,
     hasSharedMark,

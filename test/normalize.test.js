@@ -24,7 +24,7 @@ describe("normalize", () => {
         const root = { value: pending.promise }
         importValue(root, "re-entrant cycle")
         const chain = new Chain(root)
-        const normalized = normalize(chain, ["value"], false, true)
+        const normalized = normalize(chain, ["value"])
         const mirror = metaOf(root).mirrors.value
         const resolved = { back: root }
 
@@ -38,21 +38,21 @@ describe("normalize", () => {
         verifyRefCounts(root)
     })
 
-    it("preserves cycle topology by identity or in a plain copy", () => {
+    it("preserves cycle and DAG topology in a metadata-free copy", () => {
         const shared = { leaf: true }
         const root = { left: shared, right: shared }
         root.self = root
         importValue(root, "normalize topology")
         const chain = new Chain(root)
 
-        const value = normalize(chain, [])
-        const copy = normalize(chain, [], true, true)
+        const copy = normalize(chain, [])
 
-        expect(value).to.be(root)
         expect(copy).not.to.be(root)
         expect(copy.self).to.be(copy)
         expect(copy.left).to.be(copy.right)
         expect(copy.left).not.to.be(shared)
+        expect(metaOf(copy)).to.be(undefined)
+        expect(metaOf(copy.left)).to.be(undefined)
         expect(hasError(chain, [])).to.be(true)
         expect(getErrors(chain, []).length).to.be(1)
         verifyRefCounts(root)
@@ -68,7 +68,6 @@ describe("normalize", () => {
         const chain = new Chain(left)
 
         const result = normalize(chain, [])
-        const plainResult = normalize(chain, [], true, true)
         let settled = false
         result.then(() => {
             settled = true
@@ -77,8 +76,7 @@ describe("normalize", () => {
         expect(settled).to.be(false)
 
         pending.resolve({ done: true })
-        expect(await result).to.be(left)
-        const copy = await plainResult
+        const copy = await result
         expect(copy).not.to.be(left)
         expect(copy.right.left).to.be(copy)
         expect(copy.right.pending).to.eql({ done: true })
@@ -126,9 +124,10 @@ describe("normalize", () => {
         importValue(root, "clean cyclic subpath")
         const chain = new Chain(root)
 
-        const clean = normalize(chain, ["child", "clean"], false)
+        const clean = normalize(chain, ["child", "clean"])
 
-        expect(clean).to.be(root.child.clean)
+        expect(clean).to.eql(root.child.clean)
+        expect(clean).not.to.be(root.child.clean)
         expect(hasError(chain, [])).to.be(true)
         expect(hasError(chain, ["child", "clean"])).to.be(false)
     })
@@ -141,43 +140,46 @@ describe("normalize", () => {
         const primitive = normalize(new Chain(root), ["primitive"])
         const missing = normalize(new Chain(root), ["missing"])
         const broken = normalize(new Chain(root), ["missing", "value"])
-        const copy = normalize(new Chain(root), ["branch"], true, true)
         const waiting = normalize(new Chain({ branch: { pending: pending.promise } }), ["branch"])
 
-        expect(branch).to.be(root.branch)
+        expect(branch).to.eql(root.branch)
+        expect(branch).not.to.be(root.branch)
         expect(primitive).to.be(2)
         expect(missing).to.be(undefined)
         expect(broken instanceof Error).to.be(true)
         expect(broken.message).to.be(
             "Cannot access property through missing or primitive value",
         )
-        expect(copy).to.eql({ x: 1 })
         expect(typeof waiting.then).to.be("function")
     })
 
-    it("returns settled clean branches synchronously and marks returned branches", () => {
+    it("returns settled clean branches synchronously as independent copies", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
         const value = normalize(new Chain(root), ["branch"])
         assignPath(new Chain(root), ["branch", "x"], 2)
 
-        expect(value).to.be(branch)
-        expect(root.branch).not.to.be(branch)
-        expect(branch.x).to.be(1)
+        expect(value).not.to.be(branch)
+        expect(metaOf(value)).to.be(undefined)
+        expect(root.branch).to.be(branch)
+        expect(branch.x).to.be(2)
         expect(root.branch.x).to.be(2)
+        expect(value.x).to.be(1)
     })
 
-    it("marks valid imported branches even when shared ownership is ceded", () => {
+    it("does not expose imported metadata", () => {
         const root = { branch: { x: 1 } }
         const branch = root.branch
 
         importValue(root, "valid normalize import")
-        const value = normalize(new Chain(root), ["branch"], false)
+        const value = normalize(new Chain(root), ["branch"])
 
-        expect(value).to.be(branch)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
-        expect(metaOf(branch).importBoundary.errorContext).to.be("valid normalize import")
+        expect(value).to.eql(branch)
+        expect(value).not.to.be(branch)
+        expect(metaOf(value)).to.be(undefined)
+        expect(metaOf(root).importBoundary.root).to.be(root)
+        expect(metaOf(root).importBoundary.errorContext).to.be("valid normalize import")
     })
 
     it("protects fast-path results from already-issued suspended writes", async () => {
@@ -188,49 +190,51 @@ describe("normalize", () => {
         assignPath(new Chain(pendingRoot.promise), ["branch", "x"], 2)
         const value = normalize(new Chain(root), ["branch"])
 
-        expect(value).to.be(branch)
+        expect(value).not.to.be(branch)
         expect(value).to.eql({ x: 1 })
 
         pendingRoot.resolve(root)
         await flushMicrotasks()
 
-        expect(value).to.be(branch)
+        expect(value).not.to.be(branch)
         expect(value).to.eql({ x: 1 })
-        expect(root.branch).not.to.be(branch)
+        expect(root.branch).to.be(branch)
         expect(root.branch).to.eql({ x: 2 })
         verifyRefCounts(branch, root.branch)
     })
 
-    it("can return settled branches without sharing ownership", () => {
-        const root = { branch: { x: 1 } }
-        const branch = root.branch
-
-        const value = normalize(new Chain(root), ["branch"], false)
-        assignPath(new Chain(root), ["branch", "x"], 2)
-
-        expect(value).to.be(branch)
-        expect(root.branch).to.be(branch)
-        expect(branch.x).to.be(2)
-    })
-
-    it("returns plain copies without marking the original branch", () => {
+    it("protects the source from native mutations of normalized output", () => {
         const child = { x: 1 }
         const branch = { left: child, right: child }
         const root = { branch }
 
-        const copy = normalize(new Chain(root), ["branch"], true, true)
-        assignPath(new Chain(root), ["branch", "left", "x"], 2)
+        const copy = normalize(new Chain(root), ["branch"])
+        copy.left.x = 2
 
         expect(copy).not.to.be(branch)
         expect(copy.left).to.be(copy.right)
         expect(copy.left).not.to.be(child)
-        expect(copy.left.x).to.be(1)
+        expect(copy.left.x).to.be(2)
         expect(root.branch).to.be(branch)
-        expect(child.x).to.be(2)
+        expect(child.x).to.be(1)
         expect(metaOf(copy)).to.be(undefined)
+        expect(metaOf(copy.left)).to.be(undefined)
     })
 
-    it("plain-copies sparse arrays and preserves DAG identity", () => {
+    it("reimports native-mutated output as fresh external data", () => {
+        const output = normalize(new Chain({ value: { x: 1 } }), [])
+        output.value.back = output
+
+        importValue(output, "normalized round trip")
+
+        const errors = getErrors(new Chain(output), [])
+        expect(errors.length).to.be(1)
+        expect(errors[0].message).to.be(
+            'Cyclic property "back" (imported at: normalized round trip)',
+        )
+    })
+
+    it("copies sparse arrays and preserves DAG identity", () => {
         const child = { x: 1 }
         const ignoredSymbol = Symbol("ignored")
         const root = new Array(4)
@@ -242,7 +246,7 @@ describe("normalize", () => {
             enumerable: false,
         })
 
-        const copy = normalize(new Chain(root), [], true, true)
+        const copy = normalize(new Chain(root), [])
 
         expect(Array.isArray(copy)).to.be(true)
         expect(copy.length).to.be(4)
@@ -281,28 +285,11 @@ describe("normalize", () => {
         pending.resolve("done")
         const value = await result
 
-        expect(value).to.be(branch)
+        expect(value).not.to.be(branch)
         expect(value).to.eql({ pending: "done" })
         expect(root.branch).not.to.be(branch)
         expect(root.branch).to.eql({ pending: "done", later: 2 })
         verifyRefCounts(branch, root.branch)
-    })
-
-    it("pins pending branches even without shared ownership", async () => {
-        const pending = deferred()
-        const root = { branch: { pending: pending.promise } }
-        const branch = root.branch
-
-        const result = normalize(new Chain(root), ["branch"], false)
-        assignPath(new Chain(root), ["branch", "later"], 2)
-
-        pending.resolve("done")
-        const value = await result
-
-        expect(value).to.be(branch)
-        expect(value).to.eql({ pending: "done" })
-        expect(root.branch).not.to.be(branch)
-        expect(root.branch).to.eql({ pending: "done", later: 2 })
     })
 
     it("shares one settlement wait between pending callers", async () => {
@@ -320,30 +307,38 @@ describe("normalize", () => {
         pending.resolve("done")
         const values = await Promise.all([first, second])
 
-        expect(values).to.eql([branch, branch])
+        expect(values).to.eql([
+            { pending: "done" },
+            { pending: "done" },
+        ])
+        expect(values[0]).not.to.be(branch)
+        expect(values[1]).not.to.be(branch)
+        expect(values[0]).not.to.be(values[1])
         expect(metaOf(branch).settlementPromise).to.be(undefined)
         expect(metaOf(branch).settlementResolve).to.be(undefined)
     })
 
-    it("keeps caller return modes independent on one settlement wait", async () => {
+    it("gives callers independent copies from one settlement wait", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const chain = new Chain({ branch })
 
-        const directResult = normalize(chain, ["branch"])
+        const firstResult = normalize(chain, ["branch"])
         const settlementPromise = metaOf(branch).settlementPromise
-        const plainResult = normalize(chain, ["branch"], true, true)
+        const secondResult = normalize(chain, ["branch"])
 
         expect(metaOf(branch).settlementPromise).to.be(settlementPromise)
         pending.resolve({ done: true })
 
-        const direct = await directResult
-        const plain = await plainResult
-        expect(direct).to.be(branch)
-        expect(plain).not.to.be(branch)
-        expect(plain).to.eql({ pending: { done: true } })
-        expect(metaOf(plain)).to.be(undefined)
-        expect(metaOf(plain.pending)).to.be(undefined)
+        const first = await firstResult
+        const second = await secondResult
+        expect(first).not.to.be(branch)
+        expect(second).not.to.be(branch)
+        expect(first).not.to.be(second)
+        expect(first).to.eql({ pending: { done: true } })
+        expect(second).to.eql(first)
+        expect(metaOf(first)).to.be(undefined)
+        expect(metaOf(first.pending)).to.be(undefined)
         verifyRefCounts(branch)
     })
 
@@ -357,7 +352,6 @@ describe("normalize", () => {
         const childSettlement = metaOf(child).settlementPromise
         const rootResult = normalize(chain, [])
         const rootSettlement = metaOf(root).settlementPromise
-        const plainRootResult = normalize(chain, [], true, true)
 
         expect(childSettlement).to.be.ok()
         expect(rootSettlement).to.be.ok()
@@ -367,12 +361,11 @@ describe("normalize", () => {
         pending.resolve({ done: true })
         const childValue = await childResult
         const rootValue = await rootResult
-        const plainRoot = await plainRootResult
 
-        expect(childValue).to.be(child)
-        expect(rootValue).to.be(root)
-        expect(plainRoot).to.eql({ child: { pending: { done: true } } })
-        expect(plainRoot).not.to.be(root)
+        expect(childValue).to.eql({ pending: { done: true } })
+        expect(childValue).not.to.be(child)
+        expect(rootValue).to.eql({ child: { pending: { done: true } } })
+        expect(rootValue).not.to.be(root)
         verifyRefCounts(root)
     })
 
@@ -386,7 +379,7 @@ describe("normalize", () => {
         pending.resolve({})
         const value = await result
 
-        expect(value).to.be(root.branch)
+        expect(value).not.to.be(root.branch)
         expect(value).to.eql({ x: 1 })
         verifyRefCounts(root)
     })
@@ -402,7 +395,7 @@ describe("normalize", () => {
         pending.resolve({ keep: true, remove: true })
         const value = await result
 
-        expect(value).to.be(root.branch)
+        expect(value).not.to.be(root.branch)
         expect(value).to.eql({ keep: true })
         verifyRefCounts(root)
     })
@@ -578,7 +571,7 @@ describe("normalize", () => {
         pending.resolve({ e: new Error("transient") })
         const value = await result
 
-        expect(value).to.be(root.branch)
+        expect(value).not.to.be(root.branch)
         expect(value).to.eql({ inner: { e: "fixed" } })
         verifyRefCounts(root)
     })
@@ -628,7 +621,7 @@ describe("normalize", () => {
         // The watched counter zeroed independently of the copy world's.
         expect(settled).to.be(true)
         const value = await result
-        expect(value).to.be(branch)
+        expect(value).not.to.be(branch)
         expect(value).to.eql({ pending: "done" })
         expect(getRefCounter(root.branch).promiseCount).to.be(2)
 
@@ -652,31 +645,71 @@ describe("normalize", () => {
 
         expect(current).not.to.be(original)
         first.resolve("first done")
-        expect(await originalResult).to.be(original)
+        const originalOutput = await originalResult
+        expect(originalOutput).not.to.be(original)
+        expect(originalOutput).to.eql({ first: "first done" })
         expect(original).to.eql({ first: "first done" })
         expectCounts(current, 1, 0)
 
         const currentResult = normalize(chain, ["branch"])
         second.resolve("second done")
-        expect(await currentResult).to.be(current)
+        const currentOutput = await currentResult
+        expect(currentOutput).not.to.be(current)
+        expect(currentOutput).to.eql({
+            first: "first done",
+            second: "second done",
+        })
         expect(current).to.eql({ first: "first done", second: "second done" })
         verifyRefCounts(original, current)
     })
 
     it("preserves cyclic imports while exposing their diagnostics separately", () => {
-        const branch = {}
-        branch.self = branch
+        const cyclic = {}
+        cyclic.self = cyclic
+        const branch = { cyclic }
         const root = { branch }
 
         importValue(root, "normalize import")
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(metaOf(branch).importBoundary).to.be(undefined)
         const value = normalize(new Chain(root), ["branch"])
 
-        expect(value).to.be(branch)
+        expect(value).not.to.be(branch)
+        expect(value.cyclic.self).to.be(value.cyclic)
         expect(hasError(new Chain(root), ["branch"])).to.be(true)
-        expect(metaOf(branch).shared).to.be(true)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
-        expect(metaOf(branch).importBoundary.errorContext).to.be("normalize import")
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(metaOf(branch).importBoundary).to.be(undefined)
         expect(getRefCounter(branch).errorCount).to.be(1)
+    })
+
+    it("does not pin synchronous imported cycle failures", () => {
+        const cyclic = { bad: new Error("hidden") }
+        cyclic.self = cyclic
+        const branch = { cyclic }
+        const root = { branch }
+
+        importValue(root, "synchronous cycle failure")
+        const result = normalize(new Chain(root), ["branch"])
+
+        expect(result instanceof Error).to.be(true)
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(metaOf(branch).importBoundary).to.be(undefined)
+    })
+
+    it("pins pending imported branches without making them import roots", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        const root = { branch }
+
+        importValue(root, "pending normalize pin")
+        const result = normalize(new Chain(root), ["branch"])
+
+        expect(metaOf(branch).shared).to.be(true)
+        expect(metaOf(branch).importBoundary).to.be(undefined)
+
+        pending.resolve("done")
+        expect(await result).to.eql({ pending: "done" })
+        expect(metaOf(branch).importBoundary).to.be(undefined)
     })
 
     it("normalizes promises inside frozen branches through mirrors", async () => {
@@ -685,12 +718,12 @@ describe("normalize", () => {
         const pending = Object.freeze({ pending: promise })
 
         importValue(pending, "frozen normalize")
-        const copied = normalize(new Chain(valid), [], true, true)
+        const copied = normalize(new Chain(valid), [])
         const normalized = normalize(new Chain(pending), [])
 
         expect(copied).to.eql({ x: 1 })
         expect(copied).not.to.be(valid)
-        expect(await normalized).to.be(pending)
+        expect(await normalized).to.eql({ pending: 1 })
         expect(pending.pending).to.be(promise)
         expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
         expect(getRefCounter(valid)).not.to.be(undefined)
@@ -698,19 +731,21 @@ describe("normalize", () => {
         verifyRefCounts(valid, pending)
     })
 
-    it("returns clean frozen branches synchronously without copying", () => {
+    it("returns clean frozen branches synchronously as copies", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
         importValue(frozen, "clean frozen normalize")
 
-        const value = normalize(new Chain(frozen), [], false)
+        const value = normalize(new Chain(frozen), [])
 
-        expect(value).to.be(frozen)
+        expect(value).to.eql({ nested: { value: 1 } })
+        expect(value).not.to.be(frozen)
+        expect(value.nested).not.to.be(frozen.nested)
         expect(getRefCounter(frozen)).not.to.be(undefined)
         expect(getRefCounter(frozen.nested)).not.to.be(undefined)
         verifyRefCounts(frozen)
     })
 
-    it("waits for an indexed child beneath a frozen ancestor", async () => {
+    it("waits for a trusted indexed child beneath a frozen ancestor", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
 
@@ -722,8 +757,10 @@ describe("normalize", () => {
 
         expect(getRefCounter(frozen).promiseCount).to.be(1)
         pending.resolve("done")
-        expect(await normalized).to.be(frozen)
-        expect(child.pending).to.be(pending.promise)
+        expect(await normalized).to.eql({ child: { pending: "done" } })
+        // Existing META makes child a trusted runtime island rather than a
+        // newly imported original holder.
+        expect(child.pending).to.be("done")
         expect(lookupPath(new Chain(frozen), ["child", "pending"], false)).to.be("done")
         verifyRefCounts(frozen)
     })

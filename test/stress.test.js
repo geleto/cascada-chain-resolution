@@ -16,7 +16,7 @@ const {
 } = require("./support")
 
 describe("bounded stress", () => {
-    it("indexes, probes, settles, and plain-copies a deep branch", async () => {
+    it("indexes, probes, settles, and copies a deep branch", async () => {
         const depth = 256
         const pending = deferred()
         let root = { pending: pending.promise }
@@ -28,13 +28,11 @@ describe("bounded stress", () => {
 
         const foundError = hasError(chain, [])
         const normalized = normalize(chain, [])
-        const plainCopy = normalize(chain, [], true, true)
 
         pending.resolve("done")
 
         expect(await foundError).to.be(false)
-        expect(await normalized).to.be(root)
-        const copy = await plainCopy
+        const copy = await normalized
         expect(copy).not.to.be(root)
 
         let sourceNode = root
@@ -96,9 +94,10 @@ describe("bounded stress", () => {
         pending[depth - 1].resolve({ done: true })
 
         expect(await foundError).to.be(false)
-        expect(await normalized).to.be(root)
+        const normalizedValue = await normalized
+        expect(normalizedValue).not.to.be(root)
 
-        let node = root.value
+        let node = normalizedValue.value
         for (let i = 0; i < depth - 1; i++) {
             node = node.next
         }

@@ -10,7 +10,6 @@ const {
 } = require("./error")
 const {
     ensureMeta,
-    markImported,
     markShared,
     metaOf,
     nodeImportBoundary,
@@ -24,10 +23,9 @@ const {
     readLogicalProperty,
 } = require("./promise-mirrors")
 const {
-    buildImportedRefIndex,
-    clearCycleError,
-    getCommittedCycleError,
-    prepareImportedPropertyTransition,
+    clearMetaCycleError,
+    getCycleError,
+    initImport,
 } = require("./import")
 const { writeLanguageProperty } = require("./validate")
 
@@ -56,30 +54,26 @@ function getRefCounts(value) {
 function getPropertyRefCounts(parent, key) {
     const mirror = getPromiseMirror(parent, key)
     if (mirror && mirror.pendingConsumerCount > 0) return [1, 0]
-    if (getCommittedCycleError(parent, key)) return [0, 1]
+    if (getCycleError(parent, key)) return [0, 1]
     return getRefCounts(readLogicalProperty(parent, key))
 }
 
 function getCountedChild(parent, key) {
     const mirror = getPromiseMirror(parent, key)
     if (mirror && mirror.pendingConsumerCount > 0) return undefined
-    if (getCommittedCycleError(parent, key)) return undefined
+    if (getCycleError(parent, key)) return undefined
     return readLogicalProperty(parent, key)
 }
 
-function buildRefIndex(value, inheritedImportBoundary = undefined, placement = undefined) {
+function buildRefIndex(value, inheritedImportBoundary = undefined) {
     if (!isTracked(value)) return value
 
     const importBoundary = nodeImportBoundary(value, inheritedImportBoundary)
     if (importBoundary) {
-        buildImportedRefIndex(
-            value,
-            importBoundary,
-            placement,
-            !getRefCounter(importBoundary.root),
-            commitRefIndex,
-            commitCycleErrorEdge,
-        )
+        if (!getRefCounter(importBoundary.root)) {
+            commitRefIndex(importBoundary.root, importBoundary, true)
+        }
+        commitRefIndex(value, importBoundary, true)
         return value
     }
 
@@ -105,7 +99,7 @@ function commitRefIndex(
     const childNodes = []
 
     for (const key of Object.keys(node)) {
-        if (getCommittedCycleError(node, key)) {
+        if (getCycleError(node, key)) {
             errorCount++
             continue
         }
@@ -127,15 +121,7 @@ function commitRefIndex(
         const childImportBoundary = mirror?.importBoundary ??
             nodeImportBoundary(child, importBoundary)
         if (childImportBoundary && !importGraphPrepared) {
-            buildRefIndex(child, childImportBoundary, {
-                parent: node,
-                key,
-                mirror,
-            })
-            if (getCommittedCycleError(node, key)) {
-                errorCount++
-                continue
-            }
+            buildRefIndex(child, childImportBoundary)
         }
 
         const childCounts = commitRefIndex(
@@ -171,63 +157,34 @@ function preparePropertyTransition(
     newValue,
     markNewValueShared = false,
 ) {
-    const ownerCounter = getRefCounter(owner)
-    const prepared = {
-        value: newValue,
-        preparedWhileOwnerIndexed: !!ownerCounter,
-    }
     // The next FIFO consumer may mutate this private value before the mirror
     // drains. Publish the irreversible sharing mark now so that advance COWs.
     if (markNewValueShared) markShared(newValue)
-
-    let importBoundary = nodeImportBoundary(newValue)
-    if (propertyMirror?.importBoundary && !importBoundary) {
-        markImported(newValue, propertyMirror.importBoundary.errorContext)
-        importBoundary = nodeImportBoundary(newValue)
-    }
+    const importBoundary = nodeImportBoundary(
+        newValue,
+        propertyMirror?.importBoundary,
+    )
     if (propertyMirror && importBoundary) {
         propertyMirror.importBoundary = importBoundary
     }
 
-    if (!ownerCounter || !isTracked(newValue)) {
-        return prepared
+    if (getRefCounter(owner) && isTracked(newValue)) {
+        buildRefIndex(newValue, importBoundary)
     }
-
-    if (importBoundary) {
-        prepareImportedPropertyTransition(
-            owner,
-            propertyMirror,
-            importBoundary,
-            !getRefCounter(importBoundary.root),
-            commitRefIndex,
-            commitCycleErrorEdge,
-        )
-    }
-
-    buildRefIndex(newValue, importBoundary)
-    return prepared
 }
 
-function commitPropertyTransition(owner, key, propertyMirror, prepared) {
-    const nextCounts = prepared.preparedWhileOwnerIndexed
-        ? getRefCounts(prepared.value)
-        : undefined
-    const nextChild = isPromise(prepared.value)
-        ? undefined
-        : prepared.value
+function commitPropertyTransition(owner, key, propertyMirror, newValue) {
     commitLiveEdge(
         owner,
         key,
-        nextCounts,
-        nextChild,
         () => {
             if (propertyMirror) {
                 writeLanguageProperty(owner, key, propertyMirror.promise)
-                clearCycleError(owner, key)
+                clearMetaCycleError(owner, key)
                 installPromiseMirror(owner, key, propertyMirror)
             } else {
-                writeLanguageProperty(owner, key, prepared.value)
-                clearCycleError(owner, key)
+                writeLanguageProperty(owner, key, newValue)
+                clearMetaCycleError(owner, key)
                 clearPromiseMirror(owner, key)
             }
         },
@@ -235,69 +192,50 @@ function commitPropertyTransition(owner, key, propertyMirror, prepared) {
 }
 
 function commitMirrorDrain(mirror) {
-    if (!isLivePromiseMirror(mirror.node, mirror.key, mirror)) return
-
-    const counter = getRefCounter(mirror.node)
-    if (counter && !mirror.preparedWhileOwnerIndexed) {
-        const prepared = preparePropertyTransition(
-            mirror.node,
-            mirror,
-            mirror.currentValue,
-        )
-        mirror.currentValue = prepared.value
-        mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
+    if (!isLivePromiseMirror(mirror.node, mirror.key, mirror)) {
+        mirror.pendingConsumerCount--
+        return
     }
 
-    let nextCounts
-    if (counter) {
-        nextCounts = mirror.cycleError
-            ? [0, 1]
-            : getRefCounts(mirror.currentValue)
+    if (getRefCounter(mirror.node) &&
+        !mirror.cycleError &&
+        isTracked(mirror.currentValue) &&
+        !getRefCounter(mirror.currentValue)) {
+        buildRefIndex(mirror.currentValue, mirror.importBoundary)
     }
-    const nextChild = mirror.cycleError ? undefined : mirror.currentValue
+
     commitLiveEdge(
         mirror.node,
         mirror.key,
-        nextCounts,
-        nextChild,
         () => {
-            if (!mirror.ownerIsImportedOriginal && Object.isExtensible(mirror.node)) {
+            if (!metaOf(mirror.node)?.importedOriginal &&
+                Object.isExtensible(mirror.node)) {
                 writeLanguageProperty(mirror.node, mirror.key, mirror.currentValue)
             }
-            clearCycleError(mirror.node, mirror.key)
+            clearMetaCycleError(mirror.node, mirror.key)
+            mirror.pendingConsumerCount--
         },
     )
 }
 
-function commitCycleErrorEdge(parent, key, nextValue, cycleError, publish) {
-    const counter = getRefCounter(parent)
-    let nextCounts
-    let nextChild
-    if (counter) {
-        nextCounts = cycleError ? [0, 1] : getRefCounts(nextValue)
-        nextChild = cycleError || isPromise(nextValue) || isError(nextValue)
-            ? undefined
-            : nextValue
-    }
-    commitLiveEdge(parent, key, nextCounts, nextChild, publish)
-}
-
 function deleteEdge(parent, key) {
-    commitLiveEdge(parent, key, [0, 0], undefined, () => {
+    commitLiveEdge(parent, key, () => {
         delete parent[key]
         clearPromiseMirror(parent, key)
-        clearCycleError(parent, key)
+        clearMetaCycleError(parent, key)
     })
 }
 
-function commitLiveEdge(owner, key, nextCounts, nextChild, updatePlacement) {
+function commitLiveEdge(owner, key, updateProperty) {
     const counter = getRefCounter(owner)
     const oldCounts = counter ? getPropertyRefCounts(owner, key) : undefined
     const oldChild = counter ? getCountedChild(owner, key) : undefined
 
-    updatePlacement()
+    updateProperty()
     if (!counter) return
 
+    const nextCounts = getPropertyRefCounts(owner, key)
+    const nextChild = getCountedChild(owner, key)
     removeParentEdge(oldChild, owner)
     addParentEdge(nextChild, owner)
     applyCountDelta(
@@ -362,6 +300,14 @@ function copyCounters(source, copy) {
     if (!getRefCounter(source)) return
     commitRefIndex(copy)
 }
+
+initImport(commitLiveEdge, mirror => {
+    preparePropertyTransition(
+        mirror.node,
+        mirror,
+        mirror.currentValue,
+    )
+})
 
 module.exports = {
     buildRefIndex,

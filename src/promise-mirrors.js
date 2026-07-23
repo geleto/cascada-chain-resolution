@@ -1,6 +1,7 @@
 const { onValueResolve } = require("./helpers")
 const {
     ensureMeta,
+    markShared,
     metaOf,
 } = require("./meta")
 const { reportFatalError } = require("./error")
@@ -37,7 +38,7 @@ function installPromiseMirror(node, key, mirror) {
 }
 
 // Creation registers the mandatory consumer; callers publish the mirror only
-// when its owner/key placement represents this promise.
+// when its owner/key property represents this promise.
 function createPromiseMirror(
     node,
     key,
@@ -45,7 +46,6 @@ function createPromiseMirror(
     forkSourceMirror = null,
     markResolvedValueShared = false,
     importBoundary = undefined,
-    ownerIsImportedOriginal = false,
 ) {
     const mirror = {
         node,
@@ -54,25 +54,38 @@ function createPromiseMirror(
         promise,
         // Latest logical value produced by completed FIFO consumers.
         currentValue: undefined,
-        // Whether currentValue was prepared while its owner had refcounts.
-        preparedWhileOwnerIndexed: false,
         // Registered consumers not yet completed; zero exposes currentValue synchronously.
         pendingConsumerCount: 0,
         // Error queries see this instead of currentValue; other operations use currentValue.
         cycleError: undefined,
-        // Import provenance: { root, errorContext } for lazy preparation and attribution.
+        // Import provenance: { root, errorContext } for preparation and attribution.
         importBoundary,
-        // Original imported owners retain the physical Promise after settlement.
-        ownerIsImportedOriginal,
+        // Added synchronously when import must classify before generic preparation.
+        importPreparationRegistered: false,
     }
 
     // The mandatory writeback is born first. Every later operation on this
-    // placement registers through the same counted wrapper.
+    // property registers through the same counted wrapper.
     onPromiseMirrorResolve(mirror, settledValueOrError => {
+        if (forkSourceMirror !== null) {
+            // Import provenance is sampled at the same FIFO position as the
+            // source value. An earlier path consumer may have consumed it.
+            mirror.importBoundary = markResolvedValueShared
+                ? forkSourceMirror.importBoundary
+                : undefined
+        }
         const value = forkSourceMirror === null
             ? settledValueOrError
             : forkSourceMirror.currentValue
-        setPromiseMirrorValue(mirror, value, markResolvedValueShared)
+        if (mirror.importPreparationRegistered) {
+            // Import's next FIFO consumer must classify cycles before this
+            // resolved branch can be ref-indexed.
+            if (markResolvedValueShared) markShared(value)
+            mirror.currentValue = value
+            mirror.cycleError = undefined
+        } else {
+            setPromiseMirrorValue(mirror, value, markResolvedValueShared)
+        }
     })
     return mirror
 }
@@ -84,6 +97,7 @@ function createAssignedPromiseMirror(node, key, promise) {
 }
 
 // DISCOVERY: the physical Promise already occupies the imported/raw property.
+// Promise identity permits reuse here only; ASSIGN always creates a fresh mirror.
 function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined) {
     const existing = getPromiseMirror(node, key)
     if (existing?.promise === promise) return existing
@@ -94,20 +108,19 @@ function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined
         null,
         false,
         importBoundary,
-        importBoundary !== undefined,
     )
     installPromiseMirror(node, key, mirror)
     return mirror
 }
 
 // FORK: read the source mirror at this FIFO position, but prepare the value for
-// the copy's own owner/key placement. A fork is language-owned, never external.
+// the copy's own owner/key property. A fork is language-owned, never external.
 function forkPromiseMirror(
     source,
     copy,
     key,
     promise,
-    markResolvedValueShared,
+    retainedOffPath,
     importBoundary,
 ) {
     const forkSourceMirror = getOrCreatePromiseMirror(
@@ -121,8 +134,12 @@ function forkPromiseMirror(
         key,
         promise,
         forkSourceMirror,
-        markResolvedValueShared,
-        importBoundary,
+        retainedOffPath,
+        // Off-path forks retain imported data. A path fork is transformed by
+        // the current COW walk, which already carries the inherited boundary.
+        retainedOffPath
+            ? (forkSourceMirror.importBoundary ?? importBoundary)
+            : undefined,
     )
     installPromiseMirror(copy, key, mirror)
     return mirror
@@ -148,24 +165,28 @@ function onPromiseMirrorResolve(mirror, fn) {
     mirror.pendingConsumerCount++
     return onValueResolve(mirror.promise, value => {
         const result = fn(value)
-        if (mirror.pendingConsumerCount === 1) commitMirrorDrain(mirror)
-        // A thrown consumer or drain commit never reaches this decrement, so
-        // its outstanding count permanently prevents publication.
-        mirror.pendingConsumerCount--
+        if (mirror.pendingConsumerCount === 1) {
+            // The drain decrements inside its live-edge update, after the old
+            // pending projection is captured and before the new one is read.
+            commitMirrorDrain(mirror)
+        } else {
+            mirror.pendingConsumerCount--
+        }
+        // A thrown consumer or a drain failure before its property update
+        // leaves an outstanding count and prevents publication.
         return result
     })
 }
 
 function setPromiseMirrorValue(mirror, value, markResolvedValueShared = false) {
-    const prepared = preparePropertyTransition(
+    preparePropertyTransition(
         mirror.node,
         mirror,
         value,
         markResolvedValueShared,
     )
-    mirror.currentValue = prepared.value
+    mirror.currentValue = value
     mirror.cycleError = undefined
-    mirror.preparedWhileOwnerIndexed = prepared.preparedWhileOwnerIndexed
 }
 
 function readLogicalProperty(node, key) {
