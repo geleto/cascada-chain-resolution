@@ -3,6 +3,8 @@ import {
     expect,
     metaOf,
     assignPath,
+    deletePath,
+    getErrors,
     hasError,
     lookupPath,
     exportValue,
@@ -18,6 +20,68 @@ describe("Chain root state", () => {
         expect(hasError(chain, [])).to.be(false)
         expect(exportValue(chain, [])).to.eql({ clean: true })
         expect(metaOf(chain)).to.be(undefined)
+    })
+
+    it("handles number and string roots across every operation", () => {
+        for (const primitive of [7, "text"]) {
+            expect(lookupPath(new Chain(primitive), [])).to.be(primitive)
+            expect(exportValue(new Chain(primitive), [])).to.be(primitive)
+            expect(hasError(new Chain(primitive), [])).to.be(false)
+            expect(getErrors(new Chain(primitive), [])).to.eql([])
+
+            const lookupError = lookupPath(new Chain(primitive), ["child"])
+            const exportError = exportValue(new Chain(primitive), ["child"])
+            const errors = getErrors(new Chain(primitive), ["child"])
+            for (const error of [lookupError, exportError, ...errors]) {
+                expect(error instanceof Error).to.be(true)
+                expect(error.message).to.be(
+                    "Cannot access property through missing or primitive value",
+                )
+            }
+            expect(errors.length).to.be(1)
+            expect(hasError(new Chain(primitive), ["child"])).to.be(true)
+
+            const assignedRoot = new Chain(primitive)
+            const replacement = { primitive }
+            assignPath(assignedRoot, [], replacement)
+            expect(assignedRoot._state.value).to.be(replacement)
+
+            const deletedRoot = new Chain(primitive)
+            deletePath(deletedRoot, [])
+            expect(deletedRoot._state.value).to.be(null)
+
+            const assignedChild = new Chain(primitive)
+            assignPath(assignedChild, ["child"], 1)
+            expect(assignedChild._state.value instanceof Error).to.be(true)
+
+            const deletedChild = new Chain(primitive)
+            deletePath(deletedChild, ["child"])
+            expect(deletedChild._state.value instanceof Error).to.be(true)
+        }
+    })
+
+    it("treats an array root as tracked language data", () => {
+        const child = { value: 1 }
+        const root = [child]
+        const chain = new Chain(root)
+
+        expect(lookupPath(chain, [], false)).to.be(root)
+        expect(lookupPath(chain, [0, "value"], false)).to.be(1)
+        expect(hasError(chain, [])).to.be(false)
+        expect(getErrors(chain, [])).to.eql([])
+
+        const exported = exportValue(chain, [])
+        expect(Array.isArray(exported)).to.be(true)
+        expect(exported).to.eql([{ value: 1 }])
+        expect(exported).not.to.be(root)
+        expect(exported[0]).not.to.be(child)
+
+        assignPath(chain, [0, "value"], 2)
+        expect(root[0].value).to.be(2)
+
+        deletePath(chain, [0])
+        expect(root.length).to.be(1)
+        expect(0 in root).to.be(false)
     })
 
     it("orders root promise operations through the state holder", async () => {
