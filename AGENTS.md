@@ -8,7 +8,7 @@ It achieves this with ordered local continuations, mirrors, and copy-on-write:
 
 1. An operation synchronously processes everything currently available.
 2. On reaching a Promise it registers at that position and moves on, continuing any other work already available.
-3. Each Promise runs its own registrations in the order they were made, and each completes its transition synchronously.
+3. When a Promise settles, its existing registrations run as one FIFO batch, and each completes its transition synchronously.
 4. Mirrors preserve the exact property version an operation captured.
 5. Copy-on-write preserves owner isolation.
 
@@ -18,6 +18,7 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 - Do all available work synchronously, in program order.
 - On reaching a Promise, register at that exact position through the runtime's promise helpers. Raw `.then` belongs only inside those helpers.
+- Invoke a continuation in the source Promise's single reaction; an intermediate proxy would fragment its FIFO batch.
 - Never defer part of a transition with `await`, another `.then`, `queueMicrotask`, or lazy registration.
 
 ## Promise Mirrors
@@ -43,7 +44,7 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 - Copying starts at the first shared level, not always the root. Once that level is copied, the old one still points at its children, so they must be copied too, down to the target.
 - Reused children are marked shared, because two worlds now point at them. Whichever side writes first copies again.
 - It copies a path, not a graph. If `root.self === root`, changing `root.a` gives a new root whose `self` still points at the original.
-- A copy carries only own enumerable keys, so no metadata comes across. What the copy needs — mirrors, import boundaries, counters — is rebuilt for its own world, and the new path is owned again.
+- A copy carries only own enumerable keys, so no metadata comes across. Its mirrors, import boundaries, and counters are rebuilt for its own world, and the new path is owned again.
 - A copied Promise key gets a fresh mirror at the copier's program position, so the two worlds diverge exactly there. Creating it later would seed from the raw settled value and drop writes issued before the copy.
 
 ## Language Data

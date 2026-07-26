@@ -81,6 +81,7 @@
     - `onValueResolve` still has exactly one data-facing catch: promise rejection becomes the language Error value before the continuation runs. Exceptions thrown by the continuation and failures while converting a rejection reason are fatal and routed through `reportFatalError`.
     - Issue 12 collapses `onValueResolve` to one reaction on the source promise: the fulfilled branch calls `runFatal(fn, value)`, while the rejected branch performs `errorFromRejection` and invokes `fn` inside the same `runFatal` call so conversion failures remain fatal. Do not resolve an intermediate proxy and invoke `fn` in a second reaction. One-stage value and internal consumers then preserve their registration order when mixed on the same promise; mirror-specific draining supplies the additional guard needed by synchronous settled reads.
     - `onInternalResolve` is for runtime aggregate promises such as hasError's clean wait tree: source rejection is fatal, not converted to a language Error. Races that may answer before all internal waits finish attach this fatal handler to the losing waits, so a later kernel bug is reported even after the public operation result has already settled.
+    - Item 19 adds `onPromiseReady` for later resolvers of an already seeded Promise property version. Both fulfillment and rejection mean only that the first resolver can now be observed, so the raw result is ignored and the callback runs through `runFatal`. The helper returns its derived Promise so export and Error-query readiness trees can compose it through `Promise.all`.
     - A fatal in a discarded internal mutator continuation is reported and leaves its derived promise rejected. Mutators deliberately return nothing, so that rejection reaches the host as unhandled; this is the fatal contract, not a language Error conversion.
     - `runFatal` catches only synchronous throws. Every public operation uses it for its synchronous prefix, while `onValueResolve` and `onInternalResolve` own their respective asynchronous rejection policies without adding another reaction.
 
@@ -321,7 +322,237 @@
     walk and aggregate readiness use the fatal boundary. Full design:
     `docs/export-error-set.md`.
 
-19. **Class-instance copy-on-write adapters.** Imported class instances are valid containers for Cascada-visible own enumerable data, but copying every non-array object into `{}` silently discards class identity and methods. Generic prototype preservation is not sound: `Object.create(Object.getPrototypeOf(value))` cannot reproduce private fields or native internal slots, and can therefore create an object that passes `instanceof` while its methods fail.
+19. **Live-property Promise mirrors.** Replace the drain model with one direct
+    state rule: while a mirror is live, its physical parent/key property is the
+    authoritative evolving value; after the mirror is detached, its lazily
+    created `detachedValue` is authoritative. A mirror is live only while the
+    parent's mirror map contains that exact instance.
+
+    Runtime state is derived rather than stored:
+
+    | State | Authoritative value | Placement cut | Import boundary |
+    | --- | --- | --- | --- |
+    | live, pending | physical property is the Promise | none | mirror |
+    | live, resolved | physical property is the latest value | parent META | cleared |
+    | detached, pending | `detachedValue` is the Promise | none | mirror |
+    | detached, resolved | `detachedValue` is the latest value | none | cleared |
+
+    "Resolved" means the first resolver has completed its synchronous
+    transition. The source Promise may already be physically settled while that
+    resolver is queued, but the runtime state is still pending because the
+    authoritative location still contains the Promise. There is no
+    live-resolved state whose authoritative value is a Promise.
+
+    **Property-version lifecycle.** The first operation to reach an unmirrored
+    Promise property creates and installs the mirror and synchronously registers
+    that property version's first `.then`; call this its *first resolver*.
+    Every resolver captures the Promise, parent, key, and exact mirror at
+    registration time. The first resolver alone consumes the raw settlement
+    payload, prepares it, performs any operation-specific synchronous work, and
+    publishes the resulting state. If the mirror is still live it writes the
+    physical property; otherwise it writes `detachedValue`.
+
+    Lazy discovery remains necessary for trusted object literals, initial Chain
+    values, assigned subgraphs containing nested Promises, and derived Promises
+    returned by `import`. An unindexed owner may therefore create a mirror at
+    first reach. A Promise below an indexed owner must already have its mirror;
+    absence there is fatal downward-closure corruption.
+
+    Later resolvers use the source Promise only as a FIFO readiness signal.
+    They ignore both its fulfillment payload and rejection reason, read the
+    latest state through `mirror.getValue(parent, key)`, and synchronously apply
+    their own operation to that state. A later mutation may publish `V'`, `V''`,
+    and so on, but it never seeds again from the original settlement payload.
+    Pure lookup, export, and Error-query resolvers only read; they do not
+    recommit unchanged state.
+
+    `PromiseMirror` stores no `promise`, `node`, `key`, `currentValue`,
+    `pendingConsumerCount`, or resolved flag. It keeps only state unavailable
+    from a live placement: the unresolved `importBoundary`, plus optional
+    `detachedValue` created on detachment. Keep
+    `isLive(parent, key)`, `getValue(parent, key)`, and `detach(parent, key)` as
+    narrow lifecycle operations. Remove `isDrained()`,
+    `PromiseMirror.onResolve`, `commitMirrorDrain`, and all draining state.
+
+    A live mirror remains installed after its first resolver replaces the
+    physical Promise with a value. Already-registered resolvers need that exact
+    property-version identity even though synchronous operations now see an
+    ordinary value. Only replacement, deletion, and same-Promise reassignment
+    remove it; there is no settlement-time mirror cleanup. Those operations
+    detach the old mirror inside the same `commitLiveEdge` update that replaces
+    the property, after the old refcount state has been captured and before the
+    physical write. `detach(parent, key)` captures the old physical value as
+    `detachedValue`, discards any live placement cut, and removes the mirror-map
+    entry. Operations that already captured the mirror then continue against
+    their private value, while the new property version proceeds independently.
+
+    **Reads and cuts.** Ordinary `readLanguageProperty(parent, key)` is a purely
+    physical own-enumerable read and never consults mirror state. Mirror
+    acquisition runs only when that physical value is a Promise; a synchronous
+    operation on a resolved physical value ignores the retained mirror.
+    Lifecycle code that replaces a property still looks up that retained mirror
+    so it can detach it correctly. This removes the metadata and mirror-map
+    lookup from every ordinary property read in mutation, ref-index, export, and
+    Error-query walks.
+
+    `getValue(parent, key)` reads the physical language property while the
+    mirror is live and `detachedValue` otherwise. Live cycle cuts use the
+    ordinary parent-META `cycleCuts` set. A detached placement is absent from
+    the indexed graph and retains no placement cut; intrinsic cuts inside its
+    tracked value remain on those nodes. Every state-changing live resolver
+    replaces the previous parent-META cut state, clearing an obsolete cut unless
+    preparation reports one for the new value. A newly created mirror has no
+    detached field; `detachedValue` is added only when an already-issued resolver
+    retains a displaced property version. Remove `hasPublishedCycleCut`,
+    separate plain/mirror cut setters, and mirror/plain live-cut exclusivity.
+
+    A physical Promise and a published parent-META cut are mutually exclusive.
+    Pending publication clears any old cut before installing the Promise, and
+    resolving publication replaces the Promise and cut in one transition. The
+    refcount verifier checks this invariant.
+
+    **FIFO command contract.** Every operation processes its synchronously
+    available path immediately. When it reaches a Promise, it registers directly
+    on that Promise at its issue position and its resolver later performs its
+    complete state transition synchronously. Same-Promise reactions therefore
+    evolve one property version in order: the first resolver produces `V`, and
+    later mutations/readers observe `V`, `V'`, `V''`, and so on. A reader issued
+    after an earlier resolver completed reads the physical value synchronously;
+    one issued while the property still contains the Promise registers behind
+    every already-issued resolver.
+
+    When one Promise settles, JavaScript enqueues all reactions already
+    registered on it as one contiguous FIFO batch. Another Promise's reaction
+    runs before or after that batch, never between its entries, and a reaction
+    registered after settlement joins the tail. The one-reaction helper rule is
+    therefore load-bearing: an intermediate proxy would fragment the batch and
+    invalidate the ordering argument.
+
+    This relies on the Cascada command runner issuing operations in program
+    order. Calling kernel operations from unrelated host microtasks while an
+    earlier same-Promise reaction is queued is outside the language-lowering
+    contract. The old settlement-gap fast-path test represents that broader
+    host-call model and is removed. Immediate registration, same-Promise FIFO,
+    and synchronous resolver bodies remain load-bearing.
+
+    **Rejection handling.** The first resolver uses the one-reaction
+    `onValueResolve` helper, which converts a rejected data Promise to one
+    language Error for that property version before running its callback.
+    Conversion or callback throws remain fatal. Later resolvers use
+    `onPromiseReady`, whose fulfillment and rejection branches both ignore the
+    raw result and run the callback through the fatal boundary. It returns the
+    derived Promise from that one reaction; export and Error-query callbacks may
+    return nested readiness, preserving their hierarchical `Promise.all` trees.
+    Later resolvers observe the Error already published by the first resolver.
+    A fork first resolver uses the same readiness behavior because it samples
+    the source mirror's prepared state rather than converting the source
+    rejection again.
+
+    **Import sequencing.** External data reaches the runtime only through
+    `import`, so import is the first operation to reach every previously
+    unprepared external Promise placement. Import creates the mirror and owns
+    its first resolver; no generic writeback is registered before it. That
+    resolver retains the imported placement's copied ancestry, performs full
+    preparation and cycle discovery, gives a resolved tracked value the direct
+    boundary needed by later synchronous traversal, and only then publishes its
+    final value and placement cut.
+
+    A later attachment of an already imported pending branch needs no second
+    asynchronous classifier. If its eventual value creates a cycle through that
+    attachment, the cycle must re-enter the pending placement's owner or another
+    ancestor retained by its original import resolver; that resolver discovers
+    the back-edge before publication. If the imported value is already
+    available, attachment checking is synchronous. Fixed-path work therefore
+    runs either synchronously on an available value or as birth-time preparation
+    owned by a fresh property version, never as a later resolver that delays an
+    existing mirror.
+
+    Assignment, same-Promise reassignment, and COW fork create fresh property
+    versions. Their first resolvers capture their own destination ancestry.
+    A fork waits at its FIFO position, reads the source mirror's current
+    live/detached state, derives import attribution from that sampled value
+    rather than provisional creation-time state, marks a retained off-path
+    tracked value shared, performs destination-specific cycle preparation, and
+    publishes once. A Promise returned by a root import is already prepared
+    before that derived Promise settles; assigning it still creates a fresh
+    destination property version whose first resolver owns attachment checking.
+
+    `importBoundary` exists only while the property version is unresolved. It
+    belongs to the mirror rather than the whole parent because one owned COW
+    node can retain pending properties from different imported boundaries. The
+    successful first transition clears it for both live and detached mirrors.
+    A resolved tracked value carries any continuing direct boundary in its own
+    META; a primitive, Error, or operation-produced owned value needs none.
+    Later operations derive import state from the current value or their own
+    synchronous destination context and never overwrite a pending mirror's
+    boundary with context from a later FIFO position.
+
+    This sequencing removes both `importPreparationRegistered` and any need for
+    `pendingPreparationCount`: there is no generic raw writeback followed by a
+    separate import classifier, and no unprepared value is ever published.
+
+    **Atomic transitions and counters.** A live resolver computes its final
+    value and placement cut before publication. One `commitLiveEdge` transition
+    writes both while retaining the exact mirror-map entry, then derives the new
+    counts. The old physical Promise contributes `[1, 0, 0]`; the prepared
+    replacement contributes its actual Promise/Error/cycle-cut/child counts.
+    Any entering tracked child is indexed before the physical write, and reverse
+    edges plus propagated deltas change atomically with it. Later
+    state-changing resolvers perform the same exact transition from the current
+    physical state.
+
+    A detached resolver changes only `detachedValue`; it never updates its
+    former parent's property, cuts, counters, or reverse edges. If that owner
+    was indexed, the resolver prepares/indexes the detached branch before an
+    earlier Error query consumes it. Verification derives live state solely from
+    the physical property and parent META: a physical Promise counts as pending,
+    a live cut counts as a cut, and an ordinary value contributes normally.
+    Detached mirrors are absent from the indexed graph.
+
+    **Physical-write requirement.** A live mirror is valid only while its
+    property exists as an own enumerable writable data property. Discovery of
+    an existing Promise property validates that complete descriptor before
+    installing a mirror. Assignment to a missing key instead uses the ordinary
+    property transition, which creates the valid data property and installs its
+    fresh mirror atomically. Immediately before every later live resolver write,
+    require the property still to exist with the complete valid descriptor: a
+    missing property, accessor conversion, non-enumerability, or loss of
+    writability is the same fatal host-boundary violation. Existing writable
+    properties on sealed or otherwise non-extensible holders remain valid
+    because replacing their value is legal. Ordinary non-Promise frozen data
+    remains supported. Writable imported Promise properties receive their
+    resolved physical values, so import transfers settlement ownership of those
+    properties to the runtime. Host-facing output still goes through `export`.
+
+    Removing `mirror.promise` deliberately removes the old
+    different-Promise identity check. Required acquisition still reports a
+    missing mirror below an indexed owner fatally. All valid replacement,
+    deletion, and same- or different-Promise reassignment goes through the
+    atomic transition that detaches the old mirror and installs a fresh one;
+    direct host mutation after import is outside the runtime contract, so the
+    source Promise is not retained solely as a corruption detector.
+
+    **Coverage and cleanup.** Tests cover root and nested Promises; fulfillment,
+    rejection conversion exactly once per property version; first-resolver
+    import preparation; same-Promise FIFO mutation/lookup/Error-query ordering;
+    a live resolved mirror remaining installed for later queued resolvers;
+    overwrite and deletion before and after first resolution; same-Promise
+    reassignment as a fresh property version; COW fork divergence, sampled
+    attribution, retained-value sharing, and destination-only cycles; detached
+    indexing for an earlier query; attachment of an existing pending imported
+    branch without a second classifier; synchronous resolved attachment; an
+    indexed placement cut committed with its resolved value; two pending
+    properties with different boundaries on one owned COW parent; writable
+    sealed holders; rejected accessor/non-writable imported Promise properties;
+    a property deleted or changed to an accessor/non-enumerable/non-writable
+    descriptor after mirror creation; resolved `undefined`; live cut replacement
+    and repair; detached resolution retaining no placement cut; and both
+    metadata storage modes. Tests
+    assert observable state rather than removed drain fields. README, runtime
+    specification, import preparation, counter design, verifier, and
+    implemented-step descriptions are updated together when this step lands.
+
+20. **Class-instance copy-on-write adapters.** Imported class instances are valid containers for Cascada-visible own enumerable data, but copying every non-array object into `{}` silently discards class identity and methods. Generic prototype preservation is not sound: `Object.create(Object.getPrototypeOf(value))` cannot reproduce private fields or native internal slots, and can therefore create an object that passes `instanceof` while its methods fail.
 
     Add an explicit host-only shallow-copy protocol, exposed as a Symbol that is outside the language-visible string-key graph. A participating class implements the protocol and returns a fresh, extensible instance with its private/non-enumerable/internal state copied and exactly the same own enumerable string keys and values as the source. The kernel validates that contract, then keeps ownership of its existing per-key work: shared/import marker propagation, promise-mirror forks, counter copying, and parent-edge registration. Plain objects, null-prototype records, and arrays retain their built-in copy paths; `export` remains deliberately plain-data output.
 
@@ -329,7 +560,7 @@
 
     Tests must cover a nested imported class instance plus ordinary sibling and top-level properties; mutation must leave the external instance and siblings unchanged, preserve `instanceof`, and keep a method using private state functional. Also cover promise/Error fields through the adapted instance, shared aliases, an unadapted class, and malformed adapters under both metadata storage modes.
 
-20. **Language integration.** The language layer must route external values and ownership-sensitive operations through the kernel entry points that establish Cascada's invariants.
+21. **Language integration.** The language layer must route external values and ownership-sensitive operations through the kernel entry points that establish Cascada's invariants.
 
     **Import.** Every incoming external value must pass through `import(value, errorContext)` before that value can become part of language-owned data. The language layer constructs the truthy error/attribution context (line, file, ...; a non-empty string in this sandbox) at the call site. Import marks the boundary root only; if that root is a promise, its derived import wrapper marks the resolved root before consumers run. Nested promises are discovered eagerly by the imported graph walk and retain the inherited attribution when they settle. Extraction from an external result (`var x = getExternalValue().a`) creates a new boundary rooted at `a` with that attribution.
 
