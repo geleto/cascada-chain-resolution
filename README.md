@@ -35,16 +35,15 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
 - [`docs/import-preparation.md`](docs/import-preparation.md) explains imported
   graph preparation, aliases, cycles, and Promise continuations.
 - [`docs/counters-implementation.md`](docs/counters-implementation.md) explains
-  lazy subtree counters, Promise mirrors, settlement, and verification.
-- [`docs/cycles-as-data.md`](docs/cycles-as-data.md) defines cycle cuts and the
-  projected/raw traversal boundary.
+  lazy subtree counters, Promise mirrors, and verification.
+- [`docs/cycles-as-data.md`](docs/cycles-as-data.md) defines cycle cuts and
+  cut-separated ref-index components.
+- [`docs/export-error-set.md`](docs/export-error-set.md) defines export's fused
+  copy-or-collect traversal and complete Error result.
 - [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
-- [`docs/future/export-error-set.md`](docs/future/export-error-set.md)
-  specifies a future complete Error result for export.
 
-The first four documents describe the implemented runtime. `docs/plan.md`
-tracks both completed and pending work; documents under `docs/future` describe
-planned end states and are not current behavior.
+The first five documents describe the implemented runtime. `docs/plan.md`
+tracks both completed and pending work.
 
 ## Source layout
 
@@ -54,14 +53,14 @@ planned end states and are not current behavior.
   shared observational walkers.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise
   continuations.
-- `src/refcounts.js` owns lazy subtree counters, parent edges, settlement, and
-  atomic property transitions.
+- `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
+  property transitions.
 - `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle and logical reads.
-- `src/raw-walk.js` owns metadata-free graph copying and raw Error traversal.
+- `src/raw-walk.js` owns metadata-free export copying and Error collection.
 - `src/language-properties.js` owns descriptor validation and safe physical
   writes for language-visible properties.
-- The remaining small modules own metadata, fatal errors, helpers, and refcount
-  verification.
+- The remaining small source modules own metadata, fatal errors, and helpers.
+  Refcount verification is test-only in `test/verify-refcounts.js`.
 
 ## Runtime model
 
@@ -117,7 +116,7 @@ The public operations are:
 | `deletePath(chain, path)` | Delete a path value |
 | `lookupPath(chain, path, sharedOwnership)` | Read a path value |
 | `import(value, errorContext)` | Admit external data |
-| `export(chain, path)` | Produce settled metadata-free output |
+| `export(chain, path)` | Copy host-ready output or collect its Errors |
 | `hasError(chain, path)` | Test for a reachable Error |
 | `getErrors(chain, path)` | Collect distinct reachable Errors |
 
@@ -186,9 +185,10 @@ and is reconstructed only where needed; it is never copied as language data.
 
 ## Subtree counters
 
-`hasError`, `getErrors`, and `export` ask questions about complete branches.
-Repeated full scans would be expensive, so the first such operation builds a
-lazy ref index for the reached branch.
+`hasError` and `getErrors` ask questions about complete branches. Repeated full
+scans would be expensive, so the first Error query builds a lazy ref index for
+the reached branch. Export walks the raw branch directly because producing a
+successful copy already requires visiting all of it.
 
 Each indexed node stores:
 
@@ -203,35 +203,36 @@ Unqueried branches pay no counter maintenance cost.
 
 Imported cycles cannot participate directly in recursive parent propagation.
 A cycle cut contributes only to `cycleCutCount` and installs no reverse parent
-edge. Operations requiring complete raw data cross cuts with an identity-aware
-walk.
+edge. Ref-indexing resumes at the target as an independent component, while
+export alone walks the raw graph without counters.
 
 ## Branch observations
 
 **`hasError`** returns `true` immediately for a positive `errorCount`. A
-cut-free branch uses counter-pruned Promise traversal; a branch with cuts uses
-one raw identity-aware traversal and reports only ordinary Errors. It does not
+counter-fenced walk follows only subtrees whose Promise, Error, or cycle-cut
+count reports relevant work. At a cycle cut, its independently indexed target
+resumes the same fenced traversal. It reports only ordinary Errors and does not
 pin or mark the branch.
 
 **`getErrors`** returns each reachable Error identity once. Counters prune clean
-cut-free regions. A branch containing cuts is walked raw so ordinary Errors and
-Promises hidden behind the projection remain visible. Cuts themselves add
-nothing. It waits for the complete Promise frontier captured and recursively
-exposed at its issue position.
+regions through the same fenced walk, including independently indexed cut
+targets. Cuts themselves add nothing. It waits for the complete Promise
+frontier captured and recursively exposed at its issue position.
 
-**`export`** produces a metadata-free deep copy. If settlement is required,
-it marks the reached branch shared so later writes copy away, then waits for
-`promiseCount` to reach zero after every earlier mirror consumer drains.
-Ordinary Errors collapse the current sandbox result to one Error. The final
-copy always walks the raw graph, so aliases and cycles are reconstructed and
-Promises hidden behind cuts are included.
+**`export`** performs one immediate raw copy-or-collect walk at its issue
+position. A successful result is a metadata-free deep copy preserving arrays,
+holes, own-key order, aliases, cycles, enumerable `__proto__`, and logical
+Promise values.
+The first Error stops further copy allocation, but traversal continues through
+the complete captured Promise frontier. Failure returns a fresh outer Error
+whose `.errors` array contains each reachable Error identity once. Export does
+not ref-index, mark, or pin the branch.
 
 ## Metadata
 
 One META record per tracked node contains only the fields whose subsystems have
 become active: ownership marks, import state, Promise mirrors, cycle
-cuts, counters, reverse parents, and optional export settlement
-state.
+cuts, counters, and reverse parents.
 
 Inline mode stores META in an own non-enumerable Symbol property when possible.
 WeakMap mode stores it externally, and inline mode uses the same WeakMap

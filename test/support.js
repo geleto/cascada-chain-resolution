@@ -68,6 +68,7 @@ export {
 export {
     onInternalResolve,
     onValueResolve,
+    runFatal,
 } from "../src/helpers.js"
 
 export {

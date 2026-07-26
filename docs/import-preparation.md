@@ -3,7 +3,7 @@
 `import(value, errorContext)` is the boundary for external data. It establishes
 shared ownership and attribution, prepares aliases and cycles in the reachable
 graph, and registers continuations for nested Promises. Subtree counters remain
-lazy until `export`, `hasError`, or `getErrors` needs them.
+lazy until `hasError` or `getErrors` needs them.
 
 The refcount and observation semantics of the resulting cuts are specified in
 [`cycles-as-data.md`](cycles-as-data.md).
@@ -158,8 +158,8 @@ changed, and the cut is not an Error.
 In the projected ref-index:
 
 - the cut contributes `[0, 0, 1]`;
-- indexing does not follow the raw target;
-- no reverse parent edge crosses the cut; and
+- counts do not propagate and no reverse parent edge crosses the cut;
+- the raw target starts an independently indexed component;
 - every projected parent graph remains acyclic.
 
 Every raw directed imported cycle must contain at least one cut before
@@ -173,13 +173,13 @@ The cut is always visible to projected consumers:
 - only `promiseCount === 0 && cycleCutCount === 0` proves that no unresolved or
   raw frontier is hidden from projection.
 
-The raw graph remains available where projection completeness is insufficient:
+The raw graph remains available without weakening the counter invariant:
 
 - finite lookup and mutation paths follow raw values;
-- Error queries raw-walk a reached branch containing cuts and report only
-  ordinary Errors;
-- `export` reconstructs aliases and cycles; and
-- raw traversal waits recursively for Promises found behind cuts.
+- Error queries use cut counts to reach actual cut placements and continue
+  through each target's independent index; and
+- `export` alone walks the raw graph directly to reconstruct aliases and
+  cycles, recursively waiting for Promises.
 
 Re-rooting a tracked identity does not remove a cycle in the underlying graph.
 Replacing or deleting the exact cut property removes that placement's

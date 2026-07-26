@@ -5,6 +5,8 @@ import {
     metaOf,
     buildRefIndex,
     getRefCounter,
+    setFatalErrorReporter,
+    thrownBy,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -12,14 +14,25 @@ import {
     hasError,
     lookupPath,
     exportValue,
-    onInternalResolve,
     importValue,
     deferred,
     flushMicrotasks,
-    expectCounts,
 } from "./support.js"
 import * as packageRuntime from "cascada-chain-resolution"
 import { export as packageExport } from "cascada-chain-resolution"
+import {
+    createRawWalkState,
+    walkRawBranch,
+} from "../src/raw-walk.js"
+
+function expectExportErrors(outcome, expected) {
+    expect(outcome instanceof Error).to.be(true)
+    expect(outcome.message).to.be("export: branch contains errors")
+    expect(outcome.errors.length).to.be(expected.length)
+    for (const error of expected) {
+        expect(outcome.errors.includes(error)).to.be(true)
+    }
+}
 
 describe("export", () => {
     it("exposes the native ESM package API", () => {
@@ -37,6 +50,208 @@ describe("export", () => {
         expect(packageRuntime.export).to.be(exportValue)
         expect(runtime.export).to.be(exportValue)
         expect(runtime.normalize).to.be(undefined)
+    })
+
+    it("uses a non-thenable Error outcome with exact Error identities", () => {
+        const repeated = new Error("repeated")
+        const distinct = new Error("distinct")
+        const outcome = exportValue(
+            new Chain([repeated, { repeated, distinct }]),
+            [],
+        )
+
+        expectExportErrors(outcome, [repeated, distinct])
+        expect(outcome.then).to.be(undefined)
+        expect(exportValue(new Chain([1, 2]), [])).to.eql([1, 2])
+    })
+
+    it("switches the raw export walker to collection-only mode", () => {
+        const error = new Error("stop copying")
+        const later = { value: 1 }
+        const root = { error, later }
+        const state = createRawWalkState()
+
+        const readiness = walkRawBranch(root, undefined, state)
+
+        expect(readiness).to.be(undefined)
+        expect(state.copying).to.be(false)
+        expect(state.copies).to.be(undefined)
+        expect(state.visited.has(root)).to.be(true)
+        expect(state.visited.has(later)).to.be(true)
+        expect([...state.errors]).to.eql([error])
+    })
+
+    it("keeps later Promise continuations in collection-only mode", async () => {
+        const first = deferred()
+        const second = deferred()
+        const root = {
+            first: first.promise,
+            second: second.promise,
+        }
+        let output
+        const state = createRawWalkState(() => {
+            output = undefined
+        })
+        const readiness = walkRawBranch(root, undefined, state)
+        output = state.copies.get(root)
+        const abandonedCopy = output
+        const error = new Error("stop async copying")
+
+        first.resolve(error)
+        await flushMicrotasks()
+
+        expect(state.copying).to.be(false)
+        expect(state.copies).to.be(undefined)
+        expect(output).to.be(undefined)
+
+        const later = { value: 1 }
+        second.resolve(later)
+        await readiness
+
+        expect(state.visited.has(later)).to.be(true)
+        expect([...state.errors]).to.eql([error])
+        expect(Object.keys(abandonedCopy)).to.eql(["first", "second"])
+        expect(abandonedCopy.first).to.be(undefined)
+        expect(abandonedCopy.second).to.be(undefined)
+    })
+
+    it("abandons earlier output when the last key is an Error", async () => {
+        const pending = deferred()
+        const error = new Error("last key")
+        const root = {
+            copied: { value: 1 },
+            pending: pending.promise,
+            error,
+        }
+        let output
+        const state = createRawWalkState(() => {
+            output = undefined
+        })
+        const readiness = walkRawBranch(root, undefined, state)
+
+        expect(state.copying).to.be(false)
+        expect(state.copies).to.be(undefined)
+        expect(output).to.be(undefined)
+
+        pending.resolve({ late: true })
+        await readiness
+
+        expect(state.copies).to.be(undefined)
+        expect([...state.errors]).to.eql([error])
+    })
+
+    it("reuses one output identity across synchronous and promised aliases", async () => {
+        const pending = deferred()
+        const shared = { value: 1 }
+        const root = { direct: shared, pending: pending.promise }
+
+        const result = exportValue(new Chain(root), [])
+        pending.resolve(shared)
+        const copy = await result
+
+        expect(copy.direct).to.be(copy.pending)
+        expect(copy.direct).not.to.be(shared)
+    })
+
+    it("keeps a promised source stable across a later shared-alias mutation", async () => {
+        const pending = deferred()
+        const shared = { value: 1 }
+        const root = {
+            alias: shared,
+            pending: pending.promise,
+        }
+        importValue(root, "shared alias export")
+        const chain = new Chain(root)
+
+        const result = exportValue(chain, ["pending"])
+        assignPath(chain, ["alias", "value"], 2)
+        pending.resolve(shared)
+        const copy = await result
+
+        expect(copy).to.eql({ value: 1 })
+        expect(shared.value).to.be(1)
+        expect(chain._state.value.alias).to.eql({ value: 2 })
+        expect(chain._state.value.alias).not.to.be(shared)
+    })
+
+    it("reports a missing indexed Promise mirror as fatal", () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        buildRefIndex(root)
+        delete metaOf(root).mirrors.pending
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        const failure = thrownBy(() => exportValue(new Chain(root), []))
+
+        expect(failure).to.be(reported)
+        expect(failure.message).to.be(
+            "Indexed promise property has no matching mirror",
+        )
+    })
+
+    it("reports synchronous raw traversal failures as fatal", () => {
+        const failure = new Error("ownKeys failed")
+        const root = new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        })
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        expect(thrownBy(() => exportValue(new Chain(root), []))).to.be(failure)
+        expect(reported).to.be(failure)
+    })
+
+    it("reports asynchronous raw traversal failures as fatal", async () => {
+        const pending = deferred()
+        const failure = new Error("getter failed")
+        const value = {}
+        Object.defineProperty(value, "bad", {
+            enumerable: true,
+            get() {
+                throw failure
+            },
+        })
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        const result = exportValue(
+            new Chain({ pending: pending.promise }),
+            [],
+        )
+        pending.resolve(value)
+
+        let rejected
+        try {
+            await result
+        } catch (error) {
+            rejected = error
+        }
+        expect(rejected).to.be(failure)
+        expect(reported).to.be(failure)
+    })
+
+    it("indexes a mirror discovered by export if its owner is indexed later", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        const result = exportValue(new Chain(branch), [])
+
+        expect(getRefCounter(branch)).to.be(undefined)
+        buildRefIndex(branch)
+        expect(getRefCounter(branch).promiseCount).to.be(1)
+
+        pending.resolve({ done: true })
+        expect(await result).to.eql({ pending: { done: true } })
+        expect(getRefCounter(branch).promiseCount).to.be(0)
+        verifyRefCounts(branch)
     })
 
     it("keeps a mirror pending when cyclic export re-enters it", async () => {
@@ -117,8 +332,7 @@ describe("export", () => {
         pending.resolve({ error })
 
         const exported = await result
-        expect(exported instanceof Error).to.be(true)
-        expect(exported.message).to.be("export: branch contains errors")
+        expectExportErrors(exported, [error])
         verifyRefCounts(first, second)
     })
 
@@ -131,13 +345,14 @@ describe("export", () => {
 
         const result = exportValue(new Chain(left), [])
 
-        expect(result instanceof Error).to.be(true)
-        expect(result.message).to.be("export: branch contains errors")
+        expectExportErrors(result, [right.bad])
     })
 
-    it("returns counted ordinary Errors without waiting for a raw cycle frontier", async () => {
+    it("collects the complete raw Error frontier despite indexed fast paths", async () => {
         const pending = deferred()
-        const branch = { bad: new Error("known") }
+        const known = new Error("known")
+        const hidden = new Error("hidden")
+        const branch = { bad: known }
         const root = { branch, pending: pending.promise }
         branch.back = root
         importValue(root, "terminal cycle Error")
@@ -147,12 +362,33 @@ describe("export", () => {
 
         expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
         expect(getRefCounter(branch)).not.to.be(undefined)
-        expect(result instanceof Error).to.be(true)
-        expect(result.message).to.be("export: branch contains errors")
+        expect(typeof result.then).to.be("function")
 
-        pending.resolve("done")
-        await flushMicrotasks()
+        pending.resolve(hidden)
+        expectExportErrors(await result, [known, hidden])
         verifyRefCounts(root, branch)
+    })
+
+    it("agrees with Error queries on stable sync and promised data", async () => {
+        const pending = deferred()
+        const known = new Error("known")
+        const hidden = new Error("hidden")
+        const chain = new Chain({
+            known,
+            pending: pending.promise,
+        })
+
+        const exported = exportValue(chain, [])
+        const errorsResult = getErrors(chain, [])
+
+        expect(hasError(chain, [])).to.be(true)
+        pending.resolve({ known, hidden })
+
+        const [outcome, errors] = await Promise.all([exported, errorsResult])
+        expectExportErrors(outcome, [known, hidden])
+        expect(errors.length).to.be(2)
+        expect(errors.includes(known)).to.be(true)
+        expect(errors.includes(hidden)).to.be(true)
     })
 
     it("exports a clean subpath through a cyclic import normally", () => {
@@ -184,7 +420,8 @@ describe("export", () => {
         expect(primitive).to.be(2)
         expect(missing).to.be(undefined)
         expect(broken instanceof Error).to.be(true)
-        expect(broken.message).to.be(
+        expect(broken.errors.length).to.be(1)
+        expect(broken.errors[0].message).to.be(
             "Cannot access property through missing or primitive value",
         )
         expect(typeof waiting.then).to.be("function")
@@ -203,6 +440,25 @@ describe("export", () => {
         expect(branch.x).to.be(2)
         expect(root.branch.x).to.be(2)
         expect(value.x).to.be(1)
+    })
+
+    it("reads an already-drained mirror synchronously without registering again", async () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        const chain = new Chain(root)
+        const observed = lookupPath(chain, ["pending"], false)
+
+        pending.resolve({ value: 1 })
+        await observed
+
+        const mirror = metaOf(root).mirrors.pending
+        expect(mirror.pendingConsumerCount).to.be(0)
+
+        const exported = exportValue(chain, [])
+
+        expect(exported.then).to.be(undefined)
+        expect(exported).to.eql({ pending: { value: 1 } })
+        expect(mirror.pendingConsumerCount).to.be(0)
     })
 
     it("does not expose imported metadata", () => {
@@ -294,6 +550,48 @@ describe("export", () => {
         expect(metaOf(copy[1])).to.be(undefined)
     })
 
+    it("preserves own-key order across Promise settlement", async () => {
+        const objectPending = deferred()
+        const arrayPending = deferred()
+        const object = {
+            first: objectPending.promise,
+            second: 2,
+        }
+        const array = ["zero"]
+        array.first = arrayPending.promise
+        array.second = 2
+
+        const objectResult = exportValue(new Chain(object), [])
+        const arrayResult = exportValue(new Chain(array), [])
+        objectPending.resolve(1)
+        arrayPending.resolve(1)
+
+        const [objectCopy, arrayCopy] = await Promise.all([
+            objectResult,
+            arrayResult,
+        ])
+        expect(Object.keys(objectCopy)).to.eql(["first", "second"])
+        expect(Object.keys(arrayCopy)).to.eql(["0", "first", "second"])
+    })
+
+    it("copies own enumerable __proto__ as data", () => {
+        const child = { value: 1 }
+        const root = { child }
+        Object.defineProperty(root, "__proto__", {
+            value: child,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+
+        const copy = exportValue(new Chain(root), [])
+
+        expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
+        expect(Object.prototype.hasOwnProperty.call(copy, "__proto__")).to.be(true)
+        expect(copy.__proto__).to.be(copy.child)
+        expect(copy.child).not.to.be(child)
+    })
+
     it("returns a single Error for settled error branches without marking them", () => {
         const child = { x: 1 }
         const branch = { error: new Error("bad"), child }
@@ -302,13 +600,12 @@ describe("export", () => {
         const value = exportValue(new Chain(root), ["branch"])
         assignPath(new Chain(root), ["branch", "child", "x"], 2)
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("export: branch contains errors")
+        expectExportErrors(value, [branch.error])
         expect(root.branch).to.be(branch)
         expect(child.x).to.be(2)
     })
 
-    it("pins pending branches so later writes COW away from the result", async () => {
+    it("captures keys before later writes without pinning the source", async () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
         const branch = root.branch
@@ -321,22 +618,19 @@ describe("export", () => {
 
         expect(value).not.to.be(branch)
         expect(value).to.eql({ pending: "done" })
-        expect(root.branch).not.to.be(branch)
+        expect(root.branch).to.be(branch)
         expect(root.branch).to.eql({ pending: "done", later: 2 })
-        verifyRefCounts(branch, root.branch)
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(getRefCounter(branch)).to.be(undefined)
     })
 
-    it("shares one settlement wait between pending callers", async () => {
+    it("keeps concurrent export readiness and output independent", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const root = { branch }
 
         const first = exportValue(new Chain(root), ["branch"])
-        const promise = metaOf(branch).settlementPromise
         const second = exportValue(new Chain(root), ["branch"])
-
-        expect(promise).to.be.ok()
-        expect(metaOf(branch).settlementPromise).to.be(promise)
 
         pending.resolve("done")
         const values = await Promise.all([first, second])
@@ -348,20 +642,38 @@ describe("export", () => {
         expect(values[0]).not.to.be(branch)
         expect(values[1]).not.to.be(branch)
         expect(values[0]).not.to.be(values[1])
-        expect(metaOf(branch).settlementPromise).to.be(undefined)
-        expect(metaOf(branch).settlementResolve).to.be(undefined)
+        expect(metaOf(branch).shared).to.be(undefined)
+        expect(getRefCounter(branch)).to.be(undefined)
     })
 
-    it("gives callers independent copies from one settlement wait", async () => {
+    it("keeps concurrent export Error state independent", async () => {
+        const pending = deferred()
+        const known = new Error("known")
+        const hidden = new Error("hidden")
+        const chain = new Chain({
+            known,
+            pending: pending.promise,
+        })
+
+        const first = exportValue(chain, [])
+        const second = exportValue(chain, [])
+        pending.resolve({ known, hidden })
+        const outcomes = await Promise.all([first, second])
+
+        expectExportErrors(outcomes[0], [known, hidden])
+        expectExportErrors(outcomes[1], [known, hidden])
+        expect(outcomes[0]).not.to.be(outcomes[1])
+        expect(outcomes[0].errors).not.to.be(outcomes[1].errors)
+    })
+
+    it("gives concurrent callers independent nested copies", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const chain = new Chain({ branch })
 
         const firstResult = exportValue(chain, ["branch"])
-        const settlementPromise = metaOf(branch).settlementPromise
         const secondResult = exportValue(chain, ["branch"])
 
-        expect(metaOf(branch).settlementPromise).to.be(settlementPromise)
         pending.resolve({ done: true })
 
         const first = await firstResult
@@ -373,24 +685,17 @@ describe("export", () => {
         expect(second).to.eql(first)
         expect(metaOf(first)).to.be(undefined)
         expect(metaOf(first.pending)).to.be(undefined)
-        verifyRefCounts(branch)
+        expect(getRefCounter(branch)).to.be(undefined)
     })
 
-    it("settles overlapping ancestor and child exports", async () => {
+    it("keeps overlapping ancestor and child exports independent", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         const root = { child }
         const chain = new Chain(root)
 
         const childResult = exportValue(chain, ["child"])
-        const childSettlement = metaOf(child).settlementPromise
         const rootResult = exportValue(chain, [])
-        const rootSettlement = metaOf(root).settlementPromise
-
-        expect(childSettlement).to.be.ok()
-        expect(rootSettlement).to.be.ok()
-        expect(rootSettlement).not.to.be(childSettlement)
-        expect(metaOf(root).settlementPromise).to.be(rootSettlement)
 
         pending.resolve({ done: true })
         const childValue = await childResult
@@ -400,7 +705,9 @@ describe("export", () => {
         expect(childValue).not.to.be(child)
         expect(rootValue).to.eql({ child: { pending: { done: true } } })
         expect(rootValue).not.to.be(root)
-        verifyRefCounts(root)
+        expect(rootValue.child).not.to.be(childValue)
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(child)).to.be(undefined)
     })
 
     it("includes earlier suspended writes at their program position", async () => {
@@ -499,6 +806,19 @@ describe("export", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
+    it("keeps a raw property mirror captured before deletion", async () => {
+        const pending = deferred()
+        const branch = { pending: pending.promise }
+        const chain = new Chain({ branch })
+        const result = exportValue(chain, ["branch"])
+
+        deletePath(chain, ["branch", "pending"])
+        pending.resolve({ observed: true })
+
+        expect(await result).to.eql({ pending: { observed: true } })
+        expect(Object.keys(branch)).to.eql([])
+    })
+
     it("does not transfer a pending export to a replacement promise", async () => {
         const observed = deferred()
         const replacement = deferred()
@@ -543,28 +863,28 @@ describe("export", () => {
 
     it("collapses to Error when a pending branch promise rejects", async () => {
         const pending = deferred()
+        const error = new Error("bad")
         const root = { branch: { pending: pending.promise } }
 
         const result = exportValue(new Chain(root), ["branch"])
-        pending.reject(new Error("bad"))
+        pending.reject(error)
         const value = await result
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("export: branch contains errors")
+        expectExportErrors(value, [error])
         expect(root.branch.pending instanceof Error).to.be(true)
         verifyRefCounts(root)
     })
 
     it("collapses to Error when a resolved promise value contains an Error", async () => {
         const pending = deferred()
+        const error = new Error("bad")
         const root = { branch: { pending: pending.promise } }
 
         const result = exportValue(new Chain(root), ["branch"])
-        pending.resolve({ failed: new Error("bad") })
+        pending.resolve({ failed: error })
         const value = await result
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("export: branch contains errors")
+        expectExportErrors(value, [error])
         expect(root.branch.pending.failed instanceof Error).to.be(true)
         verifyRefCounts(root)
     })
@@ -610,64 +930,57 @@ describe("export", () => {
         verifyRefCounts(root)
     })
 
-    it("clears the settlement generation at the drained zero-crossing", async () => {
+    it("creates no counter or settlement state while waiting", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const result = exportValue(new Chain({ branch }), ["branch"])
-        let settlementAtLaterReaction
 
-        const laterReaction = onInternalResolve(pending.promise, () => {
-            settlementAtLaterReaction = metaOf(branch).settlementPromise
-        })
+        expect(getRefCounter(branch)).to.be(undefined)
+        expect(metaOf(branch).shared).to.be(undefined)
         pending.resolve("done")
-        await Promise.all([result, laterReaction])
+        await result
 
-        expect(settlementAtLaterReaction).to.be(undefined)
+        expect(getRefCounter(branch)).to.be(undefined)
         expect(branch).to.eql({ pending: "done" })
-        verifyRefCounts(branch)
     })
 
     it("does not wait for promises added by later-issued writes", async () => {
         const first = deferred()
         const later1 = deferred()
         const later2 = deferred()
-        const root = { branch: { pending: first.promise } }   // Op1: count = 1
+        const root = { branch: { pending: first.promise } }
         const branch = root.branch
         let settled = false
 
-        const result = exportValue(new Chain(root), ["branch"])            // Op2: pins, waits
+        const result = exportValue(new Chain(root), ["branch"])
         result.then(() => {
             settled = true
         })
 
-        // Later-issued writes COW away from the pin: their promises land in a
-        // fresh copy with its own counter, never re-arming the watched one.
+        // Export already captured the branch's enumerable key frontier.
         assignPath(new Chain(root), ["branch", "a"], later1.promise)
         assignPath(new Chain(root), ["branch", "b"], later2.promise)
 
-        expect(root.branch).not.to.be(branch)
-        expect(getRefCounter(branch).promiseCount).to.be(1)
-        expect(getRefCounter(root.branch).promiseCount).to.be(3)
+        expect(root.branch).to.be(branch)
+        expect(getRefCounter(branch)).to.be(undefined)
 
         first.resolve("done")
         await flushMicrotasks()
 
-        // The watched counter zeroed independently of the copy world's.
         expect(settled).to.be(true)
         const value = await result
         expect(value).not.to.be(branch)
         expect(value).to.eql({ pending: "done" })
-        expect(getRefCounter(root.branch).promiseCount).to.be(2)
 
         later1.resolve(1)
         later2.resolve(2)
         await flushMicrotasks()
 
         expect(root.branch).to.eql({ pending: "done", a: 1, b: 2 })
-        verifyRefCounts(root, branch)
+        expect(value).to.eql({ pending: "done" })
     })
 
-    it("exports a later COW counter world independently", async () => {
+    it("exports a later state independently without forcing COW", async () => {
         const first = deferred()
         const second = deferred()
         const original = { first: first.promise }
@@ -677,13 +990,16 @@ describe("export", () => {
         assignPath(chain, ["branch", "second"], second.promise)
         const current = chain._state.value.branch
 
-        expect(current).not.to.be(original)
+        expect(current).to.be(original)
         first.resolve("first done")
         const originalOutput = await originalResult
         expect(originalOutput).not.to.be(original)
         expect(originalOutput).to.eql({ first: "first done" })
-        expect(original).to.eql({ first: "first done" })
-        expectCounts(current, 1, 0)
+        expect(original).to.eql({
+            first: "first done",
+            second: second.promise,
+        })
+        expect(getRefCounter(current)).to.be(undefined)
 
         const currentResult = exportValue(chain, ["branch"])
         second.resolve("second done")
@@ -694,7 +1010,7 @@ describe("export", () => {
             second: "second done",
         })
         expect(current).to.eql({ first: "first done", second: "second done" })
-        verifyRefCounts(original, current)
+        expect(getRefCounter(current)).to.be(undefined)
     })
 
     it("preserves cyclic imports without exposing cycle diagnostics", () => {
@@ -718,7 +1034,8 @@ describe("export", () => {
     })
 
     it("does not pin a synchronous Error found in a cyclic import", () => {
-        const cyclic = { bad: new Error("hidden") }
+        const error = new Error("hidden")
+        const cyclic = { bad: error }
         cyclic.self = cyclic
         const branch = { cyclic }
         const root = { branch }
@@ -726,21 +1043,22 @@ describe("export", () => {
         importValue(root, "synchronous cyclic Error")
         const result = exportValue(new Chain(root), ["branch"])
 
-        expect(result instanceof Error).to.be(true)
+        expectExportErrors(result, [error])
         expect(metaOf(branch).shared).to.be(undefined)
         expect(metaOf(branch).importBoundary).to.be(undefined)
     })
 
-    it("pins pending imported branches without making them import roots", async () => {
+    it("waits on imported branches without pinning or re-rooting them", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const root = { branch }
 
-        importValue(root, "pending export pin")
+        importValue(root, "pending export")
         const result = exportValue(new Chain(root), ["branch"])
 
-        expect(metaOf(branch).shared).to.be(true)
+        expect(metaOf(branch).shared).to.be(undefined)
         expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(getRefCounter(branch)).to.be(undefined)
 
         pending.resolve("done")
         expect(await result).to.eql({ pending: "done" })
@@ -761,9 +1079,26 @@ describe("export", () => {
         expect(await exported).to.eql({ pending: 1 })
         expect(pending.pending).to.be(promise)
         expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
-        expect(getRefCounter(valid)).not.to.be(undefined)
-        expect(getRefCounter(pending).promiseCount).to.be(0)
-        verifyRefCounts(valid, pending)
+        expect(getRefCounter(valid)).to.be(undefined)
+        expect(getRefCounter(pending)).to.be(undefined)
+    })
+
+    it("drains an indexed frozen holder with exact counter updates", async () => {
+        const pending = deferred()
+        const promise = pending.promise
+        const frozen = Object.freeze({ pending: promise })
+
+        importValue(frozen, "indexed frozen export")
+        buildRefIndex(frozen)
+        expect(getRefCounter(frozen).promiseCount).to.be(1)
+
+        const exported = exportValue(new Chain(frozen), [])
+        pending.resolve({ done: true })
+
+        expect(await exported).to.eql({ pending: { done: true } })
+        expect(frozen.pending).to.be(promise)
+        expect(getRefCounter(frozen).promiseCount).to.be(0)
+        verifyRefCounts(frozen)
     })
 
     it("returns clean frozen branches synchronously as copies", () => {
@@ -775,9 +1110,8 @@ describe("export", () => {
         expect(value).to.eql({ nested: { value: 1 } })
         expect(value).not.to.be(frozen)
         expect(value.nested).not.to.be(frozen.nested)
-        expect(getRefCounter(frozen)).not.to.be(undefined)
-        expect(getRefCounter(frozen.nested)).not.to.be(undefined)
-        verifyRefCounts(frozen)
+        expect(getRefCounter(frozen)).to.be(undefined)
+        expect(getRefCounter(frozen.nested)).to.be(undefined)
     })
 
     it("waits for a trusted indexed child beneath a frozen ancestor", async () => {
@@ -790,14 +1124,15 @@ describe("export", () => {
         importValue(frozen, "frozen indexed export")
         const exported = exportValue(new Chain(frozen), [])
 
-        expect(getRefCounter(frozen).promiseCount).to.be(1)
+        expect(getRefCounter(frozen)).to.be(undefined)
+        expect(getRefCounter(child).promiseCount).to.be(1)
         pending.resolve("done")
         expect(await exported).to.eql({ child: { pending: "done" } })
         // Existing META makes child a trusted runtime island rather than a
         // newly imported original holder.
         expect(child.pending).to.be("done")
         expect(lookupPath(new Chain(frozen), ["child", "pending"], false)).to.be("done")
-        verifyRefCounts(frozen)
+        verifyRefCounts(child)
     })
 
     it("exports through a root promise", async () => {

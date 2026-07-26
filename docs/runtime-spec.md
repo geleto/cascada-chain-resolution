@@ -147,10 +147,10 @@ selected owner/key placements that cut every imported cycle from the projected
 refcount graph.
 
 - Finite lookup and mutation paths follow the raw value.
-- Ref-indexing does not cross the cut, contributes one `cycleCutCount`, and
-  installs no reverse parent edge through it.
+- Ref-indexing contributes one `cycleCutCount` and installs no reverse parent
+  edge through the cut, then indexes its target as an independent component.
 - `hasError` and `getErrors` report only ordinary Errors, including those
-  reached through the raw graph behind a cut.
+  reached beyond a cut through that component's counters.
 - `export` reconstructs aliases and cycles in metadata-free output.
 
 Replacing or deleting the selected property removes that placement's cycle
@@ -175,12 +175,12 @@ and stops. Observations return the Error.
 
 The final target has operation-specific behavior:
 
-| Target state | Assignment | Deletion | Lookup / export | `hasError` | `getErrors` |
-| --- | --- | --- | --- | --- | --- |
-| Missing | Create it | No-op | `undefined` | `false` | `[]` |
-| Primitive or `null` | Replace it | Delete it | Return it | `false` | `[]` |
-| Error | Replace it | Delete it | Return it | `true` | `[error]` |
-| Tracked | Replace it | Delete it | Continue operation | Query branch | Query branch |
+| Target state | Assignment | Deletion | Lookup | Export | `hasError` | `getErrors` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Missing | Create it | No-op | `undefined` | `undefined` | `false` | `[]` |
+| Primitive or `null` | Replace it | Delete it | Return it | Return it | `false` | `[]` |
+| Error | Replace it | Delete it | Return it | Error outcome containing it | `true` | `[error]` |
+| Tracked | Replace it | Delete it | Return it | Copy or Error outcome | Query branch | Query branch |
 
 An empty assignment path replaces the root. An empty deletion path replaces
 the root with `null`.
@@ -240,6 +240,11 @@ the original thrown value continues to throw or reject. Continuation throws,
 rejection-conversion failures, invariant violations, and rejected internal
 aggregate waits are never converted into language Error values.
 
+Every public operation runs its synchronous prefix under this fatal boundary.
+`onValueResolve` and `onInternalResolve` own their respective data and internal
+rejection policies, so the synchronous shell does not add another Promise
+reaction or delay a successful asynchronous result.
+
 An object-like fatal value is reported once per identity even if it crosses
 several fatal wrapper boundaries.
 
@@ -266,17 +271,25 @@ Promise.
 
 Returns host-ready data for the branch captured at its issue position.
 
-- Primitive, missing, and Error terminals return directly.
-- A tracked branch is ref-indexed lazily.
-- If projected Promises remain, the branch is marked shared to pin that world
-  while earlier consumers drain.
+- Primitive and missing terminals return directly.
+- An Error terminal returns a fresh outer Error whose `.errors` array contains
+  that terminal identity.
 - A successful result is always a metadata-free deep copy preserving arrays,
-  holes, aliases, cycles, enumerable `__proto__`, and logical mirror values.
-- An ordinary Error reachable after settlement collapses the sandbox result to
-  one new export Error.
+  holes, own-key order, aliases, cycles, enumerable `__proto__`, and logical
+  mirror values.
+- A tracked branch starts one raw identity-aware copy-or-collect walk
+  immediately; export does not build a ref index, mark ownership, or pin.
+- The first reachable Error disables further output allocation and writes, but
+  traversal continues through every captured Promise so the result is complete.
+- Failure returns a fresh outer Error with message
+  `export: branch contains errors`; `.errors` contains each reachable Error
+  identity once, and its order is not semantic.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise.
+Unexpected synchronous traversal failures and rejected internal readiness are
+fatal. Rejected data Promises are converted to ordinary Error values before
+collection.
 
 ### `hasError(chain, path)`
 
@@ -286,9 +299,10 @@ Returns whether an Error is reachable in the issue-time branch.
 - A missing or primitive terminal returns `false`.
 - A positive indexed `errorCount` returns `true` immediately.
 - A cut-free settled zero-error branch returns `false` immediately.
-- A cut-free pending branch follows its projected Promise frontier.
-- A cut-bearing branch uses raw identity-aware traversal and resolves on the
-  first ordinary Error or when its complete Promise frontier is clean.
+- Otherwise a counter-fenced walk follows only subtrees with Promise, Error, or
+  cycle-cut work.
+- At an actual cycle cut, its independently indexed target resumes the same
+  fenced traversal.
 
 The operation never marks or pins the branch.
 
@@ -298,8 +312,10 @@ Returns an array containing each reachable Error identity once.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and primitive terminals return `[]`.
-- Counters prune clean cut-free projected regions.
-- A cut-bearing branch is walked raw, and the cut itself contributes nothing.
+- A counter-fenced walk prunes subtrees with no Promise, Error, or cycle-cut
+  work.
+- At an actual cycle cut, its independently indexed target resumes the same
+  walk; the cut itself contributes nothing.
 - Promise waits recursively extend the captured issue-time frontier.
 
 The operation never marks or pins the branch. It returns the array directly
@@ -307,15 +323,16 @@ when no wait is required and otherwise returns a Promise for that array.
 
 ## Ref-index contract
 
-Subtree counters are created lazily at the path value reached by `export`,
-`hasError`, or `getErrors`. Indexed regions are downward-closed through every
-ordinary tracked property. A pending Promise placement and a cycle cut are
-frontiers and do not install reverse child edges.
+Subtree counters are created lazily at the path value reached by `hasError` or
+`getErrors`. A successful build indexes every raw-reachable tracked value.
+Ordinary properties connect components through reverse child edges; pending
+Promise placements and cycle cuts are propagation frontiers and install no
+such edge. Export does not use subtree counters.
 
 Each indexed node stores exact `promiseCount`, `errorCount`, and
 `cycleCutCount` totals. All later transitions below an indexed parent maintain
-those totals and exact parent multiplicity. Missing counters below an ordinary
-indexed edge are a fatal invariant failure.
+those totals and exact parent multiplicity. A missing counter anywhere in an
+indexed raw-reachable graph is a fatal invariant failure.
 
 The complete implementation is specified in
 [`counters-implementation.md`](counters-implementation.md).

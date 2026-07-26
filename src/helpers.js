@@ -3,8 +3,7 @@ import * as errorUtils from "./error.js"
 // Promise registration is part of the algorithm, not a convenience wrapper:
 // - onValueResolve registers its handler synchronously at call time.
 // - Rejection becomes the language Error node before the continuation runs.
-// - Continuation throws and returned rejections go through reportFatalError;
-//   they are not converted to language Error.
+// - Synchronous continuation throws go through reportFatalError.
 // - Runtime value continuations use onValueResolve; internal aggregate waits
 //   use onInternalResolve. Runtime code must not use raw .then.
 // - Data objects with a callable `then` are treated as promises by JS and by
@@ -31,21 +30,18 @@ function isTracked(x) {
     )
 }
 
-function runFatal(fn, value) {
-    let result
+// Catch only the synchronous body. Data-Promise rejection belongs to
+// onValueResolve; internal readiness rejection belongs to onInternalResolve.
+function runFatal(fn, value = undefined) {
     try {
-        result = fn(value)
+        return fn(value)
     } catch (error) {
         return errorUtils.reportFatalError(error)
     }
-
-    return isPromise(result)
-        ? Promise.resolve(result).then(value => value, errorUtils.reportFatalError)
-        : result
 }
 
 // Rejected data promises arrive at fn as Error values. Exceptions thrown by fn
-// and rejections returned by it are runtime bugs and go through reportFatalError.
+// are runtime bugs and go through reportFatalError.
 function onValueResolve(promise, fn) {
     return Promise.resolve(promise).then(
         value => runFatal(fn, value),
@@ -70,4 +66,11 @@ function onInternalResolve(promise, fn) {
     )
 }
 
-export { isError, isPromise, isTracked, onInternalResolve, onValueResolve }
+export {
+    isError,
+    isPromise,
+    isTracked,
+    onInternalResolve,
+    onValueResolve,
+    runFatal,
+}

@@ -97,9 +97,9 @@ roots and uncut parent placements. A cut need not be the deepest cycle edge
 relative to every such root.
 
 A cut stops count propagation only across its own property. It neither clears
-nor resets the raw target's counter. The target can already have a counter
-through another parent, or can be indexed independently when an operation
-starts on the far side of the cut.
+nor resets the raw target's counter. One `buildRefIndex` call indexes every
+raw-reachable tracked value: each cut target starts another independently
+counted component.
 
 For any raw path from a reached root into data omitted by projection, consider
 the first cut on that path. Its owner is reachable through an entirely uncut
@@ -108,7 +108,8 @@ prefix, so that cut's `cycleCutCount` contribution reaches the root. Therefore:
 - `cycleCutCount === 0`, with no captured private mirror cut, proves that
   `promiseCount` and `errorCount` are complete for that reached root;
 - `cycleCutCount > 0` means those totals cover only the projected prefix; an
-  operation still needing complete branch knowledge must use raw traversal; and
+  operation still needing complete branch knowledge must inspect the cut
+  targets as separate indexed components; and
 - aliases propagate a child's projected triple through every uncut parent
   placement with structural multiplicity.
 
@@ -129,23 +130,17 @@ Different import roots can have different root totals or encounter a cut at
 different depths without changing observable results. A given tracked identity
 still has only one projected counter.
 
-Settlement depends only on `promiseCount`. Consider a Promise resolving to a
-cycle:
+The three counts remain independent when a Promise resolves to a cycle:
 
 ```text
 before: promiseCount=1, cycleCutCount=0
 after:  promiseCount=0, cycleCutCount=1
 ```
 
-The structural cut remains, but all Promise work has settled. Export's
-settlement generation must resolve at this transition.
-
-Therefore:
-
-- `cycleCutCount` selects projected or raw Error-query traversal;
-- settlement notification uses `promiseCount`;
-- Error fast paths use `errorCount`; and
-- a cycle cut is not itself an Error or pending Promise.
+The structural cut remains after the Promise work completes. Error queries use
+`promiseCount` to find pending projected work, `errorCount` for conclusive Error
+fast paths, and `cycleCutCount` to guide fenced traversal to cut targets. A
+cycle cut is neither an Error nor a pending Promise.
 
 A combined stored counter would lose these distinctions.
 
@@ -193,8 +188,11 @@ validation failures; cycle cuts themselves create no Error or Error identity.
 
 ## Ref-index and transitions
 
-Index construction does not descend through a cut. It contributes `[0, 0, 1]`
-and installs no reverse parent edge through the raw target.
+Index construction does not propagate through a cut. It contributes
+`[0, 0, 1]`, installs no reverse parent edge through the raw target, and queues
+that target as the root of another indexed component. The worklist is drained
+only after each current component is published, so a closing back edge cannot
+re-enter an active recursive frame.
 
 Every live property transaction handles triples:
 
@@ -205,85 +203,65 @@ Every live property transaction handles triples:
 5. Propagate all three deltas.
 
 `applyCountDelta` propagates `cycleCutDelta` alongside the Promise and Error
-deltas. Settlement logic compares only the old and new `promiseCount`.
+deltas.
 
 Assignment and deletion clear the exact replaced placement's cut. COW
 reconstructs cut state from the copy's own prepared placements and never copies
 markers blindly.
 
-## Error-query dispatch: whole-branch raw fallback
+## Error-query traversal
 
-Both Error queries make one branch-level dispatch:
+Both Error queries start with their conclusive counter fast paths, then use one
+counter-fenced traversal over the cut-separated index:
 
-- a path ending directly at a published or captured private cut enters raw mode
-  without requiring the cut target to have a counter;
-- an ordinary tracked terminal is indexed, after which
-  `cycleCutCount === 0` uses the counter-pruned projected walk; and
-- `cycleCutCount > 0` switches the complete reached branch to one
-  identity-aware raw walk.
+- a subtree is skipped when its Promise, Error, and cycle-cut counts are all
+  zero;
+- a positive `cycleCutCount` guides the fenced walk to actual cut placements;
+- at a published cut, its independently indexed target resumes the same fenced
+  traversal; and
+- a path ending directly at a published or captured private cut builds or uses
+  that target's index exactly like any other tracked terminal.
 
-A Promise reached by projected mode applies the same dispatch to its exact
-captured resolved branch. A private cut on a draining or revoked mirror selects
-raw mode even though attached counters do not contain it. Once raw mode begins,
-Promises resume the same raw traversal state without requiring counters or
-another dispatch.
+A Promise reached by fenced traversal applies the same rule to its exact
+captured resolved branch. Mirror preparation indexes a tracked result before a
+later query continuation inspects it, including values retained by revoked
+mirrors.
 
-**Whole-branch raw fallback is a deliberate design decision.** After any
-conclusive counter fast path, a cut-bearing branch is raw-walked from its
-reached root. This re-walks the clean projected prefix and forgoes fine-grained
-pruning of clean subtrees, keeping the uncommon cyclic case small and avoiding
-cut-location tracking.
-
-The raw walk follows logical values without consulting cut metadata. One
-operation-local visited set terminates cycles, deduplicates aliases, and spans
-every captured Promise continuation. A counterless raw region can be entered
-only through a published or captured private cut; after that boundary, its
-descendants need no counters. Downward counter closure remains mandatory for
-every ordinary projected edge.
+One operation-local `visited` set spans every indexed component and captured
+Promise continuation. It prevents duplicate work when aliases or cuts reach an
+identity already handled by the same query.
 
 ## `hasError`
 
 An ordinary Error returns `true`; an untracked value returns `false`. At an
-indexed terminal, `errorCount > 0` returns `true` before branch dispatch. A
-cut-free branch with `promiseCount === 0` returns `false`; otherwise its
-projected Promise walk uses the first-error-versus-completion race.
-
-Raw mode uses the same first-error policy: it returns `true` on the first
-synchronously reachable Error, returns `false` when it finds neither Error nor
-Promise, and otherwise races the first asynchronous Error against completion of
-its hierarchical Promise wait tree. A cut itself never returns `true`.
+indexed terminal, `errorCount > 0` returns `true` before traversal. A branch
+whose complete counter triple is zero returns `false`; otherwise one fenced
+first-error-versus-completion race spans all reached components. A cut itself
+never returns `true`.
 
 ## `getErrors`
 
-`getErrors` remains exhaustive after the shared dispatch. Its projected mode
-prunes a child when both `errorCount` and `promiseCount` are zero; raw mode walks
-the complete branch once per identity. Ordinary Error identities enter one
-result Set, cuts add nothing, and Promise continuations extend the hierarchical
-readiness tree using the same visited and Error sets.
+`getErrors` is exhaustive within the captured frontier. Its fenced traversal
+prunes a child when its complete counter triple is zero. Each cut target resumes
+the same traversal through its independent index. Ordinary Error identities
+enter one result Set, cuts add nothing, and Promise continuations extend the
+hierarchical readiness tree using the shared visited set and Error Set.
 
 ## `export`
 
-Export produces a metadata-free graph copy with one raw identity map. A
-terminal cut target enters raw copying directly and may be counterless. An
-ordinary tracked terminal is indexed:
+Export produces a metadata-free graph copy with operation-local weak identity
+state. A terminal cut target and an ordinary tracked terminal use the same raw
+traversal; export never builds or reads subtree counters. Its `visited` set
+terminates cycles, while a copy map preserves their topology in successful
+output and is dropped if the operation finds an Error.
 
-1. `promiseCount > 0` waits for the shared settlement generation.
-2. After any required projected settlement, `errorCount > 0` takes the generic
-   Error fast path.
-3. Otherwise one `copyRawBranch` call constructs the output and detects any
-   ordinary Error or Promise hidden beyond a cut.
-
-Every non-fast-path tracked branch uses that same raw copy, whether cut-free or
-cyclic. `cycleCutCount` selects no second copy algorithm, and no projected cycle
-classifier exists. Terminal-cut knowledge is used only at operation entry to
-select the counterless raw path; it is not threaded through settlement or
-completion.
-
-A synchronous cycle containing no Promise requires no pin merely because it is
-cyclic. If the copy captures a Promise, export pins the issue-time branch before
-returning its readiness Promise. Ordinary Errors produce export's generic Error
-result; [`future/export-error-set.md`](future/export-error-set.md) specifies a
-separate complete-Error-set result.
+The walk starts copying immediately. Its first ordinary Error switches the
+operation to collection-only mode, while all captured Promise continuations
+keep extending the same Error Set and readiness tree. Success returns the
+metadata-free copy. Failure returns a fresh outer Error whose `.errors` array
+contains every distinct ordinary Error identity. Cuts contribute no Error and
+need no export-specific dispatch. See
+[`export-error-set.md`](export-error-set.md).
 
 ## Path operations and ownership
 
@@ -310,12 +288,10 @@ only if preparation establishes that the new placement closes a cycle.
 - no competing plain cut below a mirrored property; and
 - removal of stale cuts on replacement and deletion.
 
-Counterless raw regions are the sole exception to downward counter closure. In
-the attached graph, the verifier permits entry into one only through a
-published cut. Operation-focused checks permit entry through the exact captured
-private mirror cut. Once raw mode begins, descendants are outside the projected
-closure requirement; every ordinary projected tracked property must still lead
-to a ref-indexed child.
+Every tracked value raw-reachable from an indexed root must have a counter,
+including targets behind published cuts. A cut target has no reverse edge to
+its cut owner, but it must satisfy the same closure rule inside its independent
+component.
 
 Verification does not prove that every retained cut still closes a cycle.
 Changing another edge can make a cut conservative without making it invalid;
@@ -331,11 +307,10 @@ to rely on that import contract.
 - `src/meta.js`: store optional `cycleCuts`.
 - `src/promise-mirrors.js`: retain private Promise-placement cut state.
 - `src/refcounts.js`: count triples, parent transitions, propagation, COW
-  reconstruction, and Promise-only settlement.
-- `src/observations.js`: cycle-aware `hasError`, `getErrors`, and export
-  policy, including branch-level projected/raw dispatch.
-- `src/raw-walk.js`: marker-independent raw copying and Error traversal with
-  Promise frontier extension.
+  reconstruction.
+- `src/observations.js`: cycle-aware fenced Error queries and export policy.
+- `src/raw-walk.js`: marker-independent export copying and Error collection
+  with Promise frontier extension.
 - `test/verify-refcounts.js`: test-only independent triple recount and cut invariants.
 
 ## Required coverage
@@ -352,22 +327,23 @@ Run every case under inline and WeakMap metadata storage:
   receives its own marker; assert that the covered cycle receives no second cut
   and include captured private Promise cuts;
 - Promises reachable only through cuts, resolving cleanly and to Errors;
+- cut targets receiving independent counters in the initial worklist and when
+  first exposed by Promise settlement;
 - Promise-to-cut and cut-to-Promise transitions with exact ancestor deltas;
-- settlement resolving when a Promise becomes a cut even though
-  `cycleCutCount` becomes positive;
+- a Promise becoming a cut with exact independent Promise and cut deltas;
 - aliases, arrays, enumerable `__proto__`, and parent multiplicity;
 - COW mutation, deletion, partial repair, and whole-boundary replacement;
 - private, live, revoked, and forked Promise-placement cuts;
 - paths ending directly at plain published, draining private, and revoked
-  captured cuts, including counterless raw targets;
+  captured cuts, with indexed targets;
 - alternating Promise/cycle frontiers at one captured issue position;
 - a known projected Error alongside a pending Promise hidden behind a cut,
   preserving each operation's immediate-versus-exhaustive result policy;
 - rejected Promises reachable only through cuts becoming ordinary Errors;
 - non-extensible imported holders; and
 - verifier failures for wrong cut counts, stale markers, crossed parent edges,
-  counterless ordinary tracked edges, non-enumerable or non-tracked cut
-  placements, and uncut projected cycles.
+  a missing counter on any raw-reachable tracked value, non-enumerable or
+  non-tracked cut placements, and uncut projected cycles.
 
 Coherence:
 

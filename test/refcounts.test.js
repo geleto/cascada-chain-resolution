@@ -2,6 +2,7 @@ import {
     Chain,
     expect,
     buildRefIndex,
+    getErrors,
     getRefCounter,
     getRefCounts,
     metaOf,
@@ -281,6 +282,78 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
+    it("indexes only the reached branch inside an imported boundary", () => {
+        const reached = { bad: new Error("bad") }
+        const sibling = { clean: true }
+        const root = importValue({ reached, sibling }, "branch-local index")
+
+        expect(hasError(new Chain(root), ["reached"])).to.be(true)
+
+        expectCounts(reached, 0, 1)
+        expect(getRefCounter(root)).to.be(undefined)
+        expect(getRefCounter(sibling)).to.be(undefined)
+        verifyRefCounts(reached)
+    })
+
+    it("indexes cut targets as independent counter components", () => {
+        const pending = deferred()
+        const first = { pending: pending.promise }
+        const second = { back: first }
+        first.next = second
+        importValue(first, "complete cut indexing")
+
+        buildRefIndex(second)
+
+        expectCounts(second, 0, 0, 1)
+        expectCounts(first, 1, 0, 1)
+        expect(getRefCounter(first).parents.size).to.be(0)
+        expect(getRefCounter(second).parents.get(first)).to.be(1)
+        verifyRefCounts(first, second)
+    })
+
+    it("indexes cut targets that expose further cut targets", () => {
+        const first = {}
+        const second = {}
+        const third = {}
+        third.second = second
+        second.first = first
+        second.toThird = third
+        first.toSecond = second
+        importValue(third, "two-hop cut indexing")
+
+        buildRefIndex(first)
+
+        expectCounts(first, 0, 0, 1)
+        expectCounts(second, 0, 0, 2)
+        expectCounts(third, 0, 0, 2)
+        expect(getRefCounter(first).parents.get(second)).to.be(1)
+        expect(getRefCounter(second).parents.get(third)).to.be(1)
+        verifyRefCounts(first, second, third)
+    })
+
+    it("indexes a Promise cut target before later observers", async () => {
+        const pending = deferred()
+        const destination = importValue(
+            { slot: pending.promise },
+            "Promise cut destination",
+        )
+        const target = importValue(
+            { back: destination },
+            "Promise cut target",
+        )
+        buildRefIndex(destination)
+
+        expect(getRefCounter(target)).to.be(undefined)
+        pending.resolve(target)
+        await flushMicrotasks()
+
+        expect(metaOf(destination).mirrors.slot.cycleCut).to.be(true)
+        expectCounts(destination, 0, 0, 1)
+        expectCounts(target, 0, 0, 1)
+        expect(getErrors(new Chain(destination), [])).to.eql([])
+        verifyRefCounts(destination, target)
+    })
+
     it("propagates cycle-cut multiplicity through aliases", () => {
         const cyclic = {}
         cyclic.self = cyclic
@@ -428,6 +501,18 @@ describe("subtree counters", () => {
         buildRefIndex(missingChildIndexRoot)
         missingChildIndexRoot.child = {}
         expect(thrownBy(() => verifyRefCounts(missingChildIndexRoot)).message).to.be(
+            "Ref-indexed parent contains non-ref-indexed child",
+        )
+
+        const cutTarget = {}
+        const cutMiddle = {}
+        const cutOwner = { back: cutTarget }
+        cutTarget.next = cutMiddle
+        cutMiddle.next = cutOwner
+        importValue(cutTarget, "missing cut target index")
+        buildRefIndex(cutOwner)
+        delete metaOf(cutTarget).parents
+        expect(thrownBy(() => verifyRefCounts(cutOwner)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
 

@@ -1,5 +1,4 @@
 import * as helpers from "./helpers.js"
-import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
@@ -13,13 +12,18 @@ function initImport(commitLiveEdgeFn, prepareImportedMirrorValueFn) {
 }
 
 function importValue(value, errorContext) {
-    if (!errorContext) {
-        errorUtils.reportFatalError(new Error("import requires an error context"))
-    }
-    if (helpers.isPromise(value)) {
-        return helpers.onValueResolve(value, settled => importResolvedValue(settled, errorContext))
-    }
-    return importResolvedValue(value, errorContext)
+    return helpers.runFatal(() => {
+        if (!errorContext) {
+            throw new Error("import requires an error context")
+        }
+        if (helpers.isPromise(value)) {
+            return helpers.onValueResolve(
+                value,
+                settled => importResolvedValue(settled, errorContext),
+            )
+        }
+        return importResolvedValue(value, errorContext)
+    })
 }
 
 function importResolvedValue(value, errorContext) {

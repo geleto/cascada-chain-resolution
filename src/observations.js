@@ -11,83 +11,69 @@ import * as rawWalk from "./raw-walk.js"
 // sharedOwnership is false for a pure read or when ownership is ceded to
 // the caller, e.g. the final `return x` from an otherwise unused variable.
 function lookupPath(chain, path, sharedOwnership = true) {
-    return walkObservationPath(chain, path, (value, importBoundary) => {
-        if (importBoundary) {
-            imports.import(value, importBoundary.errorContext)
-        } else if (sharedOwnership) {
-            metadata.markShared(value)
-        }
-        return value
+    return helpers.runFatal(() => {
+        return walkObservationPath(chain, path, (value, importBoundary) => {
+            if (importBoundary) {
+                imports.import(value, importBoundary.errorContext)
+            } else if (sharedOwnership) {
+                metadata.markShared(value)
+            }
+            return value
+        })
     })
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportValue(chain, path) {
-    return walkObservationPath(chain, path, exportAtPathValue, true)
+    return helpers.runFatal(() => {
+        return walkObservationPath(chain, path, exportAtPathValue)
+    })
 }
 
-function exportAtPathValue(value, importBoundary, terminalCycleCut) {
-    if (helpers.isError(value) || !helpers.isTracked(value)) return value
-    if (terminalCycleCut) return copyExportBranch(value, importBoundary)
+function exportAtPathValue(value, importBoundary) {
+    if (helpers.isError(value)) return exportErrorOutcome([value])
+    if (!helpers.isTracked(value)) return value
 
-    refcounts.buildRefIndex(value, importBoundary)
-    const counter = refcounts.getRequiredRefCounter(value)
-    if (counter.promiseCount > 0) {
-        // Pin this issue-time branch while its projected Promise frontier drains.
-        metadata.markShared(value)
-        return helpers.onInternalResolve(refcounts.waitForSettlement(value), () => {
-            return exportSettledBranch(value, importBoundary)
-        })
-    }
-    return exportSettledBranch(value, importBoundary)
+    let output
+    const state = rawWalk.createRawWalkState(() => {
+        output = undefined
+    })
+    const readiness = rawWalk.walkRawBranch(value, importBoundary, state)
+    if (state.copying) output = state.copies.get(value)
+    const finish = () => state.errors.size > 0
+        ? exportErrorOutcome(state.errors)
+        : output
+    return readiness
+        ? helpers.onInternalResolve(readiness, finish)
+        : finish()
 }
 
-function exportSettledBranch(value, importBoundary) {
-    if (refcounts.getRequiredRefCounter(value).errorCount > 0) {
-        return new Error("export: branch contains errors")
-    }
-    return copyExportBranch(value, importBoundary)
-}
-
-function copyExportBranch(value, importBoundary) {
-    const inspection = rawWalk.copyRawBranch(value, importBoundary)
-    const finish = () => inspection.hasOrdinaryError
-        ? new Error("export: branch contains errors")
-        : inspection.value
-    if (!inspection.readiness) return finish()
-
-    // A raw frontier can contain Promises hidden behind cycle cuts.
-    metadata.markShared(value)
-    return helpers.onInternalResolve(inspection.readiness, finish)
+function exportErrorOutcome(errors) {
+    const outcome = new Error("export: branch contains errors")
+    outcome.errors = [...errors]
+    return outcome
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path) {
-    return walkObservationPath(chain, path, hasErrorAtPathValue, true)
+    return helpers.runFatal(() => {
+        return walkObservationPath(chain, path, hasErrorAtPathValue)
+    })
 }
 
-function hasErrorAtPathValue(value, importBoundary, terminalCycleCut) {
+function hasErrorAtPathValue(value, importBoundary) {
     if (helpers.isError(value)) return true
     if (!helpers.isTracked(value)) return false
-    if (terminalCycleCut) {
-        // A path ending at a cut has a counterless raw target; walk it directly.
-        return searchForFirstError(onError =>
-            rawWalk.collectRawErrorWaits(
-                value,
-                importBoundary,
-                createErrorSearchState(onError, true),
-            ))
-    }
 
     refcounts.buildRefIndex(value, importBoundary)
     const counter = refcounts.getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
     if (counter.cycleCutCount === 0 && counter.promiseCount === 0) return false
     return searchForFirstError(onError =>
-        searchIndexedBranchForErrors(
+        collectFencedErrorWaits(
             value,
             importBoundary,
-            createErrorSearchState(onError, true),
+            createErrorSearchState(true, onError),
         ))
 }
 
@@ -115,87 +101,79 @@ function searchForFirstError(collectWaits) {
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path) {
-    const errors = new Set()
-    return walkObservationPath(chain, path, finish, true)
+    return helpers.runFatal(() => {
+        return walkObservationPath(chain, path, finish)
+    })
 
-    function finish(value, importBoundary, terminalCycleCut) {
-        const readiness = collectErrorsAtPathValue(
-            value,
-            importBoundary,
-            terminalCycleCut,
-        )
-        if (!readiness) return [...errors]
-        return helpers.onInternalResolve(readiness, () => [...errors])
-    }
-
-    function collectErrorsAtPathValue(value, importBoundary, terminalCycleCut) {
+    function finish(value, importBoundary) {
+        const state = createErrorSearchState()
+        let readiness
         if (helpers.isError(value)) {
-            errors.add(value)
-            return undefined
+            state.foundError(value)
+        } else if (helpers.isTracked(value)) {
+            refcounts.buildRefIndex(value, importBoundary)
+            readiness = collectFencedErrorWaits(value, importBoundary, state)
         }
-        if (!helpers.isTracked(value)) return undefined
-
-        const state = createErrorSearchState(error => errors.add(error), false)
-        if (terminalCycleCut) {
-            return rawWalk.collectRawErrorWaits(value, importBoundary, state)
-        }
-
-        refcounts.buildRefIndex(value, importBoundary)
-        return searchIndexedBranchForErrors(value, importBoundary, state)
+        return readiness
+            ? helpers.onInternalResolve(readiness, () => [...state.errors])
+            : [...state.errors]
     }
 }
 
-// firstErrorOnly is hasError's mode: it stops at the first counted or raw Error.
-// getErrors leaves it false to collect every distinct identity.
-function createErrorSearchState(onError, firstErrorOnly) {
-    return {
-        onError,
+function createErrorSearchState(firstErrorOnly = false, onError = undefined) {
+    const state = {
+        errors: firstErrorOnly ? undefined : new Set(),
         firstErrorOnly,
-        projectedVisited: new WeakSet(),
-        rawVisited: new WeakSet(),
-        rawStopped: false,
+        stopped: false,
+        visited: new WeakSet(),
+        foundAnyError() {
+            if (state.stopped) return
+            state.stopped = true
+            onError()
+        },
+        foundError(error) {
+            if (state.firstErrorOnly) {
+                state.foundAnyError()
+                return
+            }
+            state.errors.add(error)
+        },
     }
+    return state
 }
 
-// Search one already-indexed tracked branch: raw traversal when it hides a cut,
-// otherwise the counter-pruned projected walk.
-function searchIndexedBranchForErrors(value, importBoundary, state) {
-    const counter = refcounts.getRequiredRefCounter(value)
-    if (state.firstErrorOnly && counter.errorCount > 0) {
-        state.onError()
-        return undefined
-    }
-    if (counter.cycleCutCount > 0) {
-        return rawWalk.collectRawErrorWaits(value, importBoundary, state)
-    }
-    return collectProjectedErrorWaits(value, importBoundary, state)
-}
-
-// Projected traversal is counter-pruned. A resolved Promise branch is
-// redispatched because it can introduce the first cut seen by this operation.
-function collectProjectedErrorWaits(value, inheritedImportBoundary, state) {
+// The fenced walk follows only nodes whose counter triple contains relevant
+// work. A cut blocks count propagation, but its indexed target resumes this
+// same walk through the operation-wide visited set.
+function collectFencedErrorWaits(value, inheritedImportBoundary, state) {
     const waits = []
     walk(value, inheritedImportBoundary)
     return waits.length === 0 ? undefined : Promise.all(waits)
 
     function walk(node, inheritedBoundary) {
-        if (state.projectedVisited.has(node)) return
-        state.projectedVisited.add(node)
+        if (state.stopped) return
+        if (state.visited.has(node)) return
+        state.visited.add(node)
 
         const counter = refcounts.getRequiredRefCounter(node)
         if (state.firstErrorOnly && counter.errorCount > 0) {
-            state.onError()
+            state.foundAnyError()
             return
         }
-        if (counter.promiseCount === 0 && counter.errorCount === 0) return
+        if (!hasErrorQueryWork(counter)) return
 
         const importBoundary = metadata.nodeImportBoundary(node, inheritedBoundary)
+        const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of Object.keys(node)) {
+            if (state.stopped) break
             let mirror = promiseMirrors.getPromiseMirror(node, key)
             const child = languageProperties.readLanguageProperty(node, key)
+            const childImportBoundary = mirror?.importBoundary ?? importBoundary
 
-            if (helpers.isError(child)) {
-                state.onError(child)
+            if (hasCycleCuts && imports.hasPublishedCycleCut(node, key)) {
+                walk(child, childImportBoundary)
+            } else if (helpers.isError(child)) {
+                state.foundError(child)
             } else if (helpers.isPromise(child)) {
                 mirror ??= promiseMirrors.getRequiredPromiseMirror(node, key, child)
                 waits.push(mirror.onResolve(() => {
@@ -207,48 +185,44 @@ function collectProjectedErrorWaits(value, inheritedImportBoundary, state) {
                 }))
             } else if (helpers.isTracked(child)) {
                 const childCounter = refcounts.getRequiredRefCounter(child)
-                if (childCounter.promiseCount > 0 || childCounter.errorCount > 0) {
-                    walk(child, mirror?.importBoundary ?? importBoundary)
+                if (hasErrorQueryWork(childCounter)) {
+                    walk(child, childImportBoundary)
                 }
             }
         }
     }
 }
 
+function hasErrorQueryWork(counter) {
+    return counter.promiseCount > 0 ||
+        counter.errorCount > 0 ||
+        counter.cycleCutCount > 0
+}
+
 function collectResolvedPromiseErrors(mirror, inheritedImportBoundary, state) {
+    if (state.stopped) return undefined
     const value = mirror.currentValue
     if (helpers.isError(value)) {
-        state.onError(value)
+        state.foundError(value)
         return undefined
     }
     if (!helpers.isTracked(value)) return undefined
 
     const importBoundary = mirror.importBoundary ?? inheritedImportBoundary
-    // A captured private cut selects raw mode even though attached counters
-    // do not yet contain it.
-    if (mirror.cycleCut) {
-        return rawWalk.collectRawErrorWaits(value, importBoundary, state)
-    }
-    return searchIndexedBranchForErrors(value, importBoundary, state)
+    return collectFencedErrorWaits(value, importBoundary, state)
 }
 
-// Observational path resolution follows raw logical values. Only the terminal
-// callback receives the exact captured property's cut state.
+// Observational path resolution follows raw logical values.
 function walkObservationPath(
     chain,
     path,
     onResolved,
-    prepareImportedParents = false,
 ) {
     const targetPath = ["value", ...path]
     return walkFromParent(chain._state, 0, undefined)
 
     function walkFromParent(parent, index, inheritedImportBoundary) {
         const importBoundary = metadata.nodeImportBoundary(parent, inheritedImportBoundary)
-        if (prepareImportedParents && importBoundary &&
-            !refcounts.getRefCounter(importBoundary.root)) {
-            refcounts.buildRefIndex(parent, importBoundary)
-        }
 
         const key = targetPath[index]
         const value = languageProperties.readLanguageProperty(parent, key)
@@ -265,30 +239,18 @@ function walkObservationPath(
                     mirror.currentValue,
                     index,
                     propertyImportBoundary,
-                    resolvedValue => onResolved(
-                        resolvedValue,
-                        propertyImportBoundary,
-                        mirror.cycleCut,
-                    ),
+                    resolvedValue => onResolved(resolvedValue, propertyImportBoundary),
                 )
             })
         }
         if (mirror) {
             const propertyImportBoundary = mirror.importBoundary ?? importBoundary
             return walkValue(value, index, propertyImportBoundary, resolvedValue => {
-                return onResolved(
-                    resolvedValue,
-                    propertyImportBoundary,
-                    mirror.cycleCut,
-                )
+                return onResolved(resolvedValue, propertyImportBoundary)
             })
         }
         return walkValue(value, index, importBoundary, resolvedValue => {
-            return onResolved(
-                resolvedValue,
-                importBoundary,
-                imports.hasPublishedCycleCut(parent, key),
-            )
+            return onResolved(resolvedValue, importBoundary)
         })
     }
 

@@ -67,7 +67,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
         const value = languageProperties.readLanguageProperty(obj, key)
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
-        // through setProperty, or refcounts.copyCounters reconstructs its indexed edges.
+        // through setProperty, or indexCopyIfSourceIndexed reconstructs its index.
         languageProperties.writeLanguageProperty(copy, key, value)
         if (helpers.isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
@@ -110,19 +110,21 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
             metadata.markShared(value)
         }
     }
-    refcounts.copyCounters(obj, copy)
+    refcounts.indexCopyIfSourceIndexed(obj, copy)
     return copy
 }
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(chain, path, value) {
-    walkMutationPath(chain._state, path, (
-        parent,
-        key,
-        importBoundary,
-        attachmentPath,
-    ) => {
-        setProperty(parent, key, value, importBoundary, attachmentPath)
+    helpers.runFatal(() => {
+        walkMutationPath(chain._state, path, (
+            parent,
+            key,
+            importBoundary,
+            attachmentPath,
+        ) => {
+            setProperty(parent, key, value, importBoundary, attachmentPath)
+        })
     })
 }
 
@@ -217,13 +219,15 @@ function walkMutationPath(rootHolder, path, onTarget) {
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deletePath(chain, path) {
-    const deletesRoot = path.length === 0
-    walkMutationPath(chain._state, path, (parent, key, importBoundary) => {
-        if (deletesRoot) {
-            setProperty(parent, key, null, importBoundary)
-        } else {
-            deleteProperty(parent, key, importBoundary)
-        }
+    helpers.runFatal(() => {
+        const deletesRoot = path.length === 0
+        walkMutationPath(chain._state, path, (parent, key, importBoundary) => {
+            if (deletesRoot) {
+                setProperty(parent, key, null, importBoundary)
+            } else {
+                deleteProperty(parent, key, importBoundary)
+            }
+        })
     })
 }
 

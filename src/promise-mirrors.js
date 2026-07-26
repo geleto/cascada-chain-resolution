@@ -59,7 +59,8 @@ class PromiseMirror {
 
     // Count registration synchronously so FIFO order and pending visibility agree.
     // Only fn's synchronous body counts: re-entrant registration extends the
-    // drain, while a Promise returned by fn does not delay it.
+    // drain, while deeper readiness owns its own rejection handling and does
+    // not delay this consumer.
     onResolve(fn) {
         this.pendingConsumerCount++
         return helpers.onValueResolve(this.promise, value => {
@@ -153,6 +154,12 @@ function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined
 function getOrCreateMirrorForValue(node, key, value, importBoundary = undefined) {
     const mirror = getPromiseMirror(node, key)
     if (mirror || !helpers.isPromise(value)) return mirror
+    // Ref-indexing creates every reachable Promise mirror. Observations may
+    // discover one only while its owner is still unindexed. `parents` is
+    // published only after ref-indexing finishes scanning the complete node.
+    if (metadata.metaOf(node)?.parents) {
+        return getRequiredPromiseMirror(node, key, value)
+    }
     return getOrCreatePromiseMirror(node, key, value, importBoundary)
 }
 

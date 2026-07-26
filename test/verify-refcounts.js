@@ -55,13 +55,16 @@ function verifyReachable(node, seen) {
         verifyStoredParentEdges(node)
     }
 
-    // Raw traversal validates markers beyond a cut without requiring counters
-    // there. Ordinary projected edges are checked above before reaching here.
+    // Cuts omit parent edges and count propagation, but every tracked target in
+    // a ref-indexed raw graph still owns an independent counter.
     for (const key of Object.keys(node)) {
         const mirror = promiseMirrors.getPromiseMirror(node, key)
         const child = mirror?.cycleCut
             ? mirror.currentValue
             : readPropertyForRecount(node, key, mirror)
+        if (counter && helpers.isTracked(child) && !getRefCounter(child)) {
+            fatal("Ref-indexed parent contains non-ref-indexed child")
+        }
         verifyReachable(child, seen)
     }
     if (counter) {

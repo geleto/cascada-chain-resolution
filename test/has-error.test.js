@@ -82,14 +82,14 @@ describe("hasError", () => {
         expect(branch.self).to.be(branch)
     })
 
-    it("stops a raw terminal-cut search at the first Error", async () => {
+    it("stops a terminal-cycle search at the first Error", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const root = {}
         root.self = root
         root.bad = new Error("found")
         root.pending = pending.promise
-        importValue(root, "raw first Error")
+        importValue(root, "cycle first Error")
         const beforeQuery = registrations()
 
         expect(hasError(new Chain(root), ["self"])).to.be(true)
@@ -297,7 +297,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("can wait a raw promise again when a later continuation reintroduces it", async () => {
+    it("can revisit a cycle Promise exposed by a later continuation", async () => {
         const first = deferred()
         const second = deferred()
         const root = {

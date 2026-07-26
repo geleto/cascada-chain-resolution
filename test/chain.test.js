@@ -8,6 +8,9 @@ import {
     hasError,
     lookupPath,
     exportValue,
+    importValue,
+    setFatalErrorReporter,
+    thrownBy,
     deferred,
     flushMicrotasks,
 } from "./support.js"
@@ -22,6 +25,37 @@ describe("Chain root state", () => {
         expect(metaOf(chain)).to.be(undefined)
     })
 
+    it("reports synchronous public-operation failures as fatal", () => {
+        const operations = [
+            value => importValue(value, "fatal import"),
+            value => lookupPath(new Chain(value), ["key"]),
+            value => exportValue(new Chain(value), []),
+            value => hasError(new Chain(value), []),
+            value => getErrors(new Chain(value), []),
+            value => assignPath(new Chain(value), ["key"], 1),
+            value => deletePath(new Chain(value), ["key"]),
+        ]
+
+        for (const operation of operations) {
+            const failure = new Error("host trap failed")
+            const value = new Proxy({}, {
+                getOwnPropertyDescriptor() {
+                    throw failure
+                },
+                ownKeys() {
+                    throw failure
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            expect(thrownBy(() => operation(value))).to.be(failure)
+            expect(reported).to.be(failure)
+        }
+    })
+
     it("handles number and string roots across every operation", () => {
         for (const primitive of [7, "text"]) {
             expect(lookupPath(new Chain(primitive), [])).to.be(primitive)
@@ -32,7 +66,12 @@ describe("Chain root state", () => {
             const lookupError = lookupPath(new Chain(primitive), ["child"])
             const exportError = exportValue(new Chain(primitive), ["child"])
             const errors = getErrors(new Chain(primitive), ["child"])
-            for (const error of [lookupError, exportError, ...errors]) {
+            expect(exportError.errors.length).to.be(1)
+            for (const error of [
+                lookupError,
+                exportError.errors[0],
+                ...errors,
+            ]) {
                 expect(error instanceof Error).to.be(true)
                 expect(error.message).to.be(
                     "Cannot access property through missing or primitive value",

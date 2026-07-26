@@ -30,8 +30,7 @@ two for that parent.
 
 Other META fields belong to their own subsystems. Promise mirrors and cycle
 cuts affect property contributions, shared/import fields affect
-ownership and preparation, and settlement fields exist only while
-export waits.
+ownership and preparation.
 
 Inline metadata uses an own non-enumerable Symbol when possible. WeakMap mode,
 and inline mode's fallback for non-extensible nodes, provide identical
@@ -66,8 +65,10 @@ property:
 An operation that captured a mirror may read its private `mirror.cycleCut`
 before publication. Private FIFO state never contributes to parent counters.
 
-Every ordinary tracked child below an indexed parent is indexed. A missing
-child counter is a fatal downward-closure violation.
+Every tracked value reachable in the raw graph below an indexed root is
+indexed. Ordinary properties connect those counters through reverse parent
+edges; cuts separate them into independent components. A missing child counter
+is a fatal raw-closure violation.
 
 ## Building the index
 
@@ -80,18 +81,37 @@ cycle-closing properties are cut, aliases are marked shared, and pending
 properties have mirrors plus their import consumers. Details live in
 [`import-preparation.md`](import-preparation.md).
 
-Index construction walks the prepared projection:
+Index construction walks the prepared graph as cut-separated projected
+components:
 
 1. A draining mirror contributes `[1, 0, 0]` and is not entered.
-2. A cycle cut contributes `[0, 0, 1]` and is not entered.
+2. A cycle cut contributes `[0, 0, 1]`, installs no reverse edge, and queues its
+   tracked target as the root of another component.
 3. An ordinary tracked child is indexed recursively and receives a reverse
    parent edge.
 4. Existing compatible indexed subtrees may be connected without recounting
    their descendants.
 5. Structural aliases add exact edge multiplicity.
 
-The first counter operation reached inside an import boundary may begin at the
-stored boundary root so the complete projected ancestry is represented.
+Queued cut targets are processed only after the component that found them is
+published. A closing back edge can therefore point to that completed component
+without re-entering an active recursive frame. The queue grows as later
+components expose more cuts, so one `buildRefIndex` call indexes every
+raw-reachable tracked value.
+
+An unresolved Promise has no target to index yet. If its owner is indexed,
+mirror preparation indexes each tracked resolved value before the next FIFO
+consumer can inspect it. This applies to live and revoked mirrors.
+
+The `parents` map is also the completed-index marker used by Promise-mirror
+acquisition. It is published only after the node's property scan has created
+every required mirror and computed the complete counter triple. Once present,
+a Promise property without a matching mirror is fatal downward-closure
+corruption.
+
+Index construction starts at the branch requested by the counter operation. It
+does not widen that work to the stored import root or unrelated imported
+siblings.
 
 Frozen, sealed, and otherwise non-extensible nodes use the same index rules.
 Only metadata storage and physical write policy differ.
@@ -127,9 +147,13 @@ A newly assigned Promise installs a fresh mirror and immediately contributes
 `[1, 0, 0]`. Deletion removes only the old contribution. Revoked mirror state is
 private and never enters the former parent's transaction.
 
-`copyCounters` reconstructs an indexed COW copy from the copy's own logical
-properties. It never clones source totals, parent maps, or placement-specific
-cycle cuts.
+Because cut targets already own counters, clearing or replacing a cut uses the
+ordinary property transaction: it reconnects the new child if applicable and
+propagates the exact triple without a conditional indexing path.
+
+`indexCopyIfSourceIndexed` reconstructs a COW copy's index from the copy's own
+logical properties when the source was indexed. It never clones source totals,
+parent maps, or placement-specific cycle cuts.
 
 ## Promise-mirror drain
 
@@ -205,46 +229,25 @@ The projected parent graph is acyclic:
 
 Zero deltas stop immediately.
 
-## Settlement
-
-When export must wait, the reached indexed node receives one shared
-settlement generation:
-
-- `settlementPromise`; and
-- `settlementResolve`.
-
-Concurrent exports of that branch share the generation. When
-`promiseCount` reaches zero, `applyCountDelta` clears both fields and resolves
-the generation immediately.
-
-No extra verification microtask is needed. The mirror remains `[1, 0, 0]` until
-all consumers at earlier FIFO positions have finished, so the zero crossing is
-already final for that issue-time world.
-
-`hasError` and `getErrors` do not use this shared settlement state. Each owns
-its captured Promise wait tree and does not pin the branch.
-
 ## Consumers
 
-### `export`
-
-Export indexes the reached path value and waits for `promiseCount` to reach
-zero when necessary. A positive `errorCount` then takes the Error fast path.
-Otherwise one raw identity-aware walk creates the metadata-free copy and finds
-Promises or Errors hidden behind cuts.
+Subtree counters serve Error queries. Export does not build or read the index;
+its raw copy-or-collect walk must visit the complete branch on success and owns
+its Promise readiness directly.
 
 ### `hasError`
 
-`errorCount > 0` answers `true` immediately. With `cycleCutCount === 0`, the
-operation follows only relevant projected Promises. With a positive cut count,
-it raw-walks the complete reached branch and resolves on the first ordinary
-Error or complete clean frontier.
+`errorCount > 0` answers `true` immediately. Otherwise the operation uses all
+three counters to fence its indexed walk. A positive `cycleCutCount` guides the
+walk to actual cut placements, whose independently indexed targets resume the
+same fenced traversal. `hasError` resolves on the first ordinary Error or the
+complete clean frontier.
 
 ### `getErrors`
 
-Counters prune clean cut-free projected regions. A positive `cycleCutCount`
-switches the complete reached branch to raw traversal. Ordinary Error
-identities enter one operation-local Set; cuts add nothing.
+A counter-fenced walk prunes subtrees whose complete counter triple is zero.
+At actual cut placements, the target resumes through its independent index.
+Ordinary Error identities enter one operation-local Set; cuts add nothing.
 
 Only the initial value reached by path resolution calls `buildRefIndex`.
 Resolved child branches are prepared and, when required by downward closure,
@@ -257,7 +260,7 @@ indexed by mirror processing before query continuations inspect them.
 - recounts every projected logical placement;
 - compares exact Promise, Error, and cycle-cut totals;
 - checks reverse-edge multiplicity;
-- checks downward closure;
+- checks raw-reachable counter closure, including across cuts;
 - verifies cut shape and mirror/plain exclusivity; and
 - treats a cycle in the projected parents graph as a fatal invariant failure.
 

@@ -910,8 +910,8 @@ describe("import", () => {
         importValue(array, "frozen array")
         const exported = exportValue(new Chain(array), [])
 
-        expectCounts(array, 2, 0)
-        expectCounts(nested, 1, 0)
+        expect(getRefCounter(array)).to.be(undefined)
+        expect(getRefCounter(nested)).to.be(undefined)
 
         first.resolve({ x: 1 })
         second.resolve(2)
