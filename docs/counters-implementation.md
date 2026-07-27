@@ -38,32 +38,25 @@ semantics.
 
 ## Property projection
 
-Counts belong to owner/key placements, not blindly to physical values.
-`getPropertyRefState(parent, key)` returns the placement's `counts` contribution
-and its logical `child` for reverse-edge bookkeeping:
+Counts belong to owner/key placements. `getPropertyRefState(parent, key)`
+returns the placement's `counts` contribution and counted `child` for
+reverse-edge bookkeeping:
 
-| Logical property state | Contribution |
+| Property state | Contribution |
 | --- | --- |
-| Unresolved or draining live mirror | `[1, 0, 0]` |
+| Physical Promise | `[1, 0, 0]` |
 | Published cycle cut | `[0, 0, 1]` |
-| Ordinary Promise | `[1, 0, 0]` |
-| Ordinary Error | `[0, 1, 0]` |
+| Error | `[0, 1, 0]` |
 | Indexed tracked child | Child totals |
 | Primitive or missing value | `[0, 0, 0]` |
 
-Pending mirrors and cycle cuts return no child. Other states return their
-logical value; only a tracked child receives a reverse parent edge.
+Promises and cycle cuts return no child. Other states return the physical
+value; only an indexed tracked child receives a reverse parent edge. A physical
+Promise and a cycle cut on the same placement are invalid.
 
-`hasPublishedCycleCut(parent, key)` reads only the state published by the live
-property:
-
-- a plain property checks `meta.cycleCuts`;
-- a drained mirror reads `mirror.cycleCut`; and
-- a draining mirror returns `false` because the property still contributes
-  `[1, 0, 0]`.
-
-An operation that captured a mirror may read its private `mirror.cycleCut`
-before publication. Private FIFO state never contributes to parent counters.
+A retained live mirror does not alter the contribution after its first resolver
+has replaced the Promise. It remains only as property-version identity for
+already-registered resolvers.
 
 Every tracked value reachable in the raw graph below an indexed root is
 indexed. Ordinary properties connect those counters through reverse parent
@@ -84,7 +77,7 @@ properties have mirrors plus their import consumers. Details live in
 Index construction walks the prepared graph as cut-separated projected
 components:
 
-1. A draining mirror contributes `[1, 0, 0]` and is not entered.
+1. A physical Promise contributes `[1, 0, 0]` and is not entered.
 2. A cycle cut contributes `[0, 0, 1]`, installs no reverse edge, and queues its
    tracked target as the root of another component.
 3. An ordinary tracked child is indexed recursively and receives a reverse
@@ -99,14 +92,15 @@ without re-entering an active recursive frame. The queue grows as later
 components expose more cuts, so one `buildRefIndex` call indexes every
 raw-reachable tracked value.
 
-An unresolved Promise has no target to index yet. If its owner is indexed,
-mirror preparation indexes each tracked resolved value before the next FIFO
-consumer can inspect it. This applies to live and revoked mirrors.
+An unresolved Promise has no target to index yet. Its first resolver indexes a
+tracked result before publishing it when the owner is indexed. A detached
+mirror also indexes its private tracked result before an earlier query consumes
+it.
 
 The `parents` map is also the completed-index marker used by Promise-mirror
 acquisition. It is published only after the node's property scan has created
 every required mirror and computed the complete counter triple. Once present,
-a Promise property without a matching mirror is fatal downward-closure
+a Promise property without a mirror is fatal downward-closure
 corruption.
 
 Index construction starts at the branch requested by the counter operation. It
@@ -114,24 +108,23 @@ does not widen that work to the stored import root or unrelated imported
 siblings.
 
 Frozen, sealed, and otherwise non-extensible nodes use the same index rules.
-Only metadata storage and physical write policy differ.
+Promise properties must still be writable; ordinary frozen values are valid.
 
 ## Property transitions
 
 New values are prepared before they enter an attached indexed graph.
 
-`preparePropertyTransition(owner, propertyMirror, newValue)` performs the
-non-publishing work:
-
-- preserve or establish import state;
-- prepare a child mirror value when applicable; and
-- build the entering child's index if the owner is already indexed.
+`propertyTransitions.replaceProperty(owner, key, propertyMirror, newValue)`
+asks refcounting to index the entering child when the owner is already indexed,
+then publishes the property and its optional Promise mirror through one
+live-edge transaction.
 
 Descriptor failures are checked before preparation. A fatal preparation leaves
 the attached edge unchanged.
 
-Every live assignment, deletion, cycle-cut change, and successful final
-mirror drain uses one synchronous commit transaction:
+Every live assignment, deletion, cycle-cut change, and Promise resolver update
+is performed by `src/property-transitions.js` or `src/import.js` inside one
+`refcounts.commitLiveEdge` transaction:
 
 1. Snapshot the old projected counts and counted child.
 2. Perform the validated physical/mirror/cycle update.
@@ -144,75 +137,57 @@ interleave with the synchronous transition. It does not attempt rollback after
 an internal fatal failure.
 
 A newly assigned Promise installs a fresh mirror and immediately contributes
-`[1, 0, 0]`. Deletion removes only the old contribution. Revoked mirror state is
-private and never enters the former parent's transaction.
+`[1, 0, 0]`. Deletion removes only the old contribution. Detached mirror state
+is private and never enters the former parent's transaction.
 
 Because cut targets already own counters, clearing or replacing a cut uses the
 ordinary property transaction: it reconnects the new child if applicable and
 propagates the exact triple without a conditional indexing path.
 
-`indexCopyIfSourceIndexed` reconstructs a COW copy's index from the copy's own
+`indexValueIfSourceIndexed` reconstructs a COW copy's index from the copy's own
 logical properties when the source was indexed. It never clones source totals,
 parent maps, or placement-specific cycle cuts.
 
-## Promise-mirror drain
+## Promise mirrors
 
 One internal `PromiseMirror` represents one Promise-backed property version.
-Every consumer registers through `mirror.onResolve(...)`; `isDrained()` and
-`isLive()` keep pending visibility independent from property liveness, while
-`setValue(...)` owns prepared logical-value updates.
+While it is live, the physical property is authoritative. The first resolver
+uses `onInitialPromiseResolve` to consume fulfillment or convert rejection to Error,
+prepares the result, and publishes it through the ordinary live-edge
+transaction. Later resolvers use `onLaterPromiseReady`, ignore the raw Promise
+result, and read the latest state left by earlier FIFO resolvers. All resolvers
+for one callable thenable register on its shared canonical native Promise.
 
-Registration:
+Replacing or deleting the property detaches its mirror inside the same live
+transition. Detachment captures the old physical value as `detachedValue` and
+removes the map entry. Already-issued resolvers then update only that private
+value. Detached state contributes nothing to the former parent's counters.
 
-1. increments `pendingConsumerCount` synchronously;
-2. registers directly on the raw source Promise at the caller's issue position;
-3. converts a source rejection to a language Error value;
-4. runs the consumer's synchronous body; and
-5. decrements after successful completion.
+A live resolved mirror remains installed until replacement because queued
+resolvers still use its identity. Ordinary reads and recounts ignore it and use
+the physical value. The mirror itself stores no Promise, parent, key, consumer
+count, duplicate current value, or cycle cut.
 
-The mandatory writeback is the first consumer. Import preparation, mutation and
-observation continuations, COW forks, and Error-query waits use the same
-ordering mechanism.
+A state-changing live resolver:
 
-While `pendingConsumerCount > 0`, the attached placement remains `[1, 0, 0]`.
-Consumers prepare successive private `currentValue` states in FIFO order, but
-the parent contribution does not bounce through intermediate values.
+1. validates that the property still exists as an own enumerable writable data
+   property;
+2. prepares and indexes the entering tracked value when required;
+3. snapshots the old physical contribution;
+4. writes the new value and cycle-cut state; and
+5. updates reverse edges and propagates one exact delta.
 
-The final successful consumer performs one drain:
+The first resolver for imported data performs import preparation and cycle
+classification before this publication. A rejected first result is published
+as one Error; later readiness callbacks do not convert the rejection again.
 
-1. capture the old `[1, 0, 0]` contribution;
-2. refresh child preparation if the owner became indexed;
-3. commit the final logical value or cycle cut if the mirror is live;
-4. decrement the count to zero inside that transition; and
-5. read and propagate the final property contribution.
+## Physical reads
 
-Zero means the source resolved, every registered consumer completed its
-synchronous work, and final publication succeeded. This closes the
-settlement-to-writeback race: a later read cannot use a synchronous settled
-value while an earlier registered mutation is still queued.
-
-A synchronous fatal consumer leaves its count outstanding and prevents final
-publication. A revoked mirror reaches its private final state but performs no
-attached-edge commit.
-
-## Logical reads
-
-`readLanguageProperty(parent, key)` returns:
-
-- the original Promise while a live mirror is draining;
-- `mirror.currentValue` after that mirror drains; or
-- the own enumerable physical property when no mirror exists.
-
-Returning the Promise while draining forces the caller to register behind every
-earlier consumer. Returning `currentValue` after drain also handles a legitimate
-settled `undefined`.
-
-Imported-original and non-extensible holders may retain their physical Promise
-permanently. Logical reads therefore remain mirror-aware after settlement.
-
-A mirrored property stores its cycle cut exclusively on the mirror.
-Installing or removing a mirror clears competing plain-property cycle metadata,
-so an old cut cannot reappear after transition.
+`readLanguageProperty(parent, key)` returns only the own enumerable physical
+property. Mirror lookup occurs only when that value is a Promise or when a
+replacement must detach an existing property version. `mirror.getValue(...)`
+is reserved for callbacks that captured that mirror: it reads the physical
+property while live and `detachedValue` afterward.
 
 ## Delta propagation
 
@@ -224,7 +199,7 @@ The projected parent graph is acyclic:
 
 - trusted language data is tree-shaped;
 - imported aliases retain finite edge multiplicity;
-- Promise placements are frontiers while draining; and
+- physical Promise placements are frontiers; and
 - every imported cycle has a cut with no reverse edge.
 
 Zero deltas stop immediately.
@@ -251,7 +226,7 @@ Ordinary Error identities enter one operation-local Set; cuts add nothing.
 
 Only the initial value reached by path resolution calls `buildRefIndex`.
 Resolved child branches are prepared and, when required by downward closure,
-indexed by mirror processing before query continuations inspect them.
+indexed by their first resolver before query continuations inspect them.
 
 ## Verification
 
@@ -261,8 +236,10 @@ indexed by mirror processing before query continuations inspect them.
 - compares exact Promise, Error, and cycle-cut totals;
 - checks reverse-edge multiplicity;
 - checks raw-reachable counter closure, including across cuts;
-- verifies cut shape and mirror/plain exclusivity; and
+- verifies cut shape, physical Promise/cut exclusivity, and live mirror property
+  descriptors; and
 - treats a cycle in the projected parents graph as a fatal invariant failure.
 
-A draining mirror always recounts as `[1, 0, 0]`, regardless of its physical or
-private prepared value. Verification never changes runtime state.
+A physical Promise always recounts as `[1, 0, 0]`. A retained mirror over a
+resolved physical value has no special count. Verification never changes
+runtime state.

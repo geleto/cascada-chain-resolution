@@ -58,10 +58,7 @@ function verifyReachable(node, seen) {
     // Cuts omit parent edges and count propagation, but every tracked target in
     // a ref-indexed raw graph still owns an independent counter.
     for (const key of Object.keys(node)) {
-        const mirror = promiseMirrors.getPromiseMirror(node, key)
-        const child = mirror?.cycleCut
-            ? mirror.currentValue
-            : readPropertyForRecount(node, key, mirror)
+        const child = readPropertyForRecount(node, key)
         if (counter && helpers.isTracked(child) && !getRefCounter(child)) {
             fatal("Ref-indexed parent contains non-ref-indexed child")
         }
@@ -84,11 +81,11 @@ function verifyCycleCuts(node) {
             if (typeof key !== "string") {
                 fatal("Cycle cut keys must be strings")
             }
-            if (promiseMirrors.getPromiseMirror(node, key)) {
-                fatal("Mirrored property also has a plain cycle cut")
-            }
             if (!propertyIsEnumerable.call(node, key)) {
                 fatal("Cycle cut names a missing or non-enumerable property")
+            }
+            if (helpers.isPromise(node[key])) {
+                fatal("Pending Promise property also has a cycle cut")
             }
             if (!helpers.isTracked(node[key])) {
                 fatal("Cycle cut must contain a tracked value")
@@ -98,12 +95,10 @@ function verifyCycleCuts(node) {
 
     for (const key of Object.keys(meta?.mirrors ?? {})) {
         const mirror = promiseMirrors.getPromiseMirror(node, key)
-        if (!mirror?.cycleCut) continue
-        if (!propertyIsEnumerable.call(node, key)) {
-            fatal("Promise cycle cut names a missing or non-enumerable property")
-        }
-        if (!helpers.isTracked(mirror.currentValue)) {
-            fatal("Promise cycle cut must contain a prepared tracked value")
+        const descriptor = Object.getOwnPropertyDescriptor(node, key)
+        if (!mirror || !descriptor?.enumerable || !("value" in descriptor) ||
+            !descriptor.writable) {
+            fatal("Live Promise mirror requires a writable language property")
         }
     }
 }
@@ -144,15 +139,20 @@ function verifyParentGraph(node, states) {
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key) {
     const mirror = promiseMirrors.getPromiseMirror(node, key)
-    if (mirror && !mirror.isDrained()) {
+    const child = readPropertyForRecount(node, key)
+    if (helpers.isPromise(child)) {
+        if (!mirror) {
+            fatal("Indexed promise property has no mirror")
+        }
+        if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
+            fatal("Pending Promise property also has a cycle cut")
+        }
         return { child: undefined, counts: [1, 0, 0] }
     }
-    if (mirror?.cycleCut || (!mirror && metadata.metaOf(node)?.cycleCuts?.has(key))) {
+    if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
         return { child: undefined, counts: [0, 0, 1] }
     }
 
-    const child = readPropertyForRecount(node, key, mirror)
-    if (helpers.isPromise(child)) return { child, counts: [1, 0, 0] }
     if (helpers.isError(child)) return { child, counts: [0, 1, 0] }
     if (!helpers.isTracked(child)) return { child, counts: [0, 0, 0] }
 
@@ -168,8 +168,7 @@ function recountProperty(node, key) {
     }
 }
 
-function readPropertyForRecount(node, key, mirror) {
-    if (mirror) return mirror.isDrained() ? mirror.currentValue : mirror.promise
+function readPropertyForRecount(node, key) {
     return propertyIsEnumerable.call(node, key) ? node[key] : undefined
 }
 

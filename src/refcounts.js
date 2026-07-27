@@ -32,14 +32,13 @@ function getRefCounts(value) {
 }
 
 function getPropertyRefState(parent, key) {
-    const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror && !mirror.isDrained()) {
+    const child = languageProperties.readLanguageProperty(parent, key)
+    if (helpers.isPromise(child)) {
         return { child: undefined, counts: [1, 0, 0] }
     }
-    if (imports.hasPublishedCycleCut(parent, key)) {
+    if (imports.hasCycleCut(parent, key)) {
         return { child: undefined, counts: [0, 0, 1] }
     }
-    const child = languageProperties.readLanguageProperty(parent, key)
     return { child, counts: getRefCounts(child) }
 }
 
@@ -47,8 +46,7 @@ function buildRefIndex(value, inheritedImportBoundary = undefined) {
     if (!helpers.isTracked(value) || getRefCounter(value)) return value
 
     const cutTargetQueue = []
-    const importBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
-    indexComponent(value, importBoundary, cutTargetQueue)
+    indexComponent(value, inheritedImportBoundary, cutTargetQueue)
 
     // A cut blocks count propagation, not indexing. Defer its target until the
     // current component is published so a closing back edge cannot re-enter an
@@ -58,12 +56,16 @@ function buildRefIndex(value, inheritedImportBoundary = undefined) {
         if (!getRefCounter(target.value)) {
             indexComponent(
                 target.value,
-                target.importBoundary,
+                target.inheritedImportBoundary,
                 cutTargetQueue,
             )
         }
     }
     return value
+}
+
+function indexValueIfSourceIndexed(source, value) {
+    if (getRefCounter(source)) buildRefIndex(value)
 }
 
 // Recursively index one cut-free projected component. Its cuts become roots of
@@ -93,24 +95,22 @@ function indexComponent(
 
     for (const key of Object.keys(node)) {
         const child = languageProperties.readLanguageProperty(node, key)
-        if (imports.hasPublishedCycleCut(node, key)) {
+        if (imports.hasCycleCut(node, key)) {
             cycleCutCount++
-            const mirror = promiseMirrors.getPromiseMirror(node, key)
             cutTargetQueue.push({
                 value: child,
-                importBoundary: mirror?.importBoundary ??
-                    metadata.nodeImportBoundary(child, importBoundary),
+                inheritedImportBoundary: importBoundary,
             })
             continue
         }
 
-        const mirror = promiseMirrors.getOrCreateMirrorForValue(
-            node,
-            key,
-            child,
-            importBoundary,
-        )
         if (helpers.isPromise(child)) {
+            promiseMirrors.getOrCreatePromiseMirror(
+                node,
+                key,
+                child,
+                importBoundary,
+            )
             promiseCount++
             continue
         }
@@ -121,11 +121,9 @@ function indexComponent(
         }
         if (!helpers.isTracked(child)) continue
 
-        const childImportBoundary = mirror?.importBoundary ??
-            metadata.nodeImportBoundary(child, importBoundary)
         const childCounts = indexComponent(
             child,
-            childImportBoundary,
+            importBoundary,
             cutTargetQueue,
         )
         promiseCount += childCounts[0]
@@ -145,89 +143,11 @@ function indexComponent(
     return [promiseCount, errorCount, cycleCutCount]
 }
 
-function preparePropertyTransition(
+function commitLiveEdge(
     owner,
-    propertyMirror,
-    newValue,
-    markNewValueShared = false,
+    key,
+    updateProperty,
 ) {
-    // The next FIFO consumer may mutate this private value before the mirror
-    // drains. Publish the irreversible sharing mark now so that advance COWs.
-    if (markNewValueShared) metadata.markShared(newValue)
-    const importBoundary = metadata.nodeImportBoundary(
-        newValue,
-        propertyMirror?.importBoundary,
-    )
-    if (propertyMirror && importBoundary) {
-        propertyMirror.importBoundary = importBoundary
-    }
-
-    if (getRefCounter(owner) && helpers.isTracked(newValue)) {
-        buildRefIndex(newValue, importBoundary)
-    }
-}
-
-function commitPropertyTransition(owner, key, propertyMirror, newValue) {
-    commitLiveEdge(
-        owner,
-        key,
-        () => {
-            if (propertyMirror) {
-                languageProperties.writeLanguageProperty(
-                    owner,
-                    key,
-                    propertyMirror.promise,
-                )
-                imports.clearPlainCycleCut(owner, key)
-                promiseMirrors.installPromiseMirror(owner, key, propertyMirror)
-            } else {
-                languageProperties.writeLanguageProperty(owner, key, newValue)
-                imports.clearPlainCycleCut(owner, key)
-                promiseMirrors.clearPromiseMirror(owner, key)
-            }
-        },
-    )
-}
-
-function commitMirrorDrain(mirror) {
-    if (!mirror.isLive()) {
-        mirror.pendingConsumerCount--
-        return
-    }
-
-    if (getRefCounter(mirror.node) &&
-        helpers.isTracked(mirror.currentValue) &&
-        !getRefCounter(mirror.currentValue)) {
-        buildRefIndex(mirror.currentValue, mirror.importBoundary)
-    }
-
-    commitLiveEdge(
-        mirror.node,
-        mirror.key,
-        () => {
-            if (!metadata.metaOf(mirror.node)?.importedOriginal &&
-                Object.isExtensible(mirror.node)) {
-                languageProperties.writeLanguageProperty(
-                    mirror.node,
-                    mirror.key,
-                    mirror.currentValue,
-                )
-            }
-            imports.clearPlainCycleCut(mirror.node, mirror.key)
-            mirror.pendingConsumerCount--
-        },
-    )
-}
-
-function deleteEdge(parent, key) {
-    commitLiveEdge(parent, key, () => {
-        delete parent[key]
-        promiseMirrors.clearPromiseMirror(parent, key)
-        imports.clearPlainCycleCut(parent, key)
-    })
-}
-
-function commitLiveEdge(owner, key, updateProperty) {
     const counter = getRefCounter(owner)
     const oldState = counter ? getPropertyRefState(owner, key) : undefined
 
@@ -279,27 +199,11 @@ function applyCountDelta(node, promiseDelta, errorDelta, cycleCutDelta) {
     }
 }
 
-function indexCopyIfSourceIndexed(source, copy) {
-    if (!getRefCounter(source)) return
-    buildRefIndex(copy)
-}
-
-imports.initImport(commitLiveEdge, mirror => {
-    preparePropertyTransition(
-        mirror.node,
-        mirror,
-        mirror.currentValue,
-    )
-})
-
 export {
     buildRefIndex,
-    commitPropertyTransition,
-    commitMirrorDrain,
-    deleteEdge,
+    commitLiveEdge,
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,
-    indexCopyIfSourceIndexed,
-    preparePropertyTransition,
+    indexValueIfSourceIndexed,
 }

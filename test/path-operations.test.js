@@ -72,7 +72,7 @@ describe("path assignment", () => {
         expect({}.polluted).to.be(undefined)
     })
 
-    it("safely drains a promise assigned to missing __proto__", async () => {
+    it("safely resolves a promise assigned to missing __proto__", async () => {
         const pending = deferred()
         const resolved = { safe: true }
         const root = {}
@@ -157,7 +157,7 @@ describe("path assignment", () => {
         deferredValue.resolve(resolved)
         await flushMicrotasks()
 
-        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(deferredValue.promise)
+        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(resolved)
         expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(resolved)
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
         expect(lookupPath(new Chain(next), ["__proto__"])).to.be(resolved)
@@ -834,7 +834,7 @@ describe("deletePath", () => {
         expect(1 in pendingRoot.list).to.be(false)
     })
 
-    it("revokes pending writeback when deleting a promise key", async () => {
+    it("detaches pending resolution when deleting a promise key", async () => {
         const deferredValue = deferred()
         const root = {}
 

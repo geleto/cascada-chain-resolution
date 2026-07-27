@@ -53,9 +53,11 @@ tracks both completed and pending work.
   shared observational walkers.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise
   continuations.
+- `src/property-transitions.js` coordinates property replacement, deletion,
+  Promise-mirror publication, and cycle-cut changes.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
-  property transitions.
-- `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle and logical reads.
+  accounting around indexed property transitions.
+- `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle.
 - `src/raw-walk.js` owns metadata-free export copying and Error collection.
 - `src/language-properties.js` owns descriptor validation and safe physical
   writes for language-visible properties.
@@ -95,16 +97,20 @@ external value enters through `import(value, errorContext)`, which:
 - registers imported Promise continuations in issue order; and
 - leaves subtree counters lazy until a branch query needs them.
 
-Imported host objects are not physically changed. Logical settled Promise
-values and cycle cuts live in runtime metadata. Language mutation first copies
-the imported path. A cut is structural bookkeeping, not an Error: finite paths
-cross it normally, Error queries ignore it as data, and export reconstructs the
-original cyclic topology.
+Language mutation never changes imported host objects; it copies the imported
+path first. Promise settlement is the one deliberate handoff: an own enumerable
+writable Promise property receives its prepared value physically. A Promise
+property that is missing, non-enumerable, an accessor, or non-writable is
+invalid imported data. Ordinary frozen data remains supported.
 
-Host code receives tracked Cascada data only through `export`, which returns
-a metadata-free deep copy with logical Promise values materialized. Internal
-code may use non-sharing lookup only when it does not expose the returned
-tracked value to mutable host code.
+Cycle cuts live in metadata. A cut is structural bookkeeping, not an Error:
+finite paths cross it normally, Error queries ignore it as data, and export
+reconstructs the original cyclic topology.
+
+Host code receives tracked Cascada data only through `export`, which returns a
+metadata-free deep copy with captured Promise-property values materialized.
+Internal code may use non-sharing lookup only when it does not expose the
+returned tracked value to mutable host code.
 
 ## Commands and issue order
 
@@ -122,7 +128,8 @@ The public operations are:
 
 Every operation runs its synchronous prefix immediately. If it reaches a
 Promise, it registers a continuation and returns; the next operation starts
-without waiting.
+without waiting. Each callable thenable is canonicalized once to one native
+Promise, so every runtime registration for that value shares one FIFO queue.
 
 JavaScript runs reactions registered on one Promise in registration order.
 Cascada issues operations and registers their reactions in program order, so
@@ -136,32 +143,23 @@ an earlier lookup, export, or Error query observes.
 
 ## Promise mirrors
 
-Each Promise-backed property has a mirror record. It identifies that exact
-property version and stores:
+Each Promise-backed property has a mirror identifying that exact property
+version. While the mirror is live, the physical property is its authoritative
+state: first the Promise, then each value produced by FIFO operations. The
+first resolver consumes fulfillment or converts rejection to Error and
+publishes it. Later resolvers use the Promise only as a readiness signal and
+read the latest property value left by earlier resolvers.
 
-- the original Promise;
-- the latest logical value prepared by registered consumers;
-- the number of consumers that still have synchronous work to perform; and
-- any private or published cycle cut for that placement.
-
-The mandatory writeback is the first consumer. Every later operation that
-needs the property registers through the same mirror and increments its
-consumer count synchronously.
-
-While any consumer remains, the property is still logically pending. A later
-read joins the Promise queue instead of observing a half-advanced settled
-value. The final successful consumer commits one transition from the pending
-placement to its final logical state.
-
-Overwriting or deleting a Promise-backed property removes its live mirror.
-Operations that already captured the old mirror continue privately, but their
-result cannot write back into the newer property. Reassigning the same Promise
-creates a fresh mirror because it is a new property version.
+Overwriting or deleting the property detaches its mirror. At that moment the
+old value is captured as `detachedValue`; already-issued operations continue
+against that private state and cannot write into the replacement property.
+Reassigning even the same Promise creates a fresh mirror because it is a new
+property version.
 
 When copy-on-write copies a node containing a pending property, the copy gets
-its own mirror at the copy's issue position. The original and copied worlds
-therefore include exactly the earlier operations and diverge independently
-after the copy.
+its own mirror at the copy's issue position. Its FIFO resolver samples the
+source at that exact position, so the two worlds include the same earlier
+operations and diverge independently afterward.
 
 ## Copy-on-write
 
@@ -221,8 +219,8 @@ frontier captured and recursively exposed at its issue position.
 
 **`export`** performs one immediate raw copy-or-collect walk at its issue
 position. A successful result is a metadata-free deep copy preserving arrays,
-holes, own-key order, aliases, cycles, enumerable `__proto__`, and logical
-Promise values.
+holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
+Promise-property values.
 The first Error stops further copy allocation, but traversal continues through
 the complete captured Promise frontier. Failure returns a fresh outer Error
 whose `.errors` array contains each reachable Error identity once. Export does

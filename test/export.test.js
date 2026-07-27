@@ -188,7 +188,7 @@ describe("export", () => {
 
         expect(failure).to.be(reported)
         expect(failure.message).to.be(
-            "Indexed promise property has no matching mirror",
+            "Indexed promise property has no mirror",
         )
     })
 
@@ -254,7 +254,7 @@ describe("export", () => {
         verifyRefCounts(branch)
     })
 
-    it("keeps a mirror pending when cyclic export re-enters it", async () => {
+    it("keeps a live mirror when cyclic export re-enters it", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
         importValue(root, "re-entrant cycle")
@@ -267,9 +267,10 @@ describe("export", () => {
         const copy = await exported
 
         expect(copy.back.value).to.be(copy)
-        expect(mirror.pendingConsumerCount).to.be(0)
-        expect(mirror.cycleCut).to.be(false)
-        expect(metaOf(resolved).cycleCuts.has("back")).to.be(true)
+        expect(mirror.isLive(root, "value")).to.be(true)
+        expect(root.value).to.be(resolved)
+        expect(metaOf(root).cycleCuts.has("value")).to.be(true)
+        expect(metaOf(resolved).cycleCuts).to.be(undefined)
         verifyRefCounts(root)
     })
 
@@ -315,7 +316,7 @@ describe("export", () => {
         expect(copy).not.to.be(left)
         expect(copy.right.left).to.be(copy)
         expect(copy.right.pending).to.eql({ done: true })
-        expect(right.pending).to.be(pending.promise)
+        expect(right.pending).to.eql({ done: true })
         expect(lookupPath(chain, ["right", "pending", "done"], false)).to.be(true)
         verifyRefCounts(left, right)
     })
@@ -442,7 +443,7 @@ describe("export", () => {
         expect(value.x).to.be(1)
     })
 
-    it("reads an already-drained mirror synchronously without registering again", async () => {
+    it("reads a resolved live mirror synchronously without registering again", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
@@ -452,13 +453,14 @@ describe("export", () => {
         await observed
 
         const mirror = metaOf(root).mirrors.pending
-        expect(mirror.pendingConsumerCount).to.be(0)
+        expect(mirror.isLive(root, "pending")).to.be(true)
+        expect(Object.hasOwn(mirror, "detachedValue")).to.be(false)
 
         const exported = exportValue(chain, [])
 
         expect(exported.then).to.be(undefined)
         expect(exported).to.eql({ pending: { value: 1 } })
-        expect(mirror.pendingConsumerCount).to.be(0)
+        expect(mirror.isLive(root, "pending")).to.be(true)
     })
 
     it("does not expose imported metadata", () => {
@@ -784,7 +786,7 @@ describe("export", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("settles promises exposed by a path mirror revoked before resolution", async () => {
+    it("settles promises exposed by a path mirror detached before resolution", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
@@ -1065,40 +1067,40 @@ describe("export", () => {
         expect(metaOf(branch).importBoundary).to.be(undefined)
     })
 
-    it("exports promises inside frozen branches through mirrors", async () => {
+    it("exports promises inside sealed branches through mirrors", async () => {
         const valid = Object.freeze({ x: 1 })
         const promise = Promise.resolve(1)
-        const pending = Object.freeze({ pending: promise })
+        const pending = Object.seal({ pending: promise })
 
-        importValue(pending, "frozen export")
+        importValue(pending, "sealed export")
         const copied = exportValue(new Chain(valid), [])
         const exported = exportValue(new Chain(pending), [])
 
         expect(copied).to.eql({ x: 1 })
         expect(copied).not.to.be(valid)
         expect(await exported).to.eql({ pending: 1 })
-        expect(pending.pending).to.be(promise)
+        expect(pending.pending).to.be(1)
         expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
         expect(getRefCounter(valid)).to.be(undefined)
         expect(getRefCounter(pending)).to.be(undefined)
     })
 
-    it("drains an indexed frozen holder with exact counter updates", async () => {
+    it("resolves an indexed sealed holder with exact counter updates", async () => {
         const pending = deferred()
         const promise = pending.promise
-        const frozen = Object.freeze({ pending: promise })
+        const sealed = Object.seal({ pending: promise })
 
-        importValue(frozen, "indexed frozen export")
-        buildRefIndex(frozen)
-        expect(getRefCounter(frozen).promiseCount).to.be(1)
+        importValue(sealed, "indexed sealed export")
+        buildRefIndex(sealed)
+        expect(getRefCounter(sealed).promiseCount).to.be(1)
 
-        const exported = exportValue(new Chain(frozen), [])
+        const exported = exportValue(new Chain(sealed), [])
         pending.resolve({ done: true })
 
         expect(await exported).to.eql({ pending: { done: true } })
-        expect(frozen.pending).to.be(promise)
-        expect(getRefCounter(frozen).promiseCount).to.be(0)
-        verifyRefCounts(frozen)
+        expect(sealed.pending).to.eql({ done: true })
+        expect(getRefCounter(sealed).promiseCount).to.be(0)
+        verifyRefCounts(sealed)
     })
 
     it("returns clean frozen branches synchronously as copies", () => {
@@ -1129,7 +1131,7 @@ describe("export", () => {
         pending.resolve("done")
         expect(await exported).to.eql({ child: { pending: "done" } })
         // Existing META makes child a trusted runtime island rather than a
-        // newly imported original holder.
+        // newly imported host holder.
         expect(child.pending).to.be("done")
         expect(lookupPath(new Chain(frozen), ["child", "pending"], false)).to.be("done")
         verifyRefCounts(child)

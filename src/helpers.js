@@ -1,11 +1,15 @@
 import * as errorUtils from "./error.js"
 
+const CANONICAL_PROMISES = new WeakMap()
+
 // Promise registration is part of the algorithm, not a convenience wrapper:
-// - onValueResolve registers its handler synchronously at call time.
+// - Every callable thenable is canonicalized once to one native Promise.
+// - Each helper registers its handler synchronously on that shared FIFO queue.
 // - Rejection becomes the language Error node before the continuation runs.
 // - Synchronous continuation throws go through reportFatalError.
-// - Runtime value continuations use onValueResolve; internal aggregate waits
-//   use onInternalResolve. Runtime code must not use raw .then.
+// - Initial property resolvers use onInitialPromiseResolve; later property
+//   resolvers use onLaterPromiseReady; aggregate waits use onAllPromisesReady.
+// - Runtime code must not use raw .then.
 // - Data objects with a callable `then` are treated as promises by JS and by
 //   this kernel; ordinary language data must not rely on callable `then` keys.
 function isPromise(x) {
@@ -31,7 +35,7 @@ function isTracked(x) {
 }
 
 // Catch only the synchronous body. Data-Promise rejection belongs to
-// onValueResolve; internal readiness rejection belongs to onInternalResolve.
+// onInitialPromiseResolve; aggregate rejection belongs to onAllPromisesReady.
 function runFatal(fn, value = undefined) {
     try {
         return fn(value)
@@ -40,10 +44,19 @@ function runFatal(fn, value = undefined) {
     }
 }
 
-// Rejected data promises arrive at fn as Error values. Exceptions thrown by fn
-// are runtime bugs and go through reportFatalError.
-function onValueResolve(promise, fn) {
-    return Promise.resolve(promise).then(
+function getCanonicalPromise(promise) {
+    let canonical = CANONICAL_PROMISES.get(promise)
+    if (!canonical) {
+        canonical = Promise.resolve(promise)
+        CANONICAL_PROMISES.set(promise, canonical)
+    }
+    return canonical
+}
+
+// The initial resolver receives fulfillment or a rejection converted to a
+// language Error. Exceptions thrown by fn are fatal runtime bugs.
+function onInitialPromiseResolve(promise, fn) {
+    return getCanonicalPromise(promise).then(
         value => runFatal(fn, value),
         reason => {
             let value
@@ -57,11 +70,19 @@ function onValueResolve(promise, fn) {
     )
 }
 
-// Internal promises already carry runtime failures, not language data
-// rejections, so rejection is fatal instead of converted to Error.
-function onInternalResolve(promise, fn) {
-    return Promise.resolve(promise).then(
-        value => runFatal(fn, value),
+// The first resolver has already converted and published either fulfillment or
+// rejection. Later resolvers use the source only as a FIFO readiness signal.
+function onLaterPromiseReady(promise, fn) {
+    const onReady = () => runFatal(fn)
+    return getCanonicalPromise(promise).then(onReady, onReady)
+}
+
+// Callers pass the Promise.all readiness tree for their captured frontier.
+// The result is not data; fulfillment calls fn without a readiness payload,
+// while rejection is an internal failure and remains fatal.
+function onAllPromisesReady(promise, fn) {
+    return getCanonicalPromise(promise).then(
+        () => runFatal(fn),
         errorUtils.reportFatalError,
     )
 }
@@ -70,7 +91,8 @@ export {
     isError,
     isPromise,
     isTracked,
-    onInternalResolve,
-    onValueResolve,
+    onAllPromisesReady,
+    onInitialPromiseResolve,
+    onLaterPromiseReady,
     runFatal,
 }

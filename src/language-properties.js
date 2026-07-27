@@ -1,11 +1,10 @@
 import * as errorUtils from "./error.js"
-import * as promiseMirrors from "./promise-mirrors.js"
 
 const hasOwn = Object.prototype.hasOwnProperty
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
-// This module owns the descriptor policy for language-visible properties and
-// their mirror-aware reads and safe physical writes.
+// This module owns the descriptor policy and physical access for
+// language-visible properties.
 
 // Language data is own enumerable string keys only.
 function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
@@ -37,6 +36,17 @@ function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
     if (descriptor && !descriptor.writable) {
         errorUtils.reportFatalError(errorUtils.validationError(
             "Cannot assign to non-writable property",
+            errorContext,
+        ))
+    }
+    return descriptor
+}
+
+function assertCanUpdatePromiseProperty(parent, key, errorContext = undefined) {
+    const descriptor = assertCanSetLanguageProperty(parent, key, errorContext)
+    if (!descriptor) {
+        errorUtils.reportFatalError(errorUtils.validationError(
+            "Cannot resolve missing Promise property",
             errorContext,
         ))
     }
@@ -72,12 +82,6 @@ function writeLanguageProperty(parent, key, value) {
 }
 
 function readLanguageProperty(parent, key) {
-    const mirror = promiseMirrors.getPromiseMirror(parent, key)
-    if (mirror) {
-        return mirror.isDrained()
-            ? mirror.currentValue
-            : mirror.promise
-    }
     return propertyIsEnumerable.call(parent, key) ? parent[key] : undefined
 }
 
@@ -85,6 +89,7 @@ export {
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
     assertCanSetLanguageProperty,
+    assertCanUpdatePromiseProperty,
     readLanguageProperty,
     writeLanguageProperty,
 }

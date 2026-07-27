@@ -120,28 +120,28 @@ describe("hasError", () => {
         expect(getRefCounter(bad.nested).errorCount).to.be(1)
         expect(await pendingResult).to.be(false)
         expect(getRefCounter(pending).promiseCount).to.be(0)
-        expect(pending.pending instanceof Promise).to.be(true)
+        expect(pending.pending).to.be(1)
         verifyRefCounts(clean, pending, bad)
     })
 
-    it("probes terminal promises on frozen parents through mirrors without writeback", async () => {
+    it("probes terminal promises on sealed parents through mirrors", async () => {
         const cleanPending = deferred()
         const badPending = deferred()
-        const cleanRoot = Object.freeze({ pending: cleanPending.promise })
-        const badRoot = Object.freeze({ pending: badPending.promise })
+        const cleanRoot = Object.seal({ pending: cleanPending.promise })
+        const badRoot = Object.seal({ pending: badPending.promise })
 
         const cleanResult = hasError(new Chain(cleanRoot), ["pending"])
         const badResult = hasError(new Chain(badRoot), ["pending"])
 
         cleanPending.resolve(undefined)
-        badPending.reject("frozen failure")
+        badPending.reject("sealed failure")
 
         expect(await cleanResult).to.be(false)
         expect(await badResult).to.be(true)
-        expect(cleanRoot.pending).to.be(cleanPending.promise)
-        expect(badRoot.pending).to.be(badPending.promise)
-        expect(metaOf(cleanRoot).mirrors.pending.pendingConsumerCount).to.be(0)
-        expect(metaOf(badRoot).mirrors.pending.pendingConsumerCount).to.be(0)
+        expect(cleanRoot.pending).to.be(undefined)
+        expect(badRoot.pending instanceof Error).to.be(true)
+        expect(metaOf(cleanRoot).mirrors.pending).not.to.be(undefined)
+        expect(metaOf(badRoot).mirrors.pending).not.to.be(undefined)
         expect(getRefCounter(cleanRoot)).to.be(undefined)
         expect(getRefCounter(badRoot)).to.be(undefined)
     })
@@ -201,7 +201,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("answers true from errorCount while leaving normal promise writeback live", async () => {
+    it("answers true from errorCount while leaving normal promise resolution live", async () => {
         const pending = deferred()
         const root = {
             pending: pending.promise,
@@ -532,7 +532,7 @@ describe("hasError", () => {
         const root = { direct: shared, delayed: delayed.promise }
         const result = hasError(new Chain(root), [])
 
-        expect(registrations()).to.be(2) // mirror writeback plus one query wait
+        expect(registrations()).to.be(2) // first resolver plus one query wait
         delayed.resolve(shared)
         await flushMicrotasks()
         expect(registrations()).to.be(2)
@@ -690,11 +690,11 @@ describe("hasError", () => {
 
         expect(await result).to.be(false)
         expect(chain._state.value.branch.pending).to.be("fixed")
-        expect(branch.pending).to.be(pending.promise)
+        expect(branch.pending).to.be(branch)
         verifyRefCounts(root, chain._state.value)
     })
 
-    it("follows promises exposed by a mirror revoked before resolution", async () => {
+    it("follows promises exposed by a mirror detached before resolution", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: { outer: outer.promise } })
@@ -758,7 +758,7 @@ describe("hasError", () => {
         verifyRefCounts(root)
     })
 
-    it("waits for a revoked promise to settle before answering false", async () => {
+    it("waits for a detached promise to settle before answering false", async () => {
         const pending = deferred()
         const root = { branch: { pending: pending.promise } }
         let settled = false

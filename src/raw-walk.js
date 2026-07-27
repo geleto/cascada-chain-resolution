@@ -1,7 +1,7 @@
 import * as helpers from "./helpers.js"
 import * as metadata from "./meta.js"
-import * as promiseMirrors from "./promise-mirrors.js"
 import * as languageProperties from "./language-properties.js"
+import * as promiseMirrors from "./promise-mirrors.js"
 
 // Raw traversal deliberately ignores cycle cuts. Identity state makes cycles
 // finite and spans every Promise continuation captured by this operation.
@@ -45,25 +45,23 @@ function walkRawBranch(value, inheritedImportBoundary, state) {
     // Sanctioned write bypass: export output stays outside the runtime graph.
     for (const key of Object.keys(value)) {
         const child = languageProperties.readLanguageProperty(value, key)
-        const mirror = promiseMirrors.getOrCreateMirrorForValue(
-            value,
-            key,
-            child,
-            importBoundary,
-        )
-
         if (helpers.isPromise(child)) {
             // Reserve the captured key now so later settlement cannot change
             // the source's observable own-key order.
             if (state.copying) {
                 languageProperties.writeLanguageProperty(output, key, undefined)
             }
-            waits.push(walkRawPromise(value, key, mirror, importBoundary, state))
+            waits.push(walkRawPromise(
+                value,
+                key,
+                child,
+                importBoundary,
+                state,
+            ))
             continue
         }
 
-        const propertyImportBoundary = mirror?.importBoundary ?? importBoundary
-        const readiness = walkRawBranch(child, propertyImportBoundary, state)
+        const readiness = walkRawBranch(child, importBoundary, state)
         if (state.copying) {
             languageProperties.writeLanguageProperty(
                 output,
@@ -79,10 +77,23 @@ function walkRawBranch(value, inheritedImportBoundary, state) {
 
 // Keep pending continuations independent from the caller's output local. The
 // first Error can then drop the copy map without a pending closure retaining it.
-function walkRawPromise(parent, key, mirror, importBoundary, state) {
-    return mirror.onResolve(() => {
+function walkRawPromise(
+    parent,
+    key,
+    promise,
+    importBoundary,
+    state,
+) {
+    const mirror = promiseMirrors.getOrCreatePromiseMirror(
+        parent,
+        key,
+        promise,
+        importBoundary,
+    )
+    return helpers.onLaterPromiseReady(promise, () => {
+        const value = mirror.getValue(parent, key)
         const readiness = walkRawBranch(
-            mirror.currentValue,
+            value,
             mirror.importBoundary ?? importBoundary,
             state,
         )
@@ -90,7 +101,7 @@ function walkRawPromise(parent, key, mirror, importBoundary, state) {
             languageProperties.writeLanguageProperty(
                 state.copies.get(parent),
                 key,
-                getCopiedValue(mirror.currentValue, state),
+                getCopiedValue(value, state),
             )
         }
         return readiness

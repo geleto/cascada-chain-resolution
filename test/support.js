@@ -18,7 +18,7 @@ function deferred() {
 }
 
 function flushMicrotasks() {
-    // A full turn drains the recursively queued promise jobs from this turn.
+    // A full turn runs the recursively queued promise jobs from this turn.
     return new Promise(resolve => setImmediate(resolve))
 }
 
@@ -66,8 +66,9 @@ export {
 } from "../src/error.js"
 
 export {
-    onInternalResolve,
-    onValueResolve,
+    onAllPromisesReady,
+    onInitialPromiseResolve,
+    onLaterPromiseReady,
     runFatal,
 } from "../src/helpers.js"
 

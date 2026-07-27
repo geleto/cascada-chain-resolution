@@ -1,170 +1,123 @@
 import * as helpers from "./helpers.js"
-import * as metadata from "./meta.js"
 import * as errorUtils from "./error.js"
+import * as languageProperties from "./language-properties.js"
+import * as metadata from "./meta.js"
 
-let preparePropertyTransition
-let commitMirrorDrain
+let setMirrorValue
 
-function initPromiseMirrors(
-    preparePropertyTransitionFn,
-    commitMirrorDrainFn,
-) {
-    preparePropertyTransition = preparePropertyTransitionFn
-    commitMirrorDrain = commitMirrorDrainFn
+function initPromiseMirrors(setMirrorValueFn) {
+    setMirrorValue = setMirrorValueFn
 }
 
-function getPromiseMirror(node, key) {
-    return metadata.metaOf(node)?.mirrors?.[key]
+function getPromiseMirror(parent, key) {
+    return metadata.metaOf(parent)?.mirrors?.[key]
 }
 
-function getRequiredPromiseMirror(node, key, promise) {
-    const mirror = getPromiseMirror(node, key)
-    if (!mirror || mirror.promise !== promise) {
-        errorUtils.reportFatalError(new Error("Indexed promise property has no matching mirror"))
+function getRequiredPromiseMirror(parent, key) {
+    const mirror = getPromiseMirror(parent, key)
+    if (!mirror) {
+        errorUtils.reportFatalError(
+            new Error("Indexed promise property has no mirror"),
+        )
     }
     return mirror
 }
 
-function installPromiseMirror(node, key, mirror) {
-    const meta = metadata.ensureMeta(node)
+function installPromiseMirror(parent, key, mirror) {
+    const meta = metadata.ensureMeta(parent)
     meta.mirrors ??= Object.create(null)
     meta.mirrors[key] = mirror
 }
 
 class PromiseMirror {
-    constructor(node, key, promise, importBoundary) {
-        this.node = node
-        this.key = key
-        this.promise = promise
-        // Latest logical value produced by completed FIFO consumers.
-        this.currentValue = undefined
-        // Registered consumers not yet completed; zero exposes currentValue.
-        this.pendingConsumerCount = 0
-        // Ref-indexing stops here; raw observations continue through currentValue.
-        this.cycleCut = false
-        // Imported boundary root and error context used for preparation/attribution.
-        this.importBoundary = importBoundary
-        // Set when import must classify the initial value before generic preparation.
-        this.importPreparationRegistered = false
+    constructor(importBoundary) {
+        if (importBoundary) this.importBoundary = importBoundary
     }
 
-    isDrained() {
-        return this.pendingConsumerCount === 0
+    isLive(parent, key) {
+        return getPromiseMirror(parent, key) === this
     }
 
-    // Revoked mirrors leave the map but remain valid for captured consumers.
-    isLive() {
-        return getPromiseMirror(this.node, this.key) === this
+    getValue(parent, key) {
+        return this.isLive(parent, key)
+            ? languageProperties.readLanguageProperty(parent, key)
+            : this.detachedValue
     }
 
-    // Count registration synchronously so FIFO order and pending visibility agree.
-    // Only fn's synchronous body counts: re-entrant registration extends the
-    // drain, while deeper readiness owns its own rejection handling and does
-    // not delay this consumer.
-    onResolve(fn) {
-        this.pendingConsumerCount++
-        return helpers.onValueResolve(this.promise, value => {
-            const result = fn(value)
-            if (this.pendingConsumerCount === 1) {
-                // The drain decrements inside its live-edge update, after the old
-                // pending projection is captured and before the new one is read.
-                commitMirrorDrain(this)
-            } else {
-                this.pendingConsumerCount--
-            }
-            // A thrown consumer or drain failure before its property update
-            // leaves an outstanding count and prevents publication.
-            return result
-        })
-    }
-
-    setValue(value, shouldMarkResolvedValueShared = false) {
-        if (this.importPreparationRegistered) {
-            // Import registers its classifier directly after mandatory writeback,
-            // so no later FIFO consumer can observe this flag.
-            // Import's next FIFO consumer classifies cycles before this branch
-            // may be ref-indexed.
-            if (shouldMarkResolvedValueShared) metadata.markShared(value)
-        } else {
-            preparePropertyTransition(
-                this.node,
-                this,
-                value,
-                shouldMarkResolvedValueShared,
-            )
-        }
-        this.currentValue = value
-        this.cycleCut = false
+    detach(parent, key) {
+        this.detachedValue = languageProperties.readLanguageProperty(parent, key)
+        const mirrors = metadata.metaOf(parent)?.mirrors
+        if (mirrors) delete mirrors[key]
     }
 }
 
-// Creation registers the mandatory consumer; callers publish the mirror only
-// when its owner/key property represents this promise.
+// The first FIFO reaction passes optional import preparation into the property
+// transition, which prepares the value before indexing and publishing it.
 function createPromiseMirror(
-    node,
+    parent,
     key,
     promise,
-    forkSourceMirror = null,
-    markResolvedValueShared = false,
-    importBoundary = undefined,
+    importBoundary,
+    prepareImportedValue,
 ) {
-    const mirror = new PromiseMirror(node, key, promise, importBoundary)
-
-    // The mandatory writeback is born first. Every later operation on this
-    // property registers through the same counted wrapper.
-    mirror.onResolve(settledValueOrError => {
-        if (forkSourceMirror !== null) {
-            // Import attribution is sampled at the same FIFO position as the
-            // source value. An earlier path consumer may have consumed it.
-            mirror.importBoundary = markResolvedValueShared
-                ? forkSourceMirror.importBoundary
-                : undefined
-        }
-        const value = forkSourceMirror === null
-            ? settledValueOrError
-            : forkSourceMirror.currentValue
-        mirror.setValue(value, markResolvedValueShared)
+    const mirror = new PromiseMirror(importBoundary)
+    helpers.onInitialPromiseResolve(promise, value => {
+        setMirrorValue(parent, key, mirror, value, prepareImportedValue)
     })
     return mirror
 }
 
-// ASSIGN: always a fresh mirror. Reusing one would merge two divergent worlds.
-// It remains private until the assignment's live-edge commit publishes it.
-function createAssignedPromiseMirror(node, key, promise) {
-    return createPromiseMirror(node, key, promise)
-}
-
-// DISCOVERY: the physical Promise already occupies the imported/raw property.
-// Promise identity permits reuse here only; ASSIGN always creates a fresh mirror.
-function getOrCreatePromiseMirror(node, key, promise, importBoundary = undefined) {
-    const existing = getPromiseMirror(node, key)
-    if (existing?.promise === promise) return existing
-    const mirror = createPromiseMirror(
-        node,
+// ASSIGN always creates a fresh property version, even for the same Promise.
+function createAssignedPromiseMirror(
+    parent,
+    key,
+    promise,
+    prepareImportedValue,
+) {
+    return createPromiseMirror(
+        parent,
         key,
         promise,
-        null,
-        false,
-        importBoundary,
+        undefined,
+        prepareImportedValue,
     )
-    installPromiseMirror(node, key, mirror)
+}
+
+// DISCOVERY is lazy for trusted literals and derived import Promises. A
+// completed ref index must already contain every required mirror.
+function getOrCreatePromiseMirror(
+    parent,
+    key,
+    promise,
+    importBoundary,
+    prepareImportedValue,
+) {
+    const existing = getPromiseMirror(parent, key)
+    if (existing) return existing
+
+    // A completed index already contains every Promise mirror. Unindexed
+    // trusted or prepared data may still discover one lazily.
+    if (metadata.metaOf(parent)?.parents) {
+        return getRequiredPromiseMirror(parent, key)
+    }
+
+    languageProperties.assertCanSetLanguageProperty(
+        parent,
+        key,
+        importBoundary?.errorContext,
+    )
+    const mirror = createPromiseMirror(
+        parent,
+        key,
+        promise,
+        importBoundary,
+        prepareImportedValue,
+    )
+    installPromiseMirror(parent, key, mirror)
     return mirror
 }
 
-function getOrCreateMirrorForValue(node, key, value, importBoundary = undefined) {
-    const mirror = getPromiseMirror(node, key)
-    if (mirror || !helpers.isPromise(value)) return mirror
-    // Ref-indexing creates every reachable Promise mirror. Observations may
-    // discover one only while its owner is still unindexed. `parents` is
-    // published only after ref-indexing finishes scanning the complete node.
-    if (metadata.metaOf(node)?.parents) {
-        return getRequiredPromiseMirror(node, key, value)
-    }
-    return getOrCreatePromiseMirror(node, key, value, importBoundary)
-}
-
-// FORK: read the source mirror at this FIFO position, but prepare the value for
-// the copy's own owner/key property. A fork is language-owned, never external.
+// FORK samples the source property's prepared state at the copier's FIFO slot.
 function forkPromiseMirror(
     source,
     copy,
@@ -172,39 +125,48 @@ function forkPromiseMirror(
     promise,
     retainedOffPath,
     importBoundary,
+    prepareImportedValue,
 ) {
-    const forkSourceMirror = getOrCreatePromiseMirror(
+    const sourceMirror = getOrCreatePromiseMirror(
         source,
         key,
         promise,
         importBoundary,
     )
-    const mirror = createPromiseMirror(
-        copy,
-        key,
-        promise,
-        forkSourceMirror,
-        retainedOffPath,
-        // Off-path forks retain imported data. A path fork is transformed by
-        // the current COW walk, which already carries the inherited boundary.
-        retainedOffPath
-            ? (forkSourceMirror.importBoundary ?? importBoundary)
-            : undefined,
+    const mirror = new PromiseMirror(
+        retainedOffPath ? importBoundary : undefined,
     )
+    helpers.onLaterPromiseReady(promise, () => {
+        const value = sourceMirror.getValue(source, key)
+        const sampledBoundary = retainedOffPath
+            ? metadata.nodeImportBoundary(
+                value,
+                sourceMirror.importBoundary,
+            )
+            : undefined
+        if (sampledBoundary) {
+            mirror.importBoundary = sampledBoundary
+        } else {
+            delete mirror.importBoundary
+        }
+        setMirrorValue(copy, key, mirror, value, prepareImportedValue)
+        // The resolver is synchronous, so sharing is established before the
+        // next FIFO resolver can observe this retained value.
+        if (retainedOffPath) metadata.markShared(value)
+    })
     installPromiseMirror(copy, key, mirror)
     return mirror
 }
 
-function clearPromiseMirror(node, key) {
-    const mirrors = metadata.metaOf(node)?.mirrors
-    if (mirrors) delete mirrors[key]
+function detachPromiseMirror(parent, key) {
+    const mirror = getPromiseMirror(parent, key)
+    if (mirror) mirror.detach(parent, key)
 }
 
 export {
-    clearPromiseMirror,
     createAssignedPromiseMirror,
+    detachPromiseMirror,
     forkPromiseMirror,
-    getOrCreateMirrorForValue,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,

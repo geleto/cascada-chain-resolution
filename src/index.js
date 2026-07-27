@@ -4,24 +4,20 @@
 //   delete a.k  -> deletePath(a, ["k"])
 //   P(V)        -> a promise P that resolves to value V
 //
-// A promise mirror lives in node's META mirror map:
-//   promise              : the exact promise instance assigned to this key
-//   currentValue         : the newest resolved value, V -> V' -> V''
-//   pendingConsumerCount : registered FIFO consumers not yet completed
-// Every mirror consumer registers at its program position. The mirror remains
-// pending while this count is positive, then publishes one final value.
-//
-// A mirror is born at ASSIGN, DISCOVERY, or FORK. ASSIGN and DISCOVERY seed from
-// the raw settled value. FORK seeds from the source mirror at the copier's FIFO
-// position, so the copied world diverges at exactly that program point.
+// A Promise mirror identifies one parent/key property version. Its live value
+// stays in the physical property; only a displaced version owns detachedValue.
+// ASSIGN and DISCOVERY seed from raw settlement. FORK samples the source
+// mirror at the copier's FIFO position, so the worlds diverge there.
 
 import * as refcounts from "./refcounts.js"
+import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyTransitions from "./property-transitions.js"
 
 // Load-bearing helper contract:
-// Generic data promises use onValueResolve. Property-promise consumers use
-// PromiseMirror.onResolve so registration order and the drain counter advance
-// together. Rejection becomes a language Error before either continuation runs.
+// The initial resolver converts data rejection through onInitialPromiseResolve.
+// Later resolvers use onLaterPromiseReady and read the state published by that
+// first FIFO reaction instead of consuming the raw settlement again.
 
 export class Chain {
     constructor(initialValue) {
@@ -30,10 +26,8 @@ export class Chain {
     }
 }
 
-promiseMirrors.initPromiseMirrors(
-    refcounts.preparePropertyTransition,
-    refcounts.commitMirrorDrain,
-)
+imports.initImport(refcounts.commitLiveEdge)
+promiseMirrors.initPromiseMirrors(propertyTransitions.setMirrorValue)
 
 export {
     assignPath,

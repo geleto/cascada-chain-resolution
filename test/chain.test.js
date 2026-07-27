@@ -141,7 +141,7 @@ describe("Chain root state", () => {
         expect(chain._state.value.branch).not.to.be(oldBranch)
     })
 
-    it("revokes pending root writeback when the root is replaced", async () => {
+    it("detaches a pending root resolver when the root is replaced", async () => {
         const pendingRoot = deferred()
         const chain = new Chain(pendingRoot.promise)
 

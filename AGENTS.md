@@ -18,7 +18,8 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 - Do all available work synchronously, in program order.
 - On reaching a Promise, register at that exact position through the runtime's promise helpers. Raw `.then` belongs only inside those helpers.
-- Invoke a continuation in the source Promise's single reaction; an intermediate proxy would fragment its FIFO batch.
+- The helpers canonicalize each callable thenable once; every continuation for that source registers on the same native Promise.
+- Invoke each continuation in one reaction on that canonical Promise; a per-consumer proxy would fragment its FIFO batch.
 - Never defer part of a transition with `await`, another `.then`, `queueMicrotask`, or lazy registration.
 
 ## Promise Mirrors

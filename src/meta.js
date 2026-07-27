@@ -14,7 +14,6 @@ function createMeta() {
         // cycleCuts: added when the first plain-property cut is published.
         // promiseCount, errorCount, cycleCutCount, parents: added by ref-indexing.
         // importBoundary: added at a direct import boundary.
-        // importedOriginal: added to objects owned by imported host data.
     }
 }
 
@@ -60,7 +59,9 @@ function hasSharedMark(value) {
 // Bare promises crossing an ownership boundary resolve to shared values.
 // Mirrored promise properties mark their prepared logical value instead.
 function markShared(value) {
-    if (helpers.isPromise(value)) return helpers.onValueResolve(value, markShared)
+    if (helpers.isPromise(value)) {
+        return helpers.onInitialPromiseResolve(value, markShared)
+    }
     if (!helpers.isTracked(value) || !Object.isExtensible(value)) return value
     ensureMeta(value).shared = true
     return value
@@ -73,11 +74,7 @@ function markShared(value) {
 function markImported(value, errorContext) {
     if (!helpers.isTracked(value)) return false
 
-    let meta = metaOf(value)
-    if (!meta) {
-        meta = ensureMeta(value)
-        meta.importedOriginal = true
-    }
+    const meta = ensureMeta(value)
     const createdBoundary = !meta.importBoundary
     if (createdBoundary) {
         meta.importBoundary = { root: value, errorContext }

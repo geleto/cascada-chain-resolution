@@ -18,6 +18,7 @@ import {
     expectCounts,
     thrownBy,
 } from "./support.js"
+import { hasCycleCut } from "../src/import.js"
 
 describe("subtree counters", () => {
     it("keeps inline metadata visible after a node becomes non-extensible", () => {
@@ -50,17 +51,15 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("preserves an indexed mirror when its property cannot be assigned", () => {
-        const pending = deferred()
-        const root = {}
+    it("preserves indexed state when its property cannot be assigned", () => {
+        const root = { value: "original" }
+        buildRefIndex(root)
         Object.defineProperty(root, "value", {
-            value: pending.promise,
+            value: "original",
             enumerable: true,
             writable: false,
             configurable: true,
         })
-        buildRefIndex(root)
-        const mirror = metaOf(root).mirrors.value
         const replacement = importValue({ clean: true }, "blocked assignment")
 
         const failure = thrownBy(() => {
@@ -68,10 +67,10 @@ describe("subtree counters", () => {
         })
 
         expect(failure.message).to.be("Cannot assign to non-writable property")
-        expect(root.value).to.be(pending.promise)
-        expect(metaOf(root).mirrors.value).to.be(mirror)
+        expect(root.value).to.be("original")
+        expect(metaOf(root).mirrors).to.be(undefined)
         expect(getRefCounter(replacement)).to.be(undefined)
-        expectCounts(root, 1, 0)
+        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 
@@ -257,7 +256,7 @@ describe("subtree counters", () => {
         pending.resolve("done")
         await flushMicrotasks()
 
-        expect(earlier.pending).to.be(pending.promise)
+        expect(earlier.pending).to.be("done")
         expect(lookupPath(new Chain(root), ["earlier", "pending"], false)).to.be("done")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, earlier, protoValue)
@@ -347,7 +346,7 @@ describe("subtree counters", () => {
         pending.resolve(target)
         await flushMicrotasks()
 
-        expect(metaOf(destination).mirrors.slot.cycleCut).to.be(true)
+        expect(hasCycleCut(destination, "slot")).to.be(true)
         expectCounts(destination, 0, 0, 1)
         expectCounts(target, 0, 0, 1)
         expect(getErrors(new Chain(destination), [])).to.eql([])
@@ -475,24 +474,13 @@ describe("subtree counters", () => {
         buildRefIndex(mirrored)
         metaOf(mirrored).cycleCuts = new Set(["pending"])
         expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
-            "Mirrored property also has a plain cycle cut",
+            "Pending Promise property also has a cycle cut",
         )
 
         delete metaOf(mirrored).cycleCuts
-        metaOf(mirrored).mirrors.pending.cycleCut = true
+        delete mirrored.pending
         expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
-            "Promise cycle cut must contain a prepared tracked value",
-        )
-
-        const stalePending = deferred()
-        const stale = { pending: stalePending.promise }
-        buildRefIndex(stale)
-        const staleMirror = metaOf(stale).mirrors.pending
-        staleMirror.currentValue = {}
-        staleMirror.cycleCut = true
-        delete stale.pending
-        expect(thrownBy(() => verifyRefCounts(stale)).message).to.be(
-            "Promise cycle cut names a missing or non-enumerable property",
+            "Live Promise mirror requires a writable language property",
         )
     })
 
@@ -640,7 +628,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("decrements counts when a pending promise is overwritten and ignores its later writeback", async () => {
+    it("decrements counts when a pending promise is overwritten and ignores its later resolution", async () => {
         const deferredValue = deferred()
         const root = {}
 
@@ -662,7 +650,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("ref-indexes a revoked mirror's private resolved branch", async () => {
+    it("ref-indexes a detached mirror's private resolved branch", async () => {
         const outer = deferred()
         const inner = deferred()
         const resolved = {
@@ -681,7 +669,7 @@ describe("subtree counters", () => {
 
         const counter = getRefCounter(resolved)
         expect(root.value).to.be("fixed")
-        expect(mirror.currentValue).to.be(resolved)
+        expect(mirror.detachedValue).to.be(resolved)
         expect(counter).not.to.be(undefined)
         expect(counter.promiseCount).to.be(1)
         expect(counter.errorCount).to.be(1)
@@ -982,7 +970,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root, next)
     })
 
-    it("decrements a deleted pending promise and ignores its later writeback", async () => {
+    it("decrements a deleted pending promise and ignores its later resolution", async () => {
         const deferredValue = deferred()
         const root = { value: deferredValue.promise }
 

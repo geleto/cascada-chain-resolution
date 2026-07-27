@@ -1,7 +1,7 @@
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
-import { hasPublishedCycleCut } from "../src/import.js"
+import { hasCycleCut } from "../src/import.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -10,8 +10,9 @@ import {
     expect,
     reportFatalError,
     setFatalErrorReporter,
-    onInternalResolve,
-    onValueResolve,
+    onAllPromisesReady,
+    onInitialPromiseResolve,
+    onLaterPromiseReady,
     runFatal,
     buildRefIndex,
     getRefCounts,
@@ -30,13 +31,13 @@ import {
 } from "./support.js"
 
 describe("promise helpers", () => {
-    it("keeps value and internal reactions in registration order", async () => {
+    it("keeps initial and aggregate reactions in registration order", async () => {
         const pending = deferred()
         const order = []
 
-        onValueResolve(pending.promise, () => order.push("value 1"))
-        onInternalResolve(pending.promise, () => order.push("internal"))
-        onValueResolve(pending.promise, () => order.push("value 2"))
+        onInitialPromiseResolve(pending.promise, () => order.push("value 1"))
+        onAllPromisesReady(pending.promise, () => order.push("internal"))
+        onInitialPromiseResolve(pending.promise, () => order.push("value 2"))
 
         pending.resolve("done")
         await flushMicrotasks()
@@ -44,8 +45,54 @@ describe("promise helpers", () => {
         expect(order).to.eql(["value 1", "internal", "value 2"])
     })
 
+    it("canonicalizes callable thenables onto one FIFO reaction queue", async () => {
+        let registrations = 0
+        const thenable = {
+            then(resolve) {
+                registrations++
+                if (registrations === 1) {
+                    queueMicrotask(() => resolve({}))
+                } else {
+                    resolve({})
+                }
+            },
+        }
+        const chain = new Chain({ branch: thenable })
+
+        assignPath(chain, ["branch", "x"], 1)
+        const observed = lookupPath(chain, ["branch", "x"])
+
+        expect(await observed).to.be(1)
+        expect(chain._state.value.branch).to.eql({ x: 1 })
+        expect(registrations).to.be(1)
+    })
+
+    it("converts one property version's rejection only once", async () => {
+        const pending = deferred()
+        let conversions = 0
+        const reason = {
+            toString() {
+                conversions++
+                return "converted once"
+            },
+        }
+        const chain = new Chain({ branch: pending.promise })
+        const first = lookupPath(chain, ["branch"])
+        const second = lookupPath(chain, ["branch"])
+
+        pending.reject(reason)
+        const [firstValue, secondValue] = await Promise.all([first, second])
+
+        expect(conversions).to.be(1)
+        expect(firstValue).to.be(secondValue)
+        expect(chain._state.value.branch).to.be(firstValue)
+    })
+
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await onValueResolve(Promise.reject("data boom"), value => value)
+        const value = await onInitialPromiseResolve(
+            Promise.reject("data boom"),
+            value => value,
+        )
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("data boom")
@@ -66,7 +113,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onValueResolve(Promise.resolve("ok"), () => {
+            await onInitialPromiseResolve(Promise.resolve("ok"), () => {
                 throw fatal
             })
         } catch (error) {
@@ -88,8 +135,11 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await onInternalResolve(
-                onValueResolve(Promise.resolve("ok"), () => reportFatalError(fatal)),
+            await onAllPromisesReady(
+                onInitialPromiseResolve(
+                    Promise.resolve("ok"),
+                    () => reportFatalError(fatal),
+                ),
                 value => value,
             )
         } catch (error) {
@@ -111,7 +161,10 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onInternalResolve(Promise.reject(fatal), () => "ignored")
+            await onAllPromisesReady(
+                Promise.reject(fatal),
+                () => "ignored",
+            )
         } catch (error) {
             caught = error
         } finally {
@@ -136,7 +189,10 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onValueResolve(Promise.reject(reason), value => value)
+            await onInitialPromiseResolve(
+                Promise.reject(reason),
+                value => value,
+            )
         } catch (error) {
             caught = error
         } finally {
@@ -179,7 +235,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            onInternalResolve(cleanWait.promise, () => false),
+            onAllPromisesReady(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)
@@ -210,83 +266,103 @@ describe("promise helpers", () => {
             valuesUnchanged: true,
         })
     })
+
+    it("rejects host descriptor changes before live Promise publication", () => {
+        const fixture = path.join(
+            __dirname,
+            "fixtures",
+            "promise-property-fatal.js",
+        )
+        const child = spawnSync(process.execPath, [fixture], { encoding: "utf8" })
+
+        expect(child.status).to.be(0)
+        expect(JSON.parse(child.stdout)).to.eql({
+            reportCount: 4,
+            unhandledCount: 4,
+            sameErrors: true,
+            messages: [
+                "Cannot resolve missing Promise property",
+                "Cannot mutate non-enumerable property",
+                "Cannot assign to accessor property",
+                "Cannot assign to non-writable property",
+            ],
+        })
+    })
 })
 
 describe("promise mirrors and lookupPath", () => {
-    it("keeps drain and liveness as independent mirror states", async () => {
+    it("uses the property while live and private state after detachment", async () => {
         const livePending = deferred()
         const liveRoot = {}
         assignPath(new Chain(liveRoot), ["value"], livePending.promise)
         const liveMirror = metaOf(liveRoot).mirrors.value
 
         expect(liveMirror.constructor.name).to.be("PromiseMirror")
-        expect(liveMirror.isLive()).to.be(true)
-        expect(liveMirror.isDrained()).to.be(false)
+        expect(liveMirror.isLive(liveRoot, "value")).to.be(true)
+        expect(liveMirror.getValue(liveRoot, "value")).to.be(
+            livePending.promise,
+        )
+        expect(Object.hasOwn(liveMirror, "detachedValue")).to.be(false)
 
         livePending.resolve("live")
         await flushMicrotasks()
 
-        expect(liveMirror.isLive()).to.be(true)
-        expect(liveMirror.isDrained()).to.be(true)
+        expect(liveMirror.isLive(liveRoot, "value")).to.be(true)
+        expect(liveRoot.value).to.be("live")
+        expect(liveMirror.getValue(liveRoot, "value")).to.be("live")
+        expect(Object.hasOwn(liveMirror, "detachedValue")).to.be(false)
 
-        const revokedPending = deferred()
-        const revokedRoot = {}
-        const revokedChain = new Chain(revokedRoot)
-        assignPath(revokedChain, ["value"], revokedPending.promise)
-        const revokedMirror = metaOf(revokedRoot).mirrors.value
-        assignPath(revokedChain, ["value"], "replacement")
+        const detachedPending = deferred()
+        const detachedRoot = {}
+        const detachedChain = new Chain(detachedRoot)
+        assignPath(detachedChain, ["value"], detachedPending.promise)
+        const detachedMirror = metaOf(detachedRoot).mirrors.value
+        assignPath(detachedChain, ["value"], "replacement")
 
-        expect(revokedMirror.isLive()).to.be(false)
-        expect(revokedMirror.isDrained()).to.be(false)
+        expect(detachedMirror.isLive(detachedRoot, "value")).to.be(false)
+        expect(detachedMirror.detachedValue).to.be(detachedPending.promise)
 
-        revokedPending.resolve("revoked")
+        detachedPending.resolve("detached")
         await flushMicrotasks()
 
-        expect(revokedMirror.isLive()).to.be(false)
-        expect(revokedMirror.isDrained()).to.be(true)
-        expect(revokedRoot.value).to.be("replacement")
+        expect(detachedMirror.isLive(detachedRoot, "value")).to.be(false)
+        expect(detachedMirror.detachedValue).to.be("detached")
+        expect(detachedRoot.value).to.be("replacement")
     })
 
-    it("keeps physical promises when holders become non-extensible during drain", async () => {
-        for (const makeNonExtensible of [Object.seal, Object.freeze]) {
-            const pending = deferred()
-            const error = new Error("settled")
-            const value = { error }
-            const root = {}
+    it("writes through existing writable properties on sealed holders", async () => {
+        const pending = deferred()
+        const error = new Error("settled")
+        const value = { error }
+        const root = {}
 
-            assignPath(new Chain(root), ["value"], pending.promise)
-            buildRefIndex(root)
-            const mirror = metaOf(root).mirrors.value
-            const observed = lookupPath(new Chain(root), ["value"])
+        assignPath(new Chain(root), ["value"], pending.promise)
+        buildRefIndex(root)
+        const observed = lookupPath(new Chain(root), ["value"])
 
-            makeNonExtensible(root)
-            expectCounts(root, 1, 0)
-            expect(mirror.pendingConsumerCount > 1).to.be(true)
+        Object.seal(root)
+        expectCounts(root, 1, 0)
 
-            pending.resolve(value)
-            expect(await observed).to.be(value)
-            await flushMicrotasks()
+        pending.resolve(value)
+        expect(await observed).to.be(value)
+        await flushMicrotasks()
 
-            expect(root.value).to.be(pending.promise)
-            expect(mirror.currentValue).to.be(value)
-            expect(mirror.pendingConsumerCount).to.be(0)
-            expectCounts(root, 0, 1)
-            expect(hasError(new Chain(root), [])).to.be(true)
-            expect(exportValue(new Chain(root), []).message).to.be(
-                "export: branch contains errors",
-            )
-            verifyRefCounts(root)
-        }
+        expect(root.value).to.be(value)
+        expectCounts(root, 0, 1)
+        expect(hasError(new Chain(root), [])).to.be(true)
+        expect(exportValue(new Chain(root), []).message).to.be(
+            "export: branch contains errors",
+        )
+        verifyRefCounts(root)
     })
 
-    it("prepares the final value when its owner becomes indexed during the drain", async () => {
+    it("prepares a resolved value when its owner becomes indexed first", async () => {
         const pending = deferred()
         const nested = deferred()
         const root = {}
 
         assignPath(new Chain(root), ["value"], pending.promise)
-        const mirror = metaOf(root).mirrors.value
-        mirror.onResolve(() => buildRefIndex(root))
+        onLaterPromiseReady(pending.promise, () => buildRefIndex(root))
 
         pending.resolve({ bad: new Error("bad"), nested: nested.promise })
         await flushMicrotasks()
@@ -302,29 +378,26 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps a draining mirror cycle cut private until final commit", async () => {
+    it("publishes a resolved value and its cycle cut atomically", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
-        importValue(root, "private draining mark")
+        importValue(root, "atomic cycle cut")
         buildRefIndex(root)
-        const mirror = metaOf(root).mirrors.value
-        let privateCycleCut
         let publishedCycleCut
-        let countsDuringDrain
+        let countsAfterPublication
 
-        mirror.onResolve(() => {
-            privateCycleCut = mirror.cycleCut
-            publishedCycleCut = hasPublishedCycleCut(root, "value")
-            countsDuringDrain = getRefCounts(root)
+        onLaterPromiseReady(pending.promise, () => {
+            publishedCycleCut = hasCycleCut(root, "value")
+            countsAfterPublication = getRefCounts(root)
         })
 
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(privateCycleCut).to.be(true)
-        expect(publishedCycleCut).to.be(false)
-        expect(countsDuringDrain).to.eql([1, 0, 0])
-        expect(hasPublishedCycleCut(root, "value")).to.be(true)
+        expect(root.value).to.be(root)
+        expect(publishedCycleCut).to.be(true)
+        expect(countsAfterPublication).to.eql([0, 0, 1])
+        expect(hasCycleCut(root, "value")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
@@ -345,77 +418,11 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(copy).not.to.be(owner)
         expect(metaOf(copy).mirrors.value).to.be(mirror)
-        expect(mirror.promise).to.be(pending.promise)
-        expect(mirror.cycleCut).to.be(false)
+        expect(copy.value).to.be(pending.promise)
         expect(metaOf(copy).cycleCuts).to.be(undefined)
         expect(metaOf(owner).cycleCuts.has("value")).to.be(true)
         expectCounts(copy, 1, 0)
         verifyRefCounts(owner, copy)
-    })
-
-    it("does not publish a mirror whose consumer throws a falsy fatal value", async () => {
-        const pending = deferred()
-        const root = {}
-        let rejected = false
-        let reported = "not reported"
-
-        assignPath(new Chain(root), ["value"], pending.promise)
-        const mirror = metaOf(root).mirrors.value
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-        const failedConsumer = mirror.onResolve(() => {
-            throw undefined
-        }).then(
-            () => undefined,
-            reason => {
-                rejected = true
-                expect(reason).to.be(undefined)
-            },
-        )
-
-        pending.resolve({ settled: true })
-        await failedConsumer
-
-        expect(rejected).to.be(true)
-        expect(reported).to.be(undefined)
-        expect(mirror.pendingConsumerCount).to.be(1)
-        expect(root.value).to.be(pending.promise)
-    })
-
-    it("keeps reads behind consumers registered in the settlement gap", async () => {
-        const source = deferred()
-        const firstJob = deferred()
-        const readJob = deferred()
-        const root = { branch: source.promise }
-        const chain = new Chain(root)
-        let read
-        let exported
-        let countsDuringGap
-
-        buildRefIndex(root)
-        onInternalResolve(firstJob.promise, () => {
-            readJob.resolve()
-            assignPath(chain, ["branch", "x"], 1)
-        })
-        onInternalResolve(readJob.promise, () => {
-            read = lookupPath(chain, ["branch", "x"], false)
-            exported = exportValue(chain, ["branch"])
-            countsDuringGap = getRefCounts(root)
-            verifyRefCounts(root)
-        })
-
-        firstJob.resolve()
-        source.resolve({})
-        await flushMicrotasks()
-
-        expect(await read).to.be(1)
-        expect(await exported).to.eql({ x: 1 })
-        expect(countsDuringGap).to.eql([1, 0, 0])
-        const mirror = metaOf(root).mirrors.branch
-        expect(mirror.pendingConsumerCount).to.be(0)
-        expectCounts(root, 0, 0)
-        verifyRefCounts(root)
     })
 
     it("keeps owned promise results mutable until they escape", async () => {
@@ -492,7 +499,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(registrations()).to.be(before)
     })
 
-    it("applies writes to an already-settled assigned promise before writeback", async () => {
+    it("applies writes to an already-settled assigned promise in FIFO order", async () => {
         const root = {}
         const promise = Promise.resolve({})
 
@@ -634,7 +641,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("continues through promises exposed after its first mirror is revoked", async () => {
+    it("continues through promises exposed after its first mirror is detached", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
@@ -998,7 +1005,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("continues a suspended write through a mirror already revoked at settlement", async () => {
+    it("continues a suspended write through a mirror detached before settlement", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
@@ -1188,7 +1195,8 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.again).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
-        expect(resolved.again).to.be(pending.promise)
+        expect(resolved.again).to.be(resolved)
+        expect(hasCycleCut(resolved, "again")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
@@ -1212,7 +1220,8 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.next.back).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
-        expect(firstValue.next).to.be(second.promise)
+        expect(firstValue.next).to.be(secondValue)
+        expect(hasCycleCut(firstValue, "next")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })

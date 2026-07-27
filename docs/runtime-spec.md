@@ -47,10 +47,11 @@ calls. Each operation:
 3. registers all continuations needed at its current program position; and
 4. returns before unresolved data is available.
 
-Promise reactions registered on the same source run in registration order.
-Every consumer of a Promise-backed property registers through that property's
-captured mirror, so its synchronous continuation observes all earlier
-consumers and none issued later.
+Each callable thenable is canonicalized once to one native Promise. Reactions
+registered on that shared Promise run in registration order. Every consumer of
+a Promise-backed property registers through that property's captured mirror,
+so its synchronous continuation observes all earlier consumers and none issued
+later.
 
 An operation describes the state at its own issue position. A later overwrite,
 deletion, or copy-on-write transition cannot change the result captured by an
@@ -101,7 +102,7 @@ Current generic copying does not preserve a class instance's prototype,
 private fields, or internal slots. Explicit class adapters are tracked as
 future work in `plan.md`.
 
-Imported provenance remains attached to retained external children. Newly
+Imported attribution remains attached to retained external children. Newly
 copied path nodes are language-owned. If the copied source was already
 ref-indexed, the copy receives counters reconstructed from its own logical
 properties rather than cloned totals or parent links.
@@ -130,11 +131,15 @@ An import boundary:
 - registers continuations for nested Promises without awaiting them; and
 - does not build subtree counters.
 
-Newly reached host objects are recorded as imported originals. Existing
-runtime metadata identifies a previously prepared or runtime-owned identity.
-Imported originals are treated as physically immutable by Cascada. Promise
-settlement and cycle classification update logical runtime state, not the host
-object's properties.
+Newly reached host objects receive metadata recording completed preparation.
+Existing runtime metadata identifies a previously prepared or runtime-owned
+identity. The imported boundary is shared, so language mutation copy-on-writes
+before changing its data. Promise settlement is an ownership handoff: every
+Promise property discovered by import must remain an own enumerable writable
+data property, and its first resolver writes the prepared value physically.
+Ordinary non-Promise frozen data remains valid. A non-writable, accessor,
+non-enumerable, or later-deleted Promise property is a fatal host-contract
+violation.
 
 External code must not mutate an imported graph after import. Native code must
 receive tracked Cascada data through `export`, not through a direct
@@ -167,7 +172,7 @@ When a required intermediate is:
 - an Error, the same Error is propagated;
 - missing, `null`, `undefined`, or primitive, a path-access Error is produced;
 - a Promise, the operation registers at that property's program position and
-  continues from its logical value; or
+    continues from the state captured by its Promise mirror; or
 - tracked, traversal continues.
 
 A mutation installs a produced path-access Error at the broken intermediate
@@ -211,23 +216,23 @@ language Error values.
 One mirror represents one Promise-backed property version. Assigning the same
 Promise again creates a new mirror.
 
-Each mirror is an internal `PromiseMirror` instance. `onResolve` owns counted
-FIFO registration, `setValue` owns prepared logical-value updates,
-`isDrained` controls synchronous visibility, and `isLive` distinguishes the
-installed property version from a revoked version retained by older operations.
+While a mirror is live, its parent/key property is authoritative. It initially
+contains the Promise. The first resolver consumes fulfillment or converts
+rejection to Error, prepares the value, and replaces the Promise. Later
+resolvers use the canonical Promise only as a FIFO readiness signal, read the
+latest physical property value, and synchronously apply their operation.
+Ordinary reads of a resolved property do not consult the retained mirror.
 
-The mirror's mandatory writeback and every waiting operation register directly
-on the source Promise in issue order. A mirror remains logically pending until
-all registered consumers finish their synchronous work. Only the final
-successful consumer may publish its prepared value to the live property.
+A later overwrite or deletion detaches the mirror. Detachment captures the
+physical value as `detachedValue` and removes the live map entry. Resolvers
+already registered for that property version continue against this private
+value and cannot affect the replacement property. A live resolved mirror stays
+installed until such a replacement because queued resolvers still identify
+their exact property version through it.
 
-An extensible runtime-owned holder receives the final physical value. An
-imported-original or non-extensible holder may retain the original Promise
-physically; all runtime reads use the mirror's logical value.
-
-A later overwrite or deletion revokes the mirror from the live property.
-Already registered consumers retain that captured property version and finish
-privately.
+The mirror stores no source Promise, parent, key, consumer count, or duplicate
+current value. It retains only unresolved import context and, after
+detachment, `detachedValue`.
 
 ## Errors and fatal failures
 
@@ -241,9 +246,12 @@ rejection-conversion failures, invariant violations, and rejected internal
 aggregate waits are never converted into language Error values.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
-`onValueResolve` and `onInternalResolve` own their respective data and internal
-rejection policies, so the synchronous shell does not add another Promise
-reaction or delay a successful asynchronous result.
+The helpers share one canonical native Promise for each callable thenable.
+`onInitialPromiseResolve` converts the first data result,
+`onLaterPromiseReady` runs later property resolvers without reconverting
+rejection, and `onAllPromisesReady`
+owns internal readiness failures. None adds a per-consumer proxy or second
+reaction.
 
 An object-like fatal value is reported once per identity even if it crosses
 several fatal wrapper boundaries.
@@ -263,7 +271,7 @@ targets are no-ops. It updates existing refcounts and returns `undefined`.
 
 ### `lookupPath(chain, path, sharedOwnership = true)`
 
-Returns the logical value at the path. The default marks a returned tracked
+Returns the value captured at the path. The default marks a returned tracked
 value shared. The result is synchronous unless path resolution crosses a
 Promise.
 
@@ -275,8 +283,8 @@ Returns host-ready data for the branch captured at its issue position.
 - An Error terminal returns a fresh outer Error whose `.errors` array contains
   that terminal identity.
 - A successful result is always a metadata-free deep copy preserving arrays,
-  holes, own-key order, aliases, cycles, enumerable `__proto__`, and logical
-  mirror values.
+  holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
+  Promise-property values.
 - A tracked branch starts one raw identity-aware copy-or-collect walk
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but

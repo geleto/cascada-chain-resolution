@@ -5,6 +5,7 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyTransitions from "./property-transitions.js"
 import * as rawWalk from "./raw-walk.js"
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
@@ -44,7 +45,7 @@ function exportAtPathValue(value, importBoundary) {
         ? exportErrorOutcome(state.errors)
         : output
     return readiness
-        ? helpers.onInternalResolve(readiness, finish)
+        ? helpers.onAllPromisesReady(readiness, finish)
         : finish()
 }
 
@@ -69,24 +70,19 @@ function hasErrorAtPathValue(value, importBoundary) {
     const counter = refcounts.getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
     if (counter.cycleCutCount === 0 && counter.promiseCount === 0) return false
-    return searchForFirstError(onError =>
-        collectFencedErrorWaits(
-            value,
-            importBoundary,
-            createErrorSearchState(true, onError),
-        ))
+    return searchForFirstError(value, importBoundary)
 }
 
-// Runs a wait collector that reports through onError: the first discovered Error
-// becomes a synchronous true, an unfindable one false, and a pending frontier a
-// first-error-versus-completion race.
-function searchForFirstError(collectWaits) {
+// The first discovered Error becomes a synchronous true, an unfindable one
+// false, and a pending frontier a first-error-versus-completion race.
+function searchForFirstError(value, importBoundary) {
     let found = false
     let resolveError
-    const readiness = collectWaits(() => {
+    const state = createErrorSearchState(() => {
         found = true
         if (resolveError) resolveError(true)
     })
+    const readiness = collectFencedErrorWaits(value, importBoundary, state)
     if (found) return true
     if (!readiness) return false
 
@@ -95,7 +91,7 @@ function searchForFirstError(collectWaits) {
     })
     return Promise.race([
         errorPromise,
-        helpers.onInternalResolve(readiness, () => false),
+        helpers.onAllPromisesReady(readiness, () => false),
     ])
 }
 
@@ -115,12 +111,13 @@ function getErrors(chain, path) {
             readiness = collectFencedErrorWaits(value, importBoundary, state)
         }
         return readiness
-            ? helpers.onInternalResolve(readiness, () => [...state.errors])
+            ? helpers.onAllPromisesReady(readiness, () => [...state.errors])
             : [...state.errors]
     }
 }
 
-function createErrorSearchState(firstErrorOnly = false, onError = undefined) {
+function createErrorSearchState(onError) {
+    const firstErrorOnly = onError !== undefined
     const state = {
         errors: firstErrorOnly ? undefined : new Set(),
         firstErrorOnly,
@@ -166,30 +163,50 @@ function collectFencedErrorWaits(value, inheritedImportBoundary, state) {
         const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of Object.keys(node)) {
             if (state.stopped) break
-            let mirror = promiseMirrors.getPromiseMirror(node, key)
             const child = languageProperties.readLanguageProperty(node, key)
-            const childImportBoundary = mirror?.importBoundary ?? importBoundary
 
-            if (hasCycleCuts && imports.hasPublishedCycleCut(node, key)) {
-                walk(child, childImportBoundary)
+            if (hasCycleCuts && imports.hasCycleCut(node, key)) {
+                walk(child, importBoundary)
             } else if (helpers.isError(child)) {
                 state.foundError(child)
             } else if (helpers.isPromise(child)) {
-                mirror ??= promiseMirrors.getRequiredPromiseMirror(node, key, child)
-                waits.push(mirror.onResolve(() => {
-                    return collectResolvedPromiseErrors(
-                        mirror,
-                        importBoundary,
-                        state,
-                    )
-                }))
+                waits.push(collectPromiseErrors(
+                    node,
+                    key,
+                    child,
+                    importBoundary,
+                ))
             } else if (helpers.isTracked(child)) {
                 const childCounter = refcounts.getRequiredRefCounter(child)
                 if (hasErrorQueryWork(childCounter)) {
-                    walk(child, childImportBoundary)
+                    walk(child, importBoundary)
                 }
             }
         }
+    }
+
+    function collectPromiseErrors(
+        parent,
+        key,
+        promise,
+        inheritedImportBoundary,
+    ) {
+        const mirror = promiseMirrors.getRequiredPromiseMirror(parent, key)
+        return helpers.onLaterPromiseReady(promise, () => {
+            if (state.stopped) return undefined
+            const value = mirror.getValue(parent, key)
+            if (helpers.isError(value)) {
+                state.foundError(value)
+                return undefined
+            }
+            if (!helpers.isTracked(value)) return undefined
+
+            return collectFencedErrorWaits(
+                value,
+                mirror.importBoundary ?? inheritedImportBoundary,
+                state,
+            )
+        })
     }
 }
 
@@ -199,19 +216,6 @@ function hasErrorQueryWork(counter) {
         counter.cycleCutCount > 0
 }
 
-function collectResolvedPromiseErrors(mirror, inheritedImportBoundary, state) {
-    if (state.stopped) return undefined
-    const value = mirror.currentValue
-    if (helpers.isError(value)) {
-        state.foundError(value)
-        return undefined
-    }
-    if (!helpers.isTracked(value)) return undefined
-
-    const importBoundary = mirror.importBoundary ?? inheritedImportBoundary
-    return collectFencedErrorWaits(value, importBoundary, state)
-}
-
 // Observational path resolution follows raw logical values.
 function walkObservationPath(
     chain,
@@ -219,47 +223,44 @@ function walkObservationPath(
     onResolved,
 ) {
     const targetPath = ["value", ...path]
-    return walkFromParent(chain._state, 0, undefined)
+    return walkFromParent(
+        chain._state,
+        0,
+        metadata.nodeImportBoundary(chain._state),
+    )
 
-    function walkFromParent(parent, index, inheritedImportBoundary) {
-        const importBoundary = metadata.nodeImportBoundary(parent, inheritedImportBoundary)
-
+    function walkFromParent(parent, index, importBoundary) {
         const key = targetPath[index]
         const value = languageProperties.readLanguageProperty(parent, key)
-        const mirror = promiseMirrors.getOrCreateMirrorForValue(
-            parent,
-            key,
-            value,
-            importBoundary,
-        )
         if (helpers.isPromise(value)) {
-            return mirror.onResolve(() => {
-                const propertyImportBoundary = mirror.importBoundary ?? importBoundary
+            const mirror = promiseMirrors.getOrCreatePromiseMirror(
+                parent,
+                key,
+                value,
+                importBoundary,
+            )
+            return helpers.onLaterPromiseReady(value, () => {
+                const propertyValue = mirror.getValue(parent, key)
                 return walkValue(
-                    mirror.currentValue,
+                    propertyValue,
                     index,
-                    propertyImportBoundary,
-                    resolvedValue => onResolved(resolvedValue, propertyImportBoundary),
+                    mirror.importBoundary ?? importBoundary,
                 )
             })
         }
-        if (mirror) {
-            const propertyImportBoundary = mirror.importBoundary ?? importBoundary
-            return walkValue(value, index, propertyImportBoundary, resolvedValue => {
-                return onResolved(resolvedValue, propertyImportBoundary)
-            })
-        }
-        return walkValue(value, index, importBoundary, resolvedValue => {
-            return onResolved(resolvedValue, importBoundary)
-        })
+        return walkValue(value, index, importBoundary)
     }
 
-    function walkValue(value, index, importBoundary, onTerminal) {
+    function walkValue(value, index, inheritedImportBoundary) {
+        const importBoundary = metadata.nodeImportBoundary(
+            value,
+            inheritedImportBoundary,
+        )
         if (index === targetPath.length - 1 || helpers.isError(value)) {
-            return onTerminal(value)
+            return onResolved(value, importBoundary)
         }
         if (!helpers.isTracked(value)) {
-            return onTerminal(errorUtils.pathAccessError())
+            return onResolved(errorUtils.pathAccessError(), importBoundary)
         }
         return walkFromParent(value, index + 1, importBoundary)
     }

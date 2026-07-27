@@ -5,6 +5,7 @@ import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyTransitions from "./property-transitions.js"
 
 function setProperty(
     parent,
@@ -20,18 +21,25 @@ function setProperty(
     )
     // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
     // mirror. Two assignments of the same promise are divergent worlds.
-    const mirror = helpers.isPromise(value)
-        ? promiseMirrors.createAssignedPromiseMirror(parent, key, value)
-        : null
-    refcounts.preparePropertyTransition(parent, mirror, value)
-    refcounts.commitPropertyTransition(parent, key, mirror, value)
-    if (attachmentPath) {
-        imports.attachImportedDataToImportedData(
+    let mirror
+    if (helpers.isPromise(value)) {
+        let prepareImportedValue
+        if (attachmentPath) {
+            metadata.markShared(attachmentPath.root)
+            prepareImportedValue = imports.createImportedValuePreparer(
+                attachmentPath.ancestors,
+            )
+        }
+        mirror = promiseMirrors.createAssignedPromiseMirror(
             parent,
             key,
-            attachmentPath,
-            attachmentPath.root,
+            value,
+            prepareImportedValue,
         )
+    }
+    propertyTransitions.replaceProperty(parent, key, mirror, value)
+    if (attachmentPath) {
+        imports.attachImportedDataToImportedData(parent, key, attachmentPath)
     }
 }
 
@@ -41,13 +49,12 @@ function deleteProperty(parent, key, importBoundary = undefined) {
         key,
         importBoundary?.errorContext,
     )
-    refcounts.deleteEdge(parent, key)
+    propertyTransitions.deleteProperty(parent, key)
 }
 
 function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     const copy = Array.isArray(obj) ? new Array(obj.length) : {}
     const pathKeyString = String(pathKey)
-    const keys = Object.keys(obj)
     attachmentPath.root ??= copy
     attachmentPath.ancestors.add(copy)
 
@@ -60,33 +67,30 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     // child of an imported node receives its own import boundary. A path
     // child's next shallow copy omits that META, so every new path node remains
     // language-owned without a separate path exception here.
-    for (const key of keys) {
-        const isPathKey = key === pathKeyString
-        const retainedOffPath = !isPathKey
+    for (const key of Object.keys(obj)) {
+        const retainedOffPath = key !== pathKeyString
         const sourceMirror = promiseMirrors.getPromiseMirror(obj, key)
         const value = languageProperties.readLanguageProperty(obj, key)
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
-        // through setProperty, or indexCopyIfSourceIndexed reconstructs its index.
+        // through setProperty, or indexValueIfSourceIndexed reconstructs its index.
         languageProperties.writeLanguageProperty(copy, key, value)
         if (helpers.isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
             //
-            // Why eager: a mirror minted lazily by a later walk would seed
-            // currentValue from the RAW resolved value, stranding every advance
-            // (V -> V' -> ...) made by ops issued BEFORE this copy; their writes
-            // silently vanish from the copied world.
-            //
-            // Why seeding from the source mirror is correct: this initializer is
-            // registered at the copier's FIFO slot, so it runs after every
-            // continuation of earlier ops and before every continuation of later
-            // ops. The two worlds diverge at exactly this point in program order.
+            // Its FIFO reaction samples the source after earlier operations and
+            // before later ones, so the two property versions diverge here.
             //
             // Why mark non-path captured values: they are reused by two worlds,
             // so the first advance on either side must COW. The path key itself
             // is protected by the walk's inherited state if we enter it, and
             // may simply be replaced/deleted at the target.
+            const prepareImportedValue = retainedOffPath
+                ? imports.createImportedValuePreparer(
+                    attachmentPath.ancestors,
+                )
+                : undefined
             promiseMirrors.forkPromiseMirror(
                 obj,
                 copy,
@@ -94,14 +98,8 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
                 value,
                 retainedOffPath,
                 propertyImportBoundary,
+                prepareImportedValue,
             )
-            if (retainedOffPath && propertyImportBoundary) {
-                imports.attachImportedDataToImportedData(
-                    copy,
-                    key,
-                    attachmentPath,
-                )
-            }
         } else if (propertyImportBoundary && helpers.isTracked(value)) {
             // The source child remains external; a later shallow copy of a path
             // child drops this boundary together with its other META.
@@ -110,7 +108,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
             metadata.markShared(value)
         }
     }
-    refcounts.indexCopyIfSourceIndexed(obj, copy)
+    refcounts.indexValueIfSourceIndexed(obj, copy)
     return copy
 }
 
@@ -133,23 +131,24 @@ function assignPath(chain, path, value) {
 // install copied branches back into their key.
 function walkMutationPath(rootHolder, path, onTarget) {
     const targetPath = ["value", ...path]
-    return walk(rootHolder, 0, false, undefined, undefined)
+    let attachmentPath
+    return walk(rootHolder, 0, undefined)
 
     function walk(
         value,
         index,
-        inheritedSharedBranch,
         inheritedImportBoundary,
-        attachmentPath,
     ) {
         if (helpers.isError(value)) return value
         if (!helpers.isTracked(value)) return errorUtils.pathAccessError()
 
         // Root-only import attribution is inherited until a nested boundary
-        // overrides it; the shared-branch bit independently drives path COW.
+        // overrides it. Once COW starts, attachmentPath keeps every remaining
+        // path node in the shared branch.
         const valueImportBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
         let parent = value
-        const parentInsideSharedBranch = inheritedSharedBranch || metadata.hasSharedMark(value)
+        const parentInsideSharedBranch = attachmentPath !== undefined ||
+            metadata.hasSharedMark(value)
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
@@ -178,37 +177,36 @@ function walkMutationPath(rootHolder, path, onTarget) {
         )
 
         const child = languageProperties.readLanguageProperty(parent, key)
-        const mirror = promiseMirrors.getOrCreateMirrorForValue(
-            parent,
-            key,
-            child,
-            valueImportBoundary,
-        )
         if (helpers.isPromise(child)) {
-            mirror.onResolve(() => {
-                const childImportBoundary = mirror.importBoundary ?? valueImportBoundary
+            const mirror = promiseMirrors.getOrCreatePromiseMirror(
+                parent,
+                key,
+                child,
+                valueImportBoundary,
+            )
+            helpers.onLaterPromiseReady(child, () => {
+                const propertyValue = mirror.getValue(parent, key)
                 const next = walk(
-                    mirror.currentValue,
+                    propertyValue,
                     index + 1,
-                    parentInsideSharedBranch,
-                    childImportBoundary,
-                    attachmentPath,
+                    mirror.importBoundary ?? valueImportBoundary,
                 )
-                // The active path has now produced an owned value. Unlike an
-                // off-path fork, this placement no longer carries import attribution.
-                mirror.importBoundary = undefined
-                mirror.setValue(next)
+                if (next !== propertyValue) {
+                    propertyTransitions.setMirrorValue(
+                        parent,
+                        key,
+                        mirror,
+                        next,
+                    )
+                }
             })
             return parent
         }
 
-        const childImportBoundary = mirror?.importBoundary ?? valueImportBoundary
         const next = walk(
             child,
             index + 1,
-            parentInsideSharedBranch,
-            childImportBoundary,
-            attachmentPath,
+            valueImportBoundary,
         )
         if (next !== child) {
             setProperty(parent, key, next, valueImportBoundary)

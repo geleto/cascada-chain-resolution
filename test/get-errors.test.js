@@ -16,6 +16,7 @@ import {
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
+import { hasCycleCut } from "../src/import.js"
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)
@@ -36,7 +37,7 @@ describe("getErrors", () => {
 
             expect(failure instanceof Error).to.be(true)
             expect(failure.message).to.be(
-                "Indexed promise property has no matching mirror",
+                "Indexed promise property has no mirror",
             )
         }
     })
@@ -174,14 +175,14 @@ describe("getErrors", () => {
         verifyRefCounts(first, second)
     })
 
-    it("collects behind a private mid-branch mirror cut", async () => {
+    it("collects through a Promise placement that becomes a cycle cut", async () => {
         const pending = deferred()
         const hiddenError = new Error("outside queried branch")
         const root = {
             hiddenError,
             branch: { pending: pending.promise },
         }
-        importValue(root, "private mid-branch cycle")
+        importValue(root, "promised mid-branch cycle")
         const chain = new Chain(root)
 
         const result = getErrors(chain, ["branch"])
@@ -189,22 +190,22 @@ describe("getErrors", () => {
 
         const errors = await result
         expectErrors(errors, [hiddenError])
-        expect(metaOf(root.branch).mirrors.pending.cycleCut).to.be(true)
+        expect(hasCycleCut(root.branch, "pending")).to.be(true)
         verifyRefCounts(root)
     })
 
-    it("walks non-extensible values behind a cycle cut", async () => {
+    it("walks sealed values behind a cycle cut", async () => {
         const pending = deferred()
         const directError = new Error("frozen direct")
         const promisedError = new Error("frozen promised")
-        const frozen = Object.freeze({
+        const sealed = Object.seal({
             directError,
             pending: pending.promise,
         })
-        const first = { frozen }
+        const first = { sealed }
         const second = { back: first }
         first.next = second
-        importValue(first, "frozen cycle")
+        importValue(first, "sealed cycle")
 
         const result = getErrors(new Chain(second), [])
         pending.resolve({ promisedError })
@@ -213,7 +214,7 @@ describe("getErrors", () => {
             await result,
             [directError, promisedError],
         )
-        expect(frozen.pending).to.be(pending.promise)
+        expect(sealed.pending).to.eql({ promisedError })
         verifyRefCounts(second)
     })
 
@@ -378,16 +379,13 @@ describe("getErrors", () => {
         const root = importValue({ branch }, "shared path branch")
 
         const result = getErrors(new Chain(root), ["branch"])
-        // Writeback, imported-path continuation, then the query wait.
-        expect(registrations()).to.be(3)
+        expect(registrations()).to.be(2)
         expect(metaOf(branch).shared).to.be(undefined)
         expect(metaOf(child).shared).to.be(undefined)
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
-        // The repeated child adds one fixed-path continuation but no second
-        // query wait.
-        expect(registrations()).to.be(4)
+        expect(registrations()).to.be(2)
         expect(metaOf(child).shared).to.be(true)
 
         pending.reject("bad")
@@ -409,8 +407,7 @@ describe("getErrors", () => {
         const root = importValue(branch, "imported diamond")
         const result = getErrors(new Chain(root), [])
 
-        // One writeback, one imported-path continuation, and one query wait.
-        expect(registrations()).to.be(3)
+        expect(registrations()).to.be(2)
         expect(metaOf(leaf).shared).to.be(true)
 
         pending.reject("diamond failure")
@@ -637,13 +634,13 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors).to.eql([])
         expect(chain._state.value.pending).to.be("replacement")
-        expect(branch.pending).to.be(pending.promise)
+        expect(branch.pending).to.be(branch)
     })
 
-    it("does not report a private terminal cycle after a COW overwrite", async () => {
+    it("does not report a detached terminal cycle after a COW overwrite", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
-        importValue(branch, "private terminal cycle")
+        importValue(branch, "detached terminal cycle")
         const chain = new Chain(branch)
 
         const result = getErrors(chain, ["pending"])
@@ -715,19 +712,19 @@ describe("getErrors", () => {
         expect(chain._state.value).to.eql({ clean: true })
     })
 
-    it("reads terminal promises on frozen parents through mirrors", async () => {
+    it("reads terminal promises on sealed parents through mirrors", async () => {
         const pending = deferred()
-        const frozen = Object.freeze({ pending: pending.promise })
+        const sealed = Object.seal({ pending: pending.promise })
 
-        const result = getErrors(new Chain(frozen), ["pending"])
-        pending.reject("frozen terminal")
+        const result = getErrors(new Chain(sealed), ["pending"])
+        pending.reject("sealed terminal")
 
         const errors = await result
         expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be("frozen terminal")
-        expect(frozen.pending).to.be(pending.promise)
-        expect(metaOf(frozen).mirrors.pending.pendingConsumerCount).to.be(0)
-        expect(getRefCounter(frozen)).to.be(undefined)
+        expect(errors[0].message).to.be("sealed terminal")
+        expect(sealed.pending).to.be(errors[0])
+        expect(metaOf(sealed).mirrors.pending).not.to.be(undefined)
+        expect(getRefCounter(sealed)).to.be(undefined)
     })
 
     it("agrees with hasError synchronously on their shared path domain", () => {
