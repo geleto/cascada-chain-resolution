@@ -1,10 +1,17 @@
 # Property-State Classes
 
+## Status
+
+**Language integration is on hold.** The kernel implementation and its tests
+remain as an internal experiment, but Cascada variables are data-only for now
+and class instances are not a planned language feature. The certification
+Symbol remains internal and is not part of the package API.
+
 ## Scope
 
-This document defines implemented plan step 20: copy-on-write support for classes whose
-complete Cascada-relevant state is already represented by Cascada's existing
-language properties.
+This document records implemented kernel plan step 20: copy-on-write support
+for classes whose complete Cascada-relevant state is already represented by
+Cascada's existing language properties.
 
 Step 20 supports:
 
@@ -18,8 +25,9 @@ remains own enumerable string-keyed properties. Array-subclass behavior, Map
 entries, Set members, symbols, non-enumerable properties, prototypes, and
 native internal slots do not become graph edges.
 
-Deferred container and method-call ideas are recorded separately in
-[`future/keyed-containers.md`](future/keyed-containers.md).
+Deferred container ideas are recorded in
+[`future/keyed-containers.md`](future/keyed-containers.md). The abandoned
+function/method analysis is retained in [`future/run.md`](future/run.md).
 
 ## Property-state contract
 
@@ -66,7 +74,7 @@ fields, or other hidden state is not a property-state class.
 ## Explicit certification
 
 `src/mutations.js` exports a host-only Symbol named `PROPERTY_STATE_CLASS` for
-internal language integration and tests. Step 20 does not add it to the
+internal tests. Step 20 does not add it to the
 package-level `src/index.js` API; the final public surface is a later language
 integration decision. The instance's exact custom prototype must contain its
 own data descriptor whose key is that Symbol and whose value is `true`:
@@ -359,8 +367,8 @@ Every test runs under inline-Symbol and WeakMap metadata modes.
 
 ## Documentation consistency
 
-The runtime specification and README say that COW
-preserves explicitly certified non-array property-state class prototypes. They
-must continue to state that all arrays normalize to ordinary arrays during
-COW, language graph edges are only own
+The runtime specification and README identify this as an implemented internal
+kernel experiment whose language integration is on hold. They also record that
+COW preserves explicitly certified non-array property-state class prototypes,
+all arrays normalize to ordinary arrays, language graph edges are only own
 enumerable string-keyed properties, and export is plain data.

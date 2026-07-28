@@ -28,6 +28,181 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
 }
 ```
 
+## Data-only language scope
+
+For now, Cascada variables hold data only:
+
+- primitive values;
+- plain objects and null-prototype records;
+- ordinary arrays;
+- Error values; and
+- Promises that produce supported data.
+
+Functions and class instances are not part of the planned language value
+surface. Common string and array work will be provided by language-defined
+data-handling functions instead of arbitrary JavaScript calls. Those
+operations will use Cascada ordering and return data or Error values; they will
+not expose tracked objects to host code or permit user-defined side effects.
+
+Map, Set, native container behavior, arbitrary functions, and executable class
+methods remain deferred.
+
+## Internal class COW experiment (on hold)
+
+The kernel currently contains and tests an internal experiment for copying an
+explicitly certified JavaScript class instance without losing its prototype.
+It is not a supported Cascada language feature, its certification Symbol is
+not public, and further class integration is on hold.
+
+The experiment is limited to simple data classes.
+
+A supported instance must keep all meaningful state in ordinary public
+properties:
+
+```js
+class Point {
+    constructor(x, y) {
+        this.x = x
+        this.y = y
+    }
+
+    length() {
+        return Math.hypot(this.x, this.y)
+    }
+}
+```
+
+Its state properties must be own, enumerable, string-keyed data properties.
+Inherited methods and class inheritance are preserved when copy-on-write makes
+a new instance. The constructor is not called during copying.
+
+External classes must not depend on:
+
+- `#private` fields;
+- Symbol-keyed or non-enumerable state;
+- getters or setters used as instance state;
+- state hidden in closures;
+- hidden shared mutable storage; or
+- native internal slots such as those used by Map, Set, Date, RegExp, and typed
+  arrays.
+
+These restrictions are trusted. JavaScript reflection cannot reliably detect
+all hidden state.
+
+Promise-valued properties are supported when they are ordinary own enumerable
+writable data properties. Assigning even the same Promise again creates a new
+property version.
+
+Arrays, including array subclasses and cross-realm arrays, are copied as
+ordinary local arrays. Array-subclass prototypes and methods are not retained.
+Export also intentionally produces plain host data rather than preserving
+class prototypes or methods.
+
+An uncertified or unsupported class instance can still exist as data. If a
+mutation needs to copy it, that placement becomes an Error value instead of a
+counterfeit plain object. Host code must not mutate an instance or its
+descriptors after importing it.
+
+The certification Symbol currently belongs to the internal mutation module
+and is not part of the package-level public API. The complete implemented
+contract is documented in
+[`property-state-classes.md`](docs/property-state-classes.md).
+
+## Archived `run` design
+
+**On hold.** Class support — native and CascadaScript — is not planned work.
+Language variables hold data only for now. The design below is retained for the
+analysis it records, not as pending work; see
+[`run.md`](docs/future/run.md) for why it was deferred.
+
+```js
+run(path, mutates, ...arguments)
+```
+
+It would support side-effect-free functions, native JavaScript methods, and
+compiler-generated CascadaScript methods.
+
+Standalone functions use:
+
+```js
+run(functionPath, false, ...arguments)
+```
+
+They may return a value or Promise, but must not mutate arguments, closure
+state, globals, I/O, DOM state, or any other host state. Purity is trusted;
+arbitrary JavaScript side effects cannot be detected.
+
+A trusted read-only native method also uses `false`. It runs directly on the
+original receiver without a proxy, copy, or graph traversal:
+
+```js
+run(["point", "length"], false)
+```
+
+Mutating native methods use a temporary proxy-backed draft:
+
+```js
+run(methodPath, true, ...arguments)
+run(methodPath, ["position", "velocity"], ...arguments)
+```
+
+`true` permits synchronous mutation throughout the supported receiver graph.
+An array permits replacement of those direct receiver properties and mutation
+of every supported identity reachable beneath them. Permission follows object
+identity, so an allowed object remains allowed when reached through another
+alias.
+
+Native methods may mutate ordinary properties, nested objects, arrays,
+aliases, and cycles. Only identities that were written, plus the containers
+needed to reconnect them, are copied after the call. Unchanged data is reused.
+
+Native methods may have Promise-valued properties and may return a Promise.
+All receiver access and mutation must finish before the native method returns
+that Promise. This is valid:
+
+```js
+async calculate() {
+    this.status = "started"
+    const input = this.input
+    return calculate(input)
+}
+```
+
+This is not:
+
+```js
+async calculate() {
+    const result = await calculate(this.input)
+    this.result = result
+}
+```
+
+The draft is committed and revoked as soon as the method returns. Code running
+after `await`, in a timer, or in a later callback cannot read or mutate the
+draft. A later rejection becomes an Error result but does not undo synchronous
+changes already committed.
+
+Native `run` does not support private fields, accessors used as state,
+descriptor or prototype mutation, sealing/freezing, Symbol or non-enumerable
+mutation, mutation through unproxied arguments or closure aliases, or native
+Map/Set/Date-style internal mutation. It can roll back intercepted draft
+writes after a thrown exception, but it cannot roll back I/O, globals, DOM
+changes, or other external effects.
+
+Returning an Error is a successful result and keeps synchronous changes.
+Throwing an Error fails the call and discards intercepted draft changes.
+Expected usage failures are returned as Error values; fatal reporting is
+reserved for runtime bugs and invariant failures.
+
+CascadaScript classes use a different implementation selected by trusted
+compiler metadata. Their properties are Cascada variables, so their methods
+use normal Cascada operations instead of JavaScript proxies. They may suspend
+on Promises and mutate later because the compiler registers each continuation
+at its correct program position.
+
+The complete proposed design and limitations are documented in
+[`run.md`](docs/future/run.md).
+
 ## Documentation
 
 - [`docs/runtime-spec.md`](docs/runtime-spec.md) defines the current observable
@@ -42,16 +217,22 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
   copy-or-collect traversal and complete Error result.
 - [`docs/property-state-classes.md`](docs/property-state-classes.md) defines
   certified class prototype preservation during copy-on-write.
-- [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
+- [`docs/plan.md`](docs/plan.md) tracks implemented, deferred, and pending
+  work.
 
-The first six documents describe the implemented runtime. `docs/plan.md`
-tracks both completed and pending work.
+The first five documents describe the implemented core runtime.
+`docs/property-state-classes.md` records an implemented kernel experiment whose
+language integration is on hold. `docs/plan.md` tracks completed, deferred, and
+pending work.
 
 ### Pending designs
 
 - [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
-  deferred array-subclass, Map, Set, other built-in, virtual-property, and
-  method-integration ideas that are not requirements of step 20.
+  deferred array-subclass, Map, Set, other built-in, and virtual-property ideas
+  that are not requirements of step 20.
+- [`docs/future/run.md`](docs/future/run.md) archives the proposed `run`
+  function/method analysis, why class support is on hold, and the machinery
+  that would be required to revive it.
 
 ## Source layout
 

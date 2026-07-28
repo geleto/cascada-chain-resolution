@@ -1,9 +1,13 @@
-# Deferred Keyed Containers and Method Integration
+# Deferred Keyed Containers
 
 ## Status
 
 This document records possible future extensions that were considered while
 designing property-state class COW. None is part of plan step 20.
+
+Class integration is now on hold and the planned language surface is data-only.
+Near-term convenience behavior should be implemented as language-defined
+string and array data operations, not by exposing native container methods.
 
 The current recommendation is to use plain objects at the Cascada boundary:
 
@@ -28,8 +32,8 @@ preserves their prototypes could:
 - reuse the existing array property-copy pipeline.
 
 This is technically smaller than Map or Set support but is deferred because no
-current use case requires it. Wrapper classes containing an ordinary array
-already fit the property-state class model.
+current use case requires it. A plain data object containing an ordinary array
+covers the current language use case.
 
 ## Why Map and Set are deferred
 
@@ -140,24 +144,9 @@ tested.
 
 ## Method-call integration
 
-Preserving a prototype does not make opaque method calls safe over tracked
-state. COWing a receiver before a call is insufficient:
-
-- internal writes bypass mirrors, refcounts, cycles, and import preparation;
-- Promise-sensitive reads see physical Promises instead of ordered logical
-  values; and
-- returned tracked values may bypass ownership or import boundaries.
-
-A future language integration could permit:
-
-- compiler-proven pure synchronous methods;
-- reads lowered to ordered kernel observations;
-- mutators lowered to kernel property transitions;
-- atomic multi-key transitions; and
-- method results routed through normal import/ownership boundaries.
-
-Native Map/Set mutators would require this lowering if those containers were
-ever exposed directly.
+The abandoned general function/method analysis is archived separately in
+[`run.md`](run.md). Native Map/Set mutators would additionally require the
+logical-property semantics deferred by this document.
 
 ## Suggested future phases
 
@@ -167,8 +156,7 @@ If demand justifies the complexity, implement independently:
 2. a no-behavior-change logical-property interface refactor;
 3. string-only Map support;
 4. string-only Set support;
-5. selected built-in value types; and
-6. compiler method-call lowering.
+5. selected built-in value types.
 
 Each phase should be optional and should preserve the ordinary object/array
 fast path.
