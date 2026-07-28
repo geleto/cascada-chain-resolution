@@ -24,13 +24,9 @@ Language-visible properties are own enumerable string keys. Inherited and own
 non-enumerable properties are not readable as language data. Arrays are tracked
 objects with the same property rules.
 
-The planned language surface is data-only: primitives, plain or null-prototype
-records, ordinary arrays, Errors, and Promises producing those values.
-First-class functions, class instances, and arbitrary host method execution
-are not planned language values. Common string and array behavior will be
-provided by language-defined data operations. The kernel's certified-class COW
-path is an internal implemented experiment whose language integration is on
-hold.
+Certified property-state class COW and exact prototype preservation are
+implemented kernel groundwork for class support. Construction and method
+execution are separate concerns.
 
 ## Chain roots
 
@@ -107,7 +103,7 @@ The copy contains only language-visible keys:
   objects;
 - null-prototype records retain `null`;
 - internally certified property-state class instances retain their exact
-  prototype in the dormant kernel experiment;
+  prototype;
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 

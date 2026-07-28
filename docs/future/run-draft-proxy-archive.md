@@ -1,10 +1,11 @@
-# Deferred `run` Functions and Methods
+# Archived Proxy-Based `run` Design
 
 ## Status
 
-**On hold.** Class support — native and CascadaScript — is not planned work.
-Language variables hold data only for now, and the immediate work is a set of
-built-in data-handling functions for strings and arrays instead.
+**Archived.** This recursive proxy/draft design was superseded by the active
+[entry/leave primitives](../enter-leave.md) and [`run`](../run.md) designs. Its
+old scope and conclusions are historical and do not state the current
+class-support plan.
 
 This document is retained because the analysis is the reusable part. It records
 why a general `run` operation is expensive under Cascada's ordering model, which
@@ -32,7 +33,7 @@ The same surface supports two deliberately different implementations:
 The runtime determines the execution kind from trusted class or method
 metadata. Callers do not select it with another Boolean argument.
 
-## Why this is on hold
+## Why the proxy design was archived
 
 ### One operation, two edges
 
@@ -1017,10 +1018,10 @@ the first version.
 
 ## Suggested implementation phases
 
-These phases describe the full design as originally scoped. Under the current
-hold, only phase 1 is the cheap subset; everything from phase 2 onward carries
-the costs listed in "Why this is on hold", and phase 7 is removed outright if
-async native methods stay banned.
+These phases describe the full design as originally scoped. Only phase 1 was
+the cheap subset; everything from phase 2 onward carries the costs listed in
+"Why the proxy design was archived", and phase 7 disappears if async native
+methods stay banned.
 
 1. Shared path/callable resolution, trusted read-only native methods, and
    side-effect-free standalone functions with `mutates: false`, including
@@ -1211,7 +1212,8 @@ rediscover them.
 
 ## Decision summary
 
-Class support is on hold. The analysis that produced that decision:
+This proxy-based native-mutation design is archived. The analysis that produced
+that decision:
 
 - `run` is the first kernel operation whose dependency edge and effect edge are
   different properties, so Promise mirrors alone cannot order it against later

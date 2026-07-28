@@ -5,9 +5,9 @@
 This document records possible future extensions that were considered while
 designing property-state class COW. None is part of plan step 20.
 
-Class integration is now on hold and the planned language surface is data-only.
-Near-term convenience behavior should be implemented as language-defined
-string and array data operations, not by exposing native container methods.
+These extensions are independent of the completed property-state class COW
+step. String and array convenience behavior can be implemented as
+language-defined operations without first adding native container support.
 
 The current recommendation is to use plain objects at the Cascada boundary:
 
@@ -144,9 +144,9 @@ tested.
 
 ## Method-call integration
 
-The abandoned general function/method analysis is archived separately in
-[`run.md`](run.md). Native Map/Set mutators would additionally require the
-logical-property semantics deferred by this document.
+The current entered-receiver operation design is specified separately in
+[`../run.md`](../run.md). Native Map/Set mutators would additionally require
+the logical-property semantics deferred by this document.
 
 ## Suggested future phases
 

@@ -2,10 +2,10 @@
 
 ## Status
 
-**Language integration is on hold.** The kernel implementation and its tests
-remain as an internal experiment, but Cascada variables are data-only for now
-and class instances are not a planned language feature. The certification
-Symbol remains internal and is not part of the package API.
+Implemented as plan step 20. This supplies the COW and prototype-preservation
+part of class support. Class construction and method execution are separate
+concerns. The certification Symbol remains internal and is not part of the
+package API.
 
 ## Scope
 
@@ -26,8 +26,10 @@ entries, Set members, symbols, non-enumerable properties, prototypes, and
 native internal slots do not become graph edges.
 
 Deferred container ideas are recorded in
-[`future/keyed-containers.md`](future/keyed-containers.md). The abandoned
-function/method analysis is retained in [`future/run.md`](future/run.md).
+[`future/keyed-containers.md`](future/keyed-containers.md). The current
+entered-receiver method groundwork is specified in [`run.md`](run.md); the
+discarded proxy design is archived in
+[`future/run-draft-proxy-archive.md`](future/run-draft-proxy-archive.md).
 
 ## Property-state contract
 
@@ -367,8 +369,8 @@ Every test runs under inline-Symbol and WeakMap metadata modes.
 
 ## Documentation consistency
 
-The runtime specification and README identify this as an implemented internal
-kernel experiment whose language integration is on hold. They also record that
-COW preserves explicitly certified non-array property-state class prototypes,
-all arrays normalize to ordinary arrays, language graph edges are only own
-enumerable string-keyed properties, and export is plain data.
+The runtime specification and README record this as implemented class-support
+groundwork. They also record that COW preserves explicitly certified non-array
+property-state class prototypes, all arrays normalize to ordinary arrays,
+language graph edges are only own enumerable string-keyed properties, and
+export is plain data.

@@ -28,33 +28,15 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
 }
 ```
 
-## Data-only language scope
+## Property-state class copy-on-write
 
-For now, Cascada variables hold data only:
+The kernel supports copying an explicitly certified JavaScript class instance
+without losing its prototype. This is completed groundwork for class support;
+executing methods is a separate concern addressed by the planned `run`
+operation. The certification Symbol remains internal rather than part of the
+package API.
 
-- primitive values;
-- plain objects and null-prototype records;
-- ordinary arrays;
-- Error values; and
-- Promises that produce supported data.
-
-Functions and class instances are not part of the planned language value
-surface. Common string and array work will be provided by language-defined
-data-handling functions instead of arbitrary JavaScript calls. Those
-operations will use Cascada ordering and return data or Error values; they will
-not expose tracked objects to host code or permit user-defined side effects.
-
-Map, Set, native container behavior, arbitrary functions, and executable class
-methods remain deferred.
-
-## Internal class COW experiment (on hold)
-
-The kernel currently contains and tests an internal experiment for copying an
-explicitly certified JavaScript class instance without losing its prototype.
-It is not a supported Cascada language feature, its certification Symbol is
-not public, and further class integration is on hold.
-
-The experiment is limited to simple data classes.
+The COW support is limited to simple data classes.
 
 A supported instance must keep all meaningful state in ordinary public
 properties:
@@ -108,100 +90,59 @@ and is not part of the package-level public API. The complete implemented
 contract is documented in
 [`property-state-classes.md`](docs/property-state-classes.md).
 
-## Archived `run` design
+## Planned `enter`/`leave` and `run`
 
-**On hold.** Class support — native and CascadaScript — is not planned work.
-Language variables hold data only for now. The design below is retained for the
-analysis it records, not as pending work; see
-[`run.md`](docs/future/run.md) for why it was deferred.
+The planned `enter` primitive declares an asynchronous effect path before
+waiting:
 
 ```js
-run(path, mutates, ...arguments)
+const entry = enter(player, ["pos"], true)
 ```
 
-It would support side-effect-free functions, native JavaScript methods, and
-compiler-generated CascadaScript methods.
+For a mutating Entry, `player.pos` becomes a gate Promise and the captured value
+moves to `entry.chain`. Later traversals through `player.pos` wait in normal
+mirror order while unrelated paths continue. A direct replacement of
+`player.pos` creates a newer version immediately. `leave(entry)` publishes the
+private value. Publishing an Error uses an ordinary private-root assignment
+followed by `leave`. If owning-path COW leaves the target reachable from an old
+world, a direct target or a Promise transfer's prepared sampled value is marked
+shared before private mutation can change it. Leave waits at most once on the
+current private-root property version; another Promise would already be a fresh
+version rather than a recursive leave frontier.
 
-Standalone functions use:
+A read-only `enter(..., false)` installs no gate. It protects its snapshot with
+a temporary read lease only when the value does not already require COW, so an
+overlapping live mutation uses copy-on-write without permanently marking an
+otherwise singly-owned value shared. Native snapshot work must finish before
+the lease is released; already-issued kernel continuations remain ordered by
+their captured mirror positions. The single compiler-facing API validates and
+uses its Boolean analysis fact entirely inside `enter-leave.js`; internal
+mutating/read-only paths are neither exported nor called directly by other
+operations. The Entry needs no separate kind field: gate presence distinguishes
+mutation from read-only capture.
 
-```js
-run(functionPath, false, ...arguments)
-```
+The planned `run` operation builds on this:
 
-They may return a value or Promise, but must not mutate arguments, closure
-state, globals, I/O, DOM state, or any other host state. Purity is trusted;
-arbitrary JavaScript side effects cannot be detected.
+- pure string and other standalone functions have no effect path;
+- read-only operations use a temporarily protected snapshot;
+- ready, statically synchronous mutations run directly without a gate;
+- operations that may suspend enter their receiver, mutate only through the
+  private Chain, and leave when complete; and
+- future CascadaScript methods can use the same private-receiver model across
+  Promise continuations.
 
-A trusted read-only native method also uses `false`. It runs directly on the
-original receiver without a proxy, copy, or graph traversal:
+Arbitrary mutating native JavaScript methods remain unsupported because their
+raw writes bypass mirrors, import preparation, refcounts, and cycle
+bookkeeping.
 
-```js
-run(["point", "length"], false)
-```
+The finished designs are:
 
-Mutating native methods use a temporary proxy-backed draft:
+- [`enter-leave.md`](docs/enter-leave.md)
+- [`run.md`](docs/run.md)
 
-```js
-run(methodPath, true, ...arguments)
-run(methodPath, ["position", "velocity"], ...arguments)
-```
-
-`true` permits synchronous mutation throughout the supported receiver graph.
-An array permits replacement of those direct receiver properties and mutation
-of every supported identity reachable beneath them. Permission follows object
-identity, so an allowed object remains allowed when reached through another
-alias.
-
-Native methods may mutate ordinary properties, nested objects, arrays,
-aliases, and cycles. Only identities that were written, plus the containers
-needed to reconnect them, are copied after the call. Unchanged data is reused.
-
-Native methods may have Promise-valued properties and may return a Promise.
-All receiver access and mutation must finish before the native method returns
-that Promise. This is valid:
-
-```js
-async calculate() {
-    this.status = "started"
-    const input = this.input
-    return calculate(input)
-}
-```
-
-This is not:
-
-```js
-async calculate() {
-    const result = await calculate(this.input)
-    this.result = result
-}
-```
-
-The draft is committed and revoked as soon as the method returns. Code running
-after `await`, in a timer, or in a later callback cannot read or mutate the
-draft. A later rejection becomes an Error result but does not undo synchronous
-changes already committed.
-
-Native `run` does not support private fields, accessors used as state,
-descriptor or prototype mutation, sealing/freezing, Symbol or non-enumerable
-mutation, mutation through unproxied arguments or closure aliases, or native
-Map/Set/Date-style internal mutation. It can roll back intercepted draft
-writes after a thrown exception, but it cannot roll back I/O, globals, DOM
-changes, or other external effects.
-
-Returning an Error is a successful result and keeps synchronous changes.
-Throwing an Error fails the call and discards intercepted draft changes.
-Expected usage failures are returned as Error values; fatal reporting is
-reserved for runtime bugs and invariant failures.
-
-CascadaScript classes use a different implementation selected by trusted
-compiler metadata. Their properties are Cascada variables, so their methods
-use normal Cascada operations instead of JavaScript proxies. They may suspend
-on Promises and mutate later because the compiler registers each continuation
-at its correct program position.
-
-The complete proposed design and limitations are documented in
-[`run.md`](docs/future/run.md).
+The discarded recursive-proxy approach remains available only as historical
+analysis in
+[`run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md).
 
 ## Documentation
 
@@ -220,19 +161,20 @@ The complete proposed design and limitations are documented in
 - [`docs/plan.md`](docs/plan.md) tracks implemented, deferred, and pending
   work.
 
-The first five documents describe the implemented core runtime.
-`docs/property-state-classes.md` records an implemented kernel experiment whose
-language integration is on hold. `docs/plan.md` tracks completed, deferred, and
-pending work.
+The first six documents describe implemented runtime behavior.
+`docs/plan.md` tracks completed, deferred, and pending work.
 
 ### Pending designs
 
+- [`docs/enter-leave.md`](docs/enter-leave.md) specifies asynchronous path
+  ownership transfer and gate publication.
+- [`docs/run.md`](docs/run.md) specifies pure functions and entered
+  read-only/mutating data operations.
 - [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
   deferred array-subclass, Map, Set, other built-in, and virtual-property ideas
   that are not requirements of step 20.
-- [`docs/future/run.md`](docs/future/run.md) archives the proposed `run`
-  function/method analysis, why class support is on hold, and the machinery
-  that would be required to revive it.
+- [`docs/future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
+  archives the discarded native proxy/draft approach.
 
 ## Source layout
 
