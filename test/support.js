@@ -60,6 +60,8 @@ export {
     lookupPath,
 } from "../src/index.js"
 
+export { PROPERTY_STATE_CLASS } from "../src/mutations.js"
+
 export {
     reportFatalError,
     setFatalErrorReporter,

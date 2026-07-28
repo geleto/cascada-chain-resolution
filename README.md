@@ -40,15 +40,25 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
   cut-separated ref-index components.
 - [`docs/export-error-set.md`](docs/export-error-set.md) defines export's fused
   copy-or-collect traversal and complete Error result.
+- [`docs/property-state-classes.md`](docs/property-state-classes.md) defines
+  certified class prototype preservation during copy-on-write.
 - [`docs/plan.md`](docs/plan.md) tracks implemented and pending work.
 
-The first five documents describe the implemented runtime. `docs/plan.md`
+The first six documents describe the implemented runtime. `docs/plan.md`
 tracks both completed and pending work.
+
+### Pending designs
+
+- [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
+  deferred array-subclass, Map, Set, other built-in, virtual-property, and
+  method-integration ideas that are not requirements of step 20.
 
 ## Source layout
 
 - `src/index.js` owns `Chain`, runtime initialization, and the public API.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
+  It also owns the host-only property-state class certification Symbol and the
+  private COW shell selection.
 - `src/observations.js` owns lookup, export, Error queries, and their
   shared observational walkers.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise

@@ -7,6 +7,35 @@ import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as propertyTransitions from "./property-transitions.js"
 
+const PROPERTY_STATE_CLASS = Symbol("PROPERTY_STATE_CLASS")
+
+function isObjectPrototype(prototype) {
+    if (prototype === null) return false
+    if (Object.getPrototypeOf(prototype) !== null) return false
+    const constructor = Object.getOwnPropertyDescriptor(
+        prototype,
+        "constructor",
+    )?.value
+    return typeof constructor === "function" &&
+        Object.getOwnPropertyDescriptor(
+            constructor, "prototype",
+        )?.value === prototype
+}
+
+function createCopyShell(source) {
+    const prototype = Object.getPrototypeOf(source)
+    if (Array.isArray(source)) {
+        return new Array(source.length)
+    }
+    if (prototype === null) return Object.create(null)
+    if (isObjectPrototype(prototype)) return {}
+    return Object.getOwnPropertyDescriptor(
+        prototype, PROPERTY_STATE_CLASS,
+    )?.value === true
+        ? Object.create(prototype)
+        : undefined
+}
+
 function setProperty(
     parent,
     key,
@@ -52,11 +81,10 @@ function deleteProperty(parent, key, importBoundary = undefined) {
     propertyTransitions.deleteProperty(parent, key)
 }
 
-function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
-    const copy = Array.isArray(obj) ? new Array(obj.length) : {}
+function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
     const pathKeyString = String(pathKey)
-    attachmentPath.root ??= copy
-    attachmentPath.ancestors.add(copy)
+    attachmentPath.root ??= shell
+    attachmentPath.ancestors.add(shell)
 
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
@@ -67,14 +95,14 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
     // child of an imported node receives its own import boundary. A path
     // child's next shallow copy omits that META, so every new path node remains
     // language-owned without a separate path exception here.
-    for (const key of Object.keys(obj)) {
+    for (const key of Object.keys(source)) {
         const retainedOffPath = key !== pathKeyString
-        const sourceMirror = promiseMirrors.getPromiseMirror(obj, key)
-        const value = languageProperties.readLanguageProperty(obj, key)
+        const sourceMirror = promiseMirrors.getPromiseMirror(source, key)
+        const value = languageProperties.readLanguageProperty(source, key)
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or indexValueIfSourceIndexed reconstructs its index.
-        languageProperties.writeLanguageProperty(copy, key, value)
+        languageProperties.writeLanguageProperty(shell, key, value)
         if (helpers.isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
@@ -92,10 +120,7 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
                 )
                 : undefined
             promiseMirrors.forkPromiseMirror(
-                obj,
-                copy,
-                key,
-                value,
+                source, shell, key, value,
                 retainedOffPath,
                 propertyImportBoundary,
                 prepareImportedValue,
@@ -108,8 +133,8 @@ function shallowCopy(obj, pathKey, importBoundary, attachmentPath) {
             metadata.markShared(value)
         }
     }
-    refcounts.indexValueIfSourceIndexed(obj, copy)
-    return copy
+    refcounts.indexValueIfSourceIndexed(source, shell)
+    return shell
 }
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
@@ -152,12 +177,21 @@ function walkMutationPath(rootHolder, path, onTarget) {
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
+            const shell = createCopyShell(parent)
+            if (!shell) {
+                const error = errorUtils.validationError(
+                    "Cannot copy unsupported object during copy-on-write",
+                    valueImportBoundary?.errorContext,
+                )
+                return error
+            }
             attachmentPath ??= {
                 root: undefined,
                 ancestors: new Set(),
             }
             parent = shallowCopy(
                 parent,
+                shell,
                 key,
                 valueImportBoundary,
                 attachmentPath,
@@ -229,4 +263,8 @@ function deletePath(chain, path) {
     })
 }
 
-export { assignPath, deletePath }
+export {
+    PROPERTY_STATE_CLASS,
+    assignPath,
+    deletePath,
+}

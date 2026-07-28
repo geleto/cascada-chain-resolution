@@ -93,14 +93,32 @@ position.
 
 The copy contains only language-visible keys:
 
-- arrays become arrays with the same length and enumerable keys;
-- other tracked objects become plain objects;
+- arrays, including subclasses and cross-realm arrays, become local ordinary
+  arrays with the same length and enumerable keys;
+- plain objects, including cross-realm plain objects, become local plain
+  objects;
+- null-prototype records retain `null`;
+- certified property-state class instances retain their exact prototype;
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 
-Current generic copying does not preserve a class instance's prototype,
-private fields, or internal slots. Explicit class adapters are tracked as
-future work in `plan.md`.
+The mutation kernel exports `PROPERTY_STATE_CLASS` from its owning module for
+language integration; it is not yet part of the package-level API. A non-array
+custom prototype opts into property-state COW only with its own data descriptor
+whose key is that Symbol and whose value is exactly `true`. Certification is
+not inherited, does not invoke a constructor or copying callback, and asserts
+that all required state is compatible with own enumerable string-key copying.
+The kernel does not attempt to detect private fields, required hidden state,
+native internal slots, or other false assertions.
+
+All genuine arrays retain their existing path regardless of realm or subclass;
+array subclass prototypes and methods are deliberately normalized away.
+Uncertified non-array custom prototypes are unsupported. If
+an imported mutation requires COW through an unsupported instance, that
+instance's placement becomes an attributed language Error rather than a plain
+object counterfeit. Without an import boundary, the placement receives the
+same Error without attribution. Export remains plain data and does not
+preserve class prototypes or methods.
 
 Imported attribution remains attached to retained external children. Newly
 copied path nodes are language-owned. If the copied source was already
