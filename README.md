@@ -90,44 +90,83 @@ and is not part of the package-level public API. The complete implemented
 contract is documented in
 [`property-state-classes.md`](docs/property-state-classes.md).
 
-## Planned `enter`/`leave` and `run`
+## Planned `enter` and `run`
 
-The planned `enter` primitive declares an asynchronous effect path before
+The planned mutating `enter` primitive declares an asynchronous effect path before
 waiting:
 
 ```js
-const entry = enter(player, ["pos"], true)
+return enter(player, ["pos"], true, entered => {
+  assignPath(entered, ["x"], 2)
+})
 ```
 
-For a mutating Entry, `player.pos` becomes a gate Promise and the captured value
-moves to `entry.chain`. Later traversals through `player.pos` wait in normal
+For a mutating entry, `player.pos` becomes a gate Promise and mutating `enter` passes a
+private Chain rooted at the captured property version to its callback. `onEntered` may be
+synchronous or asynchronous: operations return either their direct result or a
+Promise defining the callback's complete lifetime. Mutating `enter` keeps the Chain active
+until that result fulfills, then prevents new operations through it and publishes
+the private value through the gate automatically. It forwards the operation
+result after closing the Chain without waiting for gate publication; the gate
+itself orders later graph operations. Direct
+entry setup invokes the callback synchronously. A pending path reuses the Promise
+returned by the existing path helper. Each walker invokes its callback within
+the existing path continuation; mutating setup does so after gate reconstruction.
+Later consumers of that path Promise then traverse the installed gate. No second
+same-source reaction, separate readiness Promise, pending state, source path, or
+command queue is added.
+If the callback throws or its Promise rejects, `enter` closes the Chain before
+fatal reporting, releases a read-only entry if one was acquired, and leaves a
+mutating gate unresolved.
+Later traversals through `player.pos` wait in normal
 mirror order while unrelated paths continue. A direct replacement of
-`player.pos` creates a newer version immediately. `leave(entry)` publishes the
-private value. Publishing an Error uses an ordinary private-root assignment
-followed by `leave`. If owning-path COW leaves the target reachable from an old
-world, a direct target or a Promise transfer's prepared sampled value is marked
-shared before private mutation can change it. Leave waits at most once on the
-current private-root property version; another Promise would already be a fresh
-version rather than a recursive leave frontier.
+`player.pos` creates a newer version immediately. Callback completion starts or
+arranges publication of the private value. Publishing an Error uses an ordinary private-root assignment
+before returning. If owning-path COW leaves the target reachable from the source
+graph, a direct target is marked shared before the callback; a Promise target's
+transfer sampler marks its prepared value before target-dependent private work. A
+Promise-valued target installs a transfer mirror on the private root before gate
+replacement. The replacement synchronously detaches the source mirror; its
+earlier version resolver prepares `detachedValue`, which the later transfer samples
+without retaining the source parent or key. The callback starts immediately with
+the source Promise while
+target-independent work overlaps its resolution. Target-dependent commands
+register behind the transfer on the source's canonical FIFO queue and receive
+the prepared logical value. If callback work leaves the
+private Chain's `state.value` holding a Promise, publication registers once
+through `onLaterPromiseReady`. After the root mirror and earlier FIFO operations
+have updated the authoritative slot, that callback opens the gate with the
+current `state.value` rather than letting the gate resolver assimilate the raw
+Promise. Another root Promise assignment would have occurred synchronously
+before completion and would therefore be the value registered instead.
+Gate installation and publication use ordinary atomic property transitions, so
+indexed counters and reverse-parent edges remain exact; the private Chain's
+host-state holder is not added to the language graph.
 
-A read-only `enter(..., false)` installs no gate. It protects its snapshot with
-a temporary read lease only when the value does not already require COW, so an
-overlapping live mutation uses copy-on-write without permanently marking an
-otherwise singly-owned value shared. Native snapshot work must finish before
-the lease is released; already-issued kernel continuations remain ordered by
-their captured mirror positions. The single compiler-facing API validates and
-uses its Boolean analysis fact entirely inside `enter-leave.js`; internal
-mutating/read-only paths are neither exported nor called directly by other
-operations. The Entry needs no separate kind field: gate presence distinguishes
-mutation from read-only capture.
+A read-only `enter(..., false, onEntered)` installs no gate and invokes its
+callback only after capturing a protected root. Every tracked root
+increments `META.readEnterCount`, including values already protected by
+sharing, import, or non-extensibility; primitives require no metadata.
+Overlapping readers increment independently. Live mutation then uses
+copy-on-write without permanently marking an otherwise singly-owned value
+shared. Earlier effects and Promise settlement remain part of the captured
+world, while commands use their normal mirror semantics. Native work on the
+raw captured value must finish before that read entry completes;
+already-issued kernel continuations remain ordered by
+their captured mirror positions. Every Chain that can issue operations has an
+exact `mutates` capability: ordinary Chains use `true`, while an entered Chain
+uses the compiler's validated Boolean fact. Automatic completion removes it
+from the entered Chain to prevent new operations. Internal
+mutating/read-only paths and completion routines are neither exported nor called
+directly by other operations.
 
 The planned `run` operation builds on this:
 
 - pure string and other standalone functions have no effect path;
-- read-only operations use a temporarily protected snapshot;
+- read-only operations protect their captured root until callback completion;
 - ready, statically synchronous mutations run directly without a gate;
-- operations that may suspend enter their receiver, mutate only through the
-  private Chain, and leave when complete; and
+- operations that may suspend use mutating `enter` on their receiver, mutate only through the
+  private Chain, and return their operation result or its lifetime Promise from the callback; and
 - future CascadaScript methods can use the same private-receiver model across
   Promise continuations.
 
@@ -137,7 +176,7 @@ bookkeeping.
 
 The finished designs are:
 
-- [`enter-leave.md`](docs/enter-leave.md)
+- [`enter.md`](docs/enter.md)
 - [`run.md`](docs/run.md)
 
 The discarded recursive-proxy approach remains available only as historical
@@ -166,7 +205,7 @@ The first six documents describe implemented runtime behavior.
 
 ### Pending designs
 
-- [`docs/enter-leave.md`](docs/enter-leave.md) specifies asynchronous path
+- [`docs/enter.md`](docs/enter.md) specifies asynchronous path
   ownership transfer and gate publication.
 - [`docs/run.md`](docs/run.md) specifies pure functions and entered
   read-only/mutating data operations.

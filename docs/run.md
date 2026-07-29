@@ -1,10 +1,10 @@
-# `run` Built on Enter/Leave
+# `run` Built on `enter`
 
 ## Status
 
-This document specifies the planned `run` operation built on [`enter-leave.md`](enter-leave.md).
+This document specifies the planned `run` operation built on [`enter.md`](enter.md).
 
-It replaces the archived proxy/draft proposal. `run` no longer tries to infer native JavaScript mutations and reconcile a graph afterward. A mutating call declares its receiver path up front. A ready direct-safe operation runs there synchronously; any operation that may suspend enters the path, works against a private Chain, and leaves it when complete.
+It replaces the archived proxy/draft proposal. `run` no longer tries to infer native JavaScript mutations and reconcile a graph afterward. A mutating call declares its receiver path up front. A ready direct-safe operation runs there synchronously; any operation that may suspend uses mutating `enter` on the path and returns its private-Chain work from the callback. Mutating `enter` starts or arranges publication automatically when that work completes.
 
 In the initial `run` scope, functions are compiler/runtime operations rather than values read from Cascada variables.
 
@@ -136,23 +136,23 @@ A trusted read-only method uses:
 runMethod(chain, receiverPath, method, false, ...arguments)
 ```
 
-`runMethod` obtains a read-only Entry:
+`runMethod` passes its work as the entry callback:
 
 ```js
-const entry = enter(chain, receiverPath, false)
+return enter(chain, receiverPath, false, entered => {
+    return runReadOnlyOperation(entered, method, capturedArguments)
+})
 ```
 
-The Entry captures a stable snapshot and installs no gate. The method observes that snapshot under a temporary read lease. Later live mutations use normal COW and cannot change it. If no overlapping mutation or ordinary sharing occurs, `leave` releases any acquired lease without permanently changing later write behavior. A receiver that is already explicitly shared, imported, or non-extensible needs no redundant lease because it already requires COW.
+The schematic operation helper owns argument readiness, method invocation, result preparation, and asynchronous completion. Read-only `enter` invokes the callback synchronously for a ready receiver or after FIFO entry setup for a pending receiver, always providing a ready Chain without installing a gate. Every tracked receiver increments `META.readEnterCount`, including one already protected by sharing, import, or non-extensibility; primitives require no metadata. This protects the captured receiver from mutations issued after acquisition until callback completion: later mutations use normal COW, while earlier effects and Promise settlement remain part of the captured world. The callback may wait before issuing commands because its Promise retains the read entry. When the helper's result fulfills, read-only `enter` prevents new issuance and decrements the counter for `state.value`; if no mutation or ordinary sharing occurred, completing the last read entry does not permanently change later write behavior.
 
 For native methods, read-only behavior is a trusted host/compiler assertion. The runtime does not use a proxy to detect a lie. A method that mutates its receiver, arguments, globals, or host state violates the contract.
 
-The method must not retain the tracked snapshot after completion. A tracked result passes through normal ownership/export rules and establishes permanent sharing before the read lease is released.
+The method must not retain the tracked receiver after completion. A tracked result passes through normal ownership/export rules and establishes permanent sharing before the read entry completes.
 
-`leave(entry)` closes the read-only Entry directly.
+If the method returns a Promise, the read entry remains active until that Promise settles and ownership of its result has been established. Detached observation after the returned Promise settles violates the completion contract.
 
-If the method returns a Promise, the lease remains active until that Promise settles and ownership of its result has been established. Detached observation after the returned Promise settles violates the completion contract.
-
-This lifetime restriction is specific to the native method's raw snapshot. Kernel operations issued through `entry.chain` before closure remain valid after `leave`: they performed their available work synchronously and captured pending segments at their own mirror FIFO positions. `runMethod` therefore tracks the native work result, not every issued kernel observation.
+This lifetime restriction is specific to the native method's raw receiver. Kernel operations issued through `entered` before callback completion remain valid afterward: they performed their available work synchronously and captured pending segments at their own mirror FIFO positions. `runMethod` therefore tracks the native work result, not every issued kernel observation.
 
 ## Mutating data operations
 
@@ -184,7 +184,7 @@ If all of the following are true:
 operation(chain, receiverPath, ...resolvedArguments)
 ```
 
-at the call's current program position. It installs no gate, allocates no Entry, and may return directly. This is the normal path for simple synchronous array mutations.
+at the call's current program position. It installs no gate or private Chain and may return directly. This is the normal path for simple synchronous array mutations.
 
 Direct-safe means the operation cannot discover another Promise frontier while running. Operations whose required readiness depends on dynamic or nested data must use the entered path unless their descriptor identifies and captures all such inputs before mutation begins.
 
@@ -193,38 +193,30 @@ Direct-safe means the operation cannot discover another Promise frontier while r
 Otherwise `runMethod` enters the effect path before waiting or invoking the operation:
 
 ```js
-const entry = enter(chain, receiverPath, true)
+return enter(chain, receiverPath, true, entered => {
+    return runMutatingOperation(entered, operation, capturedArguments)
+})
 ```
 
-The public receiver placement becomes the gate Promise. The same operation is then invoked against the private receiver root:
-
-```js
-operation(entry.chain, [], ...resolvedArguments)
-```
+The schematic operation helper waits for captured arguments, invokes the operation, and prepares its result. It returns that direct value or Promise, so mutating `enter` keeps the private Chain active for exactly the operation's declared lifetime and then publishes automatically. The public receiver placement becomes the gate Promise. Mutating `enter` installs it through ordinary atomic property replacement, so mirror detachment, refcount deltas, reverse-parent edges, and later publication use the existing kernel bookkeeping. Only then does its callback begin this work against the private receiver root. Direct entry setup calls the callback synchronously. Delayed ancestor setup reuses the mutation walk's existing helper chain and invokes the callback within the path continuation after graph reconstruction. A Promise-valued receiver does not delay the callback: mutating `enter` first installs a private-root transfer mirror on the source's canonical FIFO queue, so target-independent operation work overlaps receiver resolution while target-dependent kernel commands wait through that mirror. Later operations already queued on an ancestor run afterward and traverse the installed gate.
 
 Every mutation uses existing kernel operations such as:
 
 ```js
-assignPath(entry.chain, path, value)
-deletePath(entry.chain, path)
-lookupPath(entry.chain, path)
+assignPath(entered, path, value)
+deletePath(entered, path)
+lookupPath(entered, path)
 ```
 
-When the operation has issued all of its Entry operations and will issue no more, `runMethod` calls:
-
-```js
-leave(entry)
-```
-
-Later operations on the public receiver path wait behind the gate. Unrelated paths remain available.
+The callback may be synchronous or asynchronous, and its result defines the entered scope's lifetime. It may return a direct value or a Promise, including an existing Promise for a slow condition or other control flow that will later issue operations through `entered`. Once that Promise fulfills, no detached work may use the Chain. `enter` forwards the operation result after closing the scope but does not wait for receiver publication. Later operations on the public receiver path wait behind the gate; unrelated paths remain available.
 
 A direct later assignment or deletion at exactly `receiverPath` supersedes the gate immediately; it does not wait. Deeper operations traverse and wait on the gate. If superseded, the private operation still completes and releases its detached gate consumers, but cannot overwrite the newer live property version.
 
-`runMethod` must not invoke an operation on the public receiver and then switch to an Entry merely because the returned value is a Promise. By then the operation may have performed public mutations or retained the wrong receiver for its continuation. Every operation that can suspend uses the entered path from the start.
+`runMethod` must not invoke an operation on the public receiver and then switch to the entered path merely because the returned value is a Promise. By then the operation may have performed public mutations or retained the wrong receiver for its continuation. Every operation that can suspend uses the entered callback from the start.
 
 ## Array data operations
 
-Read-only array operations use a read-only Entry or controlled observation. Examples include:
+Read-only array operations use read-only `enter` or controlled observation. Examples include:
 
 ```text
 length
@@ -235,7 +227,7 @@ slice
 join
 ```
 
-Mutating array operations use the synchronous direct path when certified direct-safe and currently ready; otherwise they use a mutating Entry. Examples include:
+Mutating array operations use the synchronous direct path when certified direct-safe and currently ready; otherwise they use mutating `enter`. Examples include:
 
 ```text
 set
@@ -264,7 +256,7 @@ This preserves:
 - aliases and imported ownership; and
 - safe `length` handling under the language's array-operation contract.
 
-An entered array operation that needs several element changes may perform them synchronously on the private Chain while the public array remains gated. The changes become publicly reachable together when the Entry leaves. A direct-safe operation performs its complete transition synchronously on the public Chain.
+An entered array operation that needs several element changes may perform them synchronously on the private Chain while the public array remains gated. The changes become publicly reachable together when its callback completes. A direct-safe operation performs its complete transition synchronously on the public Chain.
 
 Whether the language exposes these operations as methods, functions, or syntax does not affect the kernel design.
 
@@ -276,15 +268,15 @@ After their positions are captured, a call may take the direct path only when th
 
 ```text
 capture argument positions
-enter effect path and install gate
+mutating enter of effect path installs gate
 wait for arguments
 execute against private Chain
-leave
+complete callback and publish
 ```
 
 If `run` waited for arguments before entering, a later mutation of the receiver could overtake it.
 
-An argument that reads from the same receiver must be captured before the gate is installed. Work after entry that needs receiver data must use `entry.chain`. Waiting through the public gate from inside the operation would deadlock.
+An argument that reads from the same receiver must be captured before the gate is installed. Work after entry that needs receiver data must use `entered`. Waiting through the public gate from inside the operation would deadlock.
 
 Arguments depending on unrelated Promises may resolve normally while the receiver path remains gated.
 
@@ -295,16 +287,16 @@ A direct-safe operation completes synchronously against the public Chain.
 An entered operation may complete directly or return a Promise representing its complete work:
 
 ```js
-const work = operation(entry.chain, [], ...arguments)
+const work = operation(entered, [], ...arguments)
 ```
 
-If `work` is direct, `runMethod` leaves immediately after the synchronous transition.
+If `work` is direct, mutating `enter` starts publication immediately after the synchronous transition.
 
-If `work` is pending because its control flow may issue more Entry operations, the Entry remains active until it settles. Compiler operations must register continuations through runtime Promise helpers rather than raw `.then`.
+If `work` is pending because its control flow may issue more operations, the private Chain remains active until it settles. Compiler operations must register continuations through runtime Promise helpers rather than raw `.then`.
 
 The operation must not issue detached work that mutates the private Chain after its returned completion has settled.
 
-An already-issued kernel mutation may itself remain suspended on a Promise when the operation finishes. `leave` may publish that graph immediately: the mutation's continuations were registered synchronously before leave, travel with their mirrors, and run before later public consumers at the same frontiers. `run` therefore waits for future operation issuance, not for every issued kernel transition to reach settled data.
+An already-issued kernel mutation may itself remain suspended on a Promise when the operation finishes. Mutating `enter` may publish that graph immediately: the mutation's continuations were registered synchronously before callback completion, travel with their mirrors, and run before later public consumers at the same frontiers. `run` therefore waits for future operation issuance, not for every issued kernel transition to reach settled data.
 
 This permits asynchronous Cascada operations without making the entire class instance one Promise. Only the declared receiver placement is gated, and the private Chain remains available to the operation.
 
@@ -317,7 +309,7 @@ This permits asynchronous Cascada operations without making the entire class ins
 
 They are related but distinct.
 
-A direct-safe mutation returns its operation result directly when receiver and arguments are ready. An entered mutation returns a Promise for completion, even when its private operation is synchronous, because gate publication and the consumers already queued on it complete at a Promise reaction boundary.
+A direct-safe mutation returns its operation result directly when receiver and arguments are ready. An entered mutation does the same when entry setup and the callback are synchronous; delayed setup or an asynchronous callback returns a Promise that forwards the callback's fulfillment value after closing the entered scope. Receiver publication is independent and remains ordered by the gate, so `runMethod` needs neither a separate result channel nor a gate continuation for result delivery.
 
 For a synchronous direct operation:
 
@@ -326,22 +318,22 @@ For a synchronous direct operation:
 
 For a synchronous operation on the entered path:
 
-1. The operation computes a result and finishes private mutations.
-2. `leave` resolves the receiver gate.
-3. Existing gate consumers run in their FIFO batch.
-4. The `runMethod` result Promise settles with the operation result after `leave` publication completion.
+1. The operation computes a result and issues its complete private work; target-dependent commands may remain suspended on the private-root transfer mirror.
+2. Callback completion closes the private Chain and either resolves the receiver gate with a direct stored `state.value` or registers `onLaterPromiseReady` on the stored Promise so its callback can use the subsequently updated `state.value`.
+3. `runMethod` returns the operation result directly.
+4. Gate publication and existing gate consumers proceed in their FIFO order.
 
 For an asynchronous operation:
 
 1. The receiver remains gated while work is pending.
-2. The operation's work Promise settles with its result.
-3. `run` establishes ownership for that result and leaves the Entry.
-4. Existing gate consumers run in their FIFO batch.
-5. The public `runMethod` result Promise settles after leave publication completion.
+2. The operation's work Promise fulfills with its result.
+3. `run` establishes ownership for that result, then mutating `enter` prevents new operations through the entered Chain and starts or arranges publication through the gate.
+4. The `runMethod` wrapper fulfills with the operation result without waiting for publication.
+5. Gate publication and existing gate consumers proceed independently in their FIFO order.
 
-Thus, observing completion of an entered `runMethod` guarantees that all operations which registered on its gate before `leave` have completed their synchronous transitions. A later direct replacement may already have detached the gate and remains the live property version.
+Thus, observing an entered `runMethod` result guarantees that the callback completed and its Chain is closed, not that the receiver gate has published or that its consumers have run. Any later kernel operation on the receiver remains correct because it traverses the installed gate. Code that needs the updated graph must observe it through the normal path operations rather than treat the operation result as a publication token. A later direct replacement may already have detached the gate and remains the live property version.
 
-Tracked results pass through normal ownership rules. A result that aliases the published receiver or one of its children establishes shared ownership.
+Tracked results pass through normal ownership rules. A result that aliases the private receiver or one of its children establishes shared ownership before it is forwarded, protecting the eventual public graph.
 
 Standalone and read-only results do not wait for unrelated graph Promises.
 
@@ -351,34 +343,32 @@ A returned Error is a normal result.
 
 If an entered mutating operation reports an expected Error, it decides whether to:
 
-- leave the current private value and return the Error separately; or
-- assign the Error to the private root and publish it with `leave`.
+- preserve the current private value and return the Error separately; or
+- assign the Error to the private root before returning.
 
-Mutating `run` is not transactional. Mutations already performed on the private Chain are not automatically rolled back when the operation later returns an Error.
+Mutating `enter` publishes automatically in either case. Mutating `run` is not transactional: mutations already performed on the private Chain are not automatically rolled back when the operation later returns an Error.
 
-A direct-safe operation simply returns its Error result after its synchronous transition; it has no Entry publication decision.
+A direct-safe operation simply returns its Error result after its synchronous transition; it has no entered-path publication decision.
 
 Compiler-generated operations should make their failure behavior explicit.
 
-User data and usage failures become Error values where a result placement exists. Fatal reporting remains reserved for runtime bugs and invariant failures.
+User data and usage failures become Error values where a result placement exists. Compiler lowering converts expected data-Promise rejection before the callback's completion boundary; the callback Promise is a control-flow signal whose rejection is fatal. Before reporting a callback throw or rejection, `enter` closes the entered Chain and releases an acquired read entry. A mutating gate remains unresolved so potentially corrupted private state is not published. Fatal reporting remains reserved for unexpected host failures, runtime bugs, and invariant failures.
 
 ## Cancellation
 
-Cancellation cannot simply abandon a mutating call because its gate would remain pending.
+Cancellation cannot abandon a callback Promise because its gate would remain pending.
 
-A cancellation policy must choose one of:
+A cancellation policy must settle the callback after choosing one of:
 
-- leave and publish the private value reached so far;
-- assign a cancellation Error to the private root and leave; or
-- continue the operation privately until it reaches its normal leave.
+- publish the private value reached so far;
+- assign a cancellation Error to the private root; or
+- continue the operation privately to normal completion.
 
-The initial implementation should use an explicit Error assignment and `leave`. Silent abandonment is forbidden.
+The initial implementation should assign an explicit Error and complete the callback. Silent abandonment is forbidden.
 
 ## Repeated calls and loops
 
-Mutating `runMethod` inherits Entry loop behavior.
-
-Sequential code should await receiver publication before entering the same path again:
+Mutating `runMethod` inherits mutating `enter` loop behavior. Awaiting it sequences callback work, not receiver publication:
 
 ```js
 for await (const item of source) {
@@ -392,20 +382,19 @@ for await (const item of source) {
 }
 ```
 
-Each iteration creates a fresh gate and mirror. With sequential publication, only one gate remains live and no accumulated Promise tail is stored.
-
-Calls issued ahead of publication queue on the current gate and retain memory proportional to the backlog.
+Each iteration creates a fresh gate and mirror. Entries issued while earlier gates remain unpublished are still FIFO-correct, but retain memory proportional to that publication backlog. Because a Promise-target callback and its result may finish before receiver readiness, even an awaited loop can pipeline gates when its operations only issue target-dependent commands. Bounding that backlog would require an explicit publication signal; awaiting the operation result alone does not provide backpressure.
 
 ## CascadaScript methods
 
 A future CascadaScript method can use the same mutating orchestration:
 
 ```text
-enter receiver path
+mutating enter of receiver path
 invoke compiled method with private receiver Chain
 compiled reads/writes use kernel operations
-keep Entry active across method continuations
-leave when compiled method completion settles
+keep entered Chain active across method continuations
+return compiled method result or work Promise
+close the scope and start or arrange publication when work completes
 ```
 
 This solves the dependency/effect ordering problem because the public receiver is gated before the method waits on arguments or internal Promises.
@@ -437,7 +426,7 @@ Mutating native methods are not supported initially. Although mutating `enter` p
 
 Imported instances also remain aliased with host code.
 
-Supporting mutating native methods would require a separate adapter, export/reimport boundary, proxy, or compiler lowering. `enter` is useful groundwork but is not sufficient by itself.
+Supporting mutating native methods would require a separate adapter, export/reimport boundary, proxy, or compiler lowering. Mutating `enter` is useful groundwork but is not sufficient by itself.
 
 ## Interaction with Promise properties
 
@@ -456,7 +445,7 @@ src/run.js
 test/run.test.js
 ```
 
-`run.js` depends on the encapsulated `enter`/`leave` exports from `enter-leave.js` and on generic Promise/result helpers. It never calls either mode's internal path directly. Existing kernel modules do not call `run`.
+`run.js` depends on the encapsulated `enter` export from `enter.js` and on generic Promise/result helpers. It never calls either mode's internal path or completion routine directly. Existing kernel modules do not call `run`.
 
 The only shared instance classification needed later should be added only when CascadaScript class dispatch becomes a real second consumer. No `instance.js` module is needed for pure functions or string/array operations.
 
@@ -464,11 +453,11 @@ String and array operation implementations may live in separate language modules
 
 ## Implementation phases
 
-1. Implement and verify the encapsulated `enter` mode selection, temporary read leases, and `leave`.
+1. Implement and verify callback-based `enter`, encapsulated mode selection, automatic completion, and counted read entries.
 2. Add pure standalone function invocation and result handling.
 3. Add trusted read-only operation/method invocation.
 4. Add direct-safe synchronous mutation dispatch.
-5. Add entered mutation orchestration with a private Entry chain.
+5. Add entered mutation orchestration with a private Chain.
 6. Implement initial string data functions.
 7. Implement read-only and mutating array data functions.
 8. Add cancellation/error policy and loop stress coverage.
@@ -492,14 +481,15 @@ Functions:
 
 Read-only calls:
 
-- direct and pending receiver acquisition;
-- temporary snapshot-lease behavior;
-- no redundant lease for an already shared, imported, or non-extensible receiver;
+- direct and pending receiver entry setup;
+- synchronous callback for a ready receiver and delayed callback for a pending receiver;
+- counted read-entry behavior for every tracked receiver;
+- shared, imported, and non-extensible receivers receiving the same temporary count;
 - later live mutation using COW;
-- lease release without permanent sharing;
-- mutation during the lease preserving snapshot and live copy;
-- suspended kernel observations retaining FIFO correctness after lease release;
-- native raw-snapshot work keeping the lease until declared completion;
+- read-entry completion without permanent sharing;
+- mutation during a read entry preserving the captured and live worlds;
+- suspended kernel observations retaining FIFO correctness after read-entry completion;
+- native raw-receiver work keeping the read entry active until declared completion;
 - escaping result permanently shared before release;
 - direct and Promise results;
 - no gate allocation;
@@ -508,9 +498,14 @@ Read-only calls:
 
 Mutating calls:
 
-- direct-safe ready operation allocating no gate, Entry, or Promise;
+- direct-safe ready operation allocating neither a gate, private Chain, nor Promise;
 - direct-safe operation returning synchronously;
 - pending receiver or argument selecting the entered path;
+- synchronous entry callback after direct graph reconstruction;
+- delayed entry callback within the existing path continuation after reconstruction and gate installation;
+- Promise-valued receiver receiving an immediate callback with one private-root transfer mirror;
+- target-independent work overlapping receiver resolution while target-dependent commands retain source FIFO order;
+- callback Chain containing no pending entry-setup state or command queue;
 - non-direct-safe operation entering even when currently ready;
 - no post-invocation switch from direct to entered execution;
 - identical relative operation behavior at a public path and private root;
@@ -521,12 +516,12 @@ Mutating calls:
 - receiver publication before later gate consumers;
 - direct receiver replacement superseding an active gate;
 - private Chain used across continuations;
-- result and receiver publication ordering;
-- returned Error with leave;
-- Error-root publication with leave;
+- operation-result delivery independent from receiver publication;
+- returned Error with automatic publication;
+- Error-root publication;
 - cancellation;
 - no detached private mutation after completion; and
-- repeated loop calls retaining O(1) live gates.
+- repeated calls remaining FIFO-correct with backlog proportional to unpublished gates.
 
 Data operations:
 
@@ -546,15 +541,15 @@ CascadaScript groundwork:
 - mutation before and after Promise barriers;
 - later caller mutations queued behind the method;
 - no whole-instance global Promise requirement; and
-- automatic leave on every compiler-generated completion path.
+- automatic publication on every compiler-generated completion path.
 
 ## Decision summary
 
 `run` is orchestration around a declared effect path:
 
 - pure functions have no effect path;
-- read-only calls capture a temporarily protected snapshot without a gate; and
+- read-only calls protect a captured receiver without a gate; and
 - ready direct-safe mutations run synchronously on the public Chain;
-- other mutating language operations gate the receiver, work through a private Chain, and publish on leave.
+- other mutating language operations gate the receiver, work through a private Chain, and publish when their callback completes.
 
 This solves ordering before asynchronous work begins and reuses the existing Promise-mirror machinery. It deliberately avoids mutation inference, recursive draft proxies, post-call graph reconciliation, and arbitrary native method execution.

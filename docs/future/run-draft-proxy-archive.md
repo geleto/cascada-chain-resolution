@@ -3,7 +3,7 @@
 ## Status
 
 **Archived.** This recursive proxy/draft design was superseded by the active
-[entry/leave primitives](../enter-leave.md) and [`run`](../run.md) designs. Its
+[`enter`](../enter.md) and [`run`](../run.md) designs. Its
 old scope and conclusions are historical and do not state the current
 class-support plan.
 
