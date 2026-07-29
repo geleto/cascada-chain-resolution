@@ -140,7 +140,7 @@ function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(chain, path, value) {
     helpers.runFatal(() => {
-        walkMutationPath(chain._state, path, (
+        walkMutationPath(chain, path, (
             parent,
             key,
             importBoundary,
@@ -152,20 +152,43 @@ function assignPath(chain, path, value) {
 }
 
 // path identifies the complete mutation target. The walk starts at the private
-// holder, where an empty path targets its value key, and recursive callers
-// install copied branches back into their key.
-function walkMutationPath(rootHolder, path, onTarget) {
+// holder, where an empty path targets its value key, and write-back
+// continuations install copied branches into their enclosing keys.
+function walkMutationPath(chain, path, onTarget, onComplete = undefined) {
+    chain.assertState()
+    const state = chain._state
+    if (!state.mutates) {
+        errorUtils.reportFatalError(
+            new Error("Cannot mutate through a read-only Chain"),
+        )
+    }
     const targetPath = ["value", ...path]
     let attachmentPath
-    return walk(rootHolder, 0, undefined)
+    return walk(state, 0, undefined, () => {})
+
+    // Completion follows synchronous reconstruction through every enclosing
+    // write-back continuation. Keeping this outside walk avoids allocating it
+    // for every recursive frame.
+    function complete(writeBack, next) {
+        writeBack(next)
+        return onComplete?.(
+            helpers.isError(next) ? next : undefined,
+        )
+    }
 
     function walk(
         value,
         index,
         inheritedImportBoundary,
+        writeBack,
     ) {
-        if (helpers.isError(value)) return value
-        if (!helpers.isTracked(value)) return errorUtils.pathAccessError()
+        if (helpers.isError(value)) {
+            return complete(writeBack, value)
+        }
+        if (!helpers.isTracked(value)) {
+            const error = errorUtils.pathAccessError()
+            return complete(writeBack, error)
+        }
 
         // Root-only import attribution is inherited until a nested boundary
         // overrides it. Once COW starts, attachmentPath keeps every remaining
@@ -173,7 +196,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
         const valueImportBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
         let parent = value
         const parentInsideSharedBranch = attachmentPath !== undefined ||
-            metadata.hasSharedMark(value)
+            metadata.requiresCopyOnWrite(value)
 
         const key = targetPath[index]
         if (parentInsideSharedBranch) {
@@ -183,7 +206,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
                     "Cannot copy unsupported object during copy-on-write",
                     valueImportBoundary?.errorContext,
                 )
-                return error
+                return complete(writeBack, error)
             }
             attachmentPath ??= {
                 root: undefined,
@@ -199,7 +222,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
         }
         if (index === targetPath.length - 1) {
             onTarget(parent, key, valueImportBoundary, attachmentPath)
-            return parent
+            return complete(writeBack, parent)
         }
 
         // Asserted after the COW: copies carry only own enumerable keys, so
@@ -218,34 +241,39 @@ function walkMutationPath(rootHolder, path, onTarget) {
                 child,
                 valueImportBoundary,
             )
-            helpers.onLaterPromiseReady(child, () => {
+            const pending = helpers.onLaterPromiseReady(child, () => {
                 const propertyValue = mirror.getValue(parent, key)
-                const next = walk(
+                return walk(
                     propertyValue,
                     index + 1,
                     mirror.importBoundary ?? valueImportBoundary,
+                    next => {
+                        if (next !== propertyValue) {
+                            propertyTransitions.setMirrorValue(
+                                parent,
+                                key,
+                                mirror,
+                                next,
+                            )
+                        }
+                    },
                 )
-                if (next !== propertyValue) {
-                    propertyTransitions.setMirrorValue(
-                        parent,
-                        key,
-                        mirror,
-                        next,
-                    )
-                }
             })
-            return parent
+            writeBack(parent)
+            return onComplete === undefined ? undefined : pending
         }
 
-        const next = walk(
+        return walk(
             child,
             index + 1,
             valueImportBoundary,
+            next => {
+                if (next !== child) {
+                    setProperty(parent, key, next, valueImportBoundary)
+                }
+                writeBack(parent)
+            },
         )
-        if (next !== child) {
-            setProperty(parent, key, next, valueImportBoundary)
-        }
-        return parent
     }
 }
 
@@ -253,7 +281,7 @@ function walkMutationPath(rootHolder, path, onTarget) {
 function deletePath(chain, path) {
     helpers.runFatal(() => {
         const deletesRoot = path.length === 0
-        walkMutationPath(chain._state, path, (parent, key, importBoundary) => {
+        walkMutationPath(chain, path, (parent, key, importBoundary) => {
             if (deletesRoot) {
                 setProperty(parent, key, null, importBoundary)
             } else {
@@ -267,4 +295,6 @@ export {
     PROPERTY_STATE_CLASS,
     assignPath,
     deletePath,
+    setProperty,
+    walkMutationPath,
 }

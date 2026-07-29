@@ -16,9 +16,30 @@ import {
 } from "./support.js"
 
 describe("Chain root state", () => {
+    it("owns its capability mode and closure", async () => {
+        expect(thrownBy(() => new Chain({}, "yes"))).to.be.a(TypeError)
+
+        const readOnly = new Chain({ value: 1 }, false)
+        expect(lookupPath(readOnly, ["value"], false)).to.be(1)
+        expect(thrownBy(() => assignPath(readOnly, ["value"], 2)))
+            .to.be.an(Error)
+
+        const pending = deferred()
+        const chain = new Chain(pending.promise)
+        const issued = lookupPath(chain, ["value"], false)
+
+        chain.close()
+        expect(thrownBy(() => lookupPath(chain, [], false)))
+            .to.be.an(Error)
+        expect(thrownBy(() => chain.close())).to.be.an(Error)
+
+        pending.resolve({ value: 2 })
+        expect(await issued).to.be(2)
+    })
+
     it("keeps host fields outside the language graph", () => {
         const chain = new Chain({ clean: true })
-        chain._commands.push(new Error("host error"))
+        chain._hostError = new Error("host error")
 
         expect(hasError(chain, [])).to.be(false)
         expect(exportValue(chain, [])).to.eql({ clean: true })

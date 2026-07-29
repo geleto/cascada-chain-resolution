@@ -158,6 +158,25 @@ function forkPromiseMirror(
     return mirror
 }
 
+// TRANSFER moves one already-detached property version into a private Chain
+// root. The source version's resolver is earlier on the same canonical Promise,
+// so detachedValue is prepared before this callback runs.
+function transferDetachedPromiseMirror(
+    sourceMirror,
+    destination,
+    key,
+    promise,
+    attachmentPath,
+) {
+    const mirror = new PromiseMirror(sourceMirror.importBoundary)
+    helpers.onLaterPromiseReady(promise, () => {
+        const value = sourceMirror.detachedValue
+        setMirrorValue(destination, key, mirror, value)
+        if (attachmentPath) metadata.markShared(value)
+    })
+    installPromiseMirror(destination, key, mirror)
+}
+
 function detachPromiseMirror(parent, key) {
     const mirror = getPromiseMirror(parent, key)
     if (mirror) mirror.detach(parent, key)
@@ -172,4 +191,5 @@ export {
     getRequiredPromiseMirror,
     initPromiseMirrors,
     installPromiseMirror,
+    transferDetachedPromiseMirror,
 }

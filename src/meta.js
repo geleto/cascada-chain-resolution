@@ -11,6 +11,7 @@ function createMeta() {
         // An empty record can also mean imported preparation visited the node.
         // shared: added when ownership first becomes shared.
         // mirrors: added when the first promise mirror is installed.
+        // readEnterCount: added while one or more read-only enter operations are active.
         // cycleCuts: added when the first plain-property cut is published.
         // promiseCount, errorCount, cycleCutCount, parents: added by ref-indexing.
         // importBoundary: added at a direct import boundary.
@@ -51,9 +52,11 @@ function ensureMeta(value) {
     return meta
 }
 
-function hasSharedMark(value) {
-    return helpers.isTracked(value) &&
-        (metaOf(value)?.shared === true || !Object.isExtensible(value))
+function requiresCopyOnWrite(value) {
+    const meta = metaOf(value)
+    return meta?.shared === true ||
+        (meta?.readEnterCount ?? 0) > 0 ||
+        !Object.isExtensible(value)
 }
 
 // Bare promises crossing an ownership boundary resolve to shared values.
@@ -90,10 +93,10 @@ function nodeImportBoundary(node, inherited) {
 
 export {
     ensureMeta,
-    hasSharedMark,
     markImported,
     markShared,
     metaOf,
     nodeImportBoundary,
+    requiresCopyOnWrite,
     STORE_META_IN_WEAKMAP,
 }

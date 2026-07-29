@@ -18,6 +18,8 @@ const chain = new runtime.Chain({ ready: true })
 const output = runtime.export(chain, [])
 ```
 
+`new Chain(value, mutates = true)` stores the Chain's exact capability mode. `chain.close()` prevents new operations through that Chain without cancelling work already issued through it; closing is one-shot.
+
 Internal modules group helper functions under a namespace:
 
 ```js
@@ -90,9 +92,9 @@ and is not part of the package-level public API. The complete implemented
 contract is documented in
 [`property-state-classes.md`](docs/property-state-classes.md).
 
-## Planned `enter` and `run`
+## Implemented `enter` and planned `run`
 
-The planned mutating `enter` primitive declares an asynchronous effect path before
+The mutating `enter` primitive declares an asynchronous effect path before
 waiting:
 
 ```js
@@ -125,10 +127,11 @@ arranges publication of the private value. Publishing an Error uses an ordinary 
 before returning. If owning-path COW leaves the target reachable from the source
 graph, a direct target is marked shared before the callback; a Promise target's
 transfer sampler marks its prepared value before target-dependent private work. A
-Promise-valued target installs a transfer mirror on the private root before gate
-replacement. The replacement synchronously detaches the source mirror; its
-earlier version resolver prepares `detachedValue`, which the later transfer samples
-without retaining the source parent or key. The callback starts immediately with
+Promise-valued target first replaces the public placement with its gate, which
+synchronously detaches the source mirror. It then installs the private-root
+transfer before invoking the callback. The source version's earlier resolver
+prepares `detachedValue`, which the transfer samples without retaining the source
+parent or key. The callback starts immediately with
 the source Promise while
 target-independent work overlaps its resolution. Target-dependent commands
 register behind the transfer on the source's canonical FIFO queue and receive
@@ -147,6 +150,8 @@ A read-only `enter(..., false, onEntered)` installs no gate and invokes its
 callback only after capturing a protected root. Every tracked root
 increments `META.readEnterCount`, including values already protected by
 sharing, import, or non-extensibility; primitives require no metadata.
+If the target was reached through an inherited import boundary, entry first
+makes it an independently attributed imported root.
 Overlapping readers increment independently. Live mutation then uses
 copy-on-write without permanently marking an otherwise singly-owned value
 shared. Earlier effects and Promise settlement remain part of the captured
@@ -217,7 +222,9 @@ The first six documents describe implemented runtime behavior.
 
 ## Source layout
 
-- `src/index.js` owns `Chain`, runtime initialization, and the public API.
+- `src/index.js` owns the public API and re-exports `Chain` from `src/chain.js`.
+- `src/init.js` owns the cycle-breaking runtime wiring shared by the
+  package facade and internal entry points.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
   It also owns the host-only property-state class certification Symbol and the
   private COW shell selection.

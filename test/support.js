@@ -61,6 +61,7 @@ export {
 } from "../src/index.js"
 
 export { PROPERTY_STATE_CLASS } from "../src/mutations.js"
+export { enter } from "../src/enter.js"
 
 export {
     reportFatalError,

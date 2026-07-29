@@ -87,6 +87,33 @@ function onAllPromisesReady(promise, fn) {
     )
 }
 
+// Operation callback completion is control flow rather than language data.
+// A Promise result stays on the canonical FIFO queue; rejection first lets the
+// owner close its scope, then remains fatal rather than becoming language data.
+function runOperationCallback(
+    callback,
+    argument,
+    onFulfilled,
+    onRejected,
+) {
+    let result
+    try {
+        result = callback(argument)
+    } catch (error) {
+        onRejected(error)
+        throw error
+    }
+    if (!isPromise(result)) return onFulfilled(result)
+
+    return getCanonicalPromise(result).then(
+        value => runFatal(onFulfilled, value),
+        reason => {
+            runFatal(onRejected, reason)
+            return errorUtils.reportFatalError(reason)
+        },
+    )
+}
+
 export {
     isError,
     isPromise,
@@ -94,5 +121,6 @@ export {
     onAllPromisesReady,
     onInitialPromiseResolve,
     onLaterPromiseReady,
+    runOperationCallback,
     runFatal,
 }

@@ -2,6 +2,7 @@ import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import { hasCycleCut } from "../src/import.js"
+import { setMirrorValue } from "../src/property-transitions.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -28,6 +29,7 @@ import {
     deferred,
     flushMicrotasks,
     expectCounts,
+    thrownBy,
 } from "./support.js"
 
 describe("promise helpers", () => {
@@ -291,6 +293,28 @@ describe("promise helpers", () => {
 })
 
 describe("promise mirrors and lookupPath", () => {
+    it("rejects a Promise before changing an existing mirror version", async () => {
+        const pending = deferred()
+        const root = {}
+        assignPath(new Chain(root), ["value"], pending.promise)
+        const mirror = metaOf(root).mirrors.value
+        const replacement = Promise.resolve("replacement")
+
+        const error = thrownBy(() => {
+            setMirrorValue(root, "value", mirror, replacement)
+        })
+
+        expect(error.message).to.be(
+            "A Promise requires a fresh property version",
+        )
+        expect(root.value).to.be(pending.promise)
+        expect(mirror.isLive(root, "value")).to.be(true)
+
+        pending.resolve("settled")
+        await flushMicrotasks()
+        expect(root.value).to.be("settled")
+    })
+
     it("uses the property while live and private state after detachment", async () => {
         const livePending = deferred()
         const liveRoot = {}

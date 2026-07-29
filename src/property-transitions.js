@@ -1,4 +1,6 @@
 import * as imports from "./import.js"
+import * as helpers from "./helpers.js"
+import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
@@ -30,6 +32,11 @@ function setMirrorValue(
     newValue,
     prepareImportedValue,
 ) {
+    if (helpers.isPromise(newValue)) {
+        errorUtils.reportFatalError(
+            new Error("A Promise requires a fresh property version"),
+        )
+    }
     const cycleCut = prepareImportedValue?.(
         newValue, mirror.importBoundary,
     )

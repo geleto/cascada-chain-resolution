@@ -6,28 +6,18 @@
 //
 // A Promise mirror identifies one parent/key property version. Its live value
 // stays in the physical property; only a displaced version owns detachedValue.
-// ASSIGN and DISCOVERY seed from raw settlement. FORK samples the source
-// mirror at the copier's FIFO position, so the worlds diverge there.
+// ASSIGN and DISCOVERY seed from raw settlement. FORK samples a live source
+// mirror at the copier's FIFO position; TRANSFER samples a detached source
+// mirror at its new placement.
 
-import * as refcounts from "./refcounts.js"
-import * as imports from "./import.js"
-import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyTransitions from "./property-transitions.js"
+import "./init.js"
 
 // Load-bearing helper contract:
 // The initial resolver converts data rejection through onInitialPromiseResolve.
 // Later resolvers use onLaterPromiseReady and read the state published by that
 // first FIFO reaction instead of consuming the raw settlement again.
 
-export class Chain {
-    constructor(initialValue) {
-        this._state = { value: initialValue }
-        this._commands = []
-    }
-}
-
-imports.initImport(refcounts.commitLiveEdge)
-promiseMirrors.initPromiseMirrors(propertyTransitions.setMirrorValue)
+export { Chain } from "./chain.js"
 
 export {
     assignPath,

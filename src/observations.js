@@ -5,7 +5,6 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyTransitions from "./property-transitions.js"
 import * as rawWalk from "./raw-walk.js"
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
@@ -222,11 +221,13 @@ function walkObservationPath(
     path,
     onResolved,
 ) {
+    chain.assertState()
+    const state = chain._state
     const targetPath = ["value", ...path]
     return walkFromParent(
-        chain._state,
+        state,
         0,
-        metadata.nodeImportBoundary(chain._state),
+        metadata.nodeImportBoundary(state),
     )
 
     function walkFromParent(parent, index, importBoundary) {
@@ -266,4 +267,10 @@ function walkObservationPath(
     }
 }
 
-export { exportValue, getErrors, hasError, lookupPath }
+export {
+    exportValue,
+    getErrors,
+    hasError,
+    lookupPath,
+    walkObservationPath,
+}
