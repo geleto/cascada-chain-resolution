@@ -8,6 +8,9 @@ designing property-state class COW. None is part of plan step 20.
 These extensions are independent of the completed property-state class COW
 step. String and array convenience behavior can be implemented as
 language-defined operations without first adding native container support.
+Planned [`ArrayView`](../array-view.md) is one Array-specific logical-property
+integration in step 23; it does not generalize the graph to Map, Set, or other
+virtual containers.
 
 The current recommendation is to use plain objects at the Cascada boundary:
 
@@ -144,9 +147,10 @@ tested.
 
 ## Method-call integration
 
-The current entered-receiver operation design is specified separately in
-[`../run.md`](../run.md). Native Map/Set mutators would additionally require
-the logical-property semantics deferred by this document.
+The deferred proxy-backed invocation design is recorded separately in
+[`run.md`](run.md). Native Map/Set mutators would additionally require the
+logical-property semantics deferred by this document. Neither feature is part
+of the current data-only runtime plan.
 
 ## Suggested future phases
 

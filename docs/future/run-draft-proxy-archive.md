@@ -2,15 +2,17 @@
 
 ## Status
 
-**Archived.** This recursive proxy/draft design was superseded by the active
-[`enter`](../enter.md) and [`run`](../run.md) designs. Its
-old scope and conclusions are historical and do not state the current
-class-support plan.
+**Historical predecessor.** This recursive proxy/draft proposal predates the
+completed callback-based [`enter`](../enter.md) primitive. Its ordering and
+reconciliation analysis informed the newer deferred
+[`proxy-plus-enter design`](run.md), but its standalone placement and
+publication machinery is no longer the preferred future architecture.
 
 This document is retained because the analysis is the reusable part. It records
 why a general `run` operation is expensive under Cascada's ordering model, which
 subset stays cheap, and what any future attempt has to solve first. It does not
-change the current runtime contract.
+change the current data-only runtime contract, and no `run` implementation is
+planned.
 
 The surface that was proposed, for reference:
 

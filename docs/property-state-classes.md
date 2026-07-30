@@ -2,10 +2,12 @@
 
 ## Status
 
-Implemented as plan step 20. This supplies the COW and prototype-preservation
-part of class support. Class construction and method execution are separate
-concerns. The certification Symbol remains internal and is not part of the
-package API.
+Implemented as plan step 20. This supplies COW and prototype preservation for
+class instances as data. The runtime graph remains data-only; construction and
+mutating class-method execution are outside the current plan. Planned
+[`run`](run.md) may invoke a certified prototype method only under its trusted
+read-only contract. The certification Symbol remains internal and is not part
+of the package API.
 
 ## Scope
 
@@ -26,9 +28,9 @@ entries, Set members, symbols, non-enumerable properties, prototypes, and
 native internal slots do not become graph edges.
 
 Deferred container ideas are recorded in
-[`future/keyed-containers.md`](future/keyed-containers.md). The current
-entered-receiver method groundwork is specified in [`run.md`](run.md); the
-discarded proxy design is archived in
+[`future/keyed-containers.md`](future/keyed-containers.md). A possible
+proxy-backed method layer over [`enter`](enter.md) is archived in
+[`future/run.md`](future/run.md); its predecessor analysis remains in
 [`future/run-draft-proxy-archive.md`](future/run-draft-proxy-archive.md).
 
 ## Property-state contract
@@ -294,8 +296,8 @@ const setData = Object.fromEntries(
 COW preserves prototype identity, so inherited and overridden methods remain
 present and can be shown to function on the copied instance.
 
-Step 20 does not add a general method-execution protocol. Direct opaque method
-calls over tracked data are outside the kernel contract:
+Step 20 does not add a method-execution protocol. Direct opaque method calls
+over tracked data remain outside the implemented kernel contract:
 
 - a method that writes `this.x` bypasses COW and graph transitions;
 - a method that reads a Promise-backed field sees the physical Promise instead
@@ -303,9 +305,11 @@ calls over tracked data are outside the kernel contract:
 - a returned tracked child can bypass normal ownership marking.
 
 Tests may invoke known pure synchronous methods to verify that prototype
-behavior survived copying. Language/compiler support for arbitrary method
-calls, Promise-sensitive reads, mutators, or returned-value ownership is
-deferred.
+behavior survived copying. Planned [`run`](run.md) adds trusted read-only
+prototype invocation with Promise-sensitive receiver preparation and normal
+result ownership, while keeping methods outside the graph. Mutating class
+methods and arbitrary opaque invocation remain deferred in
+[`future/run.md`](future/run.md).
 
 ## Export
 

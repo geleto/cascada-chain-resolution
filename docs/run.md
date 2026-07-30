@@ -1,555 +1,216 @@
-# `run` Built on `enter`
+# Standard Method `run`
 
 ## Status
 
-This document specifies the planned `run` operation built on [`enter.md`](enter.md).
+**Planned.** This is the restricted invocation layer for standard String and Array operations and trusted read-only methods. It does not put functions in the language graph or implement general side-effecting class methods.
 
-It replaces the archived proxy/draft proposal. `run` no longer tries to infer native JavaScript mutations and reconcile a graph afterward. A mutating call declares its receiver path up front. A ready direct-safe operation runs there synchronously; any operation that may suspend uses mutating `enter` on the path and returns its private-Chain work from the callback. Mutating `enter` starts or arranges publication automatically when that work completes.
-
-In the initial `run` scope, functions are compiler/runtime operations rather than values read from Cascada variables.
-
-## Supported call kinds
-
-The initial design supports:
-
-1. Side-effect-free standalone functions.
-2. Trusted read-only native methods.
-3. Language-defined mutating data operations implemented with relative kernel operations, either directly or on an entered Chain.
-4. Future CascadaScript methods compiled to the same entered-Chain model.
-
-It does not support arbitrary mutating native JavaScript methods.
-
-That restriction is important. Mutating `enter` solves ordering and ownership transfer, but a raw native method can still bypass Promise mirrors, refcounts, imported data preparation, descriptor rules, and cycle bookkeeping.
-
-## Source-level API
-
-The conceptual source surface remains:
+## Contract
 
 ```js
-run(path, mutates, ...arguments)
+run(chain, path, method, mutateArray, ...arguments)
 ```
 
-`mutates` is a Boolean in the initial version:
+`method` must be a string and `mutateArray` must be exactly `true` or `false`. Both are supplied by lowering before the receiver or any argument settles. A non-string method, invalid Boolean, `constructor`, or marked method outside the intercepted set returns a language Error before any path walk or gate.
 
-- `false`: observe only;
-- `true`: the operation may mutate the receiver represented by `path`.
-
-The earlier array-of-property-names scope is deferred. Entering one receiver path is simpler and makes the complete ordering effect visible.
-
-A standalone function is initially selected by the compiler or built-in operation table rather than read as a function value from the graph.
-
-## Kernel entry points
-
-The compiler-facing runtime API should avoid an ambiguous union of path and callable shapes:
+Cascada's `!` operator is extended from context-object effects to variable Array mutation:
 
 ```js
-runFunction(callable, ...arguments)
-
-runMethod(
-    chain,
-    receiverPath,
-    method,
-    mutates,
-    ...arguments
-)
+query.results!.push(1)
 ```
 
-The language/compiler may expose both through one source-level `run` syntax.
+The marked form passes `true`; the unmarked form passes `false`. Existing context-object `!` behavior remains separate.
 
-`method` is:
+`path` identifies the receiver and distinguishes a missing final property from one containing `undefined`. A receiver may be a primitive string, logical Array, or supported tracked object with a trusted read-only executable surface. Supported tracked objects are plain records, null-prototype records with a host descriptor, and certified property-state class instances; opaque external classes and unsupported native internal-slot objects are not admitted. Native Arrays, native Arrays carrying `META.arrayView`, and internally branded `ArrayView` instances are logical Arrays.
 
-- a trusted native read-only method descriptor; or
-- a compiler/runtime operation that accepts a Chain and receiver base path.
+## Dispatch
 
-It is not an arbitrary callable fetched from language data.
-
-A mutating operation descriptor also declares whether it is **direct-safe**: once its receiver and arguments are synchronously available, its complete transition is guaranteed not to wait. This is a trusted compiler/runtime fact, not something inferred by invoking the operation and inspecting its result.
-
-The exact exported names may change, but the implementation should keep function invocation and receiver invocation separate internally.
-
-## Standalone functions
-
-Standalone functions are side-effect-free:
-
-```js
-const result = runFunction(functionDescriptor, ...arguments)
-```
-
-They may:
-
-- observe their arguments;
-- return supported data directly;
-- return a Promise producing supported data; and
-- return or produce Error values.
-
-They must not:
-
-- mutate arguments;
-- mutate closure state or globals;
-- perform I/O or DOM mutation;
-- retain tracked runtime values;
-- receive runtime metadata-bearing objects for later host use; or
-- perform any other observable side effect.
-
-Purity is trusted for native host functions. Compiler-defined built-ins should prefer implementations that operate on exported primitives or controlled read-only views.
-
-If argument evaluation is pending, `runFunction` invokes only after all required arguments are available at their captured program positions. It has no effect path to lock because it has no side effects.
-
-The result is direct when invocation and result are synchronous, and a Promise only when argument readiness or the callable result requires waiting.
-
-## String data operations
-
-String operations are pure standalone functions. Examples include:
+The intercepted Array mutators are:
 
 ```text
-length
-slice
-substring
-startsWith
-endsWith
-includes
-indexOf
-replace
-split
-toLowerCase
-toUpperCase
-trim
+copyWithin fill pop push reverse shift sort splice unshift
 ```
 
-Their exact set and Cascada naming are separate language-design decisions.
+| `mutateArray` | Resolved call | Behavior |
+| --- | --- | --- |
+| `false` | Logical Array mutator | Leave the receiver unchanged and return a distinct transformed logical Array. |
+| `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
+| `true` | Logical Array mutator | Mutate or publish a new receiver and return the JavaScript mutator result. |
+| `true` | Non-Array receiver | Publish and return a language Error without invocation. |
 
-They:
+A logical Array mutator is selected intrinsically by name even when a receiver property shadows that name. The same-named method on a non-Array object remains an ordinary unmarked call.
 
-- accept string and primitive arguments;
-- return strings, numbers, booleans, arrays, or Errors;
-- never use `enter`;
-- never mutate a receiver; and
-- may run as soon as their required arguments are available.
+Ordinary lookup preserves JavaScript shadowing. An own enumerable language property shadows the prototype but is never an executable method. Otherwise a callable own non-enumerable property, prototype method, or compiler or host descriptor may be selected outside the language graph. The selected method must be trusted read-only and must not retain inputs or cause external side effects; other side-effecting methods are unsupported.
 
-Unsupported types and invalid arguments produce Error values.
+Standard String and Array methods are supported when their selected overload needs no caller-provided callback, replacement function, or executable protocol hook. `sort` and `toSorted` additionally support the comparator contract below. Other callback methods such as `map`, `filter`, `reduce`, and `forEach` are deferred. Calls that return native iterator objects, including `keys`, `values`, `entries`, and `matchAll`, are unsupported because those stateful internal-slot objects are not language data. Direct iteration and spread use the runtime iterator path rather than `run`.
 
-## Read-only methods
+RegExp and other unsupported internal-slot or executable-protocol arguments are rejected from their original captured values before preparation. Primitive string patterns remain supported. An ordinary call never publishes its receiver. An unmarked intercepted mutator returns a distinct post-mutation logical Array even for a no-op.
 
-A trusted read-only method uses:
+## Language Integration
+
+Lowering captures every argument position before issuing `run` and preserves omission and arity. A sort comparator occupies a separate executable slot: lowering passes its direct callable or control Promise to `run` without import, export, result admission, or storage in the Chain. A standard method uses Cascada-aware logical access and coercion whenever that avoids exposing tracked data or resolving an irrelevant subtree. The surrounding integration owns export, but standard Array and String methods do not need it:
+
+| Boundary | Export |
+| --- | --- |
+| Standard Array or String operation | None. Logical algorithms prepare primitives and small runtime-owned native inputs. A structural Array intrinsic may retain or relocate Cascada values directly under its runtime wrapper. |
+| `sort` or `toSorted` comparator | None. The callable remains outside the graph and receives logical element values under the trusted comparator contract. |
+| Other trusted native observation | Export the tracked receiver and every non-primitive argument. |
+
+No standard Array or String operation exports its receiver, elements, or arguments. A full logical receiver snapshot is needed only when an ordinary selected method or non-intrinsic override receives it as `this`; that receiver and its exported arguments form one snapshot so aliases between them are preserved. Method lookup occurs before export, and a method that requires the original prototype, hidden state, or unexported aliases is not compatible with this surface.
+
+Array payloads and identity-bearing values keep their logical identity. This includes `push` and `unshift` values, the `fill` value, `splice` and `toSpliced` insertions, the `with` value, search values, and values retained by `concat` or `flat`. A controlled structural intrinsic may receive them directly; its wrapper prepares ownership, mirrors, and bookkeeping. RegExp, unsupported callbacks, and other executable-protocol or internal-slot arguments are rejected from the captured values before preparation.
+
+For an ordinary trusted native observation, export may return directly or wait on a Promise. If every required export is direct, it adds no wrapper. Otherwise `run` coordinates only those results through the canonical Promise helpers; it does not implement export. An export Error is the operation result.
+
+`toLocaleString` is deferred because it invokes executable element methods. A direct or settled method result is admitted before entering the graph: primitives, Errors, and supported language-data objects receive normal ownership and indexing, while a callable or unsupported native internal-slot object becomes a language Error. A returned method Promise uses the canonical helpers, converts rejection to a language Error, and applies the same admission rule to fulfillment.
+
+## Cascada scalar coercion
+
+Standard Array and String methods implement the JavaScript scalar coercions they require against logical Cascada values, including `ToString`, `ToNumber`, `ToIntegerOrInfinity`, `ToLength`, and `ToUint32`. A top-level Promise and any later property version actually inspected by coercion resolve through the runtime helpers; unrelated properties and nested Promises are not visited. A language Error reached on the inspected coercion path becomes the operation result rather than being stringified or numerically converted.
+
+The supported object path reproduces the data-only behavior of logical Arrays and the known intrinsic coercion behavior of supported records and certified instances. Own language properties retain JavaScript shadowing. A callable `Symbol.toPrimitive`, `toString`, `valueOf`, or other executable coercion hook is outside this step and returns a language Error rather than being invoked. Null-prototype and shadowed objects retain the corresponding JavaScript success or conversion failure.
+
+Default `sort` and `toSorted` use the scalar conversion described under Sort comparison. `join` and intrinsic Array `toString` build their text through the same logical conversion. Other String intrinsics receive a primitive receiver and primitive scalar arguments.
+
+Locale-sensitive String methods use dedicated logical preparation rather than export. Locale-list length and present elements, and the `localeMatcher`, `usage`, `sensitivity`, `ignorePunctuation`, `collation`, `numeric`, and `caseFirst` option properties, are read and coerced only when the selected intrinsic uses them. The resulting primitives are placed in a small metadata-free Array or record for native locale processing. Other properties and nested Promises are not inspected.
+
+## Sort comparison
+
+Without a comparator, each non-`undefined` value is converted to its default comparison string and those strings are ordered lexicographically by UTF-16 code units. These strings are internal preparation, not language-visible keys. Preparing each once is equivalent on the supported surface because executable coercion hooks are excluded. Explicit `undefined` follows all string-compared values without conversion, and `sort` retains holes after `undefined`.
+
+The comparator argument may be a direct callable, `undefined`, or a Promise resolving to either. This includes a Promise produced when control flow selects between comparator bindings, such as assigning `compGreater` in one branch and `compLessOrEqual` in another. The callable bindings and their merged Promise remain executable control values; fulfillment is consumed by the comparator slot and never admitted into the language graph. A non-callable non-`undefined` value or rejection becomes a language Error. Comparator readiness and validation precede element collection as in JavaScript.
+
+A comparator is trusted read-only, side-effect-free, and non-retaining. It is invoked with `undefined` as the `this` argument and receives two resolved logical element values; tracked identity is preserved. Holes and `undefined` are ordered by the runtime and are not passed to it. Its direct or Promise result is resolved and passed through Cascada `ToNumber`; `NaN` means equality. A thrown exception, rejection, or language Error becomes the operation Error. Comparator selection and result Promises use `onInitialPromiseResolve`, whose rejection conversion is the required language behavior; they do not use `runOperationCallback`, whose rejection contract is fatal.
+
+The comparator overload uses a Promise-aware stable merge sort. Each comparison runs only when the preceding comparison needed by that algorithm has completed, and every wait uses the canonical Promise helpers. A fully direct comparator keeps the operation synchronous. A marked sort installs its receiver gate before the first comparator wait and writes the final permutation only after sorting completes; an unmarked sort or `toSorted` holds its read lease. The result matches JavaScript for a well-formed comparator; as with native JavaScript, no portable result is promised for an inconsistent comparator, and the engine-specific comparison call sequence is not reproduced.
+
+## Argument readiness
+
+An assignment-style Array payload is neither exported nor awaited. A tracked payload gains another owner and is marked shared. A Promise payload is installed immediately as a Promise-valued property, with one fresh property-version mirror per destination. It is data, not operation readiness, and does not create an argument wrapper or mutation gate.
+
+The search value for `includes`, `indexOf`, or `lastIndexOf` is also not exported, but a top-level Promise must resolve before comparison. A `concat` item resolves only when its top-level value is needed to decide whether to spread a logical Array; non-spread items and spread elements remain logical values. Comparator readiness follows Sort comparison. Scalar coercion, locale preparation, and an ordinary native observation's export add waits only for the values they inspect. The runtime scans the required readiness results synchronously and creates no Promise wrapper when they are all ready.
+
+## Array element Promises
+
+Logical Array algorithms use logical properties and never expose ArrayView backing. They resolve direct Promise-valued indexed properties only when the JavaScript operation needs their values:
+
+| Operations | Element handling |
+| --- | --- |
+| `at` | Resolve only the selected property version. |
+| `includes`, `indexOf`, `lastIndexOf` | Use the search-specific rules below. |
+| `concat` | Do not resolve receiver elements; resolve an item only to decide whether it is a logical Array to spread. |
+| `flat` | Resolve only a candidate whose value must be tested for recursive flattening. Retained values at the depth limit are not resolved. |
+| `sort`, `toSorted` | Resolve every present top-level element participating in ordering. Default comparison then prepares strings; a supplied comparator receives the logical values. |
+| `join`, intrinsic Array `toString` | Resolve each indexed value the text result inspects and any further Promise reached by its scalar conversion. |
+| `push`, `unshift`, `fill`, `splice`, `toSpliced`, `reverse`, `toReversed`, `copyWithin`, `slice`, `with` | Do not resolve elements merely to retain, insert, replace, move, or copy them. |
+| `pop`, `shift` | Contract the receiver without waiting; resolve a removed Promise only for the independent method result. |
+
+Moving a Promise-valued property never moves its mirror. The destination receives a fresh mirror at this operation's program position, while the old mirror detaches or remains with an unchanged source identity. Copying one Promise into several properties creates one mirror per destination. Structure-only operations do not inspect nested Promises. Sort and text conversion continue only into logical values that scalar coercion actually inspects.
+
+`at` returns the selected logical value and preserves tracked identity. A pending selected element produces only the result Promise needed to sample that captured property version.
+
+`sort` and `toSorted` retain the logical values and follow Sort comparison. `sort` leaves holes after explicit `undefined`; `toSorted` follows its standard read-through-holes result. Intrinsic Array `toString` first applies JavaScript's `join` lookup: the intrinsic `join` path uses the indexed text-conversion rule, a non-callable language-property shadow uses the Object-style fallback without inspecting elements, and an executable override is unsupported. Pending or erroneous non-index properties are otherwise irrelevant.
+
+### Identity-sensitive searches
+
+`includes`, `indexOf`, and `lastIndexOf` never export Array elements. `includes` uses SameValueZero and treats holes as `undefined`; `indexOf` and `lastIndexOf` use strict equality and skip holes. Length capture, `fromIndex`, direction, and early termination match JavaScript. Tracked values compare by current identity; a copy-on-write version differs from its source, and structural comparison is never used. Error elements are ordinary comparable values.
+
+`indexOf` and `lastIndexOf` traverse in search order. At a pending element they capture and resolve that property version, compare it, and continue only after a miss. Promise elements beyond the first match are never registered.
+
+`includes` first compares every available non-Promise value. If none matches, it registers all captured Promise candidates in logical order and compares them as they resolve. It settles on the first match and makes remaining registrations cleanup-only; it returns `false` only after every candidate misses. An available match or absence of Promise candidates returns synchronously.
+
+## Path and operation readiness
+
+`mutateArray` selects `walkMutationPath` or `walkObservationPath` when the call is issued. `walkObservationPath` resolves the complete receiver path, including a Promise-valued final receiver. `walkMutationPath` resolves only through the receiver's owning parent so the terminal can gate a Promise-valued final receiver before waiting.
+
+A path Promise is handled entirely by the selected walker. If post-target work is ready when its continuation reaches the target, the operation completes synchronously inside that continuation and the walker-produced Promise carries the result. Path delay alone creates no receiver gate or additional wrapper.
+
+After an observed target is reached, `run` starts receiver preparation and coordinates it with the argument-preparation results supplied by the surrounding runtime. A direct operation returns directly; pending preparation returns one runtime-helper Promise, which a delayed walker assimilates. A logical receiver retained across post-target waiting holds one read lease until its captured work and result preparation complete. The lease protects that logical identity from later in-place mutation but does not expose or lock ArrayView storage. Exported snapshots need no lease after capture.
+
+After a mutation terminal is reached, ready work mutates synchronously without a gate even when an earlier path segment delayed the walk. If the final receiver or required post-target preparation is pending, the terminal replaces the receiver with an assigned-Promise gate before waiting and returns a separate result Promise. An assignment-style payload Promise is not such a wait. A Promise removed by `pop` or `shift` may make the method result pending after the synchronous receiver transition; it does not require a receiver gate.
+
+For a Promise-valued final receiver, `run` obtains its mirror before replacement. Installing the receiver gate detaches that mirror, and one runtime-helper continuation samples `detachedValue` after earlier FIFO continuations update it. The raw receiver Promise's settlement is never consumed.
+
+Once required preparation completes, the mutation handler performs one synchronous transition, resolving an installed receiver gate before its independent result Promise. If the receiver property was superseded, its detached gate mirror no longer publishes there, but the result Promise still completes.
+
+All registration uses canonical Promise helpers. Raw `.then`, `async`/`await`, queueing, or a per-consumer proxy Promise must not split one source's FIFO batch.
+
+## Array mutation and representation
+
+While traversing to the receiver's owning parent, `walkMutationPath` calls `metadata.requiresCopyOnWrite(value)` on each path object. The first `true` starts path copy-on-write through the owning parent.
+
+At the receiver:
 
 ```js
-runMethod(chain, receiverPath, method, false, ...arguments)
+const preserveReceiver =
+    !mutateArray ||
+    attachmentPath !== undefined ||
+    metadata.requiresCopyOnWrite(receiver)
 ```
 
-`runMethod` passes its work as the entry callback:
+`attachmentPath` is the mutation walk's COW record; a defined value means the old world still retains the receiver. `requiresCopyOnWrite` is the predicate that decides whether the current logical version must be preserved, not a copying action itself.
 
-```js
-return enter(chain, receiverPath, false, entered => {
-    return runReadOnlyOperation(entered, method, capturedArguments)
-})
-```
+If preservation is unnecessary, a supported native representation is updated in place. If preservation is required and an endpoint operation can derive an `ArrayView`, the derived view changes while the current receiver remains unchanged. Otherwise the active logical Array is copied or materialized into an owned native Array and the logical operation is applied there. A marked copying implementation may write the final shape back to an eligible owned native receiver to preserve its identity; COW publishes the new representation.
 
-The schematic operation helper owns argument readiness, method invocation, result preparation, and asynchronous completion. Read-only `enter` invokes the callback synchronously for a ready receiver or after FIFO entry setup for a pending receiver, always providing a ready Chain without installing a gate. Every tracked receiver increments `META.readEnterCount`, including one already protected by sharing, import, or non-extensibility; primitives require no metadata. This protects the captured receiver from mutations issued after acquisition until callback completion: later mutations use normal COW, while earlier effects and Promise settlement remain part of the captured world. The callback may wait before issuing commands because its Promise retains the read entry. When the helper's result fulfills, read-only `enter` prevents new issuance and decrements the counter for the exact receiver captured at setup; if no mutation or ordinary sharing occurred, completing the last read entry does not permanently change later write behavior.
+`push`, `pop`, `shift`, and `unshift` use [`array-view.md`](array-view.md). Other structure-only mutators use their native Array methods on an eligible owned representation, with logical property transitions and method-specific bookkeeping around the call when that representation is already tracked. `reverse` obtains its ordering with `toReversed` on the working Array, then restores the source's reversed index presence so holes match JavaScript `reverse`. Default `sort()` obtains its permutation with `toSorted` over runtime records containing the prepared comparison strings; the comparator overload uses the Promise-aware stable sorter. Both apply the permutation to the logical values and leave holes after explicit `undefined`. `fill` and `copyWithin` use a shallow owned working copy and their native mutators. `splice` retains its standard native property order and partial-failure semantics. A marked owned receiver receives the completed shape back under the copying rule above.
 
-For native methods, read-only behavior is a trusted host/compiler assertion. The runtime does not use a proxy to detect a lie. A method that mutates its receiver, arguments, globals, or host state violates the contract.
+### Results
 
-The method must not retain the tracked receiver after completion. A tracked result passes through normal ownership/export rules and establishes permanent sharing before the read entry completes.
+| Methods | Marked result | Unmarked result |
+| --- | --- | --- |
+| `copyWithin`, `fill`, `reverse`, `sort` | Published receiver | Transformed Array |
+| `push`, `unshift` | New logical length | Transformed Array |
+| `pop`, `shift` | Removed value or `undefined` | Shortened Array |
+| `splice` | Array of removed property versions | Post-splice Array |
 
-If the method returns a Promise, the read entry remains active until that Promise settles and ownership of its result has been established. Detached observation after the returned Promise settles violates the completion contract.
+Receiver publication is never inferred from the method result. Every tracked result receives normal ownership preparation. A receiver-returning marked result aliases the published path and makes that identity shared; a wholly removed or newly created result may transfer when it has no other owner.
 
-This lifetime restriction is specific to the native method's raw receiver. Kernel operations issued through `entered` before callback completion remain valid afterward: they performed their available work synchronously and captured pending segments at their own mirror FIFO positions. `runMethod` therefore tracks the native work result, not every issued kernel observation.
+### Mutation bookkeeping
 
-## Mutating data operations
+An unpublished working Array may be completed and indexed once before publication or return. An existing ref-indexed logical Array instead updates storage or view bounds together with method-specific logical-edge bookkeeping; it has no generic affected-range snapshot reconciler. Each method captures only the property versions and placement state its native call can move or replace, applies the exact edge deltas, and finalizes every completed placement before returning a partial-failure Error. An entering edge is prepared and indexed before its contribution is added. A leaving edge removes its reverse-parent multiplicity and Promise/Error/cycle-cut totals. A replacement applies only the old-to-new edge delta.
 
-A language-defined mutating operation uses:
+| Operation | Bookkeeping |
+| --- | --- |
+| `delete array[index]`, `pop` | Remove the deleted or removed element's contribution when the property exists. |
+| `push` | Add each appended element's contribution. |
+| `shift` | Remove the first contribution; retained relocation changes no multiplicity or aggregate count. |
+| `unshift` | Add inserted contributions; retained relocation changes no multiplicity or aggregate count. |
+| `splice` | Remove deleted and add inserted contributions; retained relocation changes no multiplicity or aggregate count. |
+| `fill`, `copyWithin` | Apply an edge replacement at each changed destination. |
+| `reverse`, `sort` | Permutation changes no multiplicity or aggregate count after any required Promise resolutions. |
 
-```js
-runMethod(chain, receiverPath, operation, true, ...arguments)
-```
+Holes have no contribution. Placement-specific state, including cycle cuts and Promise mirrors, is cleared, retained, or recreated for the corresponding logical property even when aggregate counts do not change. ArrayView endpoint contraction removes the changing identity's logical edge even when another view retains the physical element. Storage and bookkeeping steps form one synchronous method-specific transition, so every completed step remains accounted for after a partial failure.
 
-The operation has one path-relative ABI:
+## `length`
 
-```js
-operation(chain, receiverPath, ...resolvedArguments)
-```
+Array `length` is a visible, non-enumerable, non-configurable virtual property of every logical Array. Assignment is an ordinary mutation and does not use `run` or require `!`; lowering still identifies the owning Array path because the change is derived from the old value. Setting length follows `ArraySetLength`. Each successfully truncated property detaches its mirror and removes its edge contribution and placement-specific state. Shared, imported, non-extensible, or read-protected Arrays copy before the change. ArrayView rules are in [`array-view.md`](array-view.md).
 
-It implements every read and write with ordinary kernel operations below `receiverPath`. This same implementation supports both execution modes.
+String `length` is a visible, non-enumerable, non-configurable, read-only virtual property. Its read resolves only the receiver path. Assignment or deletion returns a language Error without changing the receiver; deleting Array `length` does the same.
 
-### Synchronous direct path
+## Errors
 
-If all of the following are true:
+A broken observed path returns its path-access Error. A broken marked path installs that Error under the ordinary mutation rule and returns it. An unmarked missing final receiver, final Error, unsupported receiver, method, overload, argument, native input, or result returns a language Error without invocation. A valid marked mutator on a final non-Array value replaces that value with the validation Error and returns the same Error.
 
-- the receiver path is synchronously available;
-- every required argument is synchronously available; and
-- the operation descriptor is direct-safe,
+A synchronous invoked-method throw and a returned method-Promise rejection become language Error results. Another marked failure publishes the unchanged receiver or any partial mutation whose completed edge transitions are already accounted for, then returns the operation Error. An unmarked copying mutator discards its private working copy.
 
-`runMethod` invokes:
-
-```js
-operation(chain, receiverPath, ...resolvedArguments)
-```
-
-at the call's current program position. It installs no gate or private Chain and may return directly. This is the normal path for simple synchronous array mutations.
-
-Direct-safe means the operation cannot discover another Promise frontier while running. Operations whose required readiness depends on dynamic or nested data must use the entered path unless their descriptor identifies and captures all such inputs before mutation begins.
-
-### Entered path
-
-Otherwise `runMethod` enters the effect path before waiting or invoking the operation:
-
-```js
-return enter(chain, receiverPath, true, entered => {
-    return runMutatingOperation(entered, operation, capturedArguments)
-})
-```
-
-The schematic operation helper waits for captured arguments, invokes the operation, and prepares its result. It returns that direct value or Promise, so mutating `enter` keeps the private Chain active for exactly the operation's declared lifetime and then publishes automatically. The public receiver placement becomes the gate Promise. Mutating `enter` installs it through ordinary atomic property replacement, so mirror detachment, refcount deltas, reverse-parent edges, and later publication use the existing kernel bookkeeping. Only then does its callback begin this work against the private receiver root. Direct entry setup calls the callback synchronously. Delayed ancestor setup reuses the mutation walk's existing helper chain and invokes the callback within the path continuation after graph reconstruction. A Promise-valued receiver does not delay the callback: mutating `enter` detaches the source into the gate, immediately registers a private-root transfer on the source's canonical FIFO queue, then invokes the callback. Target-independent operation work overlaps receiver resolution while target-dependent kernel commands wait through that mirror. Later operations already queued on an ancestor run afterward and traverse the installed gate.
-
-Every mutation uses existing kernel operations such as:
-
-```js
-assignPath(entered, path, value)
-deletePath(entered, path)
-lookupPath(entered, path)
-```
-
-The callback may be synchronous or asynchronous, and its result defines the entered scope's lifetime. It may return a direct value or a Promise, including an existing Promise for a slow condition or other control flow that will later issue operations through `entered`. Once that Promise fulfills, no detached work may use the Chain. `enter` forwards the operation result after closing the scope but does not wait for receiver publication. Later operations on the public receiver path wait behind the gate; unrelated paths remain available.
-
-A direct later assignment or deletion at exactly `receiverPath` supersedes the gate immediately; it does not wait. Deeper operations traverse and wait on the gate. If superseded, the private operation still completes and releases its detached gate consumers, but cannot overwrite the newer live property version.
-
-`runMethod` must not invoke an operation on the public receiver and then switch to the entered path merely because the returned value is a Promise. By then the operation may have performed public mutations or retained the wrong receiver for its continuation. Every operation that can suspend uses the entered callback from the start.
-
-## Array data operations
-
-Read-only array operations use read-only `enter` or controlled observation. Examples include:
-
-```text
-length
-at
-includes
-indexOf
-slice
-join
-```
-
-Mutating array operations use the synchronous direct path when certified direct-safe and currently ready; otherwise they use mutating `enter`. Examples include:
-
-```text
-set
-append
-prepend
-pop
-shift
-insert
-remove
-splice
-reverse
-sort
-```
-
-The exact language API is separate from this runtime design.
-
-Mutating operations must be implemented through array property transitions on the supplied Chain and relative receiver path. They must not call a native mutating Array method directly on metadata-bearing data.
-
-This preserves:
-
-- sparse holes;
-- ordinary-array normalization;
-- Promise mirrors for elements;
-- assignment of the same Promise as a fresh version;
-- Error and refcount behavior;
-- aliases and imported ownership; and
-- safe `length` handling under the language's array-operation contract.
-
-An entered array operation that needs several element changes may perform them synchronously on the private Chain while the public array remains gated. The changes become publicly reachable together when its callback completes. A direct-safe operation performs its complete transition synchronously on the public Chain.
-
-Whether the language exposes these operations as methods, functions, or syntax does not affect the kernel design.
-
-## Argument evaluation order
-
-Source-language argument expressions are captured before the call begins, as in normal call evaluation.
-
-After their positions are captured, a call may take the direct path only when the receiver, arguments, and complete direct-safe transition are synchronously available. Otherwise it enters its receiver before waiting. This is essential:
-
-```text
-capture argument positions
-mutating enter of effect path installs gate
-wait for arguments
-execute against private Chain
-complete callback and publish
-```
-
-If `run` waited for arguments before entering, a later mutation of the receiver could overtake it.
-
-An argument that reads from the same receiver must be captured before the gate is installed. Work after entry that needs receiver data must use `entered`. Waiting through the public gate from inside the operation would deadlock.
-
-Arguments depending on unrelated Promises may resolve normally while the receiver path remains gated.
-
-## Synchronous and asynchronous operations
-
-A direct-safe operation completes synchronously against the public Chain.
-
-An entered operation may complete directly or return a Promise representing its complete work:
-
-```js
-const work = operation(entered, [], ...arguments)
-```
-
-If `work` is direct, mutating `enter` starts publication immediately after the synchronous transition.
-
-If `work` is pending because its control flow may issue more operations, the private Chain remains active until it settles. Compiler operations must register continuations through runtime Promise helpers rather than raw `.then`.
-
-The operation must not issue detached work that mutates the private Chain after its returned completion has settled.
-
-An already-issued kernel mutation may itself remain suspended on a Promise when the operation finishes. Mutating `enter` may publish that graph immediately: the mutation's continuations were registered synchronously before callback completion, travel with their mirrors, and run before later public consumers at the same frontiers. `run` therefore waits for future operation issuance, not for every issued kernel transition to reach settled data.
-
-This permits asynchronous Cascada operations without making the entire class instance one Promise. Only the declared receiver placement is gated, and the private Chain remains available to the operation.
-
-## Results
-
-`run` has two outputs:
-
-- receiver publication, for a mutating method; and
-- the operation result.
-
-They are related but distinct.
-
-A direct-safe mutation returns its operation result directly when receiver and arguments are ready. An entered mutation does the same when entry setup and the callback are synchronous; delayed setup or an asynchronous callback returns a Promise that forwards the callback's fulfillment value after closing the entered scope. Receiver publication is independent and remains ordered by the gate, so `runMethod` needs neither a separate result channel nor a gate continuation for result delivery.
-
-For a synchronous direct operation:
-
-1. The operation performs its complete kernel transition on the public Chain.
-2. Its result returns directly.
-
-For a synchronous operation on the entered path:
-
-1. The operation computes a result and issues its complete private work; target-dependent commands may remain suspended on the private-root transfer mirror.
-2. Callback completion closes the private Chain and either resolves the receiver gate with a direct stored `state.value` or registers `onLaterPromiseReady` on the stored Promise so its callback can use the subsequently updated `state.value`.
-3. `runMethod` returns the operation result directly.
-4. Gate publication and existing gate consumers proceed in their FIFO order.
-
-For an asynchronous operation:
-
-1. The receiver remains gated while work is pending.
-2. The operation's work Promise fulfills with its result.
-3. `run` establishes ownership for that result, then mutating `enter` prevents new operations through the entered Chain and starts or arranges publication through the gate.
-4. The `runMethod` wrapper fulfills with the operation result without waiting for publication.
-5. Gate publication and existing gate consumers proceed independently in their FIFO order.
-
-Thus, observing an entered `runMethod` result guarantees that the callback completed and its Chain is closed, not that the receiver gate has published or that its consumers have run. Any later kernel operation on the receiver remains correct because it traverses the installed gate. Code that needs the updated graph must observe it through the normal path operations rather than treat the operation result as a publication token. A later direct replacement may already have detached the gate and remains the live property version.
-
-Tracked results pass through normal ownership rules. A result that aliases the private receiver or one of its children establishes shared ownership before it is forwarded, protecting the eventual public graph.
-
-Standalone and read-only results do not wait for unrelated graph Promises.
-
-## Error behavior
-
-A returned Error is a normal result.
-
-If an entered mutating operation reports an expected Error, it decides whether to:
-
-- preserve the current private value and return the Error separately; or
-- assign the Error to the private root before returning.
-
-Mutating `enter` publishes automatically in either case. Mutating `run` is not transactional: mutations already performed on the private Chain are not automatically rolled back when the operation later returns an Error.
-
-A direct-safe operation simply returns its Error result after its synchronous transition; it has no entered-path publication decision.
-
-Compiler-generated operations should make their failure behavior explicit.
-
-User data and usage failures become Error values where a result placement exists. Compiler lowering converts expected data-Promise rejection before the callback's completion boundary; the callback Promise is a control-flow signal whose rejection is fatal. Before reporting a callback throw or rejection, `enter` closes the entered Chain and releases an acquired read entry. A mutating gate remains unresolved so potentially corrupted private state is not published. Fatal reporting remains reserved for unexpected host failures, runtime bugs, and invariant failures.
-
-## Cancellation
-
-Cancellation cannot abandon a callback Promise because its gate would remain pending.
-
-A cancellation policy must settle the callback after choosing one of:
-
-- publish the private value reached so far;
-- assign a cancellation Error to the private root; or
-- continue the operation privately to normal completion.
-
-The initial implementation should assign an explicit Error and complete the callback. Silent abandonment is forbidden.
-
-## Repeated calls and loops
-
-Mutating `runMethod` inherits mutating `enter` loop behavior. Awaiting it sequences callback work, not receiver publication:
-
-```js
-for await (const item of source) {
-    await runMethod(
-        chain,
-        ["items"],
-        appendOperation,
-        true,
-        item,
-    )
-}
-```
-
-Each iteration creates a fresh gate and mirror. Entries issued while earlier gates remain unpublished are still FIFO-correct, but retain memory proportional to that publication backlog. Because a Promise-target callback and its result may finish before receiver readiness, even an awaited loop can pipeline gates when its operations only issue target-dependent commands. Bounding that backlog would require an explicit publication signal; awaiting the operation result alone does not provide backpressure.
-
-## CascadaScript methods
-
-A future CascadaScript method can use the same mutating orchestration:
-
-```text
-mutating enter of receiver path
-invoke compiled method with private receiver Chain
-compiled reads/writes use kernel operations
-keep entered Chain active across method continuations
-return compiled method result or work Promise
-close the scope and start or arrange publication when work completes
-```
-
-This solves the dependency/effect ordering problem because the public receiver is gated before the method waits on arguments or internal Promises.
-
-The compiled method never re-traverses the public receiver placement, so it does not wait on its own gate.
-
-CascadaScript class state remains subject to compiler guarantees:
-
-- properties are Cascada variables;
-- reads and writes use kernel operations;
-- reuse uses ownership boundaries;
-- no unmarked raw copies are emitted; and
-- the supported class subset follows its declared alias/cycle rules.
-
-Class language integration remains separate from implementing `enter` and built-in string/array data operations.
-
-## Native JavaScript classes
-
-Read-only native methods may use the trusted read-only path.
-
-Mutating native methods are not supported initially. Although mutating `enter` provides ordering and can transfer exclusive ownership, direct native writes still bypass:
-
-- Promise-mirror creation and detachment;
-- import preparation;
-- language descriptor rules;
-- refcount and parent-edge updates;
-- cycle-cut maintenance; and
-- controlled admission of newly assigned host values.
-
-Imported instances also remain aliased with host code.
-
-Supporting mutating native methods would require a separate adapter, export/reimport boundary, proxy, or compiler lowering. Mutating `enter` is useful groundwork but is not sufficient by itself.
-
-## Interaction with Promise properties
-
-Language-defined and CascadaScript operations access Promise properties through the private Chain's normal path operations. They retain implicit asynchronous semantics and exact FIFO positions.
-
-Pure native functions and read-only native methods receive only the values defined by their invocation contract. They must not assume that a physical Promise property is already its future value.
-
-No Promise-free receiver precondition is needed for kernel-defined mutating operations because they do not execute opaque JavaScript property reads.
+A kernel invariant, bookkeeping failure, or trusted-call contract violation is fatal. An installed receiver or result gate remains unresolved after fatal abort.
 
 ## Implementation boundary
 
-The implementation should live primarily in:
+`src/run.js` owns dispatch, slot classification, preparation coordination, logical Array wrappers, operation gates, mutation results, result admission, and ordinary invocation. `src/array-sort.js` owns default comparison preparation and the Promise-aware comparator sorter. `src/language-coercion.js` owns Promise-aware data-only scalar coercion and locale-input preparation. The surrounding runtime owns argument capture and the export operation used for ordinary trusted native observations. `src/array-view.js` owns ArrayView representation and endpoint transitions. `src/refcounts.js` supplies narrow logical-edge addition, removal, and replacement operations. `src/meta.js` owns reusable read-lease accounting; `src/promise-mirrors.js` owns captured-version sampling and mirror recreation; existing property transitions install and settle receiver gates.
 
-```text
-src/run.js
-test/run.test.js
-```
+Logical-Array and virtual-`length` access is routed through `src/language-properties.js` for traversal, mutation, import, export, refcounting, Error search, mirrors, and iteration. The observation walker reports final-property presence to `run`, while existing consumers may ignore that additional result. Traversal recognizes virtual String `length` without treating a primitive String as a tracked object; its read-only write and deletion outcome is handled without replacing the String receiver. These adapters may be adopted incrementally while they are identity operations for ordinary Arrays, but attachment must remain disabled until every consumer uses them. `src/index.js` exports `run`; ArrayView and operation-gate helpers remain internal. Callback invocation other than sort comparison, Map/Set support, and proxy-backed mutating class methods are outside this step.
 
-`run.js` depends on the encapsulated `enter` export from `enter.js` and on generic Promise/result helpers. It never calls either mode's internal path or completion routine directly. Existing kernel modules do not call `run`.
+## Verification
 
-The only shared instance classification needed later should be added only when CascadaScript class dispatch becomes a real second consumer. No `instance.js` module is needed for pure functions or string/array operations.
+Run all coverage in inline-Symbol and WeakMap metadata modes. Cover:
 
-String and array operation implementations may live in separate language modules. They receive controlled values or private Chains and do not add special cases to `run.js`.
-
-## Implementation phases
-
-1. Implement and verify callback-based `enter`, encapsulated mode selection, automatic completion, and counted read entries.
-2. Add pure standalone function invocation and result handling.
-3. Add trusted read-only operation/method invocation.
-4. Add direct-safe synchronous mutation dispatch.
-5. Add entered mutation orchestration with a private Chain.
-6. Implement initial string data functions.
-7. Implement read-only and mutating array data functions.
-8. Add cancellation/error policy and loop stress coverage.
-9. Only later, define a CascadaScript compiled-method ABI.
-
-Mutating native JavaScript methods and the archived proxy/draft design are not part of these phases.
-
-## Test matrix
-
-Every test runs under inline-Symbol and WeakMap metadata modes.
-
-Functions:
-
-- synchronous and Promise arguments;
-- synchronous and Promise results;
-- rejection and thrown-value conversion;
-- primitive, array, object, and Error results;
-- tracked result ownership;
-- no effect-path gate; and
-- side-effect-free contract documented.
-
-Read-only calls:
-
-- direct and pending receiver entry setup;
-- synchronous callback for a ready receiver and delayed callback for a pending receiver;
-- counted read-entry behavior for every tracked receiver;
-- shared, imported, and non-extensible receivers receiving the same temporary count;
-- later live mutation using COW;
-- read-entry completion without permanent sharing;
-- mutation during a read entry preserving the captured and live worlds;
-- suspended kernel observations retaining FIFO correctness after read-entry completion;
-- native raw-receiver work keeping the read entry active until declared completion;
-- escaping result permanently shared before release;
-- direct and Promise results;
-- no gate allocation;
-- result ownership; and
-- trusted purity limitation.
-
-Mutating calls:
-
-- direct-safe ready operation allocating neither a gate, private Chain, nor Promise;
-- direct-safe operation returning synchronously;
-- pending receiver or argument selecting the entered path;
-- synchronous entry callback after direct graph reconstruction;
-- delayed entry callback within the existing path continuation after reconstruction and gate installation;
-- Promise-valued receiver receiving an immediate callback with one private-root transfer mirror;
-- target-independent work overlapping receiver resolution while target-dependent commands retain source FIFO order;
-- callback Chain containing no pending entry-setup state or command queue;
-- non-direct-safe operation entering even when currently ready;
-- no post-invocation switch from direct to entered execution;
-- identical relative operation behavior at a public path and private root;
-- gate installed before waiting for arguments;
-- direct and Promise operation completion;
-- later receiver traversals and deeper operations waiting;
-- unrelated operations continuing;
-- receiver publication before later gate consumers;
-- direct receiver replacement superseding an active gate;
-- private Chain used across continuations;
-- operation-result delivery independent from receiver publication;
-- returned Error with automatic publication;
-- Error-root publication;
-- cancellation;
-- no detached private mutation after completion; and
-- repeated calls remaining FIFO-correct with backlog proportional to unpublished gates.
-
-Data operations:
-
-- string type and boundary cases;
-- sparse and ordinary arrays;
-- element assignment/deletion;
-- same-Promise element reassignment;
-- Promise/Error elements;
-- aliases, imported arrays, and COW;
-- array length and key order;
-- refcounts and verification; and
-- exact Error behavior for invalid arguments.
-
-CascadaScript groundwork:
-
-- private receiver operations never traversing the public gate;
-- mutation before and after Promise barriers;
-- later caller mutations queued behind the method;
-- no whole-instance global Promise requirement; and
-- automatic publication on every compiler-generated completion path.
-
-## Decision summary
-
-`run` is orchestration around a declared effect path:
-
-- pure functions have no effect path;
-- read-only calls protect a captured receiver without a gate; and
-- ready direct-safe mutations run synchronously on the public Chain;
-- other mutating language operations gate the receiver, work through a private Chain, and publish when their callback completes.
-
-This solves ordering before asynchronous work begins and reuses the existing Promise-mirror machinery. It deliberately avoids mutation inference, recursive draft proxies, post-call graph reconciliation, and arbitrary native method execution.
+- validation before walking, intrinsic shadowing, ordinary overrides, supported String and Array methods, rejected constructors, unsupported callbacks, protocol objects, RegExp values, iterator results, callable results, and native internal-slot results;
+- direct and delayed paths, zero or multiple readiness Promises, assignment-style Promise payloads without waiting, operation leases, gates before required waits, receiver-before-result settlement, supersession, and gate-free ready transitions;
+- absence of export for every standard Array and String operation; exact logical locale-input preparation and export of ordinary native invocation snapshots; direct Cascada payloads to structural intrinsics; export Errors; result admission; and no raw ArrayView backing exposure;
+- Cascada scalar coercion of primitives, logical Arrays, supported records and instances, own shadows, null prototypes, unsupported executable hooks, direct and nested Promise frontiers, and Errors;
+- omitted, direct, invalid, Promise-valued, throwing, rejecting, synchronous, and Promise-returning sort comparators; logical argument identity, result coercion, stable ties, `undefined`, holes, and inconsistent comparator behavior;
+- `at`, identity searches, `concat`, `flat`, structure-only copying, full sort preparation, holes, explicit `undefined`, Errors, pending properties, aliases, cycles, and copy-on-write identities;
+- every marked and unmarked mutator across owned, shared, imported, non-extensible, read-protected, ancestor-copied, native, attached, and standalone-view receivers;
+- exact method results, no-op identity, sparse shapes, non-index properties, argument omission, assignment-style tracked payloads, Promise mirror recreation, and partial failures;
+- method-specific edge additions, removals, replacements, retained relocation without recounting, placement-state movement, and bounds-only ArrayView contraction; and
+- Array and String length reads, growth, truncation, invalid values, partial truncation failure, mirror detachment, attached views, and logical iteration.

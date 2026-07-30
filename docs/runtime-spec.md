@@ -20,13 +20,21 @@ The sandbox recognizes four value categories:
 A language data object must not rely on a callable `then` property because the
 kernel and JavaScript Promise resolution both treat it as a Promise.
 
+An ordinary callable function that is not classified as a Promise is not a
+language value. Compiler and host integrations must keep callables and
+executable descriptors outside the graph. Prototype methods on certified class
+instances are likewise outside the language-property surface. The kernel does
+not promise proactive callable validation at every assignment boundary.
+
 Language-visible properties are own enumerable string keys. Inherited and own
 non-enumerable properties are not readable as language data. Arrays are tracked
 objects with the same property rules.
 
 Certified property-state class COW and exact prototype preservation are
-implemented kernel groundwork for class support. Construction and method
-execution are separate concerns.
+implemented support for class instances as data. Construction and mutating
+class-method execution remain outside the current runtime plan. Restricted
+read-only methods and standard Array/String operations are planned separately
+in [`run.md`](run.md).
 
 ## Chain roots
 
@@ -38,8 +46,10 @@ or validated by the kernel.
 An empty path targets `_state.value`. This stable parent/key location lets a
 root Promise use the same Promise-mirror machinery as any nested property.
 
-Mutating operations change the `Chain` and return `undefined`. Values are
-observed only through `lookupPath`, `export`, `hasError`, and `getErrors`.
+Assignment and deletion change the `Chain` and return `undefined`. Values are
+currently observed through `lookupPath`, `export`, `hasError`, and `getErrors`.
+Planned [`run`](run.md) adds standard-method results and marked Array mutator
+results without changing those existing operation shapes.
 
 ## Program order
 
@@ -383,3 +393,20 @@ The compiler and host layer must:
 
 The kernel relies on these rules instead of validating trusted data for aliases
 or cycles.
+
+Planned `run` keeps two narrow executable-boundary exceptions. First, a
+runtime-controlled structural Array intrinsic may receive Cascada values when
+retaining or relocating those exact identities is the defined language
+operation. Its wrapper owns slot classification, entering ownership, Promise
+mirrors, and bookkeeping. Standard scalar coercion is performed against
+logical Cascada values before native invocation; locale methods likewise
+construct only the small native input their intrinsic inspects. Ordinary
+native observations retain the export boundary. This does not permit tracked
+identities to reach ordinary observational or external native code.
+
+A `sort` or `toSorted` comparator is the second executable-control
+exception. A direct or Promise-resolved callable remains outside the graph and
+receives resolved logical elements under a trusted read-only, side-effect-free,
+non-retaining contract. Its direct or Promise result is consumed through the
+runtime helpers and Cascada numeric coercion; this does not authorize other
+callbacks or native access to tracked identities.

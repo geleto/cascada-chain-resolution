@@ -33,10 +33,12 @@ if (helpers.isError(value) || helpers.isPromise(value)) {
 ## Property-state class copy-on-write
 
 The kernel supports copying an explicitly certified JavaScript class instance
-without losing its prototype. This is completed groundwork for class support;
-executing methods is a separate concern addressed by the planned `run`
-operation. The certification Symbol remains internal rather than part of the
-package API.
+without losing its prototype. This is completed support for class instances as
+data; the implemented runtime graph remains data-only. A restricted
+side-effect-free method operation is planned in [`run.md`](docs/run.md), while
+general proxy-backed mutating class methods remain deferred in
+[`future/run.md`](docs/future/run.md). The certification Symbol remains
+internal rather than part of the package API.
 
 The COW support is limited to simple data classes.
 
@@ -92,7 +94,7 @@ and is not part of the package-level public API. The complete implemented
 contract is documented in
 [`property-state-classes.md`](docs/property-state-classes.md).
 
-## Implemented `enter` and planned `run`
+## Implemented `enter` and planned standard invocation
 
 The mutating `enter` primitive declares an asynchronous effect path before
 waiting:
@@ -155,8 +157,8 @@ makes it an independently attributed imported root.
 Overlapping readers increment independently. Live mutation then uses
 copy-on-write without permanently marking an otherwise singly-owned value
 shared. Earlier effects and Promise settlement remain part of the captured
-world, while commands use their normal mirror semantics. Native work on the
-raw captured value must finish before that read entry completes;
+world, while commands use their normal mirror semantics. Observational native
+work uses an exported snapshot rather than the raw captured value;
 already-issued kernel continuations remain ordered by
 their captured mirror positions. Every Chain that can issue operations has an
 exact `mutates` capability: ordinary Chains use `true`, while an entered Chain
@@ -165,28 +167,31 @@ from the entered Chain to prevent new operations. Internal
 mutating/read-only paths and completion routines are neither exported nor called
 directly by other operations.
 
-The planned `run` operation builds on this:
+The next planned invocation step is [`run`](docs/run.md), restricted to
+standard String and Array operations and trusted read-only methods. Path
+Promises remain owned by the existing walkers; Array mutation installs an
+assigned-Promise gate only when receiver or required argument preparation must
+continue after the target is reached. Assignment-style element payloads remain
+logical values and do not create a wait. Standard methods use logical
+algorithms and Promise-sensitive scalar coercion rather than exporting Arrays
+or inspected elements. Ready work stays synchronous.
+[`ArrayView`](docs/array-view.md) is its internal endpoint representation.
+Functions and executable descriptors remain outside the language graph,
+callbacks other than a trusted Promise-aware sort comparator are deferred, and
+only the known Array mutators may have side effects.
 
-- pure string and other standalone functions have no effect path;
-- read-only operations protect their captured root until callback completion;
-- ready, statically synchronous mutations run directly without a gate;
-- operations that may suspend use mutating `enter` on their receiver, mutate only through the
-  private Chain, and return their operation result or its lifetime Promise from the callback; and
-- future CascadaScript methods can use the same private-receiver model across
-  Promise continuations.
+General class methods that mutate through ordinary JavaScript `this` remain
+separate future work. Their archived design combines `enter` with an
+operation-local recursive proxy:
 
-Arbitrary mutating native JavaScript methods remain unsupported because their
-raw writes bypass mirrors, import preparation, refcounts, and cycle
-bookkeeping.
-
-The finished designs are:
-
-- [`enter.md`](docs/enter.md)
-- [`run.md`](docs/run.md)
-
-The discarded recursive-proxy approach remains available only as historical
-analysis in
-[`run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md).
+- [`enter.md`](docs/enter.md) defines the implemented primitive.
+- [`run.md`](docs/run.md) defines the planned restricted standard operation.
+- [`array-view.md`](docs/array-view.md) defines its planned internal endpoint
+  representation.
+- [`future/run.md`](docs/future/run.md) records the deferred mutating-class
+  proxy design.
+- [`future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
+  retains the historical predecessor analysis.
 
 ## Documentation
 
@@ -202,23 +207,30 @@ analysis in
   copy-or-collect traversal and complete Error result.
 - [`docs/property-state-classes.md`](docs/property-state-classes.md) defines
   certified class prototype preservation during copy-on-write.
+- [`docs/enter.md`](docs/enter.md) defines implemented asynchronous path
+  ownership and gate publication.
+- [`docs/run.md`](docs/run.md) defines the planned restricted standard method
+  operation.
+- [`docs/array-view.md`](docs/array-view.md) defines its planned internal
+  endpoint representation.
 - [`docs/plan.md`](docs/plan.md) tracks implemented, deferred, and pending
   work.
 
-The first six documents describe implemented runtime behavior.
-`docs/plan.md` tracks completed, deferred, and pending work.
+The first seven documents describe implemented runtime behavior. `run.md` and
+`array-view.md` describe planned work. `docs/plan.md` tracks completed,
+deferred, and pending work.
 
-### Pending designs
+### Deferred designs
 
-- [`docs/enter.md`](docs/enter.md) specifies asynchronous path
-  ownership transfer and gate publication.
-- [`docs/run.md`](docs/run.md) specifies pure functions and entered
-  read-only/mutating data operations.
+- [`docs/future/run.md`](docs/future/run.md) records proxy-backed mutating
+  class methods beyond the restricted planned `run`.
 - [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
-  deferred array-subclass, Map, Set, other built-in, and virtual-property ideas
-  that are not requirements of step 20.
+  deferred array-subclass, Map, Set, other built-in, and general
+  virtual-container ideas that are not requirements of step 20 or planned
+  `ArrayView`.
 - [`docs/future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
-  archives the discarded native proxy/draft approach.
+  preserves the earlier proxy/draft analysis that predates callback-based
+  `enter`.
 
 ## Source layout
 
@@ -242,6 +254,10 @@ The first six documents describe implemented runtime behavior.
   writes for language-visible properties.
 - The remaining small source modules own metadata, fatal errors, and helpers.
   Refcount verification is test-only in `test/verify-refcounts.js`.
+
+Planned step 23 adds public `src/run.js` and internal `src/array-view.js`, and
+extends the logical-property adapters and metadata described in their design
+documents.
 
 ## Runtime model
 
