@@ -152,7 +152,7 @@ parent maps, or placement-specific cycle cuts.
 
 One internal `PromiseMirror` represents one Promise-backed property version.
 While it is live, the physical property is authoritative. The first resolver
-uses `onInitialPromiseResolve` to consume fulfillment or convert rejection to Error,
+uses `resolveInitialValueOrPoison` to consume fulfillment or convert rejection to a Poison,
 prepares the result, and publishes it through the ordinary live-edge
 transaction. Later resolvers use `onLaterPromiseReady`, ignore the raw Promise
 result, and read the latest state left by earlier FIFO resolvers. All resolvers

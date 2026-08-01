@@ -11,9 +11,9 @@ import {
     expect,
     reportFatalError,
     setFatalErrorReporter,
-    onAllPromisesReady,
-    onInitialPromiseResolve,
+    resolveInitialValueOrPoison,
     onLaterPromiseReady,
+    whenAllReadyOrFatal,
     runFatal,
     buildRefIndex,
     getRefCounts,
@@ -37,9 +37,15 @@ describe("promise helpers", () => {
         const pending = deferred()
         const order = []
 
-        onInitialPromiseResolve(pending.promise, () => order.push("value 1"))
-        onAllPromisesReady(pending.promise, () => order.push("internal"))
-        onInitialPromiseResolve(pending.promise, () => order.push("value 2"))
+        resolveInitialValueOrPoison(
+            pending.promise,
+            () => order.push("value 1"),
+        )
+        whenAllReadyOrFatal(pending.promise, () => order.push("internal"))
+        resolveInitialValueOrPoison(
+            pending.promise,
+            () => order.push("value 2"),
+        )
 
         pending.resolve("done")
         await flushMicrotasks()
@@ -91,7 +97,7 @@ describe("promise helpers", () => {
     })
 
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await onInitialPromiseResolve(
+        const value = await resolveInitialValueOrPoison(
             Promise.reject("data boom"),
             value => value,
         )
@@ -115,7 +121,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onInitialPromiseResolve(Promise.resolve("ok"), () => {
+            await resolveInitialValueOrPoison(Promise.resolve("ok"), () => {
                 throw fatal
             })
         } catch (error) {
@@ -137,8 +143,8 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await onAllPromisesReady(
-                onInitialPromiseResolve(
+            await whenAllReadyOrFatal(
+                resolveInitialValueOrPoison(
                     Promise.resolve("ok"),
                     () => reportFatalError(fatal),
                 ),
@@ -163,7 +169,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onAllPromisesReady(
+            await whenAllReadyOrFatal(
                 Promise.reject(fatal),
                 () => "ignored",
             )
@@ -191,7 +197,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await onInitialPromiseResolve(
+            await resolveInitialValueOrPoison(
                 Promise.reject(reason),
                 value => value,
             )
@@ -237,7 +243,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            onAllPromisesReady(cleanWait.promise, () => false),
+            whenAllReadyOrFatal(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)

@@ -1,7 +1,7 @@
 import * as imports from "./import.js"
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as refcounts from "./refcounts.js"
@@ -32,7 +32,7 @@ function setMirrorValue(
     newValue,
     prepareImportedValue,
 ) {
-    if (helpers.isPromise(newValue)) {
+    if (languageValues.isPromise(newValue)) {
         errorUtils.reportFatalError(
             new Error("A Promise requires a fresh property version"),
         )
@@ -69,12 +69,21 @@ function setMirrorValue(
 function deleteProperty(parent, key) {
     refcounts.commitLiveEdge(parent, key, () => {
         promiseMirrors.detachPromiseMirror(parent, key)
-        delete parent[key]
+        languageProperties.deleteLanguageProperty(parent, key)
         imports.clearCycleCut(parent, key)
     })
 }
 
+function contractArrayEnd(owner, key, contract) {
+    refcounts.commitLiveEdge(owner, key, () => {
+        promiseMirrors.detachPromiseMirror(owner, key)
+        imports.clearCycleCut(owner, key)
+        contract()
+    })
+}
+
 export {
+    contractArrayEnd,
     deleteProperty,
     replaceProperty,
     setMirrorValue,

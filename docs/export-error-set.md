@@ -50,7 +50,8 @@ Export never requires a ref index.
 Before an Error is found, the raw walk creates one plain-data output graph:
 
 - arrays retain length and sparse slots;
-- non-array containers become plain objects;
+- tracked non-array containers become plain objects;
+- opaque values retain their identity;
 - aliases retain one output identity;
 - cycles point back into the output graph;
 - only own enumerable string keys are copied;
@@ -144,7 +145,7 @@ successful copy.
 The raw walk returns no readiness when its complete frontier is synchronous.
 Otherwise it returns one hierarchical `Promise.all` tree.
 
-Export consumes that tree with `onAllPromisesReady`:
+Export consumes that tree with `whenAllReadyOrFatal`:
 
 - rejected data Promises were converted to ordinary Error values by their
   first property resolver; and

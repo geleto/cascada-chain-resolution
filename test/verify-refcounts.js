@@ -1,12 +1,11 @@
 // Test-only consistency oracle. It independently recounts projected
 // placements, verifies cycle-cut shape and both parent-edge directions, and
 // rejects cycles in the projected parent graph.
-import * as helpers from "../src/helpers.js"
 import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as promiseMirrors from "../src/promise-mirrors.js"
-
-const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
+import * as languageProperties from "../src/language-properties.js"
+import * as languageValues from "../src/language-values.js"
 
 function verifyRefCounts(...roots) {
     const seen = new Set()
@@ -17,7 +16,7 @@ function verifyRefCounts(...roots) {
 }
 
 function verifyReachable(node, seen) {
-    if (!helpers.isTracked(node) || seen.has(node)) return
+    if (!languageValues.isTracked(node) || seen.has(node)) return
     seen.add(node)
     verifyCycleCuts(node)
 
@@ -28,9 +27,9 @@ function verifyReachable(node, seen) {
         let cycleCutCount = 0
         const childEdges = new Map()
 
-        for (const key of Object.keys(node)) {
+        for (const key of languageProperties.enumerableLanguageKeys(node)) {
             const { child, counts } = recountProperty(node, key)
-            if (helpers.isTracked(child) && !getRefCounter(child)) {
+            if (languageValues.isTracked(child) && !getRefCounter(child)) {
                 fatal("Ref-indexed parent contains non-ref-indexed child")
             }
 
@@ -57,9 +56,13 @@ function verifyReachable(node, seen) {
 
     // Cuts omit parent edges and count propagation, but every tracked target in
     // a ref-indexed raw graph still owns an independent counter.
-    for (const key of Object.keys(node)) {
+    for (const key of languageProperties.enumerableLanguageKeys(node)) {
         const child = readPropertyForRecount(node, key)
-        if (counter && helpers.isTracked(child) && !getRefCounter(child)) {
+        if (
+            counter &&
+            languageValues.isTracked(child) &&
+            !getRefCounter(child)
+        ) {
             fatal("Ref-indexed parent contains non-ref-indexed child")
         }
         verifyReachable(child, seen)
@@ -81,13 +84,17 @@ function verifyCycleCuts(node) {
             if (typeof key !== "string") {
                 fatal("Cycle cut keys must be strings")
             }
-            if (!propertyIsEnumerable.call(node, key)) {
+            if (!languageProperties.hasLanguageProperty(node, key)) {
                 fatal("Cycle cut names a missing or non-enumerable property")
             }
-            if (helpers.isPromise(node[key])) {
+            if (languageValues.isPromise(
+                languageProperties.readLanguageProperty(node, key),
+            )) {
                 fatal("Pending Promise property also has a cycle cut")
             }
-            if (!helpers.isTracked(node[key])) {
+            if (!languageValues.isTracked(
+                languageProperties.readLanguageProperty(node, key),
+            )) {
                 fatal("Cycle cut must contain a tracked value")
             }
         }
@@ -95,7 +102,10 @@ function verifyCycleCuts(node) {
 
     for (const key of Object.keys(meta?.mirrors ?? {})) {
         const mirror = promiseMirrors.getPromiseMirror(node, key)
-        const descriptor = Object.getOwnPropertyDescriptor(node, key)
+        const descriptor = languageProperties.getLanguagePropertyDescriptor(
+            node,
+            key,
+        )
         if (!mirror || !descriptor?.enumerable || !("value" in descriptor) ||
             !descriptor.writable) {
             fatal("Live Promise mirror requires a writable language property")
@@ -106,7 +116,7 @@ function verifyCycleCuts(node) {
 function verifyStoredParentEdges(node) {
     const counter = getRefCounter(node)
     for (const [parent, count] of counter.parents) {
-        if (!helpers.isTracked(parent)) {
+        if (!languageValues.isTracked(parent)) {
             fatal("Parent edge points to untracked parent")
         }
         if (!getRefCounter(parent)) {
@@ -114,7 +124,7 @@ function verifyStoredParentEdges(node) {
         }
 
         let actualCount = 0
-        for (const key of Object.keys(parent)) {
+        for (const key of languageProperties.enumerableLanguageKeys(parent)) {
             if (recountProperty(parent, key).child === node) actualCount++
         }
         if (actualCount !== count) {
@@ -140,7 +150,7 @@ function verifyParentGraph(node, states) {
 function recountProperty(node, key) {
     const mirror = promiseMirrors.getPromiseMirror(node, key)
     const child = readPropertyForRecount(node, key)
-    if (helpers.isPromise(child)) {
+    if (languageValues.isPromise(child)) {
         if (!mirror) {
             fatal("Indexed promise property has no mirror")
         }
@@ -153,8 +163,10 @@ function recountProperty(node, key) {
         return { child: undefined, counts: [0, 0, 1] }
     }
 
-    if (helpers.isError(child)) return { child, counts: [0, 1, 0] }
-    if (!helpers.isTracked(child)) return { child, counts: [0, 0, 0] }
+    if (languageValues.isError(child)) return { child, counts: [0, 1, 0] }
+    if (!languageValues.isTracked(child)) {
+        return { child, counts: [0, 0, 0] }
+    }
 
     const counter = getRefCounter(child)
     if (!counter) return { child, counts: [0, 0, 0] }
@@ -169,7 +181,7 @@ function recountProperty(node, key) {
 }
 
 function readPropertyForRecount(node, key) {
-    return propertyIsEnumerable.call(node, key) ? node[key] : undefined
+    return languageProperties.readLanguageProperty(node, key)
 }
 
 function getRefCounter(node) {

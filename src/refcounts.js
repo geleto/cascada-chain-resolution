@@ -1,9 +1,9 @@
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 
 function getRefCounter(node) {
     const meta = metadata.metaOf(node)
@@ -19,9 +19,9 @@ function getRequiredRefCounter(node) {
 }
 
 function getRefCounts(value) {
-    if (helpers.isPromise(value)) return [1, 0, 0]
-    if (helpers.isError(value)) return [0, 1, 0]
-    if (!helpers.isTracked(value)) return [0, 0, 0]
+    if (languageValues.isPromise(value)) return [1, 0, 0]
+    if (languageValues.isError(value)) return [0, 1, 0]
+    if (!languageValues.isTracked(value)) return [0, 0, 0]
 
     const counter = getRequiredRefCounter(value)
     return [
@@ -33,7 +33,7 @@ function getRefCounts(value) {
 
 function getPropertyRefState(parent, key) {
     const child = languageProperties.readLanguageProperty(parent, key)
-    if (helpers.isPromise(child)) {
+    if (languageValues.isPromise(child)) {
         return { child: undefined, counts: [1, 0, 0] }
     }
     if (imports.hasCycleCut(parent, key)) {
@@ -43,7 +43,7 @@ function getPropertyRefState(parent, key) {
 }
 
 function buildRefIndex(value, inheritedImportBoundary = undefined) {
-    if (!helpers.isTracked(value) || getRefCounter(value)) return value
+    if (!languageValues.isTracked(value) || getRefCounter(value)) return value
 
     const cutTargetQueue = []
     indexComponent(value, inheritedImportBoundary, cutTargetQueue)
@@ -75,7 +75,7 @@ function indexComponent(
     inheritedImportBoundary,
     cutTargetQueue,
 ) {
-    if (!helpers.isTracked(node)) return [0, 0, 0]
+    if (!languageValues.isTracked(node)) return [0, 0, 0]
 
     const existing = getRefCounter(node)
     if (existing) {
@@ -93,7 +93,7 @@ function indexComponent(
     let cycleCutCount = 0
     const childNodes = []
 
-    for (const key of Object.keys(node)) {
+    for (const key of languageProperties.enumerableLanguageKeys(node)) {
         const child = languageProperties.readLanguageProperty(node, key)
         if (imports.hasCycleCut(node, key)) {
             cycleCutCount++
@@ -104,7 +104,7 @@ function indexComponent(
             continue
         }
 
-        if (helpers.isPromise(child)) {
+        if (languageValues.isPromise(child)) {
             promiseMirrors.getOrCreatePromiseMirror(
                 node,
                 key,
@@ -115,11 +115,11 @@ function indexComponent(
             continue
         }
 
-        if (helpers.isError(child)) {
+        if (languageValues.isError(child)) {
             errorCount++
             continue
         }
-        if (!helpers.isTracked(child)) continue
+        if (!languageValues.isTracked(child)) continue
 
         const childCounts = indexComponent(
             child,
@@ -166,13 +166,13 @@ function commitLiveEdge(
 }
 
 function addParentEdge(value, parent) {
-    if (!helpers.isTracked(value)) return
+    if (!languageValues.isTracked(value)) return
     const counter = getRequiredRefCounter(value)
     counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
 }
 
 function removeParentEdge(value, parent) {
-    if (!helpers.isTracked(value)) return
+    if (!languageValues.isTracked(value)) return
     const counter = getRequiredRefCounter(value)
     const count = counter.parents.get(parent)
     if (count === 1) {

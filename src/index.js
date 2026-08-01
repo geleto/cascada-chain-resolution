@@ -13,7 +13,8 @@
 import "./init.js"
 
 // Load-bearing helper contract:
-// The initial resolver converts data rejection through onInitialPromiseResolve.
+// The initial resolver converts data rejection through
+// resolveInitialValueOrPoison.
 // Later resolvers use onLaterPromiseReady and read the state published by that
 // first FIFO reaction instead of consuming the raw settlement again.
 
@@ -25,10 +26,12 @@ export {
 } from "./mutations.js"
 
 export {
-    exportValue as export,
+    exportPath as export,
     getErrors,
     hasError,
     lookupPath,
 } from "./observations.js"
 
 export { import } from "./import.js"
+export { registerDataClass } from "./language-values.js"
+export { run } from "./run.js"

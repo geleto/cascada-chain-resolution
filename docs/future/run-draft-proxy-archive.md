@@ -151,8 +151,8 @@ transaction.
 Property-state certification and execution-kind certification answer different
 questions:
 
-- `PROPERTY_STATE_CLASS` says a native instance can be copied from its own
-  enumerable string-keyed state while retaining its prototype.
+- `registerDataClass` says an instance can be copied from its own enumerable
+  string-keyed state while retaining its prototype.
 - An internal `CASCADA_CLASS` or `CASCADA_METHOD` marker says method execution
   is compiler-generated and already uses Cascada operations.
 
@@ -174,7 +174,7 @@ uses Cascada semantics. Method-level certification permits mixed classes but
 adds classification and inheritance rules. The implementation should choose
 one and reject conflicting or forged shapes with an Error value.
 
-Native draft execution requires a certified non-array property-state class.
+Native draft execution requires a registered non-array data class.
 Arrays may participate as data below a native receiver but do not acquire
 class-method preservation during COW.
 
@@ -424,7 +424,7 @@ shape:
 - `{}` for a plain-object draft;
 - `Object.create(null)` for a null-prototype draft;
 - `[]` for an array draft; and
-- `Object.create(prototype)` for a certified class draft.
+- `Object.create(prototype)` for a registered data-class draft.
 
 The handler must keep `get`, `set`, `deleteProperty`, `has`, `ownKeys`,
 `getOwnPropertyDescriptor`, `getPrototypeOf`, and relevant array behavior
@@ -616,7 +616,7 @@ through unproxied arguments.
 
 ## Promise-valued properties
 
-Native property-state classes may contain Promise-valued properties.
+Registered data classes may contain Promise-valued properties.
 
 A native method may synchronously:
 
@@ -778,7 +778,7 @@ changes committed when the Promise was returned.
 
 ## Native-method limitations
 
-A runnable native class remains a property-state class. Meaningful behavior
+A runnable native class remains a registered data class. Meaningful behavior
 must not depend on:
 
 - JavaScript `#private` fields;
@@ -1076,7 +1076,7 @@ Every applicable test runs under inline-Symbol and WeakMap metadata modes.
 - same-Promise assignment creating a fresh property version;
 - key deletion and reinsertion order;
 - arrays, sparse arrays, and array length;
-- null-prototype records and certified classes;
+- null-prototype records and registered data classes;
 - array subclasses normalized during finalized copying;
 - enumerable `__proto__`, `constructor`, and method-name data keys;
 - synchronous method-to-method calls; and
@@ -1166,10 +1166,10 @@ rediscover them.
 
 **Correctness and consistency**
 
-- A CascadaScript class needs `PROPERTY_STATE_CLASS` in addition to its
-  execution marker, because its compiler-emitted mutations still route through
-  `createCopyShell`. Either require both, or have the compiler stamp the
-  property-state marker on every generated prototype.
+- A CascadaScript class needs `registerDataClass` in addition to its execution
+  marker, because its compiler-emitted mutations still route through
+  `createCopyShell`. The compiler or runtime integration must register every
+  generated class before its instances enter Cascada.
 - Reconciliation normalizes array subclasses into ordinary arrays. Step 20's
   `createCopyShell` now does the same, so the two agree today; they must stay
   aligned, because one shape must not have two behaviors depending on which

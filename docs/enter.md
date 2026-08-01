@@ -39,7 +39,7 @@ Mutating `enter` uses `walkMutationPath` to perform COW and install a public gat
 
 `onEntered` may be synchronous or asynchronous. A synchronous callback returns its result directly; an asynchronous callback returns a Promise, including when it simply returns an existing operation or condition Promise. `enter` keeps the Chain active until that Promise fulfills, then completes the entered scope automatically: read-only completion releases the read entry, while mutating completion closes the private Chain and starts or arranges gate publication. Neither mode accepts new operations through the entered Chain afterward. The callback's return defines the scope's lifetime, so detached work must not use the Chain afterward. Compiler-level async callbacks lower waits to runtime Promise helpers; kernel code does not use raw `async`/`await` or `.then`.
 
-`enter` returns the direct value or Promise fulfillment value from `onEntered`; it never stores the operation result on the Chain. `runOperationCallback` invokes `onEntered`, completes a direct result synchronously, or canonicalizes a returned thenable in one helper reaction. Promise fulfillment completes the scope and forwards the value; rejection aborts the scope and reports the fatal failure in that same reaction. Read-only completion releases the read entry before forwarding its result. Mutating completion initiates publication before forwarding its result but does not wait for the gate or its consumers. This keeps an operation result independent from receiver publication for any higher-level callback consumer.
+`enter` returns the direct value or Promise fulfillment value from `onEntered`; it never stores the operation result on the Chain. `runOperationCallbackOrFatal` invokes `onEntered`, completes a direct result synchronously, or canonicalizes a returned thenable in one helper reaction. Promise fulfillment completes the scope and forwards the value; rejection aborts the scope and reports the Fatal in that same reaction. Read-only completion releases the read entry before forwarding its result. Mutating completion initiates publication before forwarding its result but does not wait for the gate or its consumers. This keeps an operation result independent from receiver publication for any higher-level callback consumer.
 
 `enter` does not prepare result ownership. Before returning a direct tracked result or fulfilling with one, the callback's consumer applies the ordinary ownership rules. Any result identity that also has another language owner, including reachability from the entered `state.value` at scope completion, must become shared; a newly owned result ceded to the caller need not.
 
@@ -197,8 +197,8 @@ The Promise returned by `onEntered` describes control-flow completion; it is not
 
 ```js
 return enter(chain, path, true, entered =>
-    helpers.onInitialPromiseResolve(calculate(item), value => {
-        if (helpers.isError(value)) {
+    resolution.resolveInitialValueOrPoison(calculate(item), value => {
+        if (languageValues.isError(value)) {
             assignPath(entered, [], value)
             return value
         }
@@ -211,7 +211,7 @@ Returning the Error without assigning it instead preserves the private root. An 
 
 If `onEntered` throws or its returned Promise rejects, `enter` aborts before reporting the fatal failure. Abort deletes `state.mutates`; read-only abort also releases its acquired read entry exactly once. Mutating abort does not resolve the gate. The private Chain is therefore closed and temporary read ownership cannot leak, while potentially corrupted private data remains unpublished.
 
-Anticipated unsupported COW or imported-data validation produces a language Error with the existing attribution rules. Compiler misuse, host-contract violations, and invariant failures are fatal. Fatal cases include:
+Imported-data validation produces a language Error with the existing attribution rules. Compiler misuse, host-contract violations, and invariant failures are fatal. Fatal cases include:
 
 - a non-Boolean `mutates` or non-callable `onEntered`;
 - mutation through a read-only Chain;
@@ -279,7 +279,7 @@ function walk(value, index, writeBack) {
 
 At a target or entry-setup Error, `writeBack` synchronously reconstructs every applicable enclosing frame before the completion callback runs. A Promise branch registers at its exact position, writes its current parent back immediately, and returns the existing helper Promise only when completion is requested. Its reaction returns the resumed walk, so normal Promise assimilation composes deeper ancestors and the final callback result. A Promise-valued target itself adds no setup frontier because its private Chain is available immediately. `onEntered` therefore runs exactly once after reconstruction, without a sentinel, dual node/result channel, `{ node, result }` record, explicit `new Promise`, or second reaction on one source.
 
-The writeback continuations belong only to active mutation-walk call frames. Ordinary assignment and deletion omit `onComplete`, retain their fire-and-register result shape, and do not assimilate deeper waits. The entered Chain contains no readiness state, source Chain, captured public path, or operation result, and gains no pending-command method or queue. `runOperationCallback(callback, argument, onFulfilled, onRejected)` invokes the callback and returns its direct completion result, or registers one reaction on a canonical Promise result. Fulfillment runs normal completion through `runFatal`; rejection runs entry's abort callback through `runFatal`, then reports the original failure. Its derived Promise is the wrapped operation result; delayed path helpers assimilate it normally, independently of publication.
+The writeback continuations belong only to active mutation-walk call frames. Ordinary assignment and deletion omit `onComplete`, retain their fire-and-register result shape, and do not assimilate deeper waits. The entered Chain contains no readiness state, source Chain, captured public path, or operation result, and gains no pending-command method or queue. `runOperationCallbackOrFatal(callback, argument, onFulfilled, onRejected)` invokes the callback and returns its direct completion result, or registers one reaction on a canonical Promise result. Fulfillment runs normal completion through `runFatal`; rejection runs entry's abort callback through `runFatal`, then reports the original Fatal. Its derived Promise is the wrapped operation result; delayed path helpers assimilate it normally, independently of publication.
 
 ### Gate transitions
 
@@ -289,7 +289,7 @@ Gate installation creates an assigned mirror and calls `replaceProperty`, whose 
 
 Gate publication uses `setMirrorValue` through the same transaction: it indexes the published root when the public owner is indexed, adds its reverse-parent edge when tracked, and replaces the gate's pending contribution with the root's counters. The private `chain._state` holder is host state rather than a language-graph parent, so capturing a root adds no reverse-parent edge. When COW retained the source target, direct setup or the transfer sampler has already marked the private root shared.
 
-`setMirrorValue` fatally rejects `helpers.isPromise(newValue)` before import preparation, ref indexing, descriptor changes, or publication. A new Promise always goes through `replaceProperty` and receives a fresh version. Gate assignment receives the owning walk's fixed-path `prepareImportedValue` closure so public attachment is prepared before writeback.
+`setMirrorValue` fatally rejects `languageValues.isPromise(newValue)` before import preparation, ref indexing, descriptor changes, or publication. A new Promise always goes through `replaceProperty` and receives a fresh version. Gate assignment receives the owning walk's fixed-path `prepareImportedValue` closure so public attachment is prepared before writeback.
 
 ## Verification
 
@@ -300,7 +300,7 @@ Core lifecycle and access:
 - isolated internal-module initialization, exact result shapes, validation, exactly-once callback invocation, Error bypass, and synchronous callback throws or returned callback-Promise rejection closing the Chain before fatal reporting;
 - callbacks running only after reconstruction, directly or within the existing ancestor helper continuation, with no readiness Promise or second same-source reaction;
 - `mutates: true`, `mutates: false`, closed-Chain issuance, continuations issued before closure, and use after completion;
-- synchronous and Promise callback lifetimes, successful closure and read release or publication, abnormal closure with read release but no mutating publication, and direct or `runOperationCallback` result forwarding;
+- synchronous and Promise callback lifetimes, successful closure and read release or publication, abnormal closure with read release but no mutating publication, and direct or `runOperationCallbackOrFatal` result forwarding;
 - operation results never stored on the Chain and lexical gate-resolver retention adding no gate lifecycle fields; and
 - unchanged `Chain` package identity after moving its definition.
 

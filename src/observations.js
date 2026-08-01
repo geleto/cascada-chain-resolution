@@ -1,11 +1,13 @@
 import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as rawWalk from "./raw-walk.js"
+import * as resolution from "./resolution.js"
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 // sharedOwnership is false for a pure read or when ownership is ceded to
@@ -24,27 +26,43 @@ function lookupPath(chain, path, sharedOwnership = true) {
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------
-function exportValue(chain, path) {
+function exportPath(chain, path) {
     return helpers.runFatal(() => {
-        return walkObservationPath(chain, path, exportAtPathValue)
+        return walkObservationPath(chain, path, exportBranch)
     })
 }
 
-function exportAtPathValue(value, importBoundary) {
-    if (helpers.isError(value)) return exportErrorOutcome([value])
-    if (!helpers.isTracked(value)) return value
+// Native argument export preserves nested Errors. A top-level Error remains
+// available for the caller's shallow argument poisoning.
+function exportArgument(value) {
+    return resolution.resolveInitialValueOrPoison(value, resolved => {
+        return languageValues.isError(resolved)
+            ? resolved
+            : exportTrackedValue(resolved, undefined, true)
+    })
+}
+
+function exportBranch(value, importBoundary = undefined) {
+    return exportTrackedValue(value, importBoundary, false)
+}
+
+function exportTrackedValue(value, importBoundary, preserveErrors) {
+    if (languageValues.isError(value)) {
+        return preserveErrors ? value : exportErrorOutcome([value])
+    }
+    if (!languageValues.isTracked(value)) return value
 
     let output
     const state = rawWalk.createRawWalkState(() => {
         output = undefined
-    })
+    }, preserveErrors)
     const readiness = rawWalk.walkRawBranch(value, importBoundary, state)
     if (state.copying) output = state.copies.get(value)
-    const finish = () => state.errors.size > 0
+    const finish = () => !preserveErrors && state.errors.size > 0
         ? exportErrorOutcome(state.errors)
         : output
     return readiness
-        ? helpers.onAllPromisesReady(readiness, finish)
+        ? resolution.whenAllReadyOrFatal(readiness, finish)
         : finish()
 }
 
@@ -62,8 +80,8 @@ function hasError(chain, path) {
 }
 
 function hasErrorAtPathValue(value, importBoundary) {
-    if (helpers.isError(value)) return true
-    if (!helpers.isTracked(value)) return false
+    if (languageValues.isError(value)) return true
+    if (!languageValues.isTracked(value)) return false
 
     refcounts.buildRefIndex(value, importBoundary)
     const counter = refcounts.getRequiredRefCounter(value)
@@ -90,7 +108,7 @@ function searchForFirstError(value, importBoundary) {
     })
     return Promise.race([
         errorPromise,
-        helpers.onAllPromisesReady(readiness, () => false),
+        resolution.whenAllReadyOrFatal(readiness, () => false),
     ])
 }
 
@@ -103,14 +121,17 @@ function getErrors(chain, path) {
     function finish(value, importBoundary) {
         const state = createErrorSearchState()
         let readiness
-        if (helpers.isError(value)) {
+        if (languageValues.isError(value)) {
             state.foundError(value)
-        } else if (helpers.isTracked(value)) {
+        } else if (languageValues.isTracked(value)) {
             refcounts.buildRefIndex(value, importBoundary)
             readiness = collectFencedErrorWaits(value, importBoundary, state)
         }
         return readiness
-            ? helpers.onAllPromisesReady(readiness, () => [...state.errors])
+            ? resolution.whenAllReadyOrFatal(
+                readiness,
+                () => [...state.errors],
+            )
             : [...state.errors]
     }
 }
@@ -160,22 +181,22 @@ function collectFencedErrorWaits(value, inheritedImportBoundary, state) {
 
         const importBoundary = metadata.nodeImportBoundary(node, inheritedBoundary)
         const hasCycleCuts = counter.cycleCutCount > 0
-        for (const key of Object.keys(node)) {
+        for (const key of languageProperties.enumerableLanguageKeys(node)) {
             if (state.stopped) break
             const child = languageProperties.readLanguageProperty(node, key)
 
             if (hasCycleCuts && imports.hasCycleCut(node, key)) {
                 walk(child, importBoundary)
-            } else if (helpers.isError(child)) {
+            } else if (languageValues.isError(child)) {
                 state.foundError(child)
-            } else if (helpers.isPromise(child)) {
+            } else if (languageValues.isPromise(child)) {
                 waits.push(collectPromiseErrors(
                     node,
                     key,
                     child,
                     importBoundary,
                 ))
-            } else if (helpers.isTracked(child)) {
+            } else if (languageValues.isTracked(child)) {
                 const childCounter = refcounts.getRequiredRefCounter(child)
                 if (hasErrorQueryWork(childCounter)) {
                     walk(child, importBoundary)
@@ -191,14 +212,14 @@ function collectFencedErrorWaits(value, inheritedImportBoundary, state) {
         inheritedImportBoundary,
     ) {
         const mirror = promiseMirrors.getRequiredPromiseMirror(parent, key)
-        return helpers.onLaterPromiseReady(promise, () => {
+        return resolution.onLaterPromiseReady(promise, () => {
             if (state.stopped) return undefined
             const value = mirror.getValue(parent, key)
-            if (helpers.isError(value)) {
+            if (languageValues.isError(value)) {
                 state.foundError(value)
                 return undefined
             }
-            if (!helpers.isTracked(value)) return undefined
+            if (!languageValues.isTracked(value)) return undefined
 
             return collectFencedErrorWaits(
                 value,
@@ -232,43 +253,83 @@ function walkObservationPath(
 
     function walkFromParent(parent, index, importBoundary) {
         const key = targetPath[index]
+        const present = languageProperties.hasLanguageProperty(parent, key)
         const value = languageProperties.readLanguageProperty(parent, key)
-        if (helpers.isPromise(value)) {
+        if (languageValues.isPromise(value)) {
             const mirror = promiseMirrors.getOrCreatePromiseMirror(
                 parent,
                 key,
                 value,
                 importBoundary,
             )
-            return helpers.onLaterPromiseReady(value, () => {
+            return resolution.onLaterPromiseReady(value, () => {
                 const propertyValue = mirror.getValue(parent, key)
                 return walkValue(
                     propertyValue,
                     index,
                     mirror.importBoundary ?? importBoundary,
+                    parent,
+                    key,
+                    true,
                 )
             })
         }
-        return walkValue(value, index, importBoundary)
+        return walkValue(
+            value,
+            index,
+            importBoundary,
+            parent,
+            key,
+            present,
+        )
     }
 
-    function walkValue(value, index, inheritedImportBoundary) {
+    function walkValue(
+        value,
+        index,
+        inheritedImportBoundary,
+        parent,
+        key,
+        present,
+    ) {
         const importBoundary = metadata.nodeImportBoundary(
             value,
             inheritedImportBoundary,
         )
-        if (index === targetPath.length - 1 || helpers.isError(value)) {
-            return onResolved(value, importBoundary)
+        if (index === targetPath.length - 1 || languageValues.isError(value)) {
+            return onResolved(
+                value,
+                importBoundary,
+                present,
+                parent,
+                key,
+            )
         }
-        if (!helpers.isTracked(value)) {
-            return onResolved(errorUtils.pathAccessError(), importBoundary)
+        if (
+            typeof value === "string" &&
+            languageProperties.hasLanguageProperty(
+                value,
+                targetPath[index + 1],
+            )
+        ) {
+            return walkFromParent(value, index + 1, importBoundary)
+        }
+        if (!languageValues.isTracked(value)) {
+            return onResolved(
+                errorUtils.pathAccessError(),
+                importBoundary,
+                false,
+                parent,
+                key,
+            )
         }
         return walkFromParent(value, index + 1, importBoundary)
     }
 }
 
 export {
-    exportValue,
+    exportArgument,
+    exportPath,
     getErrors,
     hasError,
     lookupPath,

@@ -45,6 +45,8 @@ describe("export", () => {
             "hasError",
             "import",
             "lookupPath",
+            "registerDataClass",
+            "run",
         ])
         expect(packageExport).to.be(packageRuntime.export)
         expect(packageRuntime.export).to.be(exportValue)
@@ -407,11 +409,17 @@ describe("export", () => {
     })
 
     it("returns direct values until a real wait is needed", () => {
-        const root = { branch: { x: 1 }, primitive: 2 }
+        const opaque = new Date()
+        const root = {
+            branch: { x: 1, opaque },
+            opaque,
+            primitive: 2,
+        }
         const pending = deferred()
 
         const branch = exportValue(new Chain(root), ["branch"])
         const primitive = exportValue(new Chain(root), ["primitive"])
+        const opaqueResult = exportValue(new Chain(root), ["opaque"])
         const missing = exportValue(new Chain(root), ["missing"])
         const broken = exportValue(new Chain(root), ["missing", "value"])
         const waiting = exportValue(new Chain({ branch: { pending: pending.promise } }), ["branch"])
@@ -419,6 +427,8 @@ describe("export", () => {
         expect(branch).to.eql(root.branch)
         expect(branch).not.to.be(root.branch)
         expect(primitive).to.be(2)
+        expect(opaqueResult).to.be(opaque)
+        expect(branch.opaque).to.be(opaque)
         expect(missing).to.be(undefined)
         expect(broken instanceof Error).to.be(true)
         expect(broken.errors.length).to.be(1)

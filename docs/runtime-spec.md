@@ -7,22 +7,24 @@ kernel. Implementation details live in
 
 ## Values
 
-The sandbox recognizes four value categories:
+The sandbox recognizes five value categories:
 
 - **Primitive:** `null`, `undefined`, strings, numbers, booleans, symbols, and
   bigints.
 - **Promise:** any object or function with a callable `then` property.
 - **Error:** a JavaScript `Error`, used here as the stand-in for Cascada's
   language Error value.
-- **Tracked value:** any other non-null object, including arrays, plain
-  objects, class instances, and non-extensible objects.
+- **Tracked value:** an Array, plain object, null-prototype record, registered
+  data-class instance, or internal `ArrayView`.
+- **Opaque value:** any other non-null non-Promise object. It retains identity
+  but has no traversable language properties.
 
 A language data object must not rely on a callable `then` property because the
 kernel and JavaScript Promise resolution both treat it as a Promise.
 
 An ordinary callable function that is not classified as a Promise is not a
 language value. Compiler and host integrations must keep callables and
-executable descriptors outside the graph. Prototype methods on certified class
+executable descriptors outside the graph. Prototype methods on registered class
 instances are likewise outside the language-property surface. The kernel does
 not promise proactive callable validation at every assignment boundary.
 
@@ -30,11 +32,11 @@ Language-visible properties are own enumerable string keys. Inherited and own
 non-enumerable properties are not readable as language data. Arrays are tracked
 objects with the same property rules.
 
-Certified property-state class COW and exact prototype preservation are
+Registered data-class COW and exact prototype preservation are
 implemented support for class instances as data. Construction and mutating
 class-method execution remain outside the current runtime plan. Restricted
-read-only methods and standard Array/String operations are planned separately
-in [`run.md`](run.md).
+read-only methods and standard Array/String operations are defined in
+[`run.md`](run.md).
 
 ## Chain roots
 
@@ -112,28 +114,26 @@ The copy contains only language-visible keys:
 - plain objects, including cross-realm plain objects, become local plain
   objects;
 - null-prototype records retain `null`;
-- internally certified property-state class instances retain their exact
+- registered data-class instances retain their exact
   prototype;
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 
-The mutation kernel exports `PROPERTY_STATE_CLASS` from its owning module for
-internal tests; it is not part of the package-level API. A non-array
-custom prototype opts into property-state COW only with its own data descriptor
-whose key is that Symbol and whose value is exactly `true`. Certification is
-not inherited, does not invoke a constructor or copying callback, and asserts
-that all required state is compatible with own enumerable string-key copying.
+`registerDataClass(Class)` permanently adds the constructor's exact prototype
+to a private `WeakSet` without modifying it. Registration must happen before
+instances enter Cascada, is not inherited, does not invoke a constructor or
+copying callback, and asserts that all required state is compatible with own
+enumerable string-key copying.
 The kernel does not attempt to detect private fields, required hidden state,
 native internal slots, or other false assertions.
 
 All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
-Uncertified non-array custom prototypes are unsupported. If
-an imported mutation requires COW through an unsupported instance, that
-instance's placement becomes an attributed language Error rather than a plain
-object counterfeit. Without an import boundary, the placement receives the
-same Error without attribution. Export remains plain data and does not
-preserve class prototypes or methods.
+Unregistered classes and native internal-slot objects are opaque identity
+leaves. They may be stored and exported, but the graph does not traverse,
+index, copy, or attach metadata to them. A path cannot enter an opaque value,
+and `run` cannot use one as a receiver. Registered class export remains plain
+data and does not preserve its prototype or methods.
 
 Imported attribution remains attached to retained external children. Newly
 copied path nodes are language-owned. If the copied source was already
@@ -280,10 +280,9 @@ aggregate waits are never converted into language Error values.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
 The helpers share one canonical native Promise for each callable thenable.
-`onInitialPromiseResolve` converts the first data result,
+`resolveInitialValueOrPoison` converts the first data result,
 `onLaterPromiseReady` runs later property resolvers without reconverting
-rejection, and `onAllPromisesReady`
-owns internal readiness failures. None adds a per-consumer proxy or second
+rejection, and `whenAllReadyOrFatal` owns internal readiness failures. None adds a per-consumer proxy or second
 reaction.
 
 An object-like fatal value is reported once per identity even if it crosses
@@ -400,13 +399,16 @@ retaining or relocating those exact identities is the defined language
 operation. Its wrapper owns slot classification, entering ownership, Promise
 mirrors, and bookkeeping. Standard scalar coercion is performed against
 logical Cascada values before native invocation; locale methods likewise
-construct only the small native input their intrinsic inspects. Ordinary
-native observations retain the export boundary. This does not permit tracked
-identities to reach ordinary observational or external native code.
+construct only the small native input their intrinsic inspects. An ordinary
+native observation receives its path-resolved receiver directly. `run` exports
+each native-bound argument after dispatch; controlled logical payloads retain
+their identity. A pending call holds a read lease, and an ArrayView receiver is
+shallow-materialized. The method remains trusted read-only, non-retaining, and
+free of external side effects.
 
 A `sort` or `toSorted` comparator is the second executable-control
 exception. A direct or Promise-resolved callable remains outside the graph and
 receives resolved logical elements under a trusted read-only, side-effect-free,
-non-retaining contract. Its direct or Promise result is consumed through the
-runtime helpers and Cascada numeric coercion; this does not authorize other
-callbacks or native access to tracked identities.
+non-retaining contract. Its result and Cascada numeric coercion must complete
+synchronously before native stable sorting can continue; this does not
+authorize other callbacks or native access to tracked identities.

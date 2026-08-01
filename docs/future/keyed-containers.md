@@ -3,9 +3,9 @@
 ## Status
 
 This document records possible future extensions that were considered while
-designing property-state class COW. None is part of plan step 20.
+designing data-class COW. None is part of plan step 20.
 
-These extensions are independent of the completed property-state class COW
+These extensions are independent of the completed data-class COW
 step. String and array convenience behavior can be implemented as
 language-defined operations without first adding native container support.
 Planned [`ArrayView`](../array-view.md) is one Array-specific logical-property
@@ -29,7 +29,7 @@ without introducing virtual property storage.
 Step 20 treats array subclasses as ordinary arrays. A future extension that
 preserves their prototypes could:
 
-- require the same exact-prototype certification as ordinary classes;
+- require the same exact-prototype registration as ordinary data classes;
 - create a genuine same-length base array;
 - restore the subclass prototype without invoking its constructor; and
 - reuse the existing array property-copy pipeline.
@@ -73,7 +73,7 @@ If implemented later, a conservative model would require:
 - missing keys created as entries;
 - a subclass's ordinary field set fixed by its imported shape;
 - intrinsic-only iteration, reads, writes, and deletion;
-- a genuine base Map shell populated before restoring a certified subclass
+- a genuine base Map shell populated before restoring a registered subclass
   prototype;
 - rebuilt classification metadata on every COW copy;
 - full Promise, Error, alias, cycle, and refcount participation; and
@@ -98,7 +98,7 @@ A conservative future Set model would require:
 - `false`, `null`, `undefined`, and deletion removing membership;
 - every other raw kernel value being a compiler-contract violation;
 - intrinsic-only construction and mutation;
-- a base Set shell populated before restoring a certified subclass prototype;
+- a base Set shell populated before restoring a registered subclass prototype;
   and
 - membership skipped by refcount and Error walks because primitive `true`
   contributes no graph work.
@@ -156,7 +156,7 @@ of the current data-only runtime plan.
 
 If demand justifies the complexity, implement independently:
 
-1. optional certified array-subclass support;
+1. optional registered array-subclass support;
 2. a no-behavior-change logical-property interface refactor;
 3. string-only Map support;
 4. string-only Set support;

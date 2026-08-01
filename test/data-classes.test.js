@@ -2,7 +2,6 @@ import { runInNewContext } from "node:vm"
 
 import {
     Chain,
-    PROPERTY_STATE_CLASS,
     assignPath,
     buildRefIndex,
     deferred,
@@ -11,19 +10,38 @@ import {
     flushMicrotasks,
     importValue,
     lookupPath,
+    registerDataClass,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
 
-function certify(prototype, value) {
-    Object.defineProperty(prototype, PROPERTY_STATE_CLASS, {
-        value: arguments.length === 1 ? true : value,
-        configurable: true,
-    })
-}
+describe("data class copy-on-write", () => {
+    it("registers only the exact prototype without modifying it", () => {
+        class Base {
+            constructor() {
+                this.value = 1
+            }
+        }
+        class Child extends Base {}
+        const keys = Reflect.ownKeys(Base.prototype)
 
-describe("property-state class copy-on-write", () => {
-    it("preserves independently certified inheritance and methods", () => {
+        registerDataClass(Base)
+
+        expect(Reflect.ownKeys(Base.prototype)).to.eql(keys)
+        const base = importValue(new Base(), "registered base")
+        const baseChain = new Chain(base)
+        assignPath(baseChain, ["value"], 2)
+        expect(baseChain._state.value.value).to.be(2)
+        expect(base.value).to.be(1)
+
+        const child = importValue(new Child(), "unregistered child")
+        const childChain = new Chain(child)
+        assignPath(childChain, ["value"], 2)
+        expect(childChain._state.value instanceof Error).to.be(true)
+        expect(child.value).to.be(1)
+    })
+
+    it("preserves independently registered inheritance and methods", () => {
         class Vec2 {
             constructor(x, y) {
                 this.x = x
@@ -54,9 +72,9 @@ describe("property-state class copy-on-write", () => {
                 return this.x * this.y * this.z
             }
         }
-        certify(Vec2.prototype)
-        certify(Vec3.prototype)
-        certify(FVec3.prototype)
+        registerDataClass(Vec2)
+        registerDataClass(Vec3)
+        registerDataClass(FVec3)
         const source = importValue(new FVec3(2, 3, 4), "fvec import")
         const chain = new Chain(source)
 
@@ -82,7 +100,7 @@ describe("property-state class copy-on-write", () => {
                 this.y = y
             }
         }
-        certify(Point.prototype)
+        registerDataClass(Point)
         const point = new Point(1, 2)
         const sibling = { stable: true }
         const root = importValue({ point, sibling }, "nested class")
@@ -105,7 +123,7 @@ describe("property-state class copy-on-write", () => {
                 this.x = x
             }
         }
-        certify(Point.prototype)
+        registerDataClass(Point)
         const source = importValue(new Point(1), "repeated class")
         const chain = new Chain(source)
 
@@ -129,7 +147,7 @@ describe("property-state class copy-on-write", () => {
                 this.x = 1
             }
         }
-        certify(PendingPoint.prototype)
+        registerDataClass(PendingPoint)
         const pending = deferred()
         const source = importValue(
             new PendingPoint(pending.promise),
@@ -162,7 +180,7 @@ describe("property-state class copy-on-write", () => {
                 this.x = 1
             }
         }
-        certify(PendingPoint.prototype)
+        registerDataClass(PendingPoint)
         const pending = deferred()
         const source = importValue(
             new PendingPoint(pending.promise),
@@ -198,7 +216,7 @@ describe("property-state class copy-on-write", () => {
                 this.value = 1
             }
         }
-        certify(Result.prototype)
+        registerDataClass(Result)
         const source = importValue(new Result(), "class Error")
         buildRefIndex(source)
         const chain = new Chain(source)
@@ -213,14 +231,14 @@ describe("property-state class copy-on-write", () => {
         verifyRefCounts(source, copy)
     })
 
-    it("preserves path-copy cycle semantics for certified classes", () => {
+    it("preserves path-copy cycle semantics for registered classes", () => {
         class Cyclic {
             constructor() {
                 this.value = 1
                 this.self = this
             }
         }
-        certify(Cyclic.prototype)
+        registerDataClass(Cyclic)
         const source = importValue(new Cyclic(), "class cycle")
         const chain = new Chain(source)
 
@@ -240,7 +258,7 @@ describe("property-state class copy-on-write", () => {
                 this.x = x
             }
         }
-        certify(Point.prototype)
+        registerDataClass(Point)
         const point = new Point(1)
         const root = importValue(
             { left: point, right: point },
@@ -273,7 +291,7 @@ describe("property-state class copy-on-write", () => {
                 this.value = 1
             }
         }
-        certify(SpecialFields.prototype)
+        registerDataClass(SpecialFields)
         const source = importValue(
             new SpecialFields(),
             "special fields",
@@ -350,13 +368,13 @@ describe("property-state class copy-on-write", () => {
         expect(foreignArray[0].value).to.be(1)
     })
 
-    it("places an attributed Error at an unsupported root", () => {
-        class Unmarked {
+    it("treats an unregistered root as an opaque leaf", () => {
+        class Unregistered {
             constructor() {
                 this.value = 1
             }
         }
-        const source = importValue(new Unmarked(), "unsupported root")
+        const source = importValue(new Unregistered(), "unsupported root")
         const chain = new Chain(source)
 
         assignPath(chain, ["value"], 2)
@@ -364,19 +382,18 @@ describe("property-state class copy-on-write", () => {
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be(
-            "Cannot copy unsupported object during copy-on-write " +
-            "(imported at: unsupported root)",
+            "Cannot access property through missing or primitive value",
         )
         expect(source.value).to.be(1)
     })
 
-    it("places an attributed Error at an unsupported nested placement", () => {
-        class Unmarked {
+    it("treats a nested unregistered instance as an opaque leaf", () => {
+        class Unregistered {
             constructor() {
                 this.value = 1
             }
         }
-        const source = new Unmarked()
+        const source = new Unregistered()
         const root = importValue(
             { branch: source, sibling: true },
             "unsupported nested",
@@ -390,8 +407,7 @@ describe("property-state class copy-on-write", () => {
         expect(copy).not.to.be(root)
         expect(copy.branch instanceof Error).to.be(true)
         expect(copy.branch.message).to.be(
-            "Cannot copy unsupported object during copy-on-write " +
-            "(imported at: unsupported nested)",
+            "Cannot access property through missing or primitive value",
         )
         expect(copy.sibling).to.be(true)
         expect(source.value).to.be(1)
@@ -400,8 +416,8 @@ describe("property-state class copy-on-write", () => {
         verifyRefCounts(root, copy)
     })
 
-    it("places an attributed Error when unsupported COW resumes behind a Promise", async () => {
-        class Unmarked {
+    it("treats an unregistered instance behind a Promise as an opaque leaf", async () => {
+        class Unregistered {
             constructor() {
                 this.value = 1
             }
@@ -414,125 +430,47 @@ describe("property-state class copy-on-write", () => {
         const chain = new Chain(root)
 
         assignPath(chain, ["branch", "value"], 2)
-        const source = new Unmarked()
+        const source = new Unregistered()
         pending.resolve(source)
         await flushMicrotasks()
         const failure = chain._state.value.branch
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be(
-            "Cannot copy unsupported object during copy-on-write " +
-            "(imported at: unsupported Promise)",
+            "Cannot access property through missing or primitive value",
         )
         expect(source.value).to.be(1)
     })
 
-    it("treats every non-true certification shape as unsupported", () => {
-        for (const marker of [false, undefined, "true", 1]) {
-            class Invalid {
-                constructor() {
-                    this.value = 1
-                }
-            }
-            certify(Invalid.prototype, marker)
-            const source = importValue(
-                new Invalid(),
-                `marker ${String(marker)}`,
-            )
-            const chain = new Chain(source)
-
-            assignPath(chain, ["value"], 2)
-
-            expect(chain._state.value instanceof Error).to.be(true)
-            expect(source.value).to.be(1)
-        }
-
-        class AccessorMarker {
-            constructor() {
-                this.value = 1
-            }
-        }
-        Object.defineProperty(
-            AccessorMarker.prototype,
-            PROPERTY_STATE_CLASS,
-            { get: () => true },
-        )
-        const source = importValue(
-            new AccessorMarker(),
-            "accessor marker",
-        )
-        const chain = new Chain(source)
+    it("does not detect falsely registered internal slots", () => {
+        class FalseDate extends Date {}
+        registerDataClass(FalseDate)
+        const source = new FalseDate(0)
+        source.value = 1
+        const chain = new Chain(importValue(
+            source,
+            "false Date registration",
+        ))
 
         assignPath(chain, ["value"], 2)
+        const copy = chain._state.value
 
-        expect(chain._state.value instanceof Error).to.be(true)
-        expect(source.value).to.be(1)
-    })
-
-    it("reclassifies certification when COW is later required", () => {
-        class MutableCertification {
-            constructor() {
-                this.value = 1
-            }
-        }
-        certify(MutableCertification.prototype)
-        const source = importValue(
-            new MutableCertification(),
-            "changed certification",
+        expect(copy instanceof FalseDate).to.be(true)
+        expect(copy.value).to.be(2)
+        expect(thrownBy(() => copy.getTime()) instanceof TypeError).to.be(
+            true,
         )
-        const chain = new Chain(source)
-        delete MutableCertification.prototype[PROPERTY_STATE_CLASS]
-
-        assignPath(chain, ["value"], 2)
-
-        expect(chain._state.value instanceof Error).to.be(true)
-        expect(source.value).to.be(1)
     })
 
-    it("does not pretend to detect falsely certified internal slots", () => {
-        const previous = Object.getOwnPropertyDescriptor(
-            Date.prototype,
-            PROPERTY_STATE_CLASS,
-        )
-        certify(Date.prototype)
-        try {
-            const source = new Date(0)
-            source.value = 1
-            const chain = new Chain(importValue(
-                source,
-                "false Date certification",
-            ))
+    it("normalizes registered and unregistered array subclasses", () => {
+        class UnregisteredList extends Array {}
+        class RegisteredList extends Array {}
+        registerDataClass(RegisteredList)
 
-            assignPath(chain, ["value"], 2)
-            const copy = chain._state.value
-
-            expect(copy instanceof Date).to.be(true)
-            expect(copy.value).to.be(2)
-            expect(thrownBy(() => copy.getTime()) instanceof TypeError).to.be(
-                true,
-            )
-        } finally {
-            if (previous) {
-                Object.defineProperty(
-                    Date.prototype,
-                    PROPERTY_STATE_CLASS,
-                    previous,
-                )
-            } else {
-                delete Date.prototype[PROPERTY_STATE_CLASS]
-            }
-        }
-    })
-
-    it("normalizes marked and unmarked array subclasses to arrays", () => {
-        class List extends Array {}
-
-        for (const marked of [false, true]) {
-            if (marked) certify(List.prototype)
-            else delete List.prototype[PROPERTY_STATE_CLASS]
+        for (const List of [UnregisteredList, RegisteredList]) {
             const source = importValue(
                 new List({ value: 1 }),
-                `array subclass ${marked}`,
+                "array subclass",
             )
             const chain = new Chain(source)
 
@@ -548,7 +486,7 @@ describe("property-state class copy-on-write", () => {
         }
     })
 
-    it("places an unattributed Error for an unsupported shared class", () => {
+    it("does not traverse an unregistered shared class", () => {
         class Unsupported {
             constructor() {
                 this.value = 1
@@ -563,27 +501,26 @@ describe("property-state class copy-on-write", () => {
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be(
-            "Cannot copy unsupported object during copy-on-write",
+            "Cannot access property through missing or primitive value",
         )
         expect(source.value).to.be(1)
     })
 
     it("reports reflection traps as fatal", () => {
-        const prototype = new Proxy({}, {
-            getOwnPropertyDescriptor() {
+        const source = new Proxy({ value: 1 }, {
+            getPrototypeOf() {
                 throw new Error("reflection trap")
             },
         })
-        const source = Object.create(prototype)
-        source.value = 1
-        const chain = new Chain(importValue(source, "proxy prototype"))
-
         const failure = thrownBy(() => {
+            const chain = new Chain(importValue(
+                source,
+                "proxy prototype",
+            ))
             assignPath(chain, ["value"], 2)
         })
 
         expect(failure.message).to.be("reflection trap")
-        expect(chain._state.value).to.be(source)
         expect(source.value).to.be(1)
     })
 })

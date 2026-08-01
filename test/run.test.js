@@ -1,0 +1,1028 @@
+import { runInNewContext } from "node:vm"
+
+import * as promiseMirrors from "../src/promise-mirrors.js"
+import {
+    Chain,
+    assignPath,
+    countPromiseRegistrations,
+    deferred,
+    expect,
+    exportValue,
+    importValue,
+    lookupPath,
+    registerDataClass,
+    run,
+    verifyRefCounts,
+} from "./support.js"
+
+describe("run", () => {
+    it("validates mutation calls before walking", () => {
+        const chain = new Chain([1])
+
+        expect(run(chain, [], "map", true) instanceof Error).to.be(true)
+        expect(run(chain, [], "constructor", false) instanceof Error).to.be(true)
+        expect(run(chain, [], "push", "yes") instanceof Error).to.be(true)
+        expect(chain._state.value).to.eql([1])
+    })
+
+    it("resolves arguments while leaving coercion native", async () => {
+        const scalar = function scalar() {}
+        expect(run(
+            new Chain("ab"),
+            [],
+            "concat",
+            false,
+            scalar,
+        )).to.be(String.prototype.concat.call("ab", scalar))
+        expect(run(
+            new Chain([1, 2]),
+            [],
+            "slice",
+            false,
+            scalar,
+        )).to.eql(Array.prototype.slice.call([1, 2], scalar))
+
+        const argument = deferred()
+        const limit = deferred()
+        const chain = new Chain("ab")
+        const result = run(chain, [], "concat", false, argument.promise)
+        const split = run(
+            new Chain("ab"),
+            [],
+            "split",
+            false,
+            "",
+            limit.promise,
+        )
+
+        expect(result instanceof Promise).to.be(true)
+        argument.resolve(["c", "d"])
+        limit.resolve(scalar)
+        expect(await result).to.be("abc,d")
+        expect(await split).to.eql(
+            String.prototype.split.call("ab", "", scalar),
+        )
+    })
+
+    it("exports only arguments that native code receives", async () => {
+        const nested = deferred()
+        const argument = { nested: nested.promise }
+        let received
+        const target = {}
+        Object.defineProperty(target, "read", {
+            enumerable: false,
+            value(value) {
+                received = value
+                return value.nested
+            },
+        })
+
+        const ordinary = run(
+            new Chain(target),
+            [],
+            "read",
+            false,
+            argument,
+        )
+        expect(ordinary instanceof Promise).to.be(true)
+        nested.resolve(3)
+        expect(await ordinary).to.be(3)
+        expect(received).not.to.be(argument)
+        expect(received).to.eql({ nested: 3 })
+
+        const indexReady = deferred()
+        const indexed = run(
+            new Chain([1]),
+            [],
+            "at",
+            false,
+            { ready: indexReady.promise },
+        )
+        expect(indexed instanceof Promise).to.be(true)
+        indexReady.resolve(true)
+        expect(await indexed).to.be(1)
+
+        const retainedReady = deferred()
+        const retained = { ready: retainedReady.promise }
+        const pushed = run(
+            new Chain([]),
+            [],
+            "push",
+            false,
+            retained,
+        )
+        expect(pushed instanceof Promise).to.be(false)
+        expect([...pushed]).to.eql([retained])
+        retainedReady.resolve(true)
+    })
+
+    it("handles arguments captured from other Chains", async () => {
+        const pending = deferred()
+        const source = new Chain({ argument: pending.promise })
+        const argument = lookupPath(source, ["argument"])
+        const target = {}
+        Object.defineProperty(target, "read", {
+            enumerable: false,
+            value(value) {
+                return value.answer
+            },
+        })
+
+        const observed = run(
+            new Chain(target),
+            [],
+            "read",
+            false,
+            argument,
+        )
+        assignPath(source, ["argument"], { answer: 2 })
+        pending.resolve({ answer: 1 })
+
+        expect(await observed).to.be(1)
+        expect(exportValue(source, [])).to.eql({
+            argument: { answer: 2 },
+        })
+
+        const payloadSource = new Chain({ item: { answer: 3 } })
+        const item = lookupPath(payloadSource, ["item"])
+        const pushed = run(
+            new Chain([]),
+            [],
+            "push",
+            false,
+            item,
+        )
+
+        expect(pushed instanceof Promise).to.be(false)
+        expect([...pushed]).to.eql([item])
+        expect([...pushed][0]).to.be(item)
+        assignPath(payloadSource, ["item", "answer"], 4)
+        expect([...pushed][0].answer).to.be(3)
+        expect(exportValue(payloadSource, [])).to.eql({
+            item: { answer: 4 },
+        })
+    })
+
+    it("uses ordinary String invocation and allows callbacks", async () => {
+        const replacement = deferred()
+        const chain = new Chain("abc")
+        const replacementResult = run(
+            chain,
+            [],
+            "replace",
+            false,
+            "a",
+            replacement.promise,
+        )
+
+        replacement.resolve(() => "x")
+
+        expect(await replacementResult).to.be("xbc")
+
+        const parts = run(
+            new Chain("a,b"),
+            [],
+            "split",
+            false,
+            ",",
+        )
+        const partsChain = new Chain(parts)
+        run(partsChain, [], "push", true, "c")
+
+        expect(partsChain._state.value).to.be(parts)
+        expect(parts).to.eql(["a", "b", "c"])
+    })
+
+    it("uses normal property access for ordinary methods", () => {
+        const source = { value: 2 }
+        const failure = new Error("lookup failed")
+        Object.defineProperty(source, "read", {
+            get() {
+                return function read() {
+                    return this.value
+                }
+            },
+        })
+        Object.defineProperty(source, "fail", {
+            get() {
+                throw failure
+            },
+        })
+
+        expect(run(new Chain(source), [], "read", false)).to.be(2)
+        expect(run(new Chain(source), [], "fail", false)).to.be(failure)
+    })
+
+    it("preserves holes and identities in Array observers", () => {
+        const child = {}
+        const source = [child, , 3]
+        const chain = new Chain(source)
+        const sliced = run(chain, [], "slice", false, 0)
+        const reversed = run(chain, [], "toReversed", false)
+
+        expect(Object.keys(sliced)).to.eql(["0", "2"])
+        expect(sliced[0]).to.be(child)
+        expect(Object.keys(reversed)).to.eql(["0", "1", "2"])
+        expect(reversed).to.eql([3, undefined, child])
+        expect(source).to.eql([child, , 3])
+    })
+
+    it("preserves native defaults after promised arguments", async () => {
+        const sliceEnd = deferred()
+        const copyEnd = deferred()
+        const flatDepth = deferred()
+        const separator = deferred()
+        const sliced = run(
+            new Chain([1, 2, 3]),
+            [],
+            "slice",
+            false,
+            0,
+            sliceEnd.promise,
+        )
+        const copiedChain = new Chain([1, 2, 3])
+        const copied = run(
+            copiedChain,
+            [],
+            "copyWithin",
+            true,
+            1,
+            0,
+            copyEnd.promise,
+        )
+        const flattened = run(
+            new Chain([[1], [2]]),
+            [],
+            "flat",
+            false,
+            flatDepth.promise,
+        )
+        const joined = run(
+            new Chain([1, 2]),
+            [],
+            "join",
+            false,
+            separator.promise,
+        )
+
+        sliceEnd.resolve(undefined)
+        copyEnd.resolve(undefined)
+        flatDepth.resolve(undefined)
+        separator.resolve(undefined)
+
+        expect(await sliced).to.eql([1, 2, 3])
+        expect(await copied).to.be(copiedChain._state.value)
+        expect(copiedChain._state.value).to.eql([1, 1, 2])
+        expect(await flattened).to.eql([1, 2])
+        expect(await joined).to.be("1,2")
+    })
+
+    it("recognizes cross-realm Array intrinsics without export", () => {
+        const pending = deferred()
+        const source = runInNewContext("[]")
+        source.push(pending.promise)
+
+        const result = run(new Chain(source), [], "slice", false)
+
+        expect(result instanceof Promise).to.be(false)
+        expect(result[0]).to.be(pending.promise)
+        pending.resolve(1)
+    })
+
+    it("forks Promise property versions at the operation position", async () => {
+        const pending = deferred()
+        const chain = new Chain([pending.promise])
+        const copy = run(chain, [], "slice", false)
+
+        assignPath(chain, ["0"], 9)
+        pending.resolve(1)
+
+        expect(await exportValue(new Chain(copy), [])).to.eql([1])
+        expect(exportValue(chain, [])).to.eql([9])
+        verifyRefCounts(copy)
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("tracks duplicate Promise origins by index during remapping", async () => {
+        const pending = deferred()
+        const chain = new Chain([pending.promise, pending.promise])
+        const source = chain._state.value
+        const source0 = promiseMirrors.getOrCreatePromiseMirror(
+            source,
+            "0",
+            pending.promise,
+        )
+        const source1 = promiseMirrors.getOrCreatePromiseMirror(
+            source,
+            "1",
+            pending.promise,
+        )
+
+        expect(source0 === source1).to.be(false)
+        run(chain, [], "reverse", true)
+
+        const reversed = chain._state.value
+        const reversed0 = promiseMirrors.getPromiseMirror(reversed, "0")
+        const reversed1 = promiseMirrors.getPromiseMirror(reversed, "1")
+        expect(reversed0 === reversed1).to.be(false)
+        expect(reversed0 === source1).to.be(false)
+        expect(reversed1 === source0).to.be(false)
+
+        const copied = new Chain([pending.promise, 0])
+        run(copied, [], "copyWithin", true, 1, 0, 1)
+        expect(
+            promiseMirrors.getPromiseMirror(copied._state.value, "0") ===
+                promiseMirrors.getPromiseMirror(copied._state.value, "1"),
+        ).to.be(false)
+
+        pending.resolve(1)
+        expect(await exportValue(chain, [])).to.eql([1, 1])
+        expect(await exportValue(copied, [])).to.eql([1, 1])
+        verifyRefCounts(chain._state.value)
+        verifyRefCounts(copied._state.value)
+    })
+
+    it("retains Error values nested in Array and object data", async () => {
+        const direct = new Error("direct")
+        const nested = deferred()
+        const flat = run(new Chain([direct]), [], "flat", false)
+        let received
+        const target = {}
+        Object.defineProperty(target, "inspect", {
+            enumerable: false,
+            value(value) {
+                received = value
+                return value.error === direct
+            },
+        })
+        const argument = { error: nested.promise }
+        const inspected = run(
+            new Chain(target),
+            [],
+            "inspect",
+            false,
+            argument,
+        )
+
+        expect(flat).to.eql([direct])
+        expect(inspected instanceof Promise).to.be(true)
+        nested.reject(direct)
+        expect(await inspected).to.be(true)
+        expect(received).not.to.be(argument)
+        expect(received.error).to.be(direct)
+    })
+
+    it("applies Error poisoning to every resolved argument", async () => {
+        const direct = new Error("direct")
+        const rejected = new Error("rejected")
+        const pending = deferred()
+        const concatItem = deferred()
+
+        expect(run(
+            new Chain("abc"),
+            [],
+            "slice",
+            false,
+            direct,
+        )).to.be(direct)
+        expect(run(
+            new Chain([1]),
+            [],
+            "with",
+            false,
+            direct,
+            2,
+        )).to.be(direct)
+
+        const pushed = run(
+            new Chain([1]),
+            [],
+            "push",
+            false,
+            direct,
+        )
+        expect(pushed).to.be(direct)
+        expect(run(
+            new Chain([direct]),
+            [],
+            "includes",
+            false,
+            direct,
+        )).to.be(direct)
+
+        const concatenated = run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            concatItem.promise,
+        )
+        concatItem.reject(rejected)
+        expect(await concatenated).to.be(rejected)
+
+        const delayed = run(
+            new Chain([1]),
+            [],
+            "slice",
+            false,
+            pending.promise,
+        )
+        pending.reject(rejected)
+        expect(await delayed).to.be(rejected)
+
+        const mutation = new Chain([1, 2])
+        expect(run(
+            mutation,
+            [],
+            "copyWithin",
+            true,
+            direct,
+        )).to.be(direct)
+        expect(exportValue(mutation, [])).to.eql([1, 2])
+    })
+
+    it("prepares flat candidates concurrently without resolving retained values", async () => {
+        const first = deferred()
+        const second = deferred()
+        const retained = deferred()
+        const firstCount = countPromiseRegistrations(first.promise)
+        const secondCount = countPromiseRegistrations(second.promise)
+        const chain = new Chain([
+            first.promise,
+            second.promise,
+            [retained.promise],
+        ])
+        const initial = [
+            firstCount(),
+            secondCount(),
+        ]
+
+        const result = run(chain, [], "flat", false, 1)
+
+        expect(firstCount() > initial[0]).to.be(true)
+        expect(secondCount() > initial[1]).to.be(true)
+        first.resolve([1])
+        second.resolve(2)
+
+        const flattened = await result
+        expect(flattened.slice(0, 2)).to.eql([1, 2])
+        expect(flattened[2]).to.be(retained.promise)
+        retained.resolve(3)
+    })
+
+    it("does not write length for same-length mutators", () => {
+        const root = [3, 1, 2]
+        Object.defineProperty(root, "length", { writable: false })
+        const chain = new Chain(root)
+
+        expect(run(chain, [], "reverse", true)).to.be(root)
+        expect(root).to.eql([2, 1, 3])
+    })
+
+    it("accounts for completed placements after a partial mutation error", () => {
+        const root = [1, 2]
+        Object.defineProperty(root, "1", {
+            value: 2,
+            enumerable: true,
+            writable: false,
+            configurable: true,
+        })
+        const result = run(
+            new Chain(root),
+            [],
+            "fill",
+            true,
+            9,
+        )
+
+        expect(result instanceof Error).to.be(true)
+        expect(root).to.eql([9, 2])
+        verifyRefCounts(root)
+    })
+
+    it("returns transformed Arrays from mutators in observation mode", () => {
+        const source = [1, 2]
+        const chain = new Chain(source)
+        const result = run(chain, [], "push", false, 3)
+        const cleared = run(new Chain([1]), [], "fill", false)
+
+        expect([...result]).to.eql([1, 2, 3])
+        expect(cleared).to.eql([undefined])
+        expect(exportValue(chain, [])).to.eql([1, 2])
+    })
+
+    it("selects observation-mode mutators by intrinsic name", () => {
+        const source = [1]
+        source.push = 0
+        const chain = new Chain(source)
+
+        const result = run(chain, [], "push", false, 2)
+        const original = exportValue(chain, [])
+
+        expect([...result]).to.eql([1, 2])
+        expect([...original]).to.eql([1])
+        expect(original.push).to.be(0)
+    })
+
+    it("rejects executable concat protocols", () => {
+        const source = [1]
+        const chain = new Chain(source)
+
+        const spread = { [Symbol.isConcatSpreadable]: true, 0: 2, length: 1 }
+        expect(run(
+            chain,
+            [],
+            "concat",
+            false,
+            spread,
+        ) instanceof Error).to.be(true)
+    })
+
+    it("keeps every earlier endpoint view stable across prepends", () => {
+        const sourceChain = new Chain([2, 3])
+        const first = run(sourceChain, [], "unshift", false, 1)
+        const second = run(new Chain(first), [], "unshift", false, 0)
+
+        expect([...second]).to.eql([0, 1, 2, 3])
+        expect([...first]).to.eql([1, 2, 3])
+        expect(exportValue(sourceChain, [])).to.eql([2, 3])
+    })
+
+    it("materializes when an endpoint no longer reaches a physical edge", () => {
+        const sourceChain = new Chain([1, 2, 3])
+        const shorter = run(sourceChain, [], "pop", false)
+        const extended = run(new Chain(shorter), [], "push", false, 4)
+
+        expect(Array.isArray(extended)).to.be(true)
+        expect(extended).to.eql([1, 2, 4])
+        expect([...shorter]).to.eql([1, 2])
+        expect(exportValue(sourceChain, [])).to.eql([1, 2, 3])
+    })
+
+    it("mutates an owned Array synchronously", () => {
+        const source = [1, 2]
+        const chain = new Chain(source)
+
+        expect(run(chain, [], "push", true, 3)).to.be(3)
+        expect(chain._state.value).to.be(source)
+        expect(source).to.eql([1, 2, 3])
+    })
+
+    it("copy-on-writes a shared mutation receiver", () => {
+        const shared = [1, 2]
+        const root = { left: shared, right: shared }
+        importValue(root)
+        const chain = new Chain(root)
+
+        expect(run(chain, ["left"], "push", true, 3)).to.be(3)
+        expect(exportValue(chain, [])).to.eql({
+            left: [1, 2, 3],
+            right: [1, 2],
+        })
+    })
+
+    it("never uses imported nested Arrays as mutable backing", () => {
+        const external = { values: [1, 2] }
+        importValue(external)
+        const chain = new Chain(external)
+
+        expect(run(chain, ["values"], "push", true, 3)).to.be(3)
+        expect(external.values).to.eql([1, 2])
+        expect(exportValue(chain, [])).to.eql({
+            values: [1, 2, 3],
+        })
+    })
+
+    it("gates delayed mutation preparation and returns its result separately", async () => {
+        const start = deferred()
+        const chain = new Chain([1, 2, 3])
+        const result = run(
+            chain,
+            [],
+            "splice",
+            true,
+            start.promise,
+            1,
+            9,
+        )
+
+        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(result instanceof Promise).to.be(true)
+        start.resolve(1)
+        expect(await result).to.eql([2])
+        expect(await exportValue(chain, [])).to.eql([1, 9, 3])
+    })
+
+    it("prepares a pending mutation receiver and argument together", async () => {
+        const receiver = deferred()
+        const start = deferred()
+        const receiverCount = countPromiseRegistrations(receiver.promise)
+        const startCount = countPromiseRegistrations(start.promise)
+        const chain = new Chain(receiver.promise)
+        const initialReceiverCount = receiverCount()
+        const initialStartCount = startCount()
+
+        const result = run(chain, [], "splice", true, start.promise, 1)
+
+        expect(receiverCount() > initialReceiverCount).to.be(true)
+        expect(startCount() > initialStartCount).to.be(true)
+        expect(chain._state.value instanceof Promise).to.be(true)
+
+        receiver.resolve([1, 2])
+        start.resolve(0)
+        expect(await result).to.eql([1])
+        expect(await exportValue(chain, [])).to.eql([2])
+    })
+
+    it("transforms the FIFO property version of a pending receiver", async () => {
+        const receiver = deferred()
+        const source = [1]
+        const chain = new Chain(receiver.promise)
+        const escaped = lookupPath(chain, [])
+
+        assignPath(chain, ["0"], 9)
+        const result = run(chain, [], "push", true, 2)
+
+        receiver.resolve(source)
+        expect(await escaped).to.be(source)
+        expect(await result).to.be(2)
+        expect(source).to.eql([1])
+        expect(await exportValue(chain, [])).to.eql([9, 2])
+    })
+
+    it("publishes a delayed receiver before its independent result", async () => {
+        const start = deferred()
+        const chain = new Chain([1, 2, 3])
+        const result = run(chain, [], "splice", true, start.promise, 1)
+        const receiver = lookupPath(chain, [])
+        const order = []
+
+        receiver.then(() => order.push("receiver"))
+        result.then(() => order.push("result"))
+        start.resolve(1)
+        await Promise.all([receiver, result])
+
+        expect(order).to.eql(["receiver", "result"])
+    })
+
+    it("completes a delayed result after receiver supersession", async () => {
+        const start = deferred()
+        const chain = new Chain({ values: [1, 2, 3] })
+        const result = run(
+            chain,
+            ["values"],
+            "splice",
+            true,
+            start.promise,
+            1,
+        )
+
+        assignPath(chain, ["values"], ["newer"])
+        start.resolve(1)
+
+        expect(await result).to.eql([2])
+        expect(await exportValue(chain, [])).to.eql({
+            values: ["newer"],
+        })
+    })
+
+    it("installs Promise payloads without gating endpoint mutation", async () => {
+        const item = deferred()
+        const chain = new Chain([1])
+
+        expect(run(chain, [], "push", true, item.promise)).to.be(2)
+        expect(chain._state.value instanceof Promise).to.be(false)
+        expect(chain._state.value[1]).to.be(item.promise)
+
+        item.resolve({ value: 2 })
+        expect(await exportValue(chain, [])).to.eql([
+            1,
+            { value: 2 },
+        ])
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("does not gate a removed Promise result", async () => {
+        const removed = deferred()
+        const chain = new Chain([1, removed.promise])
+        const result = run(chain, [], "pop", true)
+
+        expect(chain._state.value instanceof Promise).to.be(false)
+        expect(result instanceof Promise).to.be(true)
+        expect(exportValue(chain, [])).to.eql([1])
+        removed.resolve(7)
+        expect(await result).to.be(7)
+    })
+
+    it("searches Promise elements with method-specific early stopping", async () => {
+        const first = deferred()
+        const later = deferred()
+        const chain = new Chain([first.promise, 2, later.promise])
+
+        const index = run(chain, [], "indexOf", false, 2)
+        expect(run(chain, [], "includes", false, 2)).to.be(true)
+        first.resolve(1)
+        expect(await index).to.be(1)
+        later.resolve(3)
+    })
+
+    it("does not register Promise elements beyond an indexOf match", async () => {
+        const first = deferred()
+        const later = deferred()
+        const firstCount = countPromiseRegistrations(first.promise)
+        const laterCount = countPromiseRegistrations(later.promise)
+        const chain = new Chain([first.promise, 2, later.promise])
+        const initialFirst = firstCount()
+        const initialLater = laterCount()
+
+        const result = run(chain, [], "indexOf", false, 2)
+
+        expect(firstCount() > initialFirst).to.be(true)
+        expect(laterCount()).to.be(initialLater)
+        first.resolve(1)
+        expect(await result).to.be(1)
+        expect(laterCount()).to.be(initialLater)
+        later.resolve(3)
+    })
+
+    it("preserves sort holes while toSorted reads through them", () => {
+        const source = [3, , 1, undefined]
+        const sorted = run(new Chain(source), [], "sort", false)
+        const copied = run(new Chain(source), [], "toSorted", false)
+
+        expect([...sorted]).to.eql([1, 3, undefined, undefined])
+        expect(Object.keys(sorted)).to.eql(["0", "1", "2"])
+        expect([...copied]).to.eql([1, 3, undefined, undefined])
+        expect(Object.keys(copied)).to.eql(["0", "1", "2", "3"])
+    })
+
+    it("resolves a comparator binding before native sort", async () => {
+        const comparator = deferred()
+        const chain = new Chain([3, 1, 2])
+        const result = run(
+            chain,
+            [],
+            "sort",
+            true,
+            comparator.promise,
+        )
+
+        expect(chain._state.value instanceof Promise).to.be(true)
+        comparator.resolve((left, right) => left - right)
+        expect(await result).to.eql([1, 2, 3])
+        expect(await exportValue(chain, [])).to.eql([1, 2, 3])
+    })
+
+    it("does not gate for Promises outside the inspected coercion path", () => {
+        const pending = deferred()
+        const value = { unrelated: pending.promise }
+        const root = [value]
+        const chain = new Chain(root)
+
+        const result = run(chain, [], "sort", true)
+
+        expect(result).to.be(root)
+        expect(chain._state.value).to.be(root)
+        pending.resolve(1)
+    })
+
+    it("rejects Promise-returning comparators without mutation", () => {
+        const comparison = deferred()
+        const registrations = countPromiseRegistrations(comparison.promise)
+        const values = [2, 1]
+        const chain = new Chain(values)
+        const result = run(
+            chain,
+            [],
+            "sort",
+            true,
+            () => comparison.promise,
+        )
+
+        expect(result instanceof Error).to.be(true)
+        expect(registrations()).to.be(0)
+        expect(chain._state.value).to.be(values)
+        expect(values).to.eql([2, 1])
+        comparison.resolve(0)
+    })
+
+    it("uses intrinsic coercion for language data", () => {
+        let hookCalls = 0
+        const record = {
+            toString() {
+                hookCalls++
+                return "record"
+            },
+            valueOf() {
+                hookCalls++
+                return 1
+            },
+        }
+        const nested = [2]
+        nested.join = () => {
+            hookCalls++
+            return "nested"
+        }
+        class DataValue {
+            toString() {
+                hookCalls++
+                return "data"
+            }
+        }
+        registerDataClass(DataValue)
+
+        expect(run(
+            new Chain([nested, record, new DataValue()]),
+            [],
+            "join",
+            false,
+            "|",
+        )).to.be("2|[object Object]|[object Object]")
+        expect(run(
+            new Chain(nested),
+            [],
+            "toString",
+            false,
+        )).to.be("2")
+        expect(run(
+            new Chain([[1]]),
+            [],
+            "flat",
+            false,
+            record,
+        )).to.eql([[1]])
+        expect(run(
+            new Chain([Object.create(null)]),
+            [],
+            "join",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(run(
+            new Chain([1]),
+            [],
+            "join",
+            false,
+            Symbol(),
+        ) instanceof Error).to.be(true)
+
+        class Opaque {
+            toString() {
+                hookCalls++
+                return "opaque"
+            }
+        }
+        expect(run(
+            new Chain([new Opaque()]),
+            [],
+            "join",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(hookCalls).to.be(0)
+    })
+
+    it("leaves comparator result coercion to native sort", () => {
+        let coercions = 0
+        const result = run(
+            new Chain([3, 1, 2]),
+            [],
+            "toSorted",
+            false,
+            (left, right) => ({
+                valueOf() {
+                    coercions++
+                    return left - right
+                },
+            }),
+        )
+
+        expect(result).to.eql([1, 2, 3])
+        expect(coercions > 0).to.be(true)
+    })
+
+    it("invokes ordinary methods only on supported object surfaces", () => {
+        const record = {}
+        Object.defineProperty(record, "size", {
+            enumerable: false,
+            value() {
+                return { value: this.value }
+            },
+        })
+        record.value = 3
+        const callable = () => 4
+        Object.defineProperty(record, "getCallable", {
+            enumerable: false,
+            value() {
+                return callable
+            },
+        })
+        Object.defineProperty(record, "isReceiver", {
+            enumerable: false,
+            value() {
+                return this === record
+            },
+        })
+
+        const size = run(
+            new Chain(record),
+            [],
+            "size",
+            false,
+        )
+        expect(size).to.eql({ value: 3 })
+        const sizeChain = new Chain(size)
+        assignPath(sizeChain, ["value"], 4)
+        expect(sizeChain._state.value).not.to.be(size)
+        expect(size.value).to.be(3)
+        expect(run(
+            new Chain(record),
+            [],
+            "getCallable",
+            false,
+        )).to.be(callable)
+        expect(run(
+            new Chain(record),
+            [],
+            "isReceiver",
+            false,
+        )).to.be(true)
+        expect(run(
+            new Chain(new Date()),
+            [],
+            "getTime",
+            false,
+        ) instanceof Error).to.be(true)
+
+        const date = new Date()
+        Object.defineProperty(record, "getDate", {
+            enumerable: false,
+            value: () => date,
+        })
+        expect(run(
+            new Chain(record),
+            [],
+            "getDate",
+            false,
+        )).to.be(date)
+    })
+
+    it("leases a method receiver while exported arguments resolve", async () => {
+        const argument = deferred()
+        const record = { value: 1 }
+        Object.defineProperty(record, "read", {
+            enumerable: false,
+            value(addend) {
+                return this.value + addend
+            },
+        })
+        const chain = new Chain(record)
+        const result = run(
+            chain,
+            [],
+            "read",
+            false,
+            argument.promise,
+        )
+
+        assignPath(chain, ["value"], 2)
+        argument.resolve(0)
+
+        expect(await result).to.be(1)
+        expect(chain._state.value.value).to.be(2)
+    })
+
+    it("allows trusted Array overrides while deferring native callbacks", () => {
+        const source = [1, 2]
+        Object.defineProperty(source, "map", {
+            enumerable: false,
+            value() {
+                return this.join("-")
+            },
+        })
+        const view = run(new Chain(source), [], "push", false, 3)
+
+        expect(run(
+            new Chain(view),
+            [],
+            "map",
+            false,
+        )).to.be("1-2-3")
+        expect(run(
+            new Chain([1, 2]),
+            [],
+            "map",
+            false,
+            value => value,
+        ) instanceof Error).to.be(true)
+    })
+
+    it("materializes a view before an ordinary indexed write", () => {
+        const sourceChain = new Chain([1, 2])
+        const view = run(sourceChain, [], "push", false, 3)
+        const viewChain = new Chain(view)
+
+        assignPath(viewChain, ["0"], 9)
+        expect(exportValue(sourceChain, [])).to.eql([1, 2])
+        expect(exportValue(viewChain, [])).to.eql([9, 2, 3])
+        verifyRefCounts(viewChain._state.value)
+    })
+})

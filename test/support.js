@@ -58,9 +58,10 @@ export {
     getErrors,
     hasError,
     lookupPath,
+    registerDataClass,
+    run,
 } from "../src/index.js"
 
-export { PROPERTY_STATE_CLASS } from "../src/mutations.js"
 export { enter } from "../src/enter.js"
 
 export {
@@ -69,11 +70,12 @@ export {
 } from "../src/error.js"
 
 export {
-    onAllPromisesReady,
-    onInitialPromiseResolve,
+    resolveInitialValueOrPoison,
     onLaterPromiseReady,
-    runFatal,
-} from "../src/helpers.js"
+    whenAllReadyOrFatal,
+} from "../src/resolution.js"
+
+export { runFatal } from "../src/helpers.js"
 
 export {
     buildRefIndex,

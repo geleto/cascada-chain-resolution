@@ -1,7 +1,7 @@
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
+import * as resolution from "./resolution.js"
 
 let setMirrorValue
 
@@ -61,7 +61,7 @@ function createPromiseMirror(
     prepareImportedValue,
 ) {
     const mirror = new PromiseMirror(importBoundary)
-    helpers.onInitialPromiseResolve(promise, value => {
+    resolution.resolveInitialValueOrPoison(promise, value => {
         setMirrorValue(parent, key, mirror, value, prepareImportedValue)
     })
     return mirror
@@ -120,28 +120,33 @@ function getOrCreatePromiseMirror(
 // FORK samples the source property's prepared state at the copier's FIFO slot.
 function forkPromiseMirror(
     source,
-    copy,
-    key,
+    destination,
+    sourceKey,
     promise,
-    retainedOffPath,
+    retained,
     importBoundary,
     prepareImportedValue,
+    {
+        sourceMirror = getOrCreatePromiseMirror(
+            source,
+            sourceKey,
+            promise,
+            importBoundary,
+        ),
+        destinationKey = sourceKey,
+        install = true,
+        fallbackImportBoundary,
+    } = {},
 ) {
-    const sourceMirror = getOrCreatePromiseMirror(
-        source,
-        key,
-        promise,
-        importBoundary,
-    )
     const mirror = new PromiseMirror(
-        retainedOffPath ? importBoundary : undefined,
+        retained ? importBoundary : undefined,
     )
-    helpers.onLaterPromiseReady(promise, () => {
-        const value = sourceMirror.getValue(source, key)
-        const sampledBoundary = retainedOffPath
+    resolution.onLaterPromiseReady(promise, () => {
+        const value = sourceMirror.getValue(source, sourceKey)
+        const sampledBoundary = retained
             ? metadata.nodeImportBoundary(
                 value,
-                sourceMirror.importBoundary,
+                sourceMirror.importBoundary ?? fallbackImportBoundary,
             )
             : undefined
         if (sampledBoundary) {
@@ -149,12 +154,18 @@ function forkPromiseMirror(
         } else {
             delete mirror.importBoundary
         }
-        setMirrorValue(copy, key, mirror, value, prepareImportedValue)
+        setMirrorValue(
+            destination,
+            destinationKey,
+            mirror,
+            value,
+            prepareImportedValue,
+        )
         // The resolver is synchronous, so sharing is established before the
         // next FIFO resolver can observe this retained value.
-        if (retainedOffPath) metadata.markShared(value)
+        if (retained) metadata.markShared(value)
     })
-    installPromiseMirror(copy, key, mirror)
+    if (install) installPromiseMirror(destination, destinationKey, mirror)
     return mirror
 }
 
@@ -169,7 +180,7 @@ function transferDetachedPromiseMirror(
     attachmentPath,
 ) {
     const mirror = new PromiseMirror(sourceMirror.importBoundary)
-    helpers.onLaterPromiseReady(promise, () => {
+    resolution.onLaterPromiseReady(promise, () => {
         const value = sourceMirror.detachedValue
         setMirrorValue(destination, key, mirror, value)
         if (attachmentPath) metadata.markShared(value)

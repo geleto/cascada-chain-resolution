@@ -1,27 +1,16 @@
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
+import * as languageValues from "./language-values.js"
+import * as resolution from "./resolution.js"
 
 const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
 const META_MAP = new WeakMap()
 const hasOwn = Object.prototype.hasOwnProperty
 
-function createMeta() {
-    return {
-        // An empty record can also mean imported preparation visited the node.
-        // shared: added when ownership first becomes shared.
-        // mirrors: added when the first promise mirror is installed.
-        // readEnterCount: added while one or more read-only enter operations are active.
-        // cycleCuts: added when the first plain-property cut is published.
-        // promiseCount, errorCount, cycleCutCount, parents: added by ref-indexing.
-        // importBoundary: added at a direct import boundary.
-    }
-}
-
 // Inline storage falls back to the WeakMap when an object cannot accept the
 // Symbol. Both storage modes therefore behave identically for non-extensible nodes.
 function metaOf(value) {
-    if (!helpers.isTracked(value)) return undefined
+    if (!languageValues.isTracked(value)) return undefined
     if (!STORE_META_IN_WEAKMAP && hasOwn.call(value, META)) {
         return value[META]
     }
@@ -29,7 +18,7 @@ function metaOf(value) {
 }
 
 function ensureMeta(value) {
-    if (!helpers.isTracked(value)) {
+    if (!languageValues.isTracked(value)) {
         errorUtils.reportFatalError(
             new TypeError("Cannot attach metadata to this value"),
         )
@@ -37,7 +26,9 @@ function ensureMeta(value) {
 
     let meta = metaOf(value)
     if (!meta) {
-        meta = createMeta()
+        // Fields are added by the subsystems that own them. An empty record can
+        // also mean imported preparation has visited the node.
+        meta = {}
         if (STORE_META_IN_WEAKMAP || !Object.isExtensible(value)) {
             META_MAP.set(value, meta)
         } else {
@@ -59,15 +50,25 @@ function requiresCopyOnWrite(value) {
         !Object.isExtensible(value)
 }
 
+function updateReadLease(value, change) {
+    const meta = ensureMeta(value)
+    const count = meta.readEnterCount ?? 0
+    const next = count + change
+    if (next === 0) delete meta.readEnterCount
+    else meta.readEnterCount = next
+}
+
 // Bare promises crossing an ownership boundary resolve to shared values.
 // Mirrored promise properties mark their prepared logical value instead.
 function markShared(value) {
-    if (helpers.isPromise(value)) {
-        return helpers.onInitialPromiseResolve(value, markShared)
-    }
-    if (!helpers.isTracked(value) || !Object.isExtensible(value)) return value
-    ensureMeta(value).shared = true
-    return value
+    return resolution.resolveInitialValueOrPoison(value, resolved => {
+        if (
+            !languageValues.isTracked(resolved) ||
+            !Object.isExtensible(resolved)
+        ) return resolved
+        ensureMeta(resolved).shared = true
+        return resolved
+    })
 }
 
 // A direct mark makes the value the root of its own imported boundary and
@@ -75,7 +76,7 @@ function markShared(value) {
 // data; existing META identifies a trusted runtime island. Descendants inherit
 // the boundary until independent use creates another one.
 function markImported(value, errorContext) {
-    if (!helpers.isTracked(value)) return false
+    if (!languageValues.isTracked(value)) return false
 
     const meta = ensureMeta(value)
     const createdBoundary = !meta.importBoundary
@@ -99,4 +100,5 @@ export {
     nodeImportBoundary,
     requiresCopyOnWrite,
     STORE_META_IN_WEAKMAP,
+    updateReadLease,
 }

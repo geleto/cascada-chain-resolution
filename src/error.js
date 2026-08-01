@@ -28,14 +28,14 @@ function pathAccessError() {
     return new Error("Cannot access property through missing or primitive value")
 }
 
-function errorFromRejection(reason) {
+function toPoison(reason) {
     return reason instanceof Error ? reason : new Error(String(reason))
 }
 
 export {
-    errorFromRejection,
     pathAccessError,
     reportFatalError,
     setFatalErrorReporter,
+    toPoison,
     validationError,
 }

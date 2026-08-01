@@ -1,18 +1,25 @@
-import * as helpers from "./helpers.js"
+import * as arrayViews from "./array-view.js"
 import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as resolution from "./resolution.js"
 
 // Raw traversal deliberately ignores cycle cuts. Identity state makes cycles
 // finite and spans every Promise continuation captured by this operation.
-// onError lets export release its local reference to an abandoned partial copy.
-function createRawWalkState(onError = undefined) {
+// onError lets export release an abandoned partial copy. Argument export sets
+// preserveErrors so nested Error values remain in that copy.
+function createRawWalkState(
+    onError = undefined,
+    preserveErrors = false,
+) {
     const state = {
         copying: true,
         copies: new WeakMap(),
         errors: new Set(),
         visited: new WeakSet(),
         foundError(error) {
+            if (preserveErrors) return
             if (state.errors.has(error)) return
             state.errors.add(error)
             if (!state.copying) return
@@ -26,26 +33,30 @@ function createRawWalkState(onError = undefined) {
 
 // Returns only optional readiness; copied values live in state.copies.
 function walkRawBranch(value, inheritedImportBoundary, state) {
-    if (helpers.isError(value)) {
+    if (languageValues.isError(value)) {
         state.foundError(value)
         return undefined
     }
-    if (!helpers.isTracked(value)) return undefined
+    if (!languageValues.isTracked(value)) return undefined
 
     if (state.visited.has(value)) return undefined
     state.visited.add(value)
 
     const output = state.copying
-        ? (Array.isArray(value) ? new Array(value.length) : {})
+        ? (
+            arrayViews.isLogicalArray(value)
+                ? new Array(arrayViews.logicalArrayLength(value))
+                : {}
+        )
         : undefined
     if (state.copying) state.copies.set(value, output)
 
     const importBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
     const waits = []
     // Sanctioned write bypass: export output stays outside the runtime graph.
-    for (const key of Object.keys(value)) {
+    for (const key of languageProperties.enumerableLanguageKeys(value)) {
         const child = languageProperties.readLanguageProperty(value, key)
-        if (helpers.isPromise(child)) {
+        if (languageValues.isPromise(child)) {
             // Reserve the captured key now so later settlement cannot change
             // the source's observable own-key order.
             if (state.copying) {
@@ -90,7 +101,7 @@ function walkRawPromise(
         promise,
         importBoundary,
     )
-    return helpers.onLaterPromiseReady(promise, () => {
+    return resolution.onLaterPromiseReady(promise, () => {
         const value = mirror.getValue(parent, key)
         const readiness = walkRawBranch(
             value,
@@ -109,7 +120,7 @@ function walkRawPromise(
 }
 
 function getCopiedValue(value, state) {
-    return helpers.isTracked(value) ? state.copies.get(value) : value
+    return languageValues.isTracked(value) ? state.copies.get(value) : value
 }
 
 export { createRawWalkState, walkRawBranch }

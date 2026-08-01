@@ -20,25 +20,24 @@ const output = runtime.export(chain, [])
 
 `new Chain(value, mutates = true)` stores the Chain's exact capability mode. `chain.close()` prevents new operations through that Chain without cancelling work already issued through it; closing is one-shot.
 
-Internal modules group helper functions under a namespace:
+Internal modules group value predicates under a namespace:
 
 ```js
-import * as helpers from "./helpers.js"
+import * as languageValues from "./language-values.js"
 
-if (helpers.isError(value) || helpers.isPromise(value)) {
+if (languageValues.isError(value) || languageValues.isPromise(value)) {
     // ...
 }
 ```
 
-## Property-state class copy-on-write
+## Data class copy-on-write
 
-The kernel supports copying an explicitly certified JavaScript class instance
-without losing its prototype. This is completed support for class instances as
-data; the implemented runtime graph remains data-only. A restricted
-side-effect-free method operation is planned in [`run.md`](docs/run.md), while
+The kernel supports copying an explicitly registered JavaScript data-class
+instance without losing its prototype. This is completed support for class
+instances as data; the implemented runtime graph remains data-only. Restricted
+side-effect-free method invocation is defined in [`run.md`](docs/run.md), while
 general proxy-backed mutating class methods remain deferred in
-[`future/run.md`](docs/future/run.md). The certification Symbol remains
-internal rather than part of the package API.
+[`future/run.md`](docs/future/run.md).
 
 The COW support is limited to simple data classes.
 
@@ -56,11 +55,16 @@ class Point {
         return Math.hypot(this.x, this.y)
     }
 }
+
+runtime.registerDataClass(Point)
 ```
 
 Its state properties must be own, enumerable, string-keyed data properties.
 Inherited methods and class inheritance are preserved when copy-on-write makes
-a new instance. The constructor is not called during copying.
+a new instance. The constructor is not called during copying. Registration is
+permanent, applies only to the class's exact prototype, and must happen before
+its instances enter Cascada. Register each participating subclass separately.
+The registry does not modify the class or its prototype.
 
 External classes must not depend on:
 
@@ -73,7 +77,8 @@ External classes must not depend on:
   arrays.
 
 These restrictions are trusted. JavaScript reflection cannot reliably detect
-all hidden state.
+all hidden state. No standard internal-slot class is registered automatically;
+such types require dedicated support rather than `registerDataClass`.
 
 Promise-valued properties are supported when they are ordinary own enumerable
 writable data properties. Assigning even the same Promise again creates a new
@@ -84,17 +89,15 @@ ordinary local arrays. Array-subclass prototypes and methods are not retained.
 Export also intentionally produces plain host data rather than preserving
 class prototypes or methods.
 
-An uncertified or unsupported class instance can still exist as data. If a
-mutation needs to copy it, that placement becomes an Error value instead of a
-counterfeit plain object. Host code must not mutate an instance or its
-descriptors after importing it.
+An unregistered class or native internal-slot object remains an opaque identity
+leaf. It can be assigned, returned, and exported, but Cascada does not traverse,
+copy, index, or invoke methods on it. External mutation of an opaque value is
+outside Cascada's guarantees.
 
-The certification Symbol currently belongs to the internal mutation module
-and is not part of the package-level public API. The complete implemented
-contract is documented in
-[`property-state-classes.md`](docs/property-state-classes.md).
+The complete implemented contract is documented in
+[`data-classes.md`](docs/data-classes.md).
 
-## Implemented `enter` and planned standard invocation
+## Implemented `enter` and standard invocation
 
 The mutating `enter` primitive declares an asynchronous effect path before
 waiting:
@@ -205,8 +208,8 @@ operation-local recursive proxy:
   cut-separated ref-index components.
 - [`docs/export-error-set.md`](docs/export-error-set.md) defines export's fused
   copy-or-collect traversal and complete Error result.
-- [`docs/property-state-classes.md`](docs/property-state-classes.md) defines
-  certified class prototype preservation during copy-on-write.
+- [`docs/data-classes.md`](docs/data-classes.md) defines
+  registered data-class prototype preservation during copy-on-write.
 - [`docs/enter.md`](docs/enter.md) defines implemented asynchronous path
   ownership and gate publication.
 - [`docs/run.md`](docs/run.md) defines the planned restricted standard method
@@ -238,8 +241,9 @@ deferred, and pending work.
 - `src/init.js` owns the cycle-breaking runtime wiring shared by the
   package facade and internal entry points.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
-  It also owns the host-only property-state class certification Symbol and the
-  private COW shell selection.
+- `src/language-values.js` owns value classification and the data-class
+  registry.
+- `src/helpers.js` owns shared invocation and reflection helpers.
 - `src/observations.js` owns lookup, export, Error queries, and their
   shared observational walkers.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise
@@ -316,6 +320,7 @@ The public operations are:
 | `assignPath(chain, path, value)` | Assign or replace a path value |
 | `deletePath(chain, path)` | Delete a path value |
 | `lookupPath(chain, path, sharedOwnership)` | Read a path value |
+| `registerDataClass(Class)` | Register an exact class prototype as tracked data |
 | `import(value, errorContext)` | Admit external data |
 | `export(chain, path)` | Copy host-ready output or collect its Errors |
 | `hasError(chain, path)` | Test for a reachable Error |

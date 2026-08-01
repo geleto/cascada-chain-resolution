@@ -6,6 +6,7 @@ import {
     getRefCounter,
     getRefCounts,
     metaOf,
+    registerDataClass,
     STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
@@ -157,8 +158,10 @@ describe("subtree counters", () => {
 
     it("does not inherit metadata through object prototypes", () => {
         const pending = deferred()
-        const prototype = {}
-        const child = Object.create(prototype)
+        class Data {}
+        registerDataClass(Data)
+        const prototype = Data.prototype
+        const child = new Data()
         child.pending = pending.promise
         const root = { prototype, child }
 

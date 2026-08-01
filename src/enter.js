@@ -4,6 +4,7 @@ import * as errorUtils from "./error.js"
 import * as helpers from "./helpers.js"
 import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import {
     setProperty,
@@ -11,6 +12,7 @@ import {
 } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as resolution from "./resolution.js"
 
 function enter(chain, path, mutates, onEntered) {
     return helpers.runFatal(() => {
@@ -28,21 +30,19 @@ function enter(chain, path, mutates, onEntered) {
 
 function enterReadOnly(chain, path, onEntered) {
     return walkObservationPath(chain, path, (value, importBoundary) => {
-        if (helpers.isError(value)) return value
+        if (languageValues.isError(value)) return value
 
         if (importBoundary) {
             imports.import(value, importBoundary.errorContext)
         }
         const entered = new Chain(value, false)
-        const readMeta = helpers.isTracked(value)
-            ? metadata.ensureMeta(value)
-            : undefined
-        if (readMeta) updateReadEnterCount(readMeta, 1)
+        const leaseValue = languageValues.isTracked(value) ? value : undefined
+        if (leaseValue) metadata.updateReadLease(leaseValue, 1)
         const close = () => {
             entered.close()
-            if (readMeta) updateReadEnterCount(readMeta, -1)
+            if (leaseValue) metadata.updateReadLease(leaseValue, -1)
         }
-        return helpers.runOperationCallback(
+        return resolution.runOperationCallbackOrFatal(
             onEntered,
             entered,
             result => {
@@ -64,7 +64,7 @@ function enterMutating(chain, path, onEntered) {
         (parent, key, importBoundary, attachmentPath) => {
             const value = languageProperties.readLanguageProperty(parent, key)
             const privateChain = new Chain(value, true)
-            const sourceMirror = helpers.isPromise(value)
+            const sourceMirror = languageValues.isPromise(value)
                 ? promiseMirrors.getOrCreatePromiseMirror(
                     parent,
                     key,
@@ -108,7 +108,7 @@ function enterMutating(chain, path, onEntered) {
             const close = () => {
                 entered.close()
             }
-            return helpers.runOperationCallback(
+            return resolution.runOperationCallbackOrFatal(
                 onEntered,
                 entered,
                 result => {
@@ -123,26 +123,9 @@ function enterMutating(chain, path, onEntered) {
     )
 }
 
-function updateReadEnterCount(meta, change) {
-    const count = meta.readEnterCount ?? 0
-    const next = count + change
-    if (
-        !Number.isSafeInteger(count) ||
-        count < 0 ||
-        !Number.isSafeInteger(next) ||
-        next < 0
-    ) {
-        errorUtils.reportFatalError(
-            new Error("Read entry count is inconsistent"),
-        )
-    }
-    if (next === 0) delete meta.readEnterCount
-    else meta.readEnterCount = next
-}
-
 function publishEnteredValue(state, resolveGate) {
     const value = state.value
-    if (!helpers.isPromise(value)) {
+    if (!languageValues.isPromise(value)) {
         resolveGate(value)
         return
     }
@@ -150,9 +133,9 @@ function publishEnteredValue(state, resolveGate) {
     // Registration happens only after callback issuance has stopped. The root
     // mirror and all earlier private commands therefore update state.value
     // first in the same canonical FIFO batch.
-    helpers.onLaterPromiseReady(value, () => {
+    resolution.onLaterPromiseReady(value, () => {
         const publishedValue = state.value
-        if (helpers.isPromise(publishedValue)) {
+        if (languageValues.isPromise(publishedValue)) {
             errorUtils.reportFatalError(
                 new Error("Entered root remained pending at publication"),
             )

@@ -910,20 +910,6 @@ describe("enter", () => {
         expect(await readResult).to.be("read")
     })
 
-    it("rejects an inconsistent read-entry counter at acquisition", () => {
-        const branch = {}
-        const chain = new Chain({ branch })
-        lookupPath(chain, ["branch"])
-        metaOf(branch).readEnterCount = -1
-
-        const error = thrownBy(() => {
-            enter(chain, ["branch"], false, () => {})
-        })
-
-        expect(error.message).to.be("Read entry count is inconsistent")
-        delete metaOf(branch).readEnterCount
-    })
-
     it("releases a read entry before reporting a callback throw", () => {
         const branch = {}
         const chain = new Chain({ branch })

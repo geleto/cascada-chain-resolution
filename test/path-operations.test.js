@@ -3,11 +3,15 @@ import {
     expect,
     assignPath,
     deletePath,
+    exportValue,
     lookupPath,
+    registerDataClass,
     importValue,
     deferred,
     flushMicrotasks,
+    run,
     thrownBy,
+    verifyRefCounts,
 } from "./support.js"
 
 describe("path assignment", () => {
@@ -260,6 +264,21 @@ describe("path assignment", () => {
         expect(deleted.message).to.be("Cannot mutate non-enumerable property")
         expect(root.hidden).to.be(hidden)
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
+
+        const array = []
+        Object.defineProperty(array, "hidden", {
+            value: 1,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+        const arrayAssigned = thrownBy(() => {
+            assignPath(new Chain(array), ["hidden"], 2)
+        })
+        expect(arrayAssigned.message).to.be(
+            "Cannot mutate non-enumerable property",
+        )
+        expect(array.hidden).to.be(1)
     })
 
     it("throws for own accessors but safely shadows inherited blockers", () => {
@@ -276,7 +295,9 @@ describe("path assignment", () => {
             enumerable: true,
             configurable: true,
         })
-        const prototype = {}
+        class InheritedState {}
+        registerDataClass(InheritedState)
+        const prototype = InheritedState.prototype
         Object.defineProperty(prototype, "locked", {
             value: 1,
             enumerable: true,
@@ -293,7 +314,7 @@ describe("path assignment", () => {
             enumerable: true,
             configurable: true,
         })
-        const inherited = Object.create(prototype)
+        const inherited = new InheritedState()
 
         const accessorFailure = thrownBy(() => {
             assignPath(new Chain(accessor), ["value"], 2)
@@ -331,20 +352,102 @@ describe("path assignment", () => {
         expect(Object.prototype.propertyIsEnumerable.call(next, "hidden")).to.be(true)
     })
 
-    it("treats array length as a non-language mutation property", () => {
+    it("exposes Array length and applies ArraySetLength semantics", () => {
         const root = [1, 2, 3]
         const chain = new Chain(root)
 
-        expect(lookupPath(chain, ["length"])).to.be(undefined)
+        expect(lookupPath(chain, ["length"])).to.be(3)
 
-        const assigned = thrownBy(() => assignPath(chain, ["length"], 1))
-        const deleted = thrownBy(() => deletePath(chain, ["length"]))
+        expect(assignPath(chain, ["length"], 1)).to.be(undefined)
+        const deleted = deletePath(chain, ["length"])
 
-        expect(assigned instanceof Error).to.be(true)
         expect(deleted instanceof Error).to.be(true)
-        expect(assigned.message).to.be("Cannot mutate non-enumerable property")
-        expect(deleted.message).to.be("Cannot mutate non-enumerable property")
-        expect(root).to.eql([1, 2, 3])
+        expect(chain._state.value).to.eql([1])
+        expect(root).to.eql([1])
+    })
+
+    it("grows Array length with holes and rejects invalid lengths unchanged", () => {
+        const root = [1]
+        const chain = new Chain(root)
+
+        expect(assignPath(chain, ["length"], 3)).to.be(undefined)
+        expect(root.length).to.be(3)
+        expect(Object.keys(root)).to.eql(["0"])
+
+        const error = assignPath(chain, ["length"], 1.5)
+        expect(error instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(root)
+        expect(root.length).to.be(3)
+    })
+
+    it("matches partial ArraySetLength failure", () => {
+        const root = [0, 1, 2]
+        Object.defineProperty(root, "1", {
+            value: 1,
+            enumerable: true,
+            writable: true,
+            configurable: false,
+        })
+        const chain = new Chain(root)
+
+        const error = assignPath(chain, ["length"], 0)
+
+        expect(error instanceof Error).to.be(true)
+        expect(root.length).to.be(2)
+        expect(root).to.eql([0, 1])
+        verifyRefCounts(root)
+    })
+
+    it("respects a non-writable native Array length", () => {
+        const root = [1, 2]
+        Object.defineProperty(root, "length", { writable: false })
+        const chain = new Chain(root)
+
+        const error = assignPath(chain, ["length"], 2)
+
+        expect(error instanceof Error).to.be(true)
+        expect(root).to.eql([1, 2])
+    })
+
+    it("gates a Promise-coerced Array length before later mutations", async () => {
+        const length = deferred()
+        const chain = new Chain([1, 2, 3])
+
+        expect(assignPath(chain, ["length"], length.promise)).to.be(undefined)
+        expect(chain._state.value instanceof Promise).to.be(true)
+        assignPath(chain, ["0"], 9)
+
+        length.resolve(1)
+        await flushMicrotasks()
+
+        expect(await exportValue(chain, [])).to.eql([9])
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("shrinks ArrayView bounds and materializes before regrowth", () => {
+        const sourceChain = new Chain([1, 2, 3])
+        const view = run(sourceChain, [], "push", false, 4)
+        const viewChain = new Chain(view)
+
+        assignPath(viewChain, ["length"], 2)
+        expect(exportValue(viewChain, [])).to.eql([1, 2])
+        expect(exportValue(sourceChain, [])).to.eql([1, 2, 3])
+
+        assignPath(viewChain, ["length"], 4)
+        const grown = exportValue(viewChain, [])
+        expect(grown.length).to.be(4)
+        expect(Object.keys(grown)).to.eql(["0", "1"])
+        expect(exportValue(sourceChain, [])).to.eql([1, 2, 3])
+        verifyRefCounts(viewChain._state.value)
+    })
+
+    it("exposes read-only String length", () => {
+        const chain = new Chain("abc")
+
+        expect(lookupPath(chain, ["length"])).to.be(3)
+        expect(assignPath(chain, ["length"], 1) instanceof Error).to.be(true)
+        expect(deletePath(chain, ["length"]) instanceof Error).to.be(true)
+        expect(chain._state.value).to.be("abc")
     })
 
     it("can shadow inherited properties", () => {

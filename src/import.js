@@ -1,7 +1,9 @@
 import * as helpers from "./helpers.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
+import * as resolution from "./resolution.js"
 
 let commitLiveEdge
 
@@ -14,13 +16,10 @@ function importValue(value, errorContext) {
         if (!errorContext) {
             throw new Error("import requires an error context")
         }
-        if (helpers.isPromise(value)) {
-            return helpers.onInitialPromiseResolve(
-                value,
-                importResolvedValue,
-            )
-        }
-        return importResolvedValue(value)
+        return resolution.resolveInitialValueOrPoison(
+            value,
+            importResolvedValue,
+        )
 
         function importResolvedValue(resolvedValue) {
             const createdBoundary = metadata.markImported(
@@ -73,7 +72,7 @@ function prepareImportedData(importBoundary) {
     function walkProperty(parent, key, inheritedBoundary, state) {
         if (hasCycleCut(parent, key)) return
         const value = languageProperties.readLanguageProperty(parent, key)
-        if (helpers.isPromise(value)) {
+        if (languageValues.isPromise(value)) {
             if (promiseMirrors.getPromiseMirror(parent, key)) return
 
             const resumedState = {
@@ -124,7 +123,7 @@ function prepareImportedData(importBoundary) {
     // cuts locally unless the ancestor predates this Promise segment, in which
     // case the identity bubbles up to the Promise placement.
     function walkValue(value, inheritedBoundary, state) {
-        if (!helpers.isTracked(value)) return undefined
+        if (!languageValues.isTracked(value)) return undefined
         if (state.currentPath.has(value)) {
             metadata.markShared(value)
             return value
@@ -153,7 +152,7 @@ function prepareImportedData(importBoundary) {
         )
         state.currentPath.add(value)
         let cycleAncestor
-        for (const key of Object.keys(value)) {
+        for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const foundAncestor = walkProperty(
                 value,
                 key,
@@ -182,7 +181,7 @@ function scanFixedPathForCycles(
     function walkProperty(parent, key, inheritedBoundary) {
         if (hasCycleCut(parent, key)) return undefined
         const value = languageProperties.readLanguageProperty(parent, key)
-        if (helpers.isPromise(value)) {
+        if (languageValues.isPromise(value)) {
             if (pathRootToPin) metadata.markShared(pathRootToPin)
             if (promiseMirrors.getPromiseMirror(parent, key)) return undefined
 
@@ -215,7 +214,7 @@ function scanFixedPathForCycles(
     }
 
     function walkValue(value, inheritedBoundary) {
-        if (!helpers.isTracked(value)) return undefined
+        if (!languageValues.isTracked(value)) return undefined
         if (fixedPath.has(value)) {
             metadata.markShared(value)
             return value
@@ -230,7 +229,7 @@ function scanFixedPathForCycles(
             value,
             inheritedBoundary,
         )
-        for (const key of Object.keys(value)) {
+        for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const matchedAncestor = walkProperty(
                 value,
                 key,
@@ -263,7 +262,7 @@ function createImportedValuePreparer(ancestors) {
 // Synchronous attachment of already resolved imported data.
 function attachImportedDataToImportedData(parent, key, attachmentPath) {
     const value = languageProperties.readLanguageProperty(parent, key)
-    if (helpers.isPromise(value)) return
+    if (languageValues.isPromise(value)) return
 
     const importBoundary = metadata.nodeImportBoundary(value)
     if (!importBoundary) return

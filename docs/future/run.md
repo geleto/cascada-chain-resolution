@@ -7,7 +7,7 @@ current implementation plan.
 
 The runtime graph remains data-only. Functions are not language data, and the
 planned restricted standard [`run`](../run.md) does not permit mutating class
-methods. The current kernel supports property-state class instances only as
+methods. The current kernel supports registered data-class instances only as
 data whose prototype can survive copy-on-write.
 
 This document records the design to use if broader invocation is revisited. It combines:
@@ -30,7 +30,7 @@ If implemented, this proxy-backed extension would have exactly two invocation
 forms:
 
 1. side-effect-free standalone functions selected outside the graph; and
-2. methods on certified property-state class instances that may mutate their
+2. methods on registered data-class instances that may mutate their
    own state.
 
 It would not:
@@ -43,7 +43,7 @@ It would not:
 - turn external side effects into a transaction.
 
 A standalone callable would come from compiler or host integration metadata. A
-class method would come from the certified receiver's prototype together with a
+class method would come from the registered receiver's prototype together with a
 trusted method descriptor. Own enumerable graph properties remain data even
 when their keys shadow method names.
 
@@ -96,12 +96,12 @@ value happens to be callable.
 ## Supported receivers
 
 A method receiver must satisfy the existing
-[`property-state class`](../property-state-classes.md) certification contract.
+[`data-class`](../data-classes.md) registration contract.
 Its meaningful state consists entirely of own enumerable string-keyed data
 properties, and its exact prototype can be used to create a copy shell without
 running a constructor.
 
-Certification already preserves:
+Registration already preserves:
 
 - prototype identity and `instanceof`;
 - inherited and overridden methods;
@@ -110,7 +110,7 @@ Certification already preserves:
 - Promise mirrors, Errors, refcounts, and ownership metadata; and
 - isolation from imported host state.
 
-Certification does not make an opaque method safe. The proxy invocation layer
+Registration does not make an opaque method safe. The proxy invocation layer
 adds that separate execution protocol.
 
 ## Why combine proxies with `enter`
@@ -323,7 +323,7 @@ value. Delete-and-reinsert order is retained. This is necessary because
 assigning even the same eventual Promise value would be a fresh property
 version if Promise writes are supported later.
 
-Proxy targets must preserve JavaScript Proxy invariants. A certified class
+Proxy targets must preserve JavaScript Proxy invariants. A registered data class
 receiver uses an operation-local shell with its exact prototype. Nested
 supported data uses the corresponding ordinary shell. No runtime metadata is
 placed on proxy targets.
@@ -395,9 +395,9 @@ materialization set before writing any edge. It then populates the shells from
 the final draft view.
 
 Allocating first preserves aliases and cycles. Shell selection reuses the
-property-state copy rules:
+data-class copy rules:
 
-- supported class identities retain their exact certified prototype;
+- supported class identities retain their exact registered prototype;
 - ordinary language-data containers use their existing supported shell; and
 - unsupported identities produce an Error before publication.
 
@@ -603,7 +603,7 @@ Every applicable test runs under inline-Symbol and WeakMap metadata modes.
 ### Data-only dispatch
 
 - callable and descriptors never entering the graph;
-- certified and unsupported receiver prototypes;
+- registered and unsupported receiver prototypes;
 - inherited, overridden, missing, and shadowed methods;
 - getter-free lookup;
 - exact `mutates` validation; and
