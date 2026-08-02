@@ -9,40 +9,40 @@ import {
     setProperty,
 } from "./mutations.js"
 import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyCaptures from "./property-capture.js"
+import * as propertyOrigins from "./property-origin.js"
 import * as propertyTransitions from "./property-transitions.js"
 import * as refcounts from "./refcounts.js"
 
 const NAMED_PROPERTIES = Symbol("Array remap named properties")
-const KIND_ASSIGN = 0
+const KIND_ADD = 0
 const KIND_DELETE = 1
 const KIND_LENGTH = 2
-const KIND_REMAP = 3
+const KIND_MOVE = 3
 
-function capture(array) {
+function createInitialRemap(array) {
     const length = arrayViews.logicalArrayLength(array)
     const remap = new Array(length)
     for (let index = 0; index < length; index++) {
-        const property = propertyCaptures.capture(array, String(index))
-        if (property) remap[index] = property
+        const origin = propertyOrigins.getOrigin(array, index)
+        if (origin) remap[index] = origin
     }
     const named = []
     for (const key of languageProperties.enumerableLanguageKeys(array)) {
         if (arrayViews.isArrayIndex(key)) continue
-        named.push([key, propertyCaptures.capture(array, key)])
+        named.push([key, propertyOrigins.getOrigin(array, key)])
     }
     remap[NAMED_PROPERTIES] = named
     return remap
 }
 
-function trace(remap) {
+function trace(arrayRemap) {
     const operations = []
-    const working = new Proxy(remap, {
+    const working = new Proxy(arrayRemap, {
         set(target, key, value) {
             if (key === "length") {
                 operations.push({ kind: KIND_LENGTH, value })
             } else if (arrayViews.isArrayIndex(key)) {
-                operations.push(operationFor(value, Number(key)))
+                operations.push(createPlacementOperation(value, Number(key)))
             }
             return Reflect.set(target, key, value, target)
         },
@@ -59,29 +59,34 @@ function trace(remap) {
     return { working, operations }
 }
 
-function operationFor(element, newIndex) {
-    return propertyCaptures.is(element)
+function createPlacementOperation(entry, newIndex) {
+    return propertyOrigins.isOrigin(entry)
         ? {
-            kind: KIND_REMAP,
-            property: element,
+            kind: KIND_MOVE,
+            origin: entry,
             newIndex,
         }
-        : { kind: KIND_ASSIGN, newIndex, value: element }
+        : { kind: KIND_ADD, newIndex, value: entry }
 }
 
-function apply(array, remap, operations) {
+function applyRemapToArray(array, remap, operations) {
     operations ??= Array.from({ length: remap.length }, (_, newIndex) => {
         return newIndex in remap
-            ? operationFor(remap[newIndex], newIndex)
+            ? createPlacementOperation(remap[newIndex], newIndex)
             : { kind: KIND_DELETE, index: newIndex }
     })
     const placementCount = new Map()
-    for (const property of remap) {
-        if (!propertyCaptures.is(property)) continue
+    for (const origin of remap) {
+        if (!propertyOrigins.isOrigin(origin)) continue
         placementCount.set(
-            property,
-            (placementCount.get(property) ?? 0) + 1,
+            origin,
+            (placementCount.get(origin) ?? 0) + 1,
         )
+    }
+    for (const operation of operations) {
+        if (operation.kind === KIND_MOVE) {
+            propertyOrigins.captureOrigin(operation.origin)
+        }
     }
 
     try {
@@ -96,12 +101,12 @@ function apply(array, remap, operations) {
                 continue
             }
             const key = String(operation.newIndex)
-            if (operation.kind === KIND_REMAP) {
-                place(
+            if (operation.kind === KIND_MOVE) {
+                placeOrigin(
                     array,
                     key,
-                    operation.property,
-                    (placementCount.get(operation.property) ?? 0) > 1,
+                    operation.origin,
+                    (placementCount.get(operation.origin) ?? 0) > 1,
                 )
             } else {
                 setProperty(array, key, operation.value)
@@ -113,62 +118,54 @@ function apply(array, remap, operations) {
     }
 }
 
-function createArray(remap, retained) {
+function createArrayFromRemap(remap, refIndexSource = undefined) {
     const output = new Array(remap.length)
-    remap.forEach((element, index) => {
-        if (propertyCaptures.is(element)) {
-            place(
-                output,
-                String(index),
-                element,
-                retained,
-            )
+    remap.forEach((entry, index) => {
+        if (propertyOrigins.isOrigin(entry)) {
+            placeOrigin(output, String(index), entry)
         } else {
-            setProperty(output, String(index), element)
-            if (!languageValues.isPromise(element)) metadata.markShared(element)
+            setProperty(output, String(index), entry)
+            if (!languageValues.isPromise(entry)) metadata.markShared(entry)
         }
     })
-    for (const [key, property] of remap[NAMED_PROPERTIES] ?? []) {
-        place(output, key, property, retained)
+    for (const [key, origin] of remap[NAMED_PROPERTIES] ?? []) {
+        placeOrigin(output, key, origin)
+    }
+    if (refIndexSource !== undefined) {
+        refcounts.indexValueIfSourceIndexed(refIndexSource, output)
     }
     return output
 }
 
-function materialize(remap, retained = true) {
-    const output = createArray(remap, retained)
-    refcounts.buildRefIndex(output)
-    return output
-}
-
-function materializeSource(source) {
-    const output = createArray(capture(source), true)
-    refcounts.indexValueIfSourceIndexed(source, output)
-    return output
-}
-
-function place(destination, key, property, retained = true) {
+function placeOrigin(
+    destination,
+    key,
+    origin,
+    retained = true,
+) {
+    propertyOrigins.captureOrigin(origin)
     const stringKey = String(key)
     languageProperties.assertCanSetLanguageProperty(
         destination,
         stringKey,
-        property.importBoundary?.errorContext,
+        origin.importBoundary?.errorContext,
     )
 
-    const value = property.value
+    const value = origin.value
     if (languageValues.isPromise(value)) {
         const mirror = promiseMirrors.forkPromiseMirror(
-            property.owner,
+            origin.owner,
             destination,
-            property.key,
+            origin.key,
             value,
             retained,
-            property.importBoundary,
+            origin.importBoundary,
             undefined,
             {
-                sourceMirror: property.mirror,
+                sourceMirror: origin.mirror,
                 destinationKey: stringKey,
                 install: false,
-                fallbackImportBoundary: property.importBoundary,
+                fallbackImportBoundary: origin.importBoundary,
             },
         )
         propertyTransitions.replaceProperty(
@@ -180,8 +177,8 @@ function place(destination, key, property, retained = true) {
         return
     }
 
-    if (property.importBoundary && languageValues.isTracked(value)) {
-        imports.import(value, property.importBoundary.errorContext)
+    if (origin.importBoundary && languageValues.isTracked(value)) {
+        imports.import(value, origin.importBoundary.errorContext)
     } else if (retained) {
         metadata.markShared(value)
     }
@@ -194,14 +191,15 @@ function place(destination, key, property, retained = true) {
             value,
         )
         imports.clearCycleCut(destination, stringKey)
-        if (property.cycleCut) imports.setCycleCut(destination, stringKey)
+        if (origin.cycleCut) {
+            imports.setCycleCut(destination, stringKey)
+        }
     })
 }
 
 export {
-    apply,
-    capture,
-    materialize,
-    materializeSource,
+    applyRemapToArray,
+    createArrayFromRemap,
+    createInitialRemap,
     trace,
 }

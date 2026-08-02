@@ -7,7 +7,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
-import * as propertyCaptures from "./property-capture.js"
+import * as propertyOrigins from "./property-origin.js"
 
 const ARRAY_METHODS = {
     __proto__: null,
@@ -24,27 +24,19 @@ const ARRAY_METHODS = {
     push: { mutate: true, endpoint: true, restValues: true },
     reverse: { mutate: true },
     shift: { mutate: true, endpoint: true, result: materializeElement },
-    slice: { exportArgs: [true, true], result: arrayRemaps.materialize },
+    slice: { exportArgs: [true, true], result: arrayRemaps.createArrayFromRemap },
     sort: {
         mutate: true,
         prepare: prepareSortArguments,
         mutationRemap: prepareAndSortAndRemap,
     },
-    splice: { mutate: true, exportArgs: [true, true], restValues: true, result: arrayRemaps.materialize },
-    toReversed: { result: arrayRemaps.materialize },
+    splice: { mutate: true, exportArgs: [true, true], restValues: true, result: arrayRemaps.createArrayFromRemap },
+    toReversed: { result: arrayRemaps.createArrayFromRemap },
     toSorted: { prepare: prepareSortArguments },
-    toSpliced: { exportArgs: [true, true], restValues: true, result: arrayRemaps.materialize },
+    toSpliced: { exportArgs: [true, true], restValues: true, result: arrayRemaps.createArrayFromRemap },
     toString: {},
     unshift: { mutate: true, endpoint: true, restValues: true },
-    with: { exportArgs: [true, false], result: arrayRemaps.materialize },
-}
-
-function callNativeArrayMethod(method, thisValue, args) {
-    return helpers.invokeDataFunctionOrPoison(
-        Array.prototype[method],
-        thisValue,
-        args,
-    )
+    with: { exportArgs: [true, false], result: arrayRemaps.createArrayFromRemap },
 }
 
 function prepareConcatArguments(args) {
@@ -74,17 +66,17 @@ function prepareConcatArguments(args) {
 function concat(thisValue, items) {
     const prepared = items.map(item => {
         return arrayViews.isLogicalArray(item)
-            ? arrayRemaps.capture(item)
+            ? arrayRemaps.createInitialRemap(item)
             : item
     })
-    const result = callNativeArrayMethod(
-        "concat",
-        arrayRemaps.capture(thisValue),
+    const result = helpers.invokeDataFunctionOrPoison(
+        Array.prototype.concat,
+        arrayRemaps.createInitialRemap(thisValue),
         prepared,
     )
     return languageValues.isError(result)
         ? result
-        : arrayRemaps.materialize(result)
+        : arrayRemaps.createArrayFromRemap(result)
 }
 
 function prepareFlatArguments(args) {
@@ -103,27 +95,27 @@ function flat(thisValue, depth) {
     return resolution.resolveOperationResultOrFatal(
         prepareFlatArray(thisValue, depth),
         prepared => {
-            const result = callNativeArrayMethod(
-                "flat",
+            const result = helpers.invokeDataFunctionOrPoison(
+                Array.prototype.flat,
                 prepared,
                 [depth],
             )
             return languageValues.isError(result)
                 ? result
-                : arrayRemaps.materialize(result)
+                : arrayRemaps.createArrayFromRemap(result)
         },
     )
 }
 
 function prepareFlatArray(array, depth) {
-    const source = arrayRemaps.capture(array)
+    const source = arrayRemaps.createInitialRemap(array)
     const output = new Array(source.length)
     const pending = []
     for (let index = 0; index < source.length; index++) {
-        const property = source[index]
-        if (!property) continue
+        const origin = source[index]
+        if (!origin) continue
         const prepared = prepareFlatProperty(
-            property,
+            origin,
             depth,
         )
         if (languageValues.isPromise(prepared)) {
@@ -141,16 +133,15 @@ function prepareFlatArray(array, depth) {
     })
 }
 
-function prepareFlatProperty(property, depth) {
-    if (depth === 0) return property
+function prepareFlatProperty(origin, depth) {
+    if (depth === 0) return origin
     return resolution.resolveOperationResultOrFatal(
-        propertyCaptures.resolve(property),
+        propertyOrigins.resolveOriginValue(origin),
         value => {
             if (arrayViews.isLogicalArray(value)) {
                 return prepareFlatArray(value, depth - 1)
             }
-            propertyCaptures.updateValue(property, value)
-            return property
+            return origin
         },
     )
 }
@@ -198,12 +189,12 @@ function toSorted(thisValue, comparator) {
 function sort(thisValue, comparator, denseHoles = false) {
     return resolution.continueOperationUnlessPoison(
         prepareAndSortAndRemap(thisValue, comparator, denseHoles),
-        arrayRemaps.materialize,
+        arrayRemaps.createArrayFromRemap,
     )
 }
 
-// Native sorting permutes captured properties by their resolved values; each
-// final position becomes the property's new index, preserving slot metadata.
+// Native sorting permutes property origins by their resolved values; placement
+// later reads each source slot before mutation replay changes the receiver.
 // Supplied comparators are synchronous and pure; default comparison stringifies
 // each defined element once.
 function prepareAndSortAndRemap(
@@ -213,21 +204,19 @@ function prepareAndSortAndRemap(
 ) {
     const records = []
     let holeCount = 0
-    const source = arrayRemaps.capture(thisValue)
+    const source = arrayRemaps.createInitialRemap(thisValue)
     for (let index = 0; index < source.length; index++) {
-        const property = source[index]
-        if (!property) {
+        const origin = source[index]
+        if (!origin) {
             holeCount++
             continue
         }
-        const valueResult =
-            propertyCaptures.resolve(property)
+        const valueResult = propertyOrigins.resolveOriginValue(origin)
         records.push(resolution.resolveOperationResultOrFatal(
             valueResult,
             value => {
-                propertyCaptures.updateValue(property, value)
                 return {
-                    property,
+                    origin,
                     value,
                 }
             },
@@ -249,15 +238,15 @@ function prepareAndSortAndRemap(
                 const compare = comparator === undefined
                     ? comparePreparedKeys
                     : compareRecords
-                const sorted = callNativeArrayMethod(
-                    "toSorted",
+                const sorted = helpers.invokeDataFunctionOrPoison(
+                    Array.prototype.toSorted,
                     sortable,
                     [compare],
                 )
                 if (languageValues.isError(sorted)) return sorted
                 source.length = sorted.length
                 for (let index = 0; index < sorted.length; index++) {
-                    source[index] = sorted[index].property
+                    source[index] = sorted[index].origin
                 }
                 const sortedLength = source.length
                 source.length += holeCount
@@ -332,7 +321,10 @@ function includes(
         resolveResult = resolve
     })
     for (const key of pending) {
-        const valueResult = propertyCaptures.resolveAt(thisValue, key)
+        const valueResult = propertyOrigins.resolveOriginValueAtKey(
+            thisValue,
+            key,
+        )
         resolution.resolveOperationResultOrFatal(
             valueResult,
             value => {
@@ -387,7 +379,7 @@ function orderedIndexSearch(
             )
             if (languageValues.isPromise(value)) {
                 return resolution.resolveOperationResultOrFatal(
-                    propertyCaptures.resolveAt(thisValue, key),
+                    propertyOrigins.resolveOriginValueAtKey(thisValue, key),
                     resolved => resolved === searchValue
                         ? current
                         : next(),
@@ -412,8 +404,8 @@ function normalizeBackwardStart(fromIndex, length) {
 }
 
 function materializeElement(element, retained = true) {
-    const result = propertyCaptures.is(element)
-        ? propertyCaptures.resolve(element)
+    const result = propertyOrigins.isOrigin(element)
+        ? propertyOrigins.resolveOriginValue(element)
         : element
     return retained
         ? resolution.resolveOperationResultOrFatal(result, value => {

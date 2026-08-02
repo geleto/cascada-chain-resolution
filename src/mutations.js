@@ -10,7 +10,7 @@ import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as propertyTransitions from "./property-transitions.js"
-import * as propertyCaptures from "./property-capture.js"
+import * as propertyOrigins from "./property-origin.js"
 import * as resolution from "./resolution.js"
 
 const KEEP_TARGET = Symbol("KEEP_TARGET")
@@ -153,11 +153,8 @@ function transformProperty(
     transform,
     returnResultPromise = true,
 ) {
-    const targetProperty = propertyCaptures.capture(
-        parent,
-        key,
-        importBoundary,
-    )
+    const targetProperty = propertyOrigins.getOrigin(parent, key)
+    propertyOrigins.captureOrigin(targetProperty, importBoundary)
     const context = {
         present: targetProperty !== undefined,
         rawValue: targetProperty?.value,
@@ -167,7 +164,7 @@ function transformProperty(
     let targetValue
     const operation = resolution.resolveOperationResultsOrFatal(
         [
-            propertyCaptures.resolve(targetProperty),
+            propertyOrigins.resolveOriginValue(targetProperty),
             prepareArguments(context),
         ],
         ([resolvedTargetValue, preparedArguments]) => {
@@ -361,8 +358,10 @@ function assignLengthPath(chain, receiverPath, value) {
                         !projection.canGrowEnd(length - currentLength)
                     )
                 ) {
-                    mutatedValue =
-                        arrayRemaps.materializeSource(targetValue)
+                    mutatedValue = arrayRemaps.createArrayFromRemap(
+                        arrayRemaps.createInitialRemap(targetValue),
+                        targetValue,
+                    )
                 }
                 const error = setArrayLengthReady(mutatedValue, length)
                 return { mutatedValue, result: error }

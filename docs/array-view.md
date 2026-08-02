@@ -163,7 +163,7 @@ The view is directly iterable. Its internal iterator reads logical length on eve
 
 ## Implementation boundary
 
-`src/array-view.js` owns the brand, internal helpers, attachment, backing preflight, representation-only endpoint transitions, bounds, and iteration. `src/array-invocation.js` decides whether the optimization applies and owns property captures, Promise mirrors, ownership, fallback, and JavaScript method results. Captured property placement materializes a view, while ordinary mutation coordinates length assignment. `ArrayView` and its representation adapters are internal module exports; none are callable through ordinary method dispatch or exported by `src/index.js`.
+`src/array-view.js` owns the brand, internal helpers, attachment, backing preflight, representation-only endpoint transitions, bounds, and iteration. `src/array-invocation.js` decides whether the optimization applies and owns Promise mirrors, ownership, fallback, and JavaScript method results. `src/property-origin.js` captures origin property state only when placement begins; placement materializes a view, while ordinary mutation coordinates length assignment. `ArrayView` and its representation adapters are internal module exports; none are callable through ordinary method dispatch or exported by `src/index.js`.
 
 `src/meta.js` stores `arrayView` on an attached native Array identity and reusable read leases. Logical adapters may be adopted incrementally while they remain identity operations for ordinary Arrays; attachment must stay disabled until every subsystem named under Logical surface uses them.
 

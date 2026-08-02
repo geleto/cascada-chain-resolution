@@ -64,11 +64,14 @@ function runObservation(chain, path, method, args) {
             const thisValue =
                 callable !== undefined &&
                 arrayViews.requiresArrayMaterialization(targetValue)
-                    ? arrayRemaps.materializeSource(targetValue)
+                    ? arrayRemaps.createArrayFromRemap(
+                        arrayRemaps.createInitialRemap(targetValue),
+                        targetValue,
+                    )
                     : targetValue
 
             const operationResult = callable === undefined
-                ? invokeArrayObservation(targetValue, importBoundary)
+                ? invokeArrayObservationMethod(targetValue, importBoundary)
                 : invokeMethodObservation(thisValue, callable)
 
             return finishObservation(
@@ -94,10 +97,10 @@ function runObservation(chain, path, method, args) {
             )
     }
 
-    function invokeArrayObservation(targetValue, importBoundary) {
+    function invokeArrayObservationMethod(targetValue, importBoundary) {
         const preparedArguments =
-            arrayInvocation.prepareArrayArguments(method, args)
-        return arrayInvocation.invokeArrayObservation(
+            arrayInvocation.prepareArrayMethodArguments(method, args)
+        return arrayInvocation.invokeArrayObservationMethod(
             targetValue,
             method,
             preparedArguments,
@@ -164,7 +167,7 @@ function runMutation(chain, path, method, args) {
             !languageValues.isPromise(rawValue) &&
             !arrayViews.isLogicalArray(rawValue)
         ) return undefined
-        return arrayInvocation.prepareArrayArguments(method, args)
+        return arrayInvocation.prepareArrayMethodArguments(method, args)
     }
 
     function invokeMutation(
@@ -196,7 +199,7 @@ function runMutation(chain, path, method, args) {
             metadata.requiresCopyOnWrite(thisValue) ||
             arrayViews.requiresArrayMaterialization(thisValue)
 
-        return arrayInvocation.invokeArrayMutation(
+        return arrayInvocation.invokeArrayMutationMethod(
             thisValue,
             method,
             preparedArguments,

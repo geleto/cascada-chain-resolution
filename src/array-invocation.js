@@ -6,7 +6,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as methods from "./array-methods.js"
 import { exportArgument } from "./observations.js"
-import * as propertyCaptures from "./property-capture.js"
+import * as propertyOrigins from "./property-origin.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as resolution from "./resolution.js"
 
@@ -18,7 +18,7 @@ function isArrayMethod(method) {
     return methods.ARRAY_METHODS[method] !== undefined
 }
 
-function prepareArrayArguments(method, args) {
+function prepareArrayMethodArguments(method, args) {
     const definition = methods.ARRAY_METHODS[method]
     return resolution.continueUnlessAnyPoison(args, () => {
         return definition.prepare
@@ -59,7 +59,7 @@ function prepareArrayArguments(method, args) {
     }
 }
 
-function invokeArrayObservation(
+function invokeArrayObservationMethod(
     thisValue,
     method,
     preparedArguments,
@@ -83,14 +83,16 @@ function invokeArrayObservation(
             if (implementation) {
                 return implementation(thisValue, preparedArgs)
             }
-            const remap = arrayRemaps.capture(thisValue)
+            const remap = arrayRemaps.createInitialRemap(thisValue)
             const nativeResult = helpers.invokeDataFunctionOrPoison(
                 Array.prototype[method],
                 remap,
                 preparedArgs,
             )
             if (languageValues.isError(nativeResult)) return nativeResult
-            if (definition.mutate) return arrayRemaps.materialize(remap)
+            if (definition.mutate) {
+                return arrayRemaps.createArrayFromRemap(remap)
+            }
             return definition.result
                 ? definition.result(nativeResult)
                 : nativeResult
@@ -98,7 +100,7 @@ function invokeArrayObservation(
     )
 }
 
-function invokeArrayMutation(
+function invokeArrayMutationMethod(
     thisValue,
     method,
     preparedArguments,
@@ -118,13 +120,13 @@ function invokeArrayMutation(
             let result = arrayView.length
             if (definition.result) {
                 const length = arrayViews.logicalArrayLength(thisValue)
-                const property = length > 0
-                    ? propertyCaptures.capture(
+                const origin = length > 0
+                    ? propertyOrigins.getOrigin(
                         thisValue,
                         String(method === "shift" ? 0 : length - 1),
                     )
                     : undefined
-                result = definition.result(property)
+                result = definition.result(origin)
             }
             return { mutatedValue: arrayView, result }
         }
@@ -137,7 +139,7 @@ function invokeArrayMutation(
         )
     }
     // TODO: Bypass remapping when owned native storage has no placement-sensitive state.
-    const remap = arrayRemaps.capture(thisValue)
+    const remap = arrayRemaps.createInitialRemap(thisValue)
     let working = remap
     let operations
     if (!replaceReceiver) {
@@ -150,26 +152,32 @@ function invokeArrayMutation(
     )
     if (languageValues.isError(nativeResult)) return nativeResult
 
+    const result = definition.result && nativeResult !== working
+        ? definition.result(
+            nativeResult,
+            definition.endpoint ? replaceReceiver : undefined,
+        )
+        : nativeResult
     const outcome = commitArrayMutation(remap, operations)
     if (languageValues.isError(outcome.result) || nativeResult === working) {
         return outcome
     }
-    const result = definition.result
-        ? definition.result(nativeResult, replaceReceiver)
-        : nativeResult
     return { mutatedValue: outcome.mutatedValue, result }
 
     function commitArrayMutation(remap, operations) {
         if (replaceReceiver) {
-            const mutatedValue = arrayRemaps.materialize(remap)
+            const mutatedValue = arrayRemaps.createArrayFromRemap(remap)
             return { mutatedValue, result: mutatedValue }
         }
 
-        const error = arrayRemaps.apply(thisValue, remap, operations)
+        const error = arrayRemaps.applyRemapToArray(
+            thisValue, remap, operations,
+        )
         return { mutatedValue: thisValue, result: error ?? thisValue }
     }
 }
 
+// thisValue can be any array representation: Array, ArrayView, Array with attached ArrayView
 function tryArrayViewOperation(
     thisValue,
     method,
@@ -257,9 +265,9 @@ function tryArrayViewOperation(
 }
 
 export {
-    invokeArrayObservation,
-    invokeArrayMutation,
+    invokeArrayObservationMethod,
+    invokeArrayMutationMethod,
     isArrayMethod,
     isArrayMutator,
-    prepareArrayArguments,
+    prepareArrayMethodArguments,
 }
