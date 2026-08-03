@@ -5,7 +5,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as methods from "./array-methods.js"
 import { exportArgument } from "./observations.js"
-import * as propertyOrigins from "./property-origin.js"
+import * as propertyOrigins from "./property-capture.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as resolution from "./resolution.js"
 
@@ -19,11 +19,10 @@ function isArrayMethod(method) {
 
 function prepareArrayMethodArguments(method, args) {
     const definition = methods.ARRAY_METHODS[method]
-    return resolution.continueUnlessAnyPoison(args, () => {
-        return definition.prepare
+    return args.find(languageValues.isError) ??
+        (definition.prepare
             ? definition.prepare(args)
-            : getExportedArrayArguments()
-    })
+            : getExportedArrayArguments())
 
     function getExportedArrayArguments() {
         const mask = definition.exportArgs ?? []
@@ -61,10 +60,11 @@ function prepareArrayMethodArguments(method, args) {
 function invokeArrayObservationMethod(
     thisValue,
     method,
-    preparedArguments,
+    args,
     importBoundary,
 ) {
     const definition = methods.ARRAY_METHODS[method]
+    const preparedArguments = prepareArrayMethodArguments(method, args)
     return resolution.continueOperationUnlessPoison(
         preparedArguments,
         preparedArgs => {

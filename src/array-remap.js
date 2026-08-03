@@ -9,7 +9,7 @@ import {
     setProperty,
 } from "./mutations.js"
 import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyOrigins from "./property-origin.js"
+import * as propertyOrigins from "./property-capture.js"
 import * as propertyTransitions from "./property-transitions.js"
 import * as refcounts from "./refcounts.js"
 

@@ -19,6 +19,12 @@ import {
 import * as resolution from "./resolution.js"
 import * as refcounts from "./refcounts.js"
 
+const STANDARD_STRING_METHODS = new Map(
+    Object.getOwnPropertyNames(String.prototype)
+        .map(method => [method, String.prototype[method]])
+        .filter(([, callable]) => typeof callable === "function"),
+)
+
 function run(chain, path, method, mutateArray, ...args) {
     if (typeof method !== "string") {
         return errorUtils.validationError(
@@ -58,8 +64,10 @@ function runObservation(chain, path, method, args) {
             }
             if (languageValues.isError(targetValue)) return targetValue
 
-            const callable = getOrdinaryMethod(targetValue, method)
+            const callable = getOrdinaryMethod(targetValue)
             if (languageValues.isError(callable)) return callable
+            const argumentError = args.find(languageValues.isError)
+            if (argumentError) return argumentError
 
             const thisValue =
                 callable !== undefined &&
@@ -71,40 +79,36 @@ function runObservation(chain, path, method, args) {
                     : targetValue
 
             const operationResult = callable === undefined
-                ? invokeArrayObservationMethod(targetValue, importBoundary)
-                : invokeMethodObservation(thisValue, callable)
+                ? arrayInvocation.invokeArrayObservationMethod(
+                    targetValue,
+                    method,
+                    args,
+                    importBoundary,
+                )
+                : invokeOrdinaryMethod(thisValue, callable)
 
             return finishObservation(
                 thisValue === targetValue ? targetValue : undefined,
                 operationResult,
-                callable !== undefined && typeof targetValue !== "string",
+                callable !== undefined &&
+                    (
+                        typeof targetValue !== "string" ||
+                        STANDARD_STRING_METHODS.get(method) !== callable
+                    ),
             )
         },
     )
 
-    function invokeMethodObservation(thisValue, callable) {
-        const argumentError = args.find(languageValues.isError)
-        return argumentError ??
-            resolution.continueOperationsUnlessPoison(
-                args.map(exportArgument),
-                preparedArgs => resolution.resolveInitialValueOrPoison(
-                    helpers.invokeDataFunctionOrPoison(
-                        callable,
-                        thisValue,
-                        preparedArgs,
-                    ),
+    function invokeOrdinaryMethod(thisValue, callable) {
+        return resolution.continueOperationsUnlessPoison(
+            args.map(exportArgument),
+            preparedArgs => resolution.resolveInitialValueOrPoison(
+                helpers.invokeDataFunctionOrPoison(
+                    callable,
+                    thisValue,
+                    preparedArgs,
                 ),
-            )
-    }
-
-    function invokeArrayObservationMethod(targetValue, importBoundary) {
-        const preparedArguments =
-            arrayInvocation.prepareArrayMethodArguments(method, args)
-        return arrayInvocation.invokeArrayObservationMethod(
-            targetValue,
-            method,
-            preparedArguments,
-            importBoundary,
+            ),
         )
     }
 
@@ -140,6 +144,71 @@ function runObservation(chain, path, method, args) {
             },
             () => metadata.updateReadLease(leaseValue, -1),
         )
+    }
+
+    function getOrdinaryMethod(targetValue) {
+        const isArray = arrayViews.isLogicalArray(targetValue)
+        if (isArray && arrayInvocation.isArrayMutator(method)) return
+
+        const tracked = languageValues.isTracked(targetValue)
+        if (
+            tracked &&
+            languageProperties.hasLanguageProperty(targetValue, method)
+        ) {
+            return errorUtils.validationError(
+                `Language property shadows method: ${method}`,
+            )
+        }
+
+        if (
+            !isArray &&
+            typeof targetValue !== "string" &&
+            !tracked &&
+            typeof targetValue !== "function"
+        ) {
+            return errorUtils.validationError(
+                "run receiver does not support methods",
+            )
+        }
+        const methodTarget = isArray
+            ? arrayViews.backingOf(targetValue)
+            : targetValue
+        if (isArray) {
+            const entry = helpers.findPropertyDescriptor(methodTarget, method)
+            if (languageValues.isError(entry)) return entry
+            if (
+                entry &&
+                (
+                    entry.descriptor.value === Array.prototype[method] ||
+                    (
+                        Array.isArray(entry.owner) &&
+                        languageValues.isPlainObjectPrototype(
+                            Object.getPrototypeOf(entry.owner),
+                        )
+                    )
+                )
+            ) {
+                if (!arrayInvocation.isArrayMethod(method)) {
+                    return errorUtils.validationError(
+                        `Unsupported Array method: ${method}`,
+                    )
+                }
+                return
+            }
+        }
+
+        let callable
+        try {
+            callable = methodTarget[method]
+        } catch (error) {
+            return errorUtils.toPoison(error)
+        }
+        if (typeof callable !== "function") {
+            return errorUtils.validationError(
+                `Method is not callable: ${method}`,
+            )
+        }
+        return callable
     }
 }
 
@@ -207,71 +276,6 @@ function runMutation(chain, path, method, args) {
             replaceReceiver,
         )
     }
-}
-
-function getOrdinaryMethod(targetValue, method) {
-    const isArray = arrayViews.isLogicalArray(targetValue)
-    if (isArray && arrayInvocation.isArrayMutator(method)) return
-
-    const tracked = languageValues.isTracked(targetValue)
-    if (
-        tracked &&
-        languageProperties.hasLanguageProperty(targetValue, method)
-    ) {
-        return errorUtils.validationError(
-            `Language property shadows method: ${method}`,
-        )
-    }
-
-    if (
-        !isArray &&
-        typeof targetValue !== "string" &&
-        !tracked &&
-        typeof targetValue !== "function"
-    ) {
-        return errorUtils.validationError(
-            "run receiver does not support methods",
-        )
-    }
-    const methodTarget = isArray
-        ? arrayViews.backingOf(targetValue)
-        : targetValue
-    if (isArray) {
-        const entry = helpers.findPropertyDescriptor(methodTarget, method)
-        if (languageValues.isError(entry)) return entry
-        if (
-            entry &&
-            (
-                entry.descriptor.value === Array.prototype[method] ||
-                (
-                    Array.isArray(entry.owner) &&
-                    languageValues.isPlainObjectPrototype(
-                        Object.getPrototypeOf(entry.owner),
-                    )
-                )
-            )
-        ) {
-            if (!arrayInvocation.isArrayMethod(method)) {
-                return errorUtils.validationError(
-                    `Unsupported Array method: ${method}`,
-                )
-            }
-            return
-        }
-    }
-
-    let callable
-    try {
-        callable = methodTarget[method]
-    } catch (error) {
-        return errorUtils.toPoison(error)
-    }
-    if (typeof callable !== "function") {
-        return errorUtils.validationError(
-            `Method is not callable: ${method}`,
-        )
-    }
-    return callable
 }
 
 export { run }

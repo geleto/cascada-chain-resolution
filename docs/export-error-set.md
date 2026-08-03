@@ -145,7 +145,7 @@ successful copy.
 The raw walk returns no readiness when its complete frontier is synchronous.
 Otherwise it returns one hierarchical `Promise.all` tree.
 
-Export consumes that tree with `whenAllReadyOrFatal`:
+Export consumes that tree with `resolveOperationResultOrFatal`:
 
 - rejected data Promises were converted to ordinary Error values by their
   first property resolver; and

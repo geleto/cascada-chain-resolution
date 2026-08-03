@@ -25,15 +25,9 @@ function resolveInitialValueOrPoison(
     if (!languageValues.isPromise(value)) return helpers.runFatal(fn, value)
     return getCanonicalPromise(value).then(
         value => helpers.runFatal(fn, value),
-        reason => {
-            let value
-            try {
-                value = errorUtils.toPoison(reason)
-            } catch (error) {
-                return errorUtils.reportFatalError(error)
-            }
-            return helpers.runFatal(fn, value)
-        },
+        reason => helpers.runFatal(
+            () => fn(errorUtils.toPoison(reason)),
+        ),
     )
 }
 
@@ -42,14 +36,6 @@ function resolveInitialValueOrPoison(
 function onLaterPromiseReady(promise, fn) {
     const onReady = () => helpers.runFatal(fn)
     return getCanonicalPromise(promise).then(onReady, onReady)
-}
-
-// A readiness aggregate is control flow, so rejection is Fatal.
-function whenAllReadyOrFatal(promise, fn) {
-    return getCanonicalPromise(promise).then(
-        () => helpers.runFatal(fn),
-        errorUtils.reportFatalError,
-    )
 }
 
 // An operation result may be direct or promised. Its rejection is Fatal.
@@ -90,10 +76,6 @@ function unlessPoison(onResolved) {
     return value => languageValues.isError(value) ? value : onResolved(value)
 }
 
-function continueUnlessAnyPoison(values, onResolved) {
-    return values.find(languageValues.isError) ?? onResolved(values)
-}
-
 function continueInitialValueUnlessPoison(
     value,
     onResolved,
@@ -125,7 +107,7 @@ function resolveOperationResultsOrFatal(results, onResolved) {
         ))
     }
     if (waits.length === 0) return helpers.runFatal(onResolved, values)
-    return whenAllReadyOrFatal(
+    return resolveOperationResultOrFatal(
         Promise.all(waits),
         () => onResolved(values),
     )
@@ -134,7 +116,7 @@ function resolveOperationResultsOrFatal(results, onResolved) {
 function continueOperationsUnlessPoison(results, onResolved) {
     return resolveOperationResultsOrFatal(
         results,
-        values => continueUnlessAnyPoison(values, onResolved),
+        values => values.find(languageValues.isError) ?? onResolved(values),
     )
 }
 
@@ -142,11 +124,9 @@ export {
     continueInitialValueUnlessPoison,
     continueOperationUnlessPoison,
     continueOperationsUnlessPoison,
-    continueUnlessAnyPoison,
     onLaterPromiseReady,
     resolveInitialValueOrPoison,
     resolveOperationResultOrFatal,
     resolveOperationResultsOrFatal,
     runOperationCallbackOrFatal,
-    whenAllReadyOrFatal,
 }

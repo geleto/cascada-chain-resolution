@@ -289,7 +289,7 @@ Every public operation runs its synchronous prefix under this fatal boundary.
 The helpers share one canonical native Promise for each callable thenable.
 `resolveInitialValueOrPoison` converts the first data result,
 `onLaterPromiseReady` runs later property resolvers without reconverting
-rejection, and `whenAllReadyOrFatal` owns internal readiness failures. None adds a per-consumer proxy or second
+rejection, and `resolveOperationResultOrFatal` owns internal operation and readiness failures. None adds a per-consumer proxy or second
 reaction.
 
 An object-like fatal value is reported once per identity even if it crosses
@@ -404,7 +404,7 @@ or cycles.
 runtime-controlled structural Array intrinsic may receive Cascada values when
 retaining or relocating those exact identities is the defined language
 operation. Its wrapper owns slot classification, entering ownership, Promise
-mirrors, and bookkeeping. Standard scalar coercion is performed against
+mirrors, and bookkeeping. Standard scalar conversion is performed against
 logical Cascada values before native invocation; locale methods likewise
 construct only the small native input their intrinsic inspects. An ordinary
 native observation receives its path-resolved receiver directly. `run` exports
@@ -416,6 +416,6 @@ free of external side effects.
 A `sort` or `toSorted` comparator is the second executable-control
 exception. A direct or Promise-resolved callable remains outside the graph and
 receives resolved logical elements under a trusted read-only, side-effect-free,
-non-retaining contract. Its result and Cascada numeric coercion must complete
+non-retaining contract. Its result and Cascada numeric conversion must complete
 synchronously before native stable sorting can continue; this does not
 authorize other callbacks or native access to tracked identities.

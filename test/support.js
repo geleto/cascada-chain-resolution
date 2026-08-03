@@ -72,7 +72,7 @@ export {
 export {
     resolveInitialValueOrPoison,
     onLaterPromiseReady,
-    whenAllReadyOrFatal,
+    resolveOperationResultOrFatal,
 } from "../src/resolution.js"
 
 export { runFatal } from "../src/helpers.js"

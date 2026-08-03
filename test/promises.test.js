@@ -13,7 +13,7 @@ import {
     setFatalErrorReporter,
     resolveInitialValueOrPoison,
     onLaterPromiseReady,
-    whenAllReadyOrFatal,
+    resolveOperationResultOrFatal,
     runFatal,
     buildRefIndex,
     getRefCounts,
@@ -33,7 +33,7 @@ import {
 } from "./support.js"
 
 describe("promise helpers", () => {
-    it("keeps initial and aggregate reactions in registration order", async () => {
+    it("keeps initial and internal reactions in registration order", async () => {
         const pending = deferred()
         const order = []
 
@@ -41,7 +41,10 @@ describe("promise helpers", () => {
             pending.promise,
             () => order.push("value 1"),
         )
-        whenAllReadyOrFatal(pending.promise, () => order.push("internal"))
+        resolveOperationResultOrFatal(
+            pending.promise,
+            () => order.push("internal"),
+        )
         resolveInitialValueOrPoison(
             pending.promise,
             () => order.push("value 2"),
@@ -143,7 +146,7 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await whenAllReadyOrFatal(
+            await resolveOperationResultOrFatal(
                 resolveInitialValueOrPoison(
                     Promise.resolve("ok"),
                     () => reportFatalError(fatal),
@@ -169,7 +172,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await whenAllReadyOrFatal(
+            await resolveOperationResultOrFatal(
                 Promise.reject(fatal),
                 () => "ignored",
             )
@@ -243,7 +246,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            whenAllReadyOrFatal(cleanWait.promise, () => false),
+            resolveOperationResultOrFatal(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)

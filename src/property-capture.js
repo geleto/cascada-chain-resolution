@@ -7,6 +7,7 @@ import * as resolution from "./resolution.js"
 
 const PROPERTY_ORIGIN = Symbol("Property origin")
 
+// An origin lazily captures one property version for resolution or remapping.
 function getOrigin(owner, key) {
     const stringKey = String(key)
     if (!languageProperties.hasLanguageProperty(owner, stringKey)) {
@@ -24,7 +25,7 @@ function isOrigin(value) {
 }
 
 function captureOrigin(origin, inheritedImportBoundary = undefined) {
-    if (!origin || "value" in origin) return origin
+    if (!origin || "value" in origin) return
     const { owner, key } = origin
     const value = languageProperties.readLanguageProperty(owner, key)
     const importBoundary = metadata.nodeImportBoundary(
@@ -43,7 +44,6 @@ function captureOrigin(origin, inheritedImportBoundary = undefined) {
     origin.mirror = mirror
     origin.importBoundary = mirror?.importBoundary ?? importBoundary
     origin.cycleCut = imports.hasCycleCut(owner, key)
-    return origin
 }
 
 function resolveOriginValue(origin) {

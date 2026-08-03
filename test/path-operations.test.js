@@ -407,7 +407,7 @@ describe("path assignment", () => {
         expect(root).to.eql([1, 2])
     })
 
-    it("gates a Promise-coerced Array length before later mutations", async () => {
+    it("gates a Promise-converted Array length before later mutations", async () => {
         const length = deferred()
         const chain = new Chain([1, 2, 3])
 
@@ -420,6 +420,57 @@ describe("path assignment", () => {
 
         expect(await exportValue(chain, [])).to.eql([9])
         verifyRefCounts(chain._state.value)
+    })
+
+    it("retains a Promise assigned to an ordinary length property", async () => {
+        const length = deferred()
+        const root = { length: 0 }
+        const chain = new Chain(root)
+
+        expect(assignPath(chain, ["length"], length.promise)).to.be(undefined)
+        expect(chain._state.value).to.be(root)
+        expect(root.length).to.be(length.promise)
+
+        length.resolve(3)
+        await flushMicrotasks()
+
+        expect(chain._state.value).to.be(root)
+        expect(root.length).to.be(3)
+    })
+
+    it("retains a Promise length payload after its object receiver resolves", async () => {
+        const receiver = deferred()
+        const length = deferred()
+        const root = { target: receiver.promise }
+        const chain = new Chain(root)
+
+        expect(assignPath(
+            chain,
+            ["target", "length"],
+            length.promise,
+        )).to.be(undefined)
+
+        const target = { length: 0 }
+        receiver.resolve(target)
+        await flushMicrotasks()
+
+        expect(await lookupPath(chain, ["target"], false)).to.be(target)
+        expect(target.length).to.be(length.promise)
+
+        length.resolve(4)
+        await flushMicrotasks()
+        expect(target.length).to.be(4)
+    })
+
+    it("rejects String length assignment without waiting for its payload", () => {
+        const length = deferred()
+        const chain = new Chain("abc")
+
+        const result = assignPath(chain, ["length"], length.promise)
+
+        expect(result instanceof Error).to.be(true)
+        expect(chain._state.value).to.be("abc")
+        length.resolve(1)
     })
 
     it("shrinks ArrayView bounds and materializes before regrowth", () => {
@@ -956,6 +1007,44 @@ describe("deletePath", () => {
 
         expect(chain._state.value).to.be(errorRoot)
         expect(root.branch).to.be(branchError)
+    })
+
+    it("deletes an ordinary object length property", () => {
+        const root = { length: 2, keep: true }
+
+        expect(deletePath(new Chain(root), ["length"])).to.be(undefined)
+        expect(root).to.eql({ keep: true })
+    })
+
+    it("does not delete ArrayView length", () => {
+        const source = new Chain([1, 2])
+        const view = run(source, [], "push", false, 3)
+        const chain = new Chain(view)
+
+        const result = deletePath(chain, ["length"])
+
+        expect(result instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(view)
+        expect(exportValue(chain, [])).to.eql([1, 2, 3])
+        expect(exportValue(source, [])).to.eql([1, 2])
+    })
+
+    it("does not delete length from delayed Array or String receivers", async () => {
+        for (const value of [[1, 2], "abc"]) {
+            const receiver = deferred()
+            const root = { value: receiver.promise }
+            const length = value.length
+
+            expect(deletePath(
+                new Chain(root),
+                ["value", "length"],
+            )).to.be(undefined)
+            receiver.resolve(value)
+            await flushMicrotasks()
+
+            expect(root.value).to.be(value)
+            expect(value.length).to.be(length)
+        }
     })
 
     it("deletes array elements without changing length", async () => {

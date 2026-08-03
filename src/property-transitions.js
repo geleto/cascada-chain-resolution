@@ -69,25 +69,17 @@ function setMirrorValue(
     delete mirror.importBoundary
 }
 
-function deleteProperty(parent, key) {
-    refcounts.commitLiveEdge(parent, key, () => {
-        promiseMirrors.detachPromiseMirror(parent, key)
-        languageProperties.deleteLanguageProperty(parent, key)
-        imports.clearCycleCut(parent, key)
-    })
-}
-
-function contractArrayEnd(owner, key, contract) {
+function removeProperty(owner, key, remove) {
     refcounts.commitLiveEdge(owner, key, () => {
         promiseMirrors.detachPromiseMirror(owner, key)
+        if (remove) remove()
+        else languageProperties.deleteLanguageProperty(owner, key)
         imports.clearCycleCut(owner, key)
-        contract()
     })
 }
 
 export {
-    contractArrayEnd,
-    deleteProperty,
+    removeProperty,
     replaceProperty,
     setMirrorValue,
 }

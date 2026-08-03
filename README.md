@@ -176,7 +176,7 @@ Promises remain owned by the existing walkers; Array mutation installs an
 assigned-Promise gate only when receiver or required argument preparation must
 continue after the target is reached. Assignment-style element payloads remain
 logical values and do not create a wait. Standard methods use logical
-algorithms and Promise-sensitive scalar coercion rather than exporting Arrays
+algorithms and Promise-sensitive scalar conversion rather than exporting Arrays
 or inspected elements. Ready work stays synchronous.
 [`ArrayView`](docs/array-view.md) is its internal shared-range representation.
 Functions and executable descriptors remain outside the language graph,

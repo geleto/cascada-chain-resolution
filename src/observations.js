@@ -62,7 +62,7 @@ function exportTrackedValue(value, importBoundary, preserveErrors) {
         ? exportErrorOutcome(state.errors)
         : output
     return readiness
-        ? resolution.whenAllReadyOrFatal(readiness, finish)
+        ? resolution.resolveOperationResultOrFatal(readiness, finish)
         : finish()
 }
 
@@ -108,7 +108,7 @@ function searchForFirstError(value, importBoundary) {
     })
     return Promise.race([
         errorPromise,
-        resolution.whenAllReadyOrFatal(readiness, () => false),
+        resolution.resolveOperationResultOrFatal(readiness, () => false),
     ])
 }
 
@@ -128,7 +128,7 @@ function getErrors(chain, path) {
             readiness = collectFencedErrorWaits(value, importBoundary, state)
         }
         return readiness
-            ? resolution.whenAllReadyOrFatal(
+            ? resolution.resolveOperationResultOrFatal(
                 readiness,
                 () => [...state.errors],
             )

@@ -3,14 +3,14 @@ import * as errorUtils from "./error.js"
 import * as helpers from "./helpers.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import * as propertyOrigins from "./property-origin.js"
+import * as propertyOrigins from "./property-capture.js"
 import * as resolution from "./resolution.js"
 
 const stringConcat = String.prototype.concat
 
 function toStringValue(value, ancestry = undefined) {
     return resolution.continueOperationUnlessPoison(
-        resolveCoercionPrimitive(value, ancestry),
+        toPrimitiveValue(value, ancestry),
         primitive => helpers.invokeDataFunctionOrPoison(
             stringConcat,
             "",
@@ -21,7 +21,7 @@ function toStringValue(value, ancestry = undefined) {
 
 function toNumberValue(value) {
     return resolution.continueOperationUnlessPoison(
-        resolveCoercionPrimitive(value),
+        toPrimitiveValue(value),
         primitive => {
             try {
                 return +primitive
@@ -32,7 +32,7 @@ function toNumberValue(value) {
     )
 }
 
-function resolveCoercionPrimitive(value, ancestry) {
+function toPrimitiveValue(value, ancestry) {
     return resolution.continueInitialValueUnlessPoison(
         value,
         resolved => {

@@ -2,7 +2,7 @@ import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
-import * as coercion from "./language-coercion.js"
+import * as conversion from "./language-conversion.js"
 import * as refcounts from "./refcounts.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -10,7 +10,7 @@ import * as metadata from "./meta.js"
 import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as propertyTransitions from "./property-transitions.js"
-import * as propertyOrigins from "./property-origin.js"
+import * as propertyOrigins from "./property-capture.js"
 import * as resolution from "./resolution.js"
 
 const KEEP_TARGET = Symbol("KEEP_TARGET")
@@ -75,7 +75,7 @@ function setArrayLength(array, value) {
         )
     }
     if (languageValues.isError(length)) return length
-    return setArrayLengthReady(array, length)
+    return commitArrayLength(array, length)
 }
 
 function deleteProperty(parent, key, importBoundary = undefined) {
@@ -84,7 +84,7 @@ function deleteProperty(parent, key, importBoundary = undefined) {
         key,
         importBoundary?.errorContext,
     )
-    propertyTransitions.deleteProperty(parent, key)
+    propertyTransitions.removeProperty(parent, key)
 }
 
 function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
@@ -148,26 +148,26 @@ function transformProperty(
     key,
     importBoundary,
     attachmentPath,
-    prepareArguments,
+    prepareInput,
     transform,
     returnResultPromise = true,
 ) {
-    const targetProperty = propertyOrigins.getOrigin(parent, key)
-    propertyOrigins.captureOrigin(targetProperty, importBoundary)
+    const origin = propertyOrigins.getOrigin(parent, key)
+    propertyOrigins.captureOrigin(origin, importBoundary)
     const context = {
-        present: targetProperty !== undefined,
-        rawValue: targetProperty?.value,
+        present: origin !== undefined,
+        rawValue: origin?.value,
         importBoundary,
         attachmentPath,
     }
-    let targetValue
+    let originalValue
     const operation = resolution.resolveOperationResultsOrFatal(
         [
-            propertyOrigins.resolveOriginValue(targetProperty),
-            prepareArguments(context),
+            propertyOrigins.resolveOriginValue(origin),
+            prepareInput(context),
         ],
         ([resolvedTargetValue, preparedArguments]) => {
-            targetValue = resolvedTargetValue
+            originalValue = resolvedTargetValue
             return resolution.resolveOperationResultOrFatal(
                 transform(
                     resolvedTargetValue,
@@ -185,7 +185,7 @@ function transformProperty(
     )
 
     if (!languageValues.isPromise(operation)) {
-        if (operation.mutatedValue !== targetValue) {
+        if (operation.mutatedValue !== originalValue) {
             setProperty(
                 parent,
                 key,
@@ -240,23 +240,15 @@ function assignPath(chain, path, value) {
         return assignLengthPath(chain, path.slice(0, -1), value)
     }
     return helpers.runFatal(() => {
-        let operationError
         const result = walkMutationPath(chain, path, (
             parent,
             key,
             importBoundary,
             attachmentPath,
-            virtual,
         ) => {
-            if (virtual === "stringLength") {
-                operationError = errorUtils.validationError(
-                    "String length is read-only",
-                )
-                return
-            }
             setProperty(parent, key, value, importBoundary, attachmentPath)
         }, undefined, tryArrayViewAssignment)
-        return result ?? operationError
+        return result
     })
 
     function tryArrayViewAssignment(
@@ -300,7 +292,7 @@ function assignLengthPath(chain, receiverPath, value) {
                     key,
                     importBoundary,
                     attachmentPath,
-                    () => value,
+                    () => undefined,
                     transformLength,
                     false,
                 )
@@ -311,7 +303,7 @@ function assignLengthPath(chain, receiverPath, value) {
 
     function transformLength(
         targetValue,
-        value,
+        _input,
         { present, importBoundary, attachmentPath },
     ) {
         if (!present) {
@@ -392,7 +384,7 @@ function assignLengthPath(chain, receiverPath, value) {
                         targetValue,
                     )
                 }
-                const error = setArrayLengthReady(mutatedValue, length)
+                const error = commitArrayLength(mutatedValue, length)
                 return { mutatedValue, result: error }
             },
         )
@@ -401,7 +393,7 @@ function assignLengthPath(chain, receiverPath, value) {
 
 function toArrayLength(value) {
     return resolution.continueOperationUnlessPoison(
-        coercion.toNumberValue(value),
+        conversion.toNumberValue(value),
         number => {
             const length = number >>> 0
             return length === number
@@ -411,7 +403,7 @@ function toArrayLength(value) {
     )
 }
 
-function setArrayLengthReady(array, length) {
+function commitArrayLength(array, length) {
     const projection = arrayViews.projectionOf(array)
     const current = projection.length
     if (arrayViews.isArrayView(projection)) {
@@ -425,7 +417,7 @@ function setArrayLengthReady(array, length) {
         }
         for (let index = current - 1; index >= length; index--) {
             const key = String(index)
-            propertyTransitions.contractArrayEnd(
+            propertyTransitions.removeProperty(
                 array,
                 key,
                 () => projection.setLength(index),
@@ -450,7 +442,7 @@ function setArrayLengthReady(array, length) {
                 )
             }
             if (languageProperties.hasLanguageProperty(array, key)) {
-                propertyTransitions.deleteProperty(array, key)
+                propertyTransitions.removeProperty(array, key)
             }
         }
     }
@@ -500,30 +492,19 @@ function walkMutationPath(
         }
         const key = targetPath[index]
         if (
-            typeof value === "string" &&
             index === targetPath.length - 1 &&
-            key === "length"
-        ) {
-            onTarget(
-                value,
-                key,
-                inheritedImportBoundary,
-                attachmentPath,
-                "stringLength",
+            key === "length" &&
+            (
+                typeof value === "string" ||
+                arrayViews.isLogicalArray(value)
             )
-            return complete(writeBack, value)
-        }
-        if (
-            arrayViews.isLogicalArray(value) &&
-            index === targetPath.length - 1 &&
-            key === "length"
         ) {
             onTarget(
                 value,
                 key,
                 inheritedImportBoundary,
                 attachmentPath,
-                "arrayLength",
+                true,
             )
             return complete(writeBack, value)
         }
@@ -652,17 +633,11 @@ function deletePath(chain, path) {
             key,
             importBoundary,
             attachmentPath,
-            virtual,
+            virtualLength,
         ) => {
             if (deletesRoot) {
                 setProperty(parent, key, null, importBoundary)
-            } else if (
-                virtual === "stringLength" ||
-                (
-                    arrayViews.isLogicalArray(parent) &&
-                    String(key) === "length"
-                )
-            ) {
+            } else if (virtualLength) {
                 operationError = errorUtils.validationError(
                     "Cannot delete length",
                 )

@@ -1,13 +1,13 @@
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
-import * as coercion from "./language-coercion.js"
+import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
 import * as helpers from "./helpers.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
-import * as propertyOrigins from "./property-origin.js"
+import * as propertyOrigins from "./property-capture.js"
 
 const ARRAY_METHODS = {
     __proto__: null,
@@ -48,16 +48,28 @@ function prepareConcatArguments(args) {
         return resolution.continueInitialValueUnlessPoison(
             item,
             value => {
-                const protocol = helpers.hasDefinedProtocol(
+                const type = typeof value
+                if (
+                    value === null ||
+                    (type !== "object" && type !== "function")
+                ) return value
+
+                const entry = helpers.findPropertyDescriptor(
                     value,
                     Symbol.isConcatSpreadable,
                 )
-                if (languageValues.isError(protocol)) return protocol
-                return protocol
-                    ? errorUtils.validationError(
-                        "Concat protocols are unsupported",
+                if (languageValues.isError(entry)) return entry
+                const descriptor = entry?.descriptor
+                if (
+                    descriptor === undefined ||
+                    (
+                        "value" in descriptor &&
+                        descriptor.value === undefined
                     )
-                    : value
+                ) return value
+                return errorUtils.validationError(
+                    "Concat protocols are unsupported",
+                )
             },
         )
     })
@@ -96,7 +108,7 @@ function prepareFlatArguments(args) {
         value => {
             return value === undefined
                 ? 1
-                : coercion.toIntegerOrInfinity(value)
+                : conversion.toIntegerOrInfinity(value)
         },
     )
 }
@@ -160,7 +172,7 @@ function prepareFlatProperty(origin, depth) {
 function prepareSearchArguments(args) {
     const searchResult = resolution.resolveInitialValueOrPoison(args[0])
     const fromResult = args.length > 1
-        ? coercion.toIntegerOrInfinity(args[1])
+        ? conversion.toIntegerOrInfinity(args[1])
         : undefined
     return resolution.continueOperationsUnlessPoison(
         [searchResult, fromResult],
@@ -169,11 +181,11 @@ function prepareSearchArguments(args) {
 }
 
 function join(thisValue, [separator]) {
-    return coercion.joinLogicalArray(thisValue, separator)
+    return conversion.joinLogicalArray(thisValue, separator)
 }
 
 function toString(thisValue) {
-    return coercion.joinLogicalArray(thisValue)
+    return conversion.joinLogicalArray(thisValue)
 }
 
 function prepareSortArguments(args) {
@@ -238,7 +250,7 @@ function prepareAndSortAndRemap(
             ? prepared.map(record => {
                 if (record.value === undefined) return record
                 return resolution.continueOperationUnlessPoison(
-                    coercion.toStringValue(record.value),
+                    conversion.toStringValue(record.value),
                     key => ({ ...record, key }),
                 )
             })

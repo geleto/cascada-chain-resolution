@@ -194,6 +194,43 @@ describe("run", () => {
         expect(parts).to.eql(["a", "b", "c"])
     })
 
+    it("imports custom and replaced String method results", () => {
+        for (const method of ["cascadaResult", "split"]) {
+            const previous = Object.getOwnPropertyDescriptor(
+                String.prototype,
+                method,
+            )
+            const external = { value: 1 }
+            Object.defineProperty(String.prototype, method, {
+                configurable: true,
+                value() {
+                    return external
+                },
+            })
+
+            try {
+                const result = run(new Chain("source"), [], method, false)
+                const resultChain = new Chain(result)
+                assignPath(resultChain, ["value"], 2)
+
+                expect(result).to.be(external)
+                expect(external).to.eql({ value: 1 })
+                expect(resultChain._state.value).to.eql({ value: 2 })
+                expect(resultChain._state.value).not.to.be(external)
+            } finally {
+                if (previous) {
+                    Object.defineProperty(
+                        String.prototype,
+                        method,
+                        previous,
+                    )
+                } else {
+                    delete String.prototype[method]
+                }
+            }
+        }
+    })
+
     it("uses normal property access for ordinary methods", () => {
         const source = { value: 2 }
         const failure = new Error("lookup failed")
@@ -949,7 +986,7 @@ describe("run", () => {
         expect(await exportValue(chain, [])).to.eql([1, 2, 3])
     })
 
-    it("does not gate for Promises outside the inspected coercion path", () => {
+    it("does not gate for Promises outside the inspected conversion path", () => {
         const pending = deferred()
         const value = { unrelated: pending.promise }
         const root = [value]
@@ -982,7 +1019,7 @@ describe("run", () => {
         comparison.resolve(0)
     })
 
-    it("uses intrinsic coercion for language data", () => {
+    it("uses intrinsic conversion for language data", () => {
         let hookCalls = 0
         const record = {
             toString() {

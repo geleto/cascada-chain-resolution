@@ -1,5 +1,4 @@
 import * as errorUtils from "./error.js"
-import * as languageValues from "./language-values.js"
 
 function runFatal(fn, value = undefined) {
     try {
@@ -31,26 +30,8 @@ function findPropertyDescriptor(object, key) {
     }
 }
 
-function hasDefinedProtocol(value, protocol) {
-    if (
-        value === null ||
-        (
-            typeof value !== "object" &&
-            typeof value !== "function"
-        )
-    ) {
-        return false
-    }
-    const entry = findPropertyDescriptor(value, protocol)
-    if (languageValues.isError(entry)) return entry
-    const descriptor = entry?.descriptor
-    return descriptor !== undefined &&
-        (!("value" in descriptor) || descriptor.value !== undefined)
-}
-
 export {
     findPropertyDescriptor,
-    hasDefinedProtocol,
     invokeDataFunctionOrPoison,
     runFatal,
 }
