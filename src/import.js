@@ -57,6 +57,35 @@ function publishCycleCut(parent, key) {
     commitLiveEdge(parent, key, () => setCycleCut(parent, key))
 }
 
+function registerImportedPromisePreparation(
+    parent,
+    key,
+    promise,
+    inheritedBoundary,
+    resume,
+) {
+    promiseMirrors.getOrCreatePromiseMirror(
+        parent,
+        key,
+        promise,
+        inheritedBoundary,
+        (resolvedValue, inheritedResolvedBoundary) => {
+            const resolvedBoundary = metadata.nodeImportBoundary(
+                resolvedValue,
+                inheritedResolvedBoundary,
+            )
+            const cycleAncestor = resume(resolvedValue, resolvedBoundary)
+            if (resolvedBoundary) {
+                metadata.markImported(
+                    resolvedValue,
+                    resolvedBoundary.errorContext,
+                )
+            }
+            return cycleAncestor
+        },
+    )
+}
+
 // Imported cycles are the graph fact trusted data cannot contain. The raw edge
 // remains ordinary data; its cut only keeps the ref-index projection acyclic.
 function prepareImportedData(importBoundary) {
@@ -74,33 +103,21 @@ function prepareImportedData(importBoundary) {
         const value = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(value)) {
             if (promiseMirrors.getPromiseMirror(parent, key)) return
-
             const resumedState = {
                 currentPath: new Set(state.currentPath),
                 visited: new WeakSet(),
             }
-            promiseMirrors.getOrCreatePromiseMirror(
+            registerImportedPromisePreparation(
                 parent,
                 key,
                 value,
                 inheritedBoundary,
-                (resolvedValue, inheritedResolvedBoundary) => {
-                    const resolvedBoundary = metadata.nodeImportBoundary(
-                        resolvedValue,
-                        inheritedResolvedBoundary,
-                    )
-                    const cycleAncestor = walkValue(
+                (resolvedValue, resolvedBoundary) => {
+                    return walkValue(
                         resolvedValue,
                         resolvedBoundary,
                         resumedState,
                     )
-                    if (resolvedBoundary) {
-                        metadata.markImported(
-                            resolvedValue,
-                            resolvedBoundary.errorContext,
-                        )
-                    }
-                    return cycleAncestor
                 },
             )
             return
@@ -184,29 +201,12 @@ function scanFixedPathForCycles(
         if (languageValues.isPromise(value)) {
             if (pathRootToPin) metadata.markShared(pathRootToPin)
             if (promiseMirrors.getPromiseMirror(parent, key)) return undefined
-
-            promiseMirrors.getOrCreatePromiseMirror(
+            registerImportedPromisePreparation(
                 parent,
                 key,
                 value,
                 inheritedBoundary,
-                (resolvedValue, inheritedResolvedBoundary) => {
-                    const resolvedBoundary = metadata.nodeImportBoundary(
-                        resolvedValue,
-                        inheritedResolvedBoundary,
-                    )
-                    const matchedAncestor = walkValue(
-                        resolvedValue,
-                        resolvedBoundary,
-                    )
-                    if (resolvedBoundary) {
-                        metadata.markImported(
-                            resolvedValue,
-                            resolvedBoundary.errorContext,
-                        )
-                    }
-                    return matchedAncestor
-                },
+                walkValue,
             )
             return undefined
         }

@@ -216,19 +216,13 @@ function placeOrigin(
     } else if (retained) {
         metadata.markShared(value)
     }
-    refcounts.indexValueIfSourceIndexed(destination, value)
-    refcounts.commitLiveEdge(destination, stringKey, () => {
-        promiseMirrors.detachPromiseMirror(destination, stringKey)
-        languageProperties.writeLanguageProperty(
-            destination,
-            stringKey,
-            value,
-        )
-        imports.clearCycleCut(destination, stringKey)
-        if (origin.cycleCut) {
-            imports.setCycleCut(destination, stringKey)
-        }
-    })
+    propertyTransitions.replaceProperty(
+        destination,
+        stringKey,
+        undefined,
+        value,
+        origin.cycleCut,
+    )
 }
 
 export {

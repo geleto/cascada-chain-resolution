@@ -12,7 +12,7 @@ import * as propertyOrigins from "./property-capture.js"
 const ARRAY_METHODS = {
     __proto__: null,
     at: { exportArgs: [true], implementation: getElementAt },
-    concat: { prepare: prepareConcatArguments, arrayView: true },
+    concat: { prepare: prepareConcatArguments, view: true },
     copyWithin: { mutate: true, exportArgs: [true, true, true] },
     fill: { mutate: true, exportArgs: [false, true, true] },
     flat: { prepare: prepareFlatArguments },
@@ -20,14 +20,14 @@ const ARRAY_METHODS = {
     indexOf: { prepare: prepareSearchArguments },
     join: { exportArgs: [true] },
     lastIndexOf: { prepare: prepareSearchArguments },
-    pop: { mutate: true, endpoint: true, elementResult: materializeElement },
-    push: { mutate: true, endpoint: true, restValues: true },
+    pop: { mutate: true, view: true, transformResult: materializeElement },
+    push: { mutate: true, view: true, restValues: true },
     reverse: { mutate: true },
-    shift: { mutate: true, endpoint: true, elementResult: materializeElement },
+    shift: { mutate: true, view: true, transformResult: materializeElement },
     slice: {
         exportArgs: [true, true],
-        arrayView: true,
-        remapResult: arrayRemaps.createArrayFromRemap,
+        view: true,
+        transformResult: materializeArrayResult,
     },
     sort: {
         mutate: true,
@@ -38,20 +38,20 @@ const ARRAY_METHODS = {
         mutate: true,
         exportArgs: [true, true],
         restValues: true,
-        remapResult: materializeRemovedElements,
+        transformResult: materializeArrayResult,
     },
-    toReversed: { remapResult: arrayRemaps.createArrayFromRemap },
+    toReversed: { transformResult: materializeArrayResult },
     toSorted: { prepare: prepareSortArguments },
     toSpliced: {
         exportArgs: [true, true],
         restValues: true,
-        remapResult: arrayRemaps.createArrayFromRemap,
+        transformResult: materializeArrayResult,
     },
     toString: {},
-    unshift: { mutate: true, endpoint: true, restValues: true },
+    unshift: { mutate: true, view: true, restValues: true },
     with: {
         exportArgs: [true, false],
-        remapResult: arrayRemaps.createArrayFromRemap,
+        transformResult: materializeArrayResult,
     },
 }
 
@@ -471,7 +471,7 @@ function materializeElement(element, retained = true) {
         : result
 }
 
-function materializeRemovedElements(remap, retained = true) {
+function materializeArrayResult(remap, retained = true) {
     return arrayRemaps.createArrayFromRemap(
         remap,
         undefined,

@@ -68,7 +68,7 @@ function invokeArrayObservationMethod(
     return resolution.continueOperationUnlessPoison(
         preparedArguments,
         preparedArgs => {
-            if (definition.endpoint || definition.arrayView) {
+            if (definition.view) {
                 const arrayView = tryArrayViewMethod(
                     thisValue,
                     method,
@@ -92,8 +92,8 @@ function invokeArrayObservationMethod(
             if (definition.mutate) {
                 return arrayRemaps.createArrayFromRemap(remap)
             }
-            return definition.remapResult
-                ? definition.remapResult(nativeResult)
+            return definition.transformResult
+                ? definition.transformResult(nativeResult)
                 : nativeResult
         },
     )
@@ -108,7 +108,7 @@ function invokeArrayMutationMethod(
 ) {
     const definition = methods.ARRAY_METHODS[method]
     if (languageValues.isError(preparedArguments)) return preparedArguments
-    if (definition.endpoint && replaceReceiver) {
+    if (definition.view && replaceReceiver) {
         const arrayView = tryArrayViewMethod(
             thisValue,
             method,
@@ -117,7 +117,7 @@ function invokeArrayMutationMethod(
         )
         if (arrayView !== undefined) {
             let result = arrayView.length
-            if (definition.elementResult) {
+            if (definition.transformResult) {
                 const length = arrayViews.logicalArrayLength(thisValue)
                 const origin = length > 0
                     ? propertyOrigins.getOrigin(
@@ -125,7 +125,7 @@ function invokeArrayMutationMethod(
                         String(method === "shift" ? 0 : length - 1),
                     )
                     : undefined
-                result = definition.elementResult(origin)
+                result = definition.transformResult(origin)
             }
             return { mutatedValue: arrayView, result }
         }
@@ -147,12 +147,8 @@ function invokeArrayMutationMethod(
     if (languageValues.isError(nativeResult)) return nativeResult
 
     let result = nativeResult
-    if (nativeResult !== working) {
-        if (definition.elementResult) {
-            result = definition.elementResult(nativeResult, replaceReceiver)
-        } else if (definition.remapResult) {
-            result = definition.remapResult(nativeResult, replaceReceiver)
-        }
+    if (nativeResult !== working && definition.transformResult) {
+        result = definition.transformResult(nativeResult, replaceReceiver)
     }
     const outcome = commitArrayMutation(remap, operations)
     if (languageValues.isError(outcome.result) || nativeResult === working) {

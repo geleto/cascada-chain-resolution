@@ -9,7 +9,9 @@ import * as refcounts from "./refcounts.js"
 // Coordinate physical property state while refcounts transparently account
 // for the same update when the owner already belongs to an index.
 
-function replaceProperty(owner, key, propertyMirror, newValue) {
+function replaceProperty(
+    owner, key, propertyMirror, newValue, cycleCut = false,
+) {
     refcounts.indexValueIfSourceIndexed(owner, newValue)
     refcounts.commitLiveEdge(
         owner,
@@ -18,6 +20,7 @@ function replaceProperty(owner, key, propertyMirror, newValue) {
             promiseMirrors.detachPromiseMirror(owner, key)
             languageProperties.writeLanguageProperty(owner, key, newValue)
             imports.clearCycleCut(owner, key)
+            if (cycleCut) imports.setCycleCut(owner, key)
             if (propertyMirror) {
                 promiseMirrors.installPromiseMirror(owner, key, propertyMirror)
             }

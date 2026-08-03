@@ -14,16 +14,6 @@ import * as resolution from "./resolution.js"
 
 const KEEP_TARGET = Symbol("KEEP_TARGET")
 
-function createCopyShell(source) {
-    const prototype = Object.getPrototypeOf(source)
-    if (arrayViews.isLogicalArray(source)) {
-        return new Array(arrayViews.logicalArrayLength(source))
-    }
-    if (prototype === null) return Object.create(null)
-    if (languageValues.isPlainObjectPrototype(prototype)) return {}
-    return Object.create(prototype)
-}
-
 function setProperty(
     parent,
     key,
@@ -86,10 +76,25 @@ function deleteProperty(parent, key, importBoundary = undefined) {
     propertyTransitions.removeProperty(parent, key)
 }
 
-function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
+function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
+    const prototype = Object.getPrototypeOf(source)
+    let destination
+    if (arrayViews.isLogicalArray(source)) {
+        destination = new Array(arrayViews.logicalArrayLength(source))
+    } else if (prototype === null) {
+        destination = Object.create(null)
+    } else {
+        destination = languageValues.isPlainObjectPrototype(prototype)
+            ? {}
+            : Object.create(prototype)
+    }
+    attachmentPath ??= {
+        root: undefined,
+        ancestors: new Set(),
+    }
     const pathKeyString = String(pathKey)
-    attachmentPath.root ??= shell
-    attachmentPath.ancestors.add(shell)
+    attachmentPath.root ??= destination
+    attachmentPath.ancestors.add(destination)
 
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
@@ -107,7 +112,7 @@ function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
         const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or indexValueIfSourceIndexed reconstructs its index.
-        languageProperties.writeLanguageProperty(shell, key, value)
+        languageProperties.writeLanguageProperty(destination, key, value)
         if (languageValues.isPromise(value)) {
             // BIRTH 3 - FORK. For every copied key holding a promise, mint the
             // copy's mirror NOW, at the copier's program position.
@@ -125,7 +130,7 @@ function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
                 )
                 : undefined
             promiseMirrors.forkPromiseMirror(
-                source, shell, key, value,
+                source, destination, key, value,
                 retainedOffPath,
                 propertyImportBoundary,
                 prepareImportedValue,
@@ -138,8 +143,11 @@ function shallowCopy(source, shell, pathKey, importBoundary, attachmentPath) {
             metadata.markShared(value)
         }
     }
-    refcounts.indexValueIfSourceIndexed(source, shell)
-    return shell
+    refcounts.indexValueIfSourceIndexed(source, destination)
+    return {
+        value: destination,
+        attachmentPath,
+    }
 }
 
 function transformProperty(
@@ -335,18 +343,14 @@ function assignLengthPath(chain, receiverPath, value) {
             let mutatedValue = targetValue
             let nextAttachment = attachmentPath
             if (mustCopy) {
-                const shell = createCopyShell(targetValue)
-                nextAttachment ??= {
-                    root: undefined,
-                    ancestors: new Set(),
-                }
-                mutatedValue = shallowCopy(
+                const copied = copyForWrite(
                     targetValue,
-                    shell,
                     "length",
                     importBoundary,
                     nextAttachment,
                 )
+                mutatedValue = copied.value
+                nextAttachment = copied.attachmentPath
             }
             setProperty(
                 mutatedValue,
@@ -405,59 +409,52 @@ function toArrayLength(value) {
 function commitArrayLength(array, length) {
     const projection = arrayViews.projectionOf(array)
     const current = projection.length
-    if (arrayViews.isArrayView(projection)) {
+    const view = arrayViews.isArrayView(projection) ? projection : undefined
+    if (view) {
         if (length >= current) {
-            if (!projection.setLength(length)) {
+            if (!view.setLength(length)) {
                 return errorUtils.validationError(
                     "Cannot grow this ArrayView in place",
                 )
             }
             return undefined
         }
-        for (let index = current - 1; index >= length; index--) {
-            const key = String(index)
-            const descriptor = projection.descriptor(key)
-            if (descriptor && !descriptor.configurable) {
-                projection.setLength(index + 1)
-                return errorUtils.validationError(
-                    "Cannot delete an Array element while setting length",
-                )
-            }
-            if (descriptor?.enumerable) {
-                propertyTransitions.removeProperty(
-                    array,
-                    key,
-                    () => projection.setLength(index),
-                )
-            } else {
-                projection.setLength(index)
-            }
-        }
-        return undefined
-    }
-
-    const descriptor = Object.getOwnPropertyDescriptor(array, "length")
-    if (descriptor?.writable !== true) {
+    } else if (
+        Object.getOwnPropertyDescriptor(array, "length")?.writable !== true
+    ) {
         return errorUtils.validationError("Array length is read-only")
     }
     if (length === current) return undefined
-    if (length < current) {
-        for (let index = current - 1; index >= length; index--) {
-            const key = String(index)
-            const property = Object.getOwnPropertyDescriptor(array, key)
-            if (property && !property.configurable) {
-                array.length = index + 1
-                return errorUtils.validationError(
-                    "Cannot delete an Array element while setting length",
-                )
-            }
-            if (languageProperties.hasLanguageProperty(array, key)) {
-                propertyTransitions.removeProperty(array, key)
-            }
+
+    for (let index = current - 1; index >= length; index--) {
+        const key = String(index)
+        const property = languageProperties.getLanguagePropertyDescriptor(
+            array,
+            key,
+        )
+        if (property && !property.configurable) {
+            setLength(index + 1)
+            return errorUtils.validationError(
+                "Cannot delete an Array element while setting length",
+            )
+        }
+        if (property?.enumerable) {
+            propertyTransitions.removeProperty(
+                array,
+                key,
+                view ? () => view.setLength(index) : undefined,
+            )
+        } else if (view) {
+            view.setLength(index)
         }
     }
-    array.length = length
+    setLength(length)
     return undefined
+
+    function setLength(nextLength) {
+        if (view) view.setLength(nextLength)
+        else array.length = nextLength
+    }
 }
 
 // path identifies the complete mutation target. The walk starts at the private
@@ -555,18 +552,14 @@ function walkMutationPath(
             arrayViews.requiresArrayMaterialization(value)
 
         if (parentInsideSharedBranch) {
-            const shell = createCopyShell(parent)
-            attachmentPath ??= {
-                root: undefined,
-                ancestors: new Set(),
-            }
-            parent = shallowCopy(
+            const copied = copyForWrite(
                 parent,
-                shell,
                 key,
                 valueImportBoundary,
                 attachmentPath,
             )
+            parent = copied.value
+            attachmentPath = copied.attachmentPath
         }
         if (index === targetPath.length - 1) {
             const targetResult = onTarget(
