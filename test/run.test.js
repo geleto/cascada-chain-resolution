@@ -194,7 +194,59 @@ describe("run", () => {
         expect(parts).to.eql(["a", "b", "c"])
     })
 
+    it("allows intrinsic RegExp dispatch but rejects custom protocols", async () => {
+        const crossRealmRegExp = runInNewContext("/b/")
+        expect(run(
+            new Chain("abc"),
+            [],
+            "match",
+            false,
+            /b/,
+        )[0]).to.be("b")
+        expect(run(
+            new Chain("abc"),
+            [],
+            "search",
+            false,
+            crossRealmRegExp,
+        )).to.be(1)
+
+        let calls = 0
+        const external = { value: 1 }
+        class Matcher {
+            [Symbol.match]() {
+                calls++
+                return external
+            }
+        }
+        expect(run(
+            new Chain("abc"),
+            [],
+            "match",
+            false,
+            new Matcher(),
+        ) instanceof Error).to.be(true)
+
+        const pending = deferred()
+        const delayed = run(
+            new Chain("abc"),
+            [],
+            "match",
+            false,
+            pending.promise,
+        )
+        pending.resolve(new Matcher())
+        expect(await delayed instanceof Error).to.be(true)
+        expect(calls).to.be(0)
+        expect(external).to.eql({ value: 1 })
+    })
+
     it("imports custom and replaced String method results", () => {
+        class Separator {
+            [Symbol.split]() {
+                throw new Error("Custom split protocol was invoked")
+            }
+        }
         for (const method of ["cascadaResult", "split"]) {
             const previous = Object.getOwnPropertyDescriptor(
                 String.prototype,
@@ -209,7 +261,13 @@ describe("run", () => {
             })
 
             try {
-                const result = run(new Chain("source"), [], method, false)
+                const result = run(
+                    new Chain("source"),
+                    [],
+                    method,
+                    false,
+                    ...(method === "split" ? [new Separator()] : []),
+                )
                 const resultChain = new Chain(result)
                 assignPath(resultChain, ["value"], 2)
 
@@ -658,6 +716,7 @@ describe("run", () => {
     })
 
     it("accounts for completed placements after a partial mutation error", () => {
+        const inserted = { value: 1 }
         const root = [1, 2]
         Object.defineProperty(root, "1", {
             value: 2,
@@ -670,12 +729,34 @@ describe("run", () => {
             [],
             "fill",
             true,
-            9,
+            inserted,
         )
 
         expect(result instanceof Error).to.be(true)
-        expect(root).to.eql([9, 2])
-        verifyRefCounts(root)
+        expect(root).to.eql([inserted, 2])
+        const chain = new Chain(root)
+        assignPath(chain, ["0", "value"], 2)
+        expect(inserted).to.eql({ value: 1 })
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("shares payloads added by owned Array mutations", () => {
+        const cases = [
+            { method: "push", args: value => [value], index: 1 },
+            { method: "unshift", args: value => [value], index: 0 },
+            { method: "splice", args: value => [1, 0, value], index: 1 },
+        ]
+        for (const { method, args, index } of cases) {
+            const value = { answer: 1 }
+            const chain = new Chain([0])
+
+            run(chain, [], method, true, ...args(value))
+            assignPath(chain, [String(index), "answer"], 2)
+
+            expect(value).to.eql({ answer: 1 })
+            expect(chain._state.value[index]).to.eql({ answer: 2 })
+            verifyRefCounts(chain._state.value)
+        }
     })
 
     it("returns transformed Arrays from mutators in observation mode", () => {
@@ -1093,6 +1174,28 @@ describe("run", () => {
         expect(hookCalls).to.be(0)
     })
 
+    it("matches native joining for mutually recursive Arrays", () => {
+        const outer = []
+        const inner = []
+        outer.push(inner, 1)
+        inner.push(outer, 2)
+        importValue(outer, "recursive Array")
+
+        expect(run(
+            new Chain(outer),
+            [],
+            "toString",
+            false,
+        )).to.be(Array.prototype.toString.call(outer))
+        expect(run(
+            new Chain(outer),
+            [],
+            "join",
+            false,
+            "|",
+        )).to.be(Array.prototype.join.call(outer, "|"))
+    })
+
     it("leaves comparator result coercion to native sort", () => {
         let coercions = 0
         const result = run(
@@ -1164,6 +1267,19 @@ describe("run", () => {
             "getTime",
             false,
         ) instanceof Error).to.be(true)
+
+        const callableReceiver = function callableReceiver() {}
+        let invoked = false
+        callableReceiver.read = () => {
+            invoked = true
+        }
+        expect(run(
+            new Chain(callableReceiver),
+            [],
+            "read",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(invoked).to.be(false)
 
         const date = new Date()
         Object.defineProperty(record, "getDate", {

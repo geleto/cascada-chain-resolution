@@ -490,6 +490,28 @@ describe("path assignment", () => {
         verifyRefCounts(viewChain._state.value)
     })
 
+    it("matches partial length failure on an ArrayView", () => {
+        const source = [0, 1, 2]
+        Object.defineProperty(source, "1", {
+            value: 1,
+            enumerable: true,
+            writable: true,
+            configurable: false,
+        })
+        const sourceChain = new Chain(source)
+        const view = run(sourceChain, [], "push", false, 3)
+        const chain = new Chain(view)
+
+        const error = assignPath(chain, ["length"], 0)
+
+        expect(error instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(view)
+        expect(view.length).to.be(2)
+        expect([...view]).to.eql([0, 1])
+        expect(exportValue(sourceChain, [])).to.eql([0, 1, 2])
+        verifyRefCounts(view, source)
+    })
+
     it("exposes read-only String length", () => {
         const chain = new Chain("abc")
 

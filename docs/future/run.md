@@ -659,8 +659,8 @@ Every applicable test runs under inline-Symbol and WeakMap metadata modes.
 ## Decision summary
 
 The current runtime graph is data-only. Restricted standard and read-only
-method execution is planned separately in [`run.md`](../run.md); proxy-backed
-mutating class methods remain deferred.
+method execution is implemented by [`run`](../run.md); proxy-backed mutating
+class methods remain deferred.
 
 If method execution is revisited, ordinary mutating class syntax should use a
 recursive operation-local draft proxy rather than requiring class authors to

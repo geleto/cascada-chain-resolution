@@ -77,6 +77,7 @@ class ArrayView {
             if (!isArrayIndex(key)) continue
             const descriptor = Object.getOwnPropertyDescriptor(backing, key)
             if (
+                !descriptor.enumerable ||
                 !("value" in descriptor) ||
                 !descriptor.writable ||
                 !descriptor.configurable
@@ -84,8 +85,19 @@ class ArrayView {
         }
 
         // Native unshift must not observe inherited indexed properties.
-        for (let index = 0; index < backing.length + count; index++) {
-            if (!Object.hasOwn(backing, index) && index in backing) return false
+        const limit = backing.length + count
+        for (
+            let prototype = Object.getPrototypeOf(backing);
+            prototype !== null;
+            prototype = Object.getPrototypeOf(prototype)
+        ) {
+            for (const key of Object.getOwnPropertyNames(prototype)) {
+                if (
+                    isArrayIndex(key) &&
+                    Number(key) < limit &&
+                    !Object.hasOwn(backing, key)
+                ) return false
+            }
         }
         return true
     }

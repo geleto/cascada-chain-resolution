@@ -1,4 +1,4 @@
-import * as helpers from "./helpers.js"
+import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -12,7 +12,7 @@ function initImport(commitLiveEdgeFn) {
 }
 
 function importValue(value, errorContext) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         if (!errorContext) {
             throw new Error("import requires an error context")
         }

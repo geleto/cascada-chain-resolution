@@ -1,6 +1,6 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as helpers from "./helpers.js"
+import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as propertyOrigins from "./property-capture.js"
@@ -11,7 +11,7 @@ const stringConcat = String.prototype.concat
 function toStringValue(value, ancestry = undefined) {
     return resolution.continueOperationUnlessPoison(
         toPrimitiveValue(value, ancestry),
-        primitive => helpers.invokeDataFunctionOrPoison(
+        primitive => invocation.invokeDataFunctionOrPoison(
             stringConcat,
             "",
             [primitive],
@@ -83,6 +83,7 @@ function joinLogicalArray(
     separator = ",",
     ancestry = undefined,
 ) {
+    ancestry ??= { array, parent: undefined }
     const length = arrayViews.logicalArrayLength(array)
     if (length === 0) return ""
     const conversions = new Array(length)
@@ -103,7 +104,7 @@ function joinLogicalArray(
     }
     return resolution.continueOperationsUnlessPoison(
         conversions,
-        values => helpers.invokeDataFunctionOrPoison(
+        values => invocation.invokeDataFunctionOrPoison(
             Array.prototype.join,
             values,
             [separator],

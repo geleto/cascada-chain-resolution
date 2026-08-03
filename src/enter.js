@@ -1,7 +1,6 @@
 import "./init.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
-import * as helpers from "./helpers.js"
 import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -15,7 +14,7 @@ import * as promiseMirrors from "./promise-mirrors.js"
 import * as resolution from "./resolution.js"
 
 function enter(chain, path, mutates, onEntered) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         if (mutates !== true && mutates !== false) {
             throw new TypeError("enter requires an exact mutates Boolean")
         }

@@ -1,4 +1,3 @@
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
@@ -239,7 +238,7 @@ function assignPath(chain, path, value) {
     if (path.length > 0 && String(path[path.length - 1]) === "length") {
         return assignLengthPath(chain, path.slice(0, -1), value)
     }
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         const result = walkMutationPath(chain, path, (
             parent,
             key,
@@ -269,7 +268,7 @@ function assignPath(chain, path, value) {
         const extended = arrayViews.ArrayView.tryExtendEnd(
             projection,
             growth,
-            view => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+            view => promiseMirrors.prepareRetainedArrayProperties(
                 array,
                 view,
             ),
@@ -281,7 +280,7 @@ function assignPath(chain, path, value) {
 }
 
 function assignLengthPath(chain, receiverPath, value) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         let result
         return walkMutationPath(
             chain,
@@ -417,11 +416,22 @@ function commitArrayLength(array, length) {
         }
         for (let index = current - 1; index >= length; index--) {
             const key = String(index)
-            propertyTransitions.removeProperty(
-                array,
-                key,
-                () => projection.setLength(index),
-            )
+            const descriptor = projection.descriptor(key)
+            if (descriptor && !descriptor.configurable) {
+                projection.setLength(index + 1)
+                return errorUtils.validationError(
+                    "Cannot delete an Array element while setting length",
+                )
+            }
+            if (descriptor?.enumerable) {
+                propertyTransitions.removeProperty(
+                    array,
+                    key,
+                    () => projection.setLength(index),
+                )
+            } else {
+                projection.setLength(index)
+            }
         }
         return undefined
     }
@@ -625,7 +635,7 @@ function walkMutationPath(
 
 // --- deletePath :  delete a.k ----------------------------------------------
 function deletePath(chain, path) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         const deletesRoot = path.length === 0
         let operationError
         const result = walkMutationPath(chain, path, (

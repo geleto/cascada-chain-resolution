@@ -19,6 +19,14 @@ function setFatalErrorReporter(reporter = () => {}) {
     fatalReporter = reporter
 }
 
+function runFatal(fn, value = undefined) {
+    try {
+        return fn(value)
+    } catch (error) {
+        return reportFatalError(error)
+    }
+}
+
 function validationError(message, errorContext = undefined) {
     if (!errorContext) return new Error(message)
     return new Error(`${message} (imported at: ${String(errorContext)})`)
@@ -35,6 +43,7 @@ function toPoison(reason) {
 export {
     pathAccessError,
     reportFatalError,
+    runFatal,
     setFatalErrorReporter,
     toPoison,
     validationError,

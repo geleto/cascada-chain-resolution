@@ -133,6 +133,9 @@ function applyRemapToArray(array, remap, operations) {
                 )
             } else {
                 setProperty(array, key, operation.value)
+                if (!languageValues.isPromise(operation.value)) {
+                    metadata.markShared(operation.value)
+                }
             }
         }
         return undefined

@@ -177,31 +177,31 @@ function forkPromiseMirror(
     return mirror
 }
 
-function forkUnresolvedPromiseMirrorsFromArray(
+function prepareRetainedArrayProperties(
     source,
     destination,
-    mapKey,
-    importBoundary,
+    destinationKeyFor,
 ) {
     const mirrors = metadata.metaOf(source)?.mirrors
-    const arraySource = Array.isArray(source)
-    if (!arraySource && !mirrors) return
-    const keys = arraySource
+    const nativeSource = Array.isArray(source)
+    if (!nativeSource && !mirrors) return
+    const keys = nativeSource
         ? languageProperties.enumerableLanguageKeys(source)
         : Object.keys(mirrors)
     for (const key of keys) {
-        const destinationKey = mapKey ? mapKey(key) : key
+        const destinationKey = destinationKeyFor
+            ? destinationKeyFor(key)
+            : key
         if (destinationKey === undefined) continue
         const value = languageProperties.readLanguageProperty(source, key)
         if (!languageValues.isPromise(value)) {
-            if (arraySource) metadata.markShared(value)
+            if (nativeSource) metadata.markShared(value)
             continue
         }
         const sourceMirror = mirrors?.[key] ?? getOrCreatePromiseMirror(
             source,
             key,
             value,
-            importBoundary,
         )
         forkPromiseMirror(
             source,
@@ -244,7 +244,7 @@ export {
     createAssignedPromiseMirror,
     detachPromiseMirror,
     forkPromiseMirror,
-    forkUnresolvedPromiseMirrorsFromArray,
+    prepareRetainedArrayProperties,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,

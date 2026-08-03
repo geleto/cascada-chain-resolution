@@ -2,7 +2,7 @@ import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
-import * as helpers from "./helpers.js"
+import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -54,7 +54,7 @@ function prepareConcatArguments(args) {
                     (type !== "object" && type !== "function")
                 ) return value
 
-                const entry = helpers.findPropertyDescriptor(
+                const entry = invocation.findPropertyDescriptor(
                     value,
                     Symbol.isConcatSpreadable,
                 )
@@ -95,7 +95,7 @@ function createConcatRemap(receiver, items) {
             ? arrayRemaps.createInitialRemap(item)
             : item
     })
-    return helpers.invokeDataFunctionOrPoison(
+    return invocation.invokeDataFunctionOrPoison(
         Array.prototype.concat,
         receiver,
         prepared,
@@ -118,7 +118,7 @@ function flat(thisValue, depth) {
     return resolution.resolveOperationResultOrFatal(
         prepareFlatArray(thisValue, depth),
         prepared => {
-            const result = helpers.invokeDataFunctionOrPoison(
+            const result = invocation.invokeDataFunctionOrPoison(
                 Array.prototype.flat,
                 prepared,
                 [depth],
@@ -261,7 +261,7 @@ function prepareAndSortAndRemap(
                 const compare = comparator === undefined
                     ? comparePreparedKeys
                     : compareRecords
-                const sorted = helpers.invokeDataFunctionOrPoison(
+                const sorted = invocation.invokeDataFunctionOrPoison(
                     Array.prototype.toSorted,
                     sortable,
                     [compare],

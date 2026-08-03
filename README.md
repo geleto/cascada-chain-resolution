@@ -179,9 +179,9 @@ logical values and do not create a wait. Standard methods use logical
 algorithms and Promise-sensitive scalar conversion rather than exporting Arrays
 or inspected elements. Ready work stays synchronous.
 [`ArrayView`](docs/array-view.md) is its internal shared-range representation.
-Functions and executable descriptors remain outside the language graph,
-callbacks other than a trusted Promise-aware sort comparator are deferred, and
-only the known Array mutators may have side effects.
+Functions and executable descriptors remain outside the language graph.
+Trusted String callbacks and sort comparators are supported; other Array
+callbacks are deferred, and only the known Array mutators may have side effects.
 
 General class methods that mutate through ordinary JavaScript `this` remain
 separate future work. Their archived design combines `enter` with an
@@ -241,9 +241,15 @@ completed, deferred, and pending work.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
 - `src/language-values.js` owns value classification and the data-class
   registry.
-- `src/helpers.js` owns shared invocation and reflection helpers.
+- `src/invocation.js` owns shared reflection, native calls, and
+  exported-argument invocation.
 - `src/observations.js` owns lookup, export, Error queries, and their
   shared observational walkers.
+- `src/run.js` owns restricted method routing and common observation handling.
+- `src/string-methods.js` and `src/string-invocation.js` own standard String
+  facts and protocol validation.
+- `src/array-view.js`, `src/array-invocation.js`, `src/array-methods.js`, and
+  `src/array-remap.js` own logical Array representation and method execution.
 - `src/import.js` prepares imported graphs, aliases, cycles, and Promise
   continuations.
 - `src/property-transitions.js` coordinates property replacement, deletion,
@@ -254,12 +260,8 @@ completed, deferred, and pending work.
 - `src/raw-walk.js` owns metadata-free export copying and Error collection.
 - `src/language-properties.js` owns descriptor validation and safe physical
   writes for language-visible properties.
-- The remaining small source modules own metadata, fatal errors, and helpers.
+- The remaining small source modules own metadata and fatal errors.
   Refcount verification is test-only in `test/verify-refcounts.js`.
-
-Planned step 23 adds public `src/run.js` and internal `src/array-view.js`, and
-extends the logical-property adapters and metadata described in their design
-documents.
 
 ## Runtime model
 
@@ -318,6 +320,7 @@ The public operations are:
 | `assignPath(chain, path, value)` | Assign or replace a path value |
 | `deletePath(chain, path)` | Delete a path value |
 | `lookupPath(chain, path, sharedOwnership)` | Read a path value |
+| `run(chain, path, method, mutateArray, ...arguments)` | Invoke a supported method |
 | `registerDataClass(Class)` | Register an exact class prototype as tracked data |
 | `import(value, errorContext)` | Admit external data |
 | `export(chain, path)` | Copy host-ready output or collect its Errors |

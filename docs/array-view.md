@@ -54,13 +54,13 @@ The first derivation attaches the source projection. A native source prepares ea
 
 `concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-origin remap, so holes, import attribution, cycle cuts, ownership, and Promise versions use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
 
-End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. `unshift` additionally preflights moved descriptors and inherited indexes before changing storage. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
+End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. `unshift` additionally rejects hidden or protected moved indexes and inherited indexes before changing storage. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
 
 ## Materialization and length
 
 Materialization creates an owned native Array containing the logical length and indexed elements. It recreates ownership, refcounts, import attribution, cycle cuts, and Promise mirrors for that identity; storage and view state are not copied.
 
-Length shrink moves `_end` while deleting the changing identity's logical edge state one index at a time. Growth with holes can extend shared storage only when the view ends at the physical end and the backing length is writable; otherwise the view materializes first. Growing after a bounds-only shrink therefore cannot reveal retained physical values.
+Length shrink moves `_end` while deleting the changing identity's logical edge state in descending order. A non-configurable logical element stops the shrink at that index after higher elements have been removed, matching `ArraySetLength`. Growth with holes can extend shared storage only when the view ends at the physical end and the backing length is writable; otherwise the view materializes first. Growing after a bounds-only shrink therefore cannot reveal retained physical values.
 
 Indexed assignment follows JavaScript Array length behavior. Assignment beyond a view's end can extend shared storage, including holes, when the view reaches the physical end and the backing is extensible with writable length. It publishes a derived view ending at `index + 1`; otherwise the receiver materializes before assignment. Unlike native endpoint methods, this direct own-property write need not inspect inherited indexes.
 

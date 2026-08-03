@@ -249,6 +249,29 @@ describe("ArrayView", () => {
         expect(source).to.eql([1, 2])
     })
 
+    it("materializes prepend when the backing has hidden indexes", () => {
+        const source = []
+        Object.defineProperty(source, "0", {
+            value: 7,
+            enumerable: false,
+            writable: true,
+            configurable: true,
+        })
+
+        const result = run(new Chain(source), [], "unshift", false, 0)
+
+        expect(Array.isArray(result)).to.be(true)
+        expect(result.length).to.be(2)
+        expect(Object.keys(result)).to.eql(["0"])
+        expect(result[0]).to.be(0)
+        expect(source.length).to.be(1)
+        expect(Object.getOwnPropertyDescriptor(
+            source,
+            "0",
+        ).enumerable).to.be(false)
+        expect(source[0]).to.be(7)
+    })
+
     it("contracts a non-extensible backing without modifying it", () => {
         const source = Object.freeze([1, 2])
         const result = run(new Chain(source), [], "pop", false)

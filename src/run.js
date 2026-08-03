@@ -3,8 +3,8 @@ import * as arrayInvocation from "./array-invocation.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as helpers from "./helpers.js"
 import * as imports from "./import.js"
+import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -13,17 +13,11 @@ import {
     walkMutationPath,
 } from "./mutations.js"
 import {
-    exportArgument,
     walkObservationPath,
 } from "./observations.js"
 import * as resolution from "./resolution.js"
 import * as refcounts from "./refcounts.js"
-
-const STANDARD_STRING_METHODS = new Map(
-    Object.getOwnPropertyNames(String.prototype)
-        .map(method => [method, String.prototype[method]])
-        .filter(([, callable]) => typeof callable === "function"),
-)
+import * as stringInvocation from "./string-invocation.js"
 
 function run(chain, path, method, mutateArray, ...args) {
     if (typeof method !== "string") {
@@ -47,7 +41,7 @@ function run(chain, path, method, mutateArray, ...args) {
         )
     }
 
-    return helpers.runFatal(() => mutateArray
+    return errorUtils.runFatal(() => mutateArray
         ? runMutation(chain, path, method, args)
         : runObservation(chain, path, method, args))
 }
@@ -77,6 +71,9 @@ function runObservation(chain, path, method, args) {
                         targetValue,
                     )
                     : targetValue
+            const stringMethod =
+                typeof targetValue === "string" &&
+                stringInvocation.getStandardStringMethod(method, callable)
 
             const operationResult = callable === undefined
                 ? arrayInvocation.invokeArrayObservationMethod(
@@ -85,32 +82,25 @@ function runObservation(chain, path, method, args) {
                     args,
                     importBoundary,
                 )
-                : invokeOrdinaryMethod(thisValue, callable)
+                : stringMethod
+                    ? stringInvocation.invokeStringObservationMethod(
+                        thisValue,
+                        stringMethod,
+                        args,
+                    )
+                    : invocation.invokeObservationMethodWithExportedArgs(
+                        callable,
+                        thisValue,
+                        args,
+                    )
 
             return finishObservation(
                 thisValue === targetValue ? targetValue : undefined,
                 operationResult,
-                callable !== undefined &&
-                    (
-                        typeof targetValue !== "string" ||
-                        STANDARD_STRING_METHODS.get(method) !== callable
-                    ),
+                callable !== undefined && !stringMethod,
             )
         },
     )
-
-    function invokeOrdinaryMethod(thisValue, callable) {
-        return resolution.continueOperationsUnlessPoison(
-            args.map(exportArgument),
-            preparedArgs => resolution.resolveInitialValueOrPoison(
-                helpers.invokeDataFunctionOrPoison(
-                    callable,
-                    thisValue,
-                    preparedArgs,
-                ),
-            ),
-        )
-    }
 
     function finishObservation(
         leaseValue,
@@ -163,8 +153,7 @@ function runObservation(chain, path, method, args) {
         if (
             !isArray &&
             typeof targetValue !== "string" &&
-            !tracked &&
-            typeof targetValue !== "function"
+            !tracked
         ) {
             return errorUtils.validationError(
                 "run receiver does not support methods",
@@ -174,13 +163,17 @@ function runObservation(chain, path, method, args) {
             ? arrayViews.backingOf(targetValue)
             : targetValue
         if (isArray) {
-            const entry = helpers.findPropertyDescriptor(methodTarget, method)
+            const entry = invocation.findPropertyDescriptor(
+                methodTarget,
+                method,
+            )
             if (languageValues.isError(entry)) return entry
             if (
                 entry &&
                 (
                     entry.descriptor.value === Array.prototype[method] ||
                     (
+                        // Recognize the base Array prototype across realms.
                         Array.isArray(entry.owner) &&
                         languageValues.isPlainObjectPrototype(
                             Object.getPrototypeOf(entry.owner),

@@ -75,7 +75,7 @@ export {
     resolveOperationResultOrFatal,
 } from "../src/resolution.js"
 
-export { runFatal } from "../src/helpers.js"
+export { runFatal } from "../src/error.js"
 
 export {
     buildRefIndex,

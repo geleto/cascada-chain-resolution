@@ -1,4 +1,3 @@
-import * as helpers from "./helpers.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -13,7 +12,7 @@ import * as resolution from "./resolution.js"
 // sharedOwnership is false for a pure read or when ownership is ceded to
 // the caller, e.g. the final `return x` from an otherwise unused variable.
 function lookupPath(chain, path, sharedOwnership = true) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         return walkObservationPath(chain, path, (value, importBoundary) => {
             if (importBoundary) {
                 imports.import(value, importBoundary.errorContext)
@@ -27,7 +26,7 @@ function lookupPath(chain, path, sharedOwnership = true) {
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         return walkObservationPath(chain, path, exportBranch)
     })
 }
@@ -74,7 +73,7 @@ function exportErrorOutcome(errors) {
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         return walkObservationPath(chain, path, hasErrorAtPathValue)
     })
 }
@@ -114,7 +113,7 @@ function searchForFirstError(value, importBoundary) {
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path) {
-    return helpers.runFatal(() => {
+    return errorUtils.runFatal(() => {
         return walkObservationPath(chain, path, finish)
     })
 

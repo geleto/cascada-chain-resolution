@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 
+import { STRING_METHODS } from "../src/string-methods.js"
 import { Chain, run } from "./support.js"
 import {
     VALUES,
@@ -78,12 +79,15 @@ const STRING_MODES = [
 
 describe("String native equivalence", () => {
     it("keeps method facts complete", () => {
+        const expected = Object.getOwnPropertyNames(String.prototype)
+            .filter(method => {
+                return method !== "constructor" && method !== "length"
+            }).sort()
         assert.deepEqual(
             Object.keys(STRING_METHOD_FACTS).sort(),
-            Object.getOwnPropertyNames(String.prototype).filter(method => {
-                return method !== "constructor" && method !== "length"
-            }).sort(),
+            expected,
         )
+        assert.deepEqual(Object.keys(STRING_METHODS).sort(), expected)
     })
 
     for (const mode of STRING_MODES) {

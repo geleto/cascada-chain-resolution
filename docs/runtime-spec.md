@@ -51,9 +51,8 @@ An empty path targets `_state.value`. This stable parent/key location lets a
 root Promise use the same Promise-mirror machinery as any nested property.
 
 Assignment and deletion change the `Chain` and return `undefined`. Values are
-currently observed through `lookupPath`, `export`, `hasError`, and `getErrors`.
-Planned [`run`](run.md) adds standard-method results and marked Array mutator
-results without changing those existing operation shapes.
+observed through `lookupPath`, `export`, `hasError`, `getErrors`, and the
+restricted standard-method [`run`](run.md) operation.
 
 ## Program order
 
@@ -313,6 +312,13 @@ targets are no-ops. It updates existing refcounts and returns `undefined`.
 Returns the value captured at the path. The default marks a returned tracked
 value shared. The result is synchronous unless path resolution crosses a
 Promise.
+
+### `run(chain, path, method, mutateArray, ...arguments)`
+
+Invokes supported String and Array operations or a trusted read-only method.
+Array mutation mode publishes through the normal mutation path; observation
+mode preserves the receiver. See [`run.md`](run.md) for dispatch, argument,
+ordering, and result contracts.
 
 ### `export(chain, path)`
 

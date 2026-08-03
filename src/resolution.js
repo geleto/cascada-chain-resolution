@@ -1,5 +1,4 @@
 import * as errorUtils from "./error.js"
-import * as helpers from "./helpers.js"
 import * as languageValues from "./language-values.js"
 
 const CANONICAL_PROMISES = new WeakMap()
@@ -22,10 +21,10 @@ function resolveInitialValueOrPoison(
     value,
     fn = value => value,
 ) {
-    if (!languageValues.isPromise(value)) return helpers.runFatal(fn, value)
+    if (!languageValues.isPromise(value)) return errorUtils.runFatal(fn, value)
     return getCanonicalPromise(value).then(
-        value => helpers.runFatal(fn, value),
-        reason => helpers.runFatal(
+        value => errorUtils.runFatal(fn, value),
+        reason => errorUtils.runFatal(
             () => fn(errorUtils.toPoison(reason)),
         ),
     )
@@ -34,7 +33,7 @@ function resolveInitialValueOrPoison(
 // The initial resolver has already published its value or Poison. A later
 // resolver uses the source only as readiness and reads the current mirror.
 function onLaterPromiseReady(promise, fn) {
-    const onReady = () => helpers.runFatal(fn)
+    const onReady = () => errorUtils.runFatal(fn)
     return getCanonicalPromise(promise).then(onReady, onReady)
 }
 
@@ -45,12 +44,12 @@ function resolveOperationResultOrFatal(
     onRejected,
 ) {
     if (!languageValues.isPromise(result)) {
-        return helpers.runFatal(onFulfilled, result)
+        return errorUtils.runFatal(onFulfilled, result)
     }
     return getCanonicalPromise(result).then(
-        value => helpers.runFatal(onFulfilled, value),
+        value => errorUtils.runFatal(onFulfilled, value),
         reason => {
-            if (onRejected) helpers.runFatal(onRejected, reason)
+            if (onRejected) errorUtils.runFatal(onRejected, reason)
             return errorUtils.reportFatalError(reason)
         },
     )
@@ -66,7 +65,7 @@ function runOperationCallbackOrFatal(
     try {
         result = callback(argument)
     } catch (error) {
-        helpers.runFatal(onRejected, error)
+        errorUtils.runFatal(onRejected, error)
         return errorUtils.reportFatalError(error)
     }
     return resolveOperationResultOrFatal(result, onFulfilled, onRejected)
@@ -106,7 +105,7 @@ function resolveOperationResultsOrFatal(results, onResolved) {
             },
         ))
     }
-    if (waits.length === 0) return helpers.runFatal(onResolved, values)
+    if (waits.length === 0) return errorUtils.runFatal(onResolved, values)
     return resolveOperationResultOrFatal(
         Promise.all(waits),
         () => onResolved(values),

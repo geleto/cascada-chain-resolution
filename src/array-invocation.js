@@ -1,6 +1,6 @@
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
-import * as helpers from "./helpers.js"
+import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as methods from "./array-methods.js"
@@ -83,7 +83,7 @@ function invokeArrayObservationMethod(
                 return implementation(thisValue, preparedArgs)
             }
             const remap = arrayRemaps.createInitialRemap(thisValue)
-            const nativeResult = helpers.invokeDataFunctionOrPoison(
+            const nativeResult = invocation.invokeDataFunctionOrPoison(
                 Array.prototype[method],
                 remap,
                 preparedArgs,
@@ -139,7 +139,7 @@ function invokeArrayMutationMethod(
     }
     const { remap, working, operations } =
         arrayRemaps.createMutationRemap(thisValue, !replaceReceiver)
-    const nativeResult = helpers.invokeDataFunctionOrPoison(
+    const nativeResult = invocation.invokeDataFunctionOrPoison(
         Array.prototype[method],
         working,
         preparedArguments,
@@ -215,7 +215,7 @@ function deriveArrayView(thisValue, start, end) {
     if (start === end) return []
     const projection = arrayViews.ArrayView.attachTo(thisValue)
     const view = new arrayViews.ArrayView(projection, start, end)
-    promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+    promiseMirrors.prepareRetainedArrayProperties(
         thisValue,
         view,
         key => {
@@ -238,7 +238,7 @@ function tryAppendArrayView(thisValue, suffix) {
     const view = arrayViews.ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,
-        derived => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+        derived => promiseMirrors.prepareRetainedArrayProperties(
             thisValue, derived,
         ),
     )
@@ -253,7 +253,7 @@ function tryPrependArrayView(thisValue, values) {
     const view = arrayViews.ArrayView.tryPrepend(
         thisValue,
         values,
-        derived => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+        derived => promiseMirrors.prepareRetainedArrayProperties(
             thisValue,
             derived,
             key => String(Number(key) + offset),
