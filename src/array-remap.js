@@ -21,19 +21,48 @@ const KIND_MOVE = 3
 function createInitialRemap(array) {
     const length = arrayViews.logicalArrayLength(array)
     const remap = new Array(length)
-    for (let index = 0; index < length; index++) {
-        const origin = propertyOrigins.getOrigin(array, index)
-        if (origin) remap[index] = origin
+    for (const key of languageProperties.enumerableLanguageKeys(array)) {
+        remap[key] = propertyOrigins.getOrigin(array, key)
     }
     return remap
 }
 
-function trace(arrayRemap) {
+function createMutationRemap(array, inPlace) {
+    if (inPlace) return traceMutation(array)
+    const remap = createInitialRemap(array)
+    return { remap, working: remap }
+}
+
+function traceMutation(array) {
     const operations = []
-    const working = new Proxy(arrayRemap, {
+    const deleted = new Set()
+    let sourceLength = arrayViews.logicalArrayLength(array)
+    const remap = new Array(sourceLength)
+    const working = new Proxy(remap, {
+        has(target, key) {
+            if (!arrayViews.isArrayIndex(key)) {
+                return Reflect.has(target, key)
+            }
+            if (Object.hasOwn(target, key)) return true
+            if (deleted.has(key) || Number(key) >= sourceLength) return false
+            return languageProperties.hasLanguageProperty(array, key)
+        },
+        get(target, key, receiver) {
+            if (!arrayViews.isArrayIndex(key)) {
+                return Reflect.get(target, key, receiver)
+            }
+            if (Object.hasOwn(target, key)) return target[key]
+            if (deleted.has(key) || Number(key) >= sourceLength) return undefined
+            const origin = propertyOrigins.getOrigin(array, key)
+            if (origin) languageProperties.writeLanguageProperty(
+                target, key, origin,
+            )
+            return origin
+        },
         set(target, key, value) {
             if (key === "length") {
                 operations.push({ kind: KIND_LENGTH, value })
+                sourceLength = Math.min(sourceLength, value)
             } else if (arrayViews.isArrayIndex(key)) {
                 operations.push(createPlacementOperation(value, Number(key)))
             }
@@ -41,6 +70,7 @@ function trace(arrayRemap) {
         },
         deleteProperty(target, key) {
             if (arrayViews.isArrayIndex(key)) {
+                deleted.add(key)
                 operations.push({
                     kind: KIND_DELETE,
                     index: Number(key),
@@ -49,7 +79,7 @@ function trace(arrayRemap) {
             return Reflect.deleteProperty(target, key)
         },
     })
-    return { working, operations }
+    return { remap, working, operations }
 }
 
 function createPlacementOperation(entry, newIndex) {
@@ -69,13 +99,13 @@ function applyRemapToArray(array, remap, operations) {
             : { kind: KIND_DELETE, index: newIndex }
     })
     const placementCount = new Map()
-    for (const origin of remap) {
-        if (!propertyOrigins.isOrigin(origin)) continue
+    remap.forEach(origin => {
+        if (!propertyOrigins.isOrigin(origin)) return
         placementCount.set(
             origin,
             (placementCount.get(origin) ?? 0) + 1,
         )
-    }
+    })
     for (const operation of operations) {
         if (operation.kind === KIND_MOVE) {
             propertyOrigins.captureOrigin(operation.origin)
@@ -113,18 +143,23 @@ function applyRemapToArray(array, remap, operations) {
 
 function createArrayFromRemap(remap, refIndexSource = undefined) {
     const output = new Array(remap.length)
-    remap.forEach((entry, index) => {
-        if (propertyOrigins.isOrigin(entry)) {
-            placeOrigin(output, String(index), entry)
-        } else {
-            setProperty(output, String(index), entry)
-            if (!languageValues.isPromise(entry)) metadata.markShared(entry)
-        }
-    })
+    placeRemap(output, remap)
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(refIndexSource, output)
     }
     return output
+}
+
+function placeRemap(destination, remap, offset = 0) {
+    remap.forEach((entry, index) => {
+        const key = String(offset + index)
+        if (propertyOrigins.isOrigin(entry)) {
+            placeOrigin(destination, key, entry)
+        } else {
+            setProperty(destination, key, entry)
+            if (!languageValues.isPromise(entry)) metadata.markShared(entry)
+        }
+    })
 }
 
 function placeOrigin(
@@ -191,5 +226,6 @@ export {
     applyRemapToArray,
     createArrayFromRemap,
     createInitialRemap,
-    trace,
+    createMutationRemap,
+    placeRemap,
 }

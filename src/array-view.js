@@ -25,49 +25,67 @@ class ArrayView {
         })
     }
 
-    static attachTo(array) {
-        const attached = attachedViewOf(array)
-        if (attached) return attached
+    static attachTo(arrayOrArrayView) {
+        const projection = projectionOf(arrayOrArrayView)
+        if (isArrayView(projection)) return projection
 
-        const view = new ArrayView(array)
-        metadata.ensureMeta(array).arrayView = view
+        const view = new ArrayView(projection)
+        metadata.ensureMeta(projection).arrayView = view
         return view
     }
 
-    static canExtendBacking(source, atStart, count) {
-        const backing = backingOf(source)
-        if (backing.length + count > 0xffffffff) return false
+    static canGrowEnd(source, count, writesProperties = false) {
         if (count === 0) return true
+        const projection = projectionOf(source)
+        const backing = backingOf(projection)
         if (
+            isArrayView(projection) &&
+            projection._end + projection._storage.baseIndex !== backing.length
+        ) return false
+        if (backing.length + count > 0xffffffff) return false
+        if (!Object.getOwnPropertyDescriptor(backing, "length").writable) {
+            return false
+        }
+        return !writesProperties || Object.isExtensible(backing)
+    }
+
+    static tryExtendEnd(source, count, beforeWrite) {
+        if (!ArrayView.canGrowEnd(source, count, true)) return
+        return ArrayView.attachTo(source).#extendEnd(count, beforeWrite)
+    }
+
+    static tryPrepend(source, values, beforeWrite) {
+        if (!ArrayView.#canPrepend(source, values.length)) return
+        return ArrayView.attachTo(source).#prepend(values, beforeWrite)
+    }
+
+    static #canPrepend(source, count) {
+        if (count === 0) return true
+        const projection = projectionOf(source)
+        const backing = backingOf(projection)
+        if (
+            isArrayView(projection) &&
+            projection._start + projection._storage.baseIndex !== 0
+        ) return false
+        if (
+            backing.length + count > 0xffffffff ||
             !Object.isExtensible(backing) ||
             !Object.getOwnPropertyDescriptor(backing, "length").writable
         ) return false
 
-        if (atStart) {
-            for (const key of Object.getOwnPropertyNames(backing)) {
-                if (!isArrayIndex(key)) continue
-                const descriptor = Object.getOwnPropertyDescriptor(backing, key)
-                if (
-                    !("value" in descriptor) ||
-                    !descriptor.writable ||
-                    !descriptor.configurable
-                ) return false
-            }
+        for (const key of Object.getOwnPropertyNames(backing)) {
+            if (!isArrayIndex(key)) continue
+            const descriptor = Object.getOwnPropertyDescriptor(backing, key)
+            if (
+                !("value" in descriptor) ||
+                !descriptor.writable ||
+                !descriptor.configurable
+            ) return false
         }
 
-        const first = atStart ? 0 : backing.length
-        const last = backing.length + count
-        // Native Array mutation must not observe inherited indexed properties.
-        for (
-            let prototype = Object.getPrototypeOf(backing);
-            prototype !== null;
-            prototype = Object.getPrototypeOf(prototype)
-        ) {
-            for (const key of Object.getOwnPropertyNames(prototype)) {
-                if (!isArrayIndex(key)) continue
-                const index = Number(key)
-                if (index >= first && index < last) return false
-            }
+        // Native unshift must not observe inherited indexed properties.
+        for (let index = 0; index < backing.length + count; index++) {
+            if (!Object.hasOwn(backing, index) && index in backing) return false
         }
         return true
     }
@@ -168,57 +186,28 @@ class ArrayView {
         return keys
     }
 
-    canExtend(atStart) {
-        const { array, baseIndex } = this._storage
-        return atStart
-            ? this._start + baseIndex === 0
-            : this._end + baseIndex === array.length
-    }
-
-    extend(atStart, values, beforeWrite) {
+    #prepend(values, beforeWrite) {
         const count = values.length
-        const next = new ArrayView(
-            this,
-            atStart ? -count : 0,
-            atStart ? this.length : this.length + count,
-        )
-        if (count === 0) return next
-
+        const next = new ArrayView(this, -count, this.length)
         beforeWrite(next)
+        if (count === 0) return next
         const storage = this._storage
-        if (atStart) {
-            Array.prototype.unshift.apply(storage.array, values)
-            storage.baseIndex += count
-        } else {
-            Array.prototype.push.apply(storage.array, values)
-        }
+        Array.prototype.unshift.apply(storage.array, values)
+        storage.baseIndex += count
         return next
     }
 
-    contract(atStart) {
-        return new ArrayView(
-            this,
-            atStart ? Math.min(1, this.length) : 0,
-            atStart ? this.length : Math.max(0, this.length - 1),
-        )
-    }
-
-    canGrowEnd(count) {
-        const backing = this._storage.array
-        return this.canExtend(false) &&
-            backing.length + count <= 0xffffffff &&
-            Object.getOwnPropertyDescriptor(backing, "length").writable
-    }
-
-    canAssignEnd(count) {
-        return this.canGrowEnd(count) &&
-            Object.isExtensible(this._storage.array)
+    #extendEnd(count, beforeWrite) {
+        const next = new ArrayView(this, 0, this.length + count)
+        beforeWrite(next)
+        if (count > 0) this._storage.array.length += count
+        return next
     }
 
     setLength(length) {
         const growth = length - this.length
         if (growth > 0) {
-            if (!this.canGrowEnd(growth)) return false
+            if (!ArrayView.canGrowEnd(this, growth)) return false
             this._storage.array.length += growth
         }
         this._end = this._start + length

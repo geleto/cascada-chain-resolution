@@ -12,7 +12,7 @@ import * as propertyOrigins from "./property-origin.js"
 const ARRAY_METHODS = {
     __proto__: null,
     at: { exportArgs: [true], result: materializeElement },
-    concat: { prepare: prepareConcatArguments },
+    concat: { prepare: prepareConcatArguments, arrayView: true },
     copyWithin: { mutate: true, exportArgs: [true, true, true] },
     fill: { mutate: true, exportArgs: [false, true, true] },
     flat: { prepare: prepareFlatArguments },
@@ -24,7 +24,11 @@ const ARRAY_METHODS = {
     push: { mutate: true, endpoint: true, restValues: true },
     reverse: { mutate: true },
     shift: { mutate: true, endpoint: true, result: materializeElement },
-    slice: { exportArgs: [true, true], result: arrayRemaps.createArrayFromRemap },
+    slice: {
+        exportArgs: [true, true],
+        arrayView: true,
+        result: arrayRemaps.createArrayFromRemap,
+    },
     sort: {
         mutate: true,
         prepare: prepareSortArguments,
@@ -64,19 +68,26 @@ function prepareConcatArguments(args) {
 }
 
 function concat(thisValue, items) {
+    const result = createConcatRemap(
+        arrayRemaps.createInitialRemap(thisValue),
+        items,
+    )
+    return languageValues.isError(result)
+        ? result
+        : arrayRemaps.createArrayFromRemap(result)
+}
+
+function createConcatRemap(receiver, items) {
     const prepared = items.map(item => {
         return arrayViews.isLogicalArray(item)
             ? arrayRemaps.createInitialRemap(item)
             : item
     })
-    const result = helpers.invokeDataFunctionOrPoison(
+    return helpers.invokeDataFunctionOrPoison(
         Array.prototype.concat,
-        arrayRemaps.createInitialRemap(thisValue),
+        receiver,
         prepared,
     )
-    return languageValues.isError(result)
-        ? result
-        : arrayRemaps.createArrayFromRemap(result)
 }
 
 function prepareFlatArguments(args) {
@@ -418,6 +429,7 @@ function materializeElement(element, retained = true) {
 export {
     ARRAY_METHODS,
     concat,
+    createConcatRemap,
     flat,
     includes,
     indexOf,

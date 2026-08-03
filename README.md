@@ -170,7 +170,7 @@ from the entered Chain to prevent new operations. Internal
 mutating/read-only paths and completion routines are neither exported nor called
 directly by other operations.
 
-The next planned invocation step is [`run`](docs/run.md), restricted to
+The [`run`](docs/run.md) operation is restricted to
 standard String and Array operations and trusted read-only methods. Path
 Promises remain owned by the existing walkers; Array mutation installs an
 assigned-Promise gate only when receiver or required argument preparation must
@@ -178,7 +178,7 @@ continue after the target is reached. Assignment-style element payloads remain
 logical values and do not create a wait. Standard methods use logical
 algorithms and Promise-sensitive scalar coercion rather than exporting Arrays
 or inspected elements. Ready work stays synchronous.
-[`ArrayView`](docs/array-view.md) is its internal endpoint representation.
+[`ArrayView`](docs/array-view.md) is its internal shared-range representation.
 Functions and executable descriptors remain outside the language graph,
 callbacks other than a trusted Promise-aware sort comparator are deferred, and
 only the known Array mutators may have side effects.
@@ -188,8 +188,8 @@ separate future work. Their archived design combines `enter` with an
 operation-local recursive proxy:
 
 - [`enter.md`](docs/enter.md) defines the implemented primitive.
-- [`run.md`](docs/run.md) defines the planned restricted standard operation.
-- [`array-view.md`](docs/array-view.md) defines its planned internal endpoint
+- [`run.md`](docs/run.md) defines the restricted standard operation.
+- [`array-view.md`](docs/array-view.md) defines its internal shared-range
   representation.
 - [`future/run.md`](docs/future/run.md) records the deferred mutating-class
   proxy design.
@@ -212,25 +212,23 @@ operation-local recursive proxy:
   registered data-class prototype preservation during copy-on-write.
 - [`docs/enter.md`](docs/enter.md) defines implemented asynchronous path
   ownership and gate publication.
-- [`docs/run.md`](docs/run.md) defines the planned restricted standard method
+- [`docs/run.md`](docs/run.md) defines the restricted standard method
   operation.
-- [`docs/array-view.md`](docs/array-view.md) defines its planned internal
-  endpoint representation.
+- [`docs/array-view.md`](docs/array-view.md) defines its internal shared-range
+  representation.
 - [`docs/plan.md`](docs/plan.md) tracks implemented, deferred, and pending
   work.
 
-The first seven documents describe implemented runtime behavior. `run.md` and
-`array-view.md` describe planned work. `docs/plan.md` tracks completed,
-deferred, and pending work.
+These documents describe implemented runtime behavior. `docs/plan.md` tracks
+completed, deferred, and pending work.
 
 ### Deferred designs
 
 - [`docs/future/run.md`](docs/future/run.md) records proxy-backed mutating
-  class methods beyond the restricted planned `run`.
+  class methods beyond restricted `run`.
 - [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
   deferred array-subclass, Map, Set, other built-in, and general
-  virtual-container ideas that are not requirements of step 20 or planned
-  `ArrayView`.
+  virtual-container ideas.
 - [`docs/future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
   preserves the earlier proxy/draft analysis that predates callback-based
   `enter`.

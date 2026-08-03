@@ -6,7 +6,7 @@
 current implementation plan.
 
 The runtime graph remains data-only. Functions are not language data, and the
-planned restricted standard [`run`](../run.md) does not permit mutating class
+restricted standard [`run`](../run.md) does not permit mutating class
 methods. The current kernel supports registered data-class instances only as
 data whose prototype can survive copy-on-write.
 

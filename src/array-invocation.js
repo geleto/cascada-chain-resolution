@@ -68,8 +68,8 @@ function invokeArrayObservationMethod(
     return resolution.continueOperationUnlessPoison(
         preparedArguments,
         preparedArgs => {
-            if (definition.endpoint) {
-                const arrayView = tryArrayViewOperation(
+            if (definition.endpoint || definition.arrayView) {
+                const arrayView = tryArrayViewMethod(
                     thisValue,
                     method,
                     preparedArgs,
@@ -109,7 +109,7 @@ function invokeArrayMutationMethod(
     const definition = methods.ARRAY_METHODS[method]
     if (languageValues.isError(preparedArguments)) return preparedArguments
     if (definition.endpoint && replaceReceiver) {
-        const arrayView = tryArrayViewOperation(
+        const arrayView = tryArrayViewMethod(
             thisValue,
             method,
             preparedArguments,
@@ -137,13 +137,8 @@ function invokeArrayMutationMethod(
             remap => commitArrayMutation(remap),
         )
     }
-    // TODO: Bypass remapping when owned native storage has no indexed state.
-    const remap = arrayRemaps.createInitialRemap(thisValue)
-    let working = remap
-    let operations
-    if (!replaceReceiver) {
-        ({ working, operations } = arrayRemaps.trace(remap))
-    }
+    const { remap, working, operations } =
+        arrayRemaps.createMutationRemap(thisValue, !replaceReceiver)
     const nativeResult = helpers.invokeDataFunctionOrPoison(
         Array.prototype[method],
         working,
@@ -176,8 +171,8 @@ function invokeArrayMutationMethod(
     }
 }
 
-// thisValue can be any array representation: Array, ArrayView, Array with attached ArrayView
-function tryArrayViewOperation(
+// thisValue can be an Array, ArrayView, or Array with an attached ArrayView.
+function tryArrayViewMethod(
     thisValue,
     method,
     args,
@@ -186,78 +181,87 @@ function tryArrayViewOperation(
     if (metadata.nodeImportBoundary(thisValue, importBoundary)) {
         return undefined
     }
-    const adding = method === "push" || method === "unshift"
-    const atStart = method === "shift" || method === "unshift"
-    let projection = arrayViews.projectionOf(thisValue)
-    const length = projection.length
-    const removedIndex = adding
-        ? undefined
-        : atStart ? 0 : length - 1
-    const offset = atStart ? (adding ? args.length : -1) : 0
-    const destinationKey = key => Number(key) === removedIndex
-        ? undefined
-        : String(Number(key) + offset)
-    if (
-        adding &&
-        !arrayViews.ArrayView.canExtendBacking(
-            projection,
-            atStart,
-            args.length,
-        )
-    ) {
-        return undefined
-    }
+    if (method === "slice") return trySliceArrayView(thisValue, args)
+    if (method === "concat") return tryConcatArrayView(thisValue, args)
+    if (method === "push") return tryAppendArrayView(thisValue, args)
+    if (method === "unshift") return tryPrependArrayView(thisValue, args)
 
-    const firstDerivation = !arrayViews.isArrayView(projection)
-    if (firstDerivation) {
-        projection = arrayViews.ArrayView.attachTo(thisValue)
-    }
+    const length = arrayViews.logicalArrayLength(thisValue)
+    return method === "shift"
+        ? deriveArrayView(thisValue, Math.min(1, length), length)
+        : deriveArrayView(thisValue, 0, Math.max(0, length - 1))
+}
 
-    let arrayView
-    if (adding) {
-        if (!projection.canExtend(atStart)) return undefined
-        arrayView = projection.extend(
-            atStart,
-            args,
-            prepareExtendedView,
-        )
-    } else {
-        arrayView = projection.contract(atStart)
-        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+function relativeIndex(value, length, defaultValue) {
+    if (value === undefined) return defaultValue
+    value = Number.isNaN(value) ? 0 : Math.trunc(value)
+    return value < 0
+        ? Math.max(length + value, 0)
+        : Math.min(value, length)
+}
+
+function trySliceArrayView(thisValue, args) {
+    if (args.some(value => {
+        return value !== undefined && typeof value !== "number"
+    })) return undefined
+
+    const length = arrayViews.logicalArrayLength(thisValue)
+    const start = relativeIndex(args[0], length, 0)
+    const end = Math.max(start, relativeIndex(args[1], length, length))
+    return deriveArrayView(thisValue, start, end)
+}
+
+function deriveArrayView(thisValue, start, end) {
+    if (start === end) return []
+    const projection = arrayViews.ArrayView.attachTo(thisValue)
+    const view = new arrayViews.ArrayView(projection, start, end)
+    promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+        thisValue,
+        view,
+        key => {
+            const index = Number(key)
+            return index >= start && index < end
+                ? String(index - start)
+                : undefined
+        },
+    )
+    return view
+}
+
+function tryConcatArrayView(thisValue, items) {
+    const suffix = methods.createConcatRemap([], items)
+    if (languageValues.isError(suffix)) return suffix
+    return tryAppendArrayView(thisValue, suffix)
+}
+
+function tryAppendArrayView(thisValue, suffix) {
+    const view = arrayViews.ArrayView.tryExtendEnd(
+        thisValue,
+        suffix.length,
+        derived => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+            thisValue, derived,
+        ),
+    )
+    if (!view) return undefined
+    const start = view.length - suffix.length
+    arrayRemaps.placeRemap(view, suffix, start)
+    return view
+}
+
+function tryPrependArrayView(thisValue, values) {
+    const offset = values.length
+    const view = arrayViews.ArrayView.tryPrepend(
+        thisValue,
+        values,
+        derived => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
             thisValue,
-            arrayView,
-            destinationKey,
-            importBoundary,
-        )
-    }
-
-    if (adding) {
-        for (const value of args) {
-            if (!languageValues.isPromise(value)) metadata.markShared(value)
-        }
-    }
-    return arrayView
-
-    function prepareExtendedView(view) {
-        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
-            thisValue,
-            view,
-            destinationKey,
-            importBoundary,
-        )
-        const start = atStart ? 0 : length
-        for (let index = 0; index < args.length; index++) {
-            const value = args[index]
-            if (!languageValues.isPromise(value)) continue
-            const key = String(start + index)
-            const mirror = promiseMirrors.createAssignedPromiseMirror(
-                view,
-                key,
-                value,
-            )
-            promiseMirrors.installPromiseMirror(view, key, mirror)
-        }
-    }
+            derived,
+            key => String(Number(key) + offset),
+        ),
+    )
+    if (!view) return undefined
+    arrayRemaps.placeRemap(view, values)
+    return view
 }
 
 export {

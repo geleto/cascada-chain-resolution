@@ -36,8 +36,7 @@ function setProperty(
         arrayViews.isLogicalArray(parent) &&
         String(key) === "length"
     ) {
-        setArrayLength(parent, value)
-        return
+        return setArrayLength(parent, value)
     }
     languageProperties.assertCanSetLanguageProperty(
         parent,
@@ -272,17 +271,18 @@ function assignPath(chain, path, value) {
         const growth = end - projection.length
         if (
             growth <= 0 ||
-            metadata.nodeImportBoundary(array, importBoundary) ||
-            !projection.canAssignEnd(growth)
+            metadata.nodeImportBoundary(array, importBoundary)
         ) return undefined
 
-        const extended = new arrayViews.ArrayView(array, 0, end)
-        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
-            array,
-            extended,
-            undefined,
-            importBoundary,
+        const extended = arrayViews.ArrayView.tryExtendEnd(
+            projection,
+            growth,
+            view => promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+                array,
+                view,
+            ),
         )
+        if (!extended) return undefined
         setProperty(extended, key, value, importBoundary, attachmentPath)
         return extended
     }
@@ -381,7 +381,10 @@ function assignLengthPath(chain, receiverPath, value) {
                     (
                         arrayViews.isArrayView(projection) &&
                         length > currentLength &&
-                        !projection.canGrowEnd(length - currentLength)
+                        !arrayViews.ArrayView.canGrowEnd(
+                            projection,
+                            length - currentLength,
+                        )
                     )
                 ) {
                     mutatedValue = arrayRemaps.createArrayFromRemap(

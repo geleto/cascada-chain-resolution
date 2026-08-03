@@ -81,7 +81,7 @@ describe("ArrayView", () => {
         const tail = new arrayViews.ArrayView(original, 1, 3)
         const last = new arrayViews.ArrayView(tail, 1, 2)
         const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
-        const extended = original.extend(true, [0], () => {})
+        const extended = run(new Chain(original), [], "unshift", false, 0)
 
         expect([...tail]).to.eql([2, 3])
         expect([...last]).to.eql([3])
@@ -130,6 +130,22 @@ describe("ArrayView", () => {
         expect(exportValue(new Chain(shifted), [])).to.eql([1, 2, 3])
         expect(exportValue(new Chain(popped), [])).to.eql([1, 2])
         verifyRefCounts(...arrays)
+    })
+
+    it("forks mirrors when endpoint extension adds no values", async () => {
+        const pending = deferred()
+        const chain = new Chain([pending.promise])
+        const derived = run(chain, [], "push", false)
+
+        expect(
+            promiseMirrors.getPromiseMirror(chain._state.value, "0") ===
+                promiseMirrors.getPromiseMirror(derived, "0"),
+        ).to.be(false)
+        assignPath(chain, ["0"], 9)
+        pending.resolve(1)
+
+        expect(await exportValue(new Chain(derived), [])).to.eql([1])
+        expect(exportValue(chain, [])).to.eql([9])
     })
 
     it("orders view forks between earlier and later mutations", async () => {

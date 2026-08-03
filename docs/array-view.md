@@ -1,6 +1,6 @@
 # `ArrayView`
 
-`ArrayView` is the internal copy-on-write representation used by [`run`](run.md) for `push`, `pop`, `shift`, and `unshift`. Owned native Arrays are mutated directly; a view is created only when an endpoint operation must preserve the current logical identity.
+`ArrayView` is the internal shared-storage representation used by [`run`](run.md) for `slice`, `concat`, `push`, `pop`, `shift`, and `unshift`. Owned native Arrays are mutated directly; a view is created when an operation can preserve existing logical identities by changing only bounds or hidden backing storage.
 
 ## Representation
 
@@ -42,15 +42,19 @@ setLength(length)
 
 Its iterator reads the current logical length and yields every logical position, including `undefined` for holes.
 
-## Endpoint derivation
+## Derivation
 
-An endpoint derivation is allowed only when the receiver is not imported.
+A derivation is allowed only when the receiver is not imported.
 
-The first derivation attaches the source projection. A native source prepares each retained property on derivation because an earlier contraction may have excluded it; a published `ArrayView` already owns prepared retained properties. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Promise arguments receive fresh result-view mirrors before the physical write. The mirrors remain logically independent even though their properties use the same backing slot.
+The first derivation attaches the source projection. A native source prepares each retained property on derivation because an earlier contraction may have excluded it; a published `ArrayView` already owns prepared retained properties. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own mirrors. The mirrors remain logically independent even though their properties use the same backing slot.
 
-`pop` and `shift` only contract the result bounds. Empty views keep their bounds. `push` requires the logical end to equal the physical end. `unshift` requires the logical start to equal the physical start; after the native prepend, increasing the shared base offset absorbs the physical movement for all earlier views. Adding no values derives a new view without touching the backing.
+`pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. Non-empty `unshift` requires the logical start to equal the physical start; after the native prepend, increasing the shared base offset absorbs the physical movement for all earlier views. Adding no values derives a new view without touching the backing.
 
-Physical extension is preflighted before attachment or mirror preparation. It checks the Array length limit, extensibility, writable length and affected indexed properties, and indexed prototype interference. If extension is ineligible, the logical range materializes and the operation continues on the resulting native Array.
+`slice` with already-numeric bounds returns a subview over the selected range. Empty results use an empty native Array, and arguments requiring native coercion use the normal materializing path.
+
+`concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-origin remap, so holes, import attribution, cycle cuts, ownership, and Promise versions use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
+
+End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. `unshift` additionally preflights moved descriptors and inherited indexes before changing storage. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
 
 ## Materialization and length
 

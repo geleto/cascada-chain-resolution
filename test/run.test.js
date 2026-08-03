@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm"
 
 import * as promiseMirrors from "../src/promise-mirrors.js"
+import * as arrayViews from "../src/array-view.js"
 import {
     Chain,
     assignPath,
@@ -220,8 +221,8 @@ describe("run", () => {
         const sliced = run(chain, [], "slice", false, 0)
         const reversed = run(chain, [], "toReversed", false)
 
-        expect(Object.keys(sliced)).to.eql(["0", "2"])
-        expect(sliced[0]).to.be(child)
+        expect(sliced.keys()).to.eql(["0", "2"])
+        expect(sliced.get("0")).to.be(child)
         expect(Object.keys(reversed)).to.eql(["0", "1", "2"])
         expect(reversed).to.eql([3, undefined, child])
         expect(source).to.eql([child, , 3])
@@ -270,7 +271,7 @@ describe("run", () => {
         flatDepth.resolve(undefined)
         separator.resolve(undefined)
 
-        expect(await sliced).to.eql([1, 2, 3])
+        expect([...(await sliced)]).to.eql([1, 2, 3])
         expect(await copied).to.be(copiedChain._state.value)
         expect(copiedChain._state.value).to.eql([1, 1, 2])
         expect(await flattened).to.eql([1, 2])
@@ -285,8 +286,148 @@ describe("run", () => {
         const result = run(new Chain(source), [], "slice", false)
 
         expect(result instanceof Promise).to.be(false)
-        expect(result[0]).to.be(pending.promise)
+        expect(result.get("0")).to.be(pending.promise)
         pending.resolve(1)
+    })
+
+    it("derives numeric slices without copying their backing", () => {
+        const source = [0, 1, 2, 3, 4]
+        const sliced = run(
+            new Chain(source),
+            [],
+            "slice",
+            false,
+            1,
+            -1,
+        )
+
+        expect(arrayViews.isArrayView(sliced)).to.be(true)
+        expect(arrayViews.backingOf(sliced)).to.be(source)
+        expect([...sliced]).to.eql([1, 2, 3])
+
+        const changed = new Chain(sliced)
+        run(changed, [], "push", true, 5)
+        expect(arrayViews.isArrayView(changed._state.value)).to.be(false)
+        expect(exportValue(new Chain(source), [])).to.eql([0, 1, 2, 3, 4])
+    })
+
+    it("appends concat items to the receiver backing", () => {
+        const left = [1, , 3]
+        const right = [, 5]
+        const concatenated = run(
+            new Chain(left),
+            [],
+            "concat",
+            false,
+            right,
+            6,
+        )
+
+        expect(arrayViews.isArrayView(concatenated)).to.be(true)
+        expect(arrayViews.backingOf(concatenated)).to.be(left)
+        expect(arrayViews.projectionOf(left).length).to.be(3)
+        expect(arrayViews.projectionOf(right)).to.be(right)
+        expect(concatenated.keys()).to.eql(["0", "2", "4", "5"])
+        expect([...concatenated]).to.eql([
+            1,
+            undefined,
+            3,
+            undefined,
+            5,
+            6,
+        ])
+        expect(exportValue(new Chain(left), [])).to.eql([1, , 3])
+        expect(right).to.eql([, 5])
+
+        const self = [1, , 3]
+        const selfConcat = run(
+            new Chain(self),
+            [],
+            "concat",
+            false,
+            self,
+        )
+        expect(selfConcat.keys()).to.eql(["0", "2", "3", "5"])
+        expect([...selfConcat]).to.eql([
+            1,
+            undefined,
+            3,
+            1,
+            undefined,
+            3,
+        ])
+        expect(exportValue(new Chain(self), [])).to.eql([1, , 3])
+    })
+
+    it("gives concatenated Promise properties independent mirrors", async () => {
+        const pending = deferred()
+        const leftChain = new Chain([pending.promise])
+        const right = [pending.promise]
+        const concatenated = run(
+            leftChain,
+            [],
+            "concat",
+            false,
+            right,
+        )
+        const mirrors = [
+            promiseMirrors.getPromiseMirror(leftChain._state.value, "0"),
+            promiseMirrors.getPromiseMirror(right, "0"),
+            promiseMirrors.getPromiseMirror(concatenated, "0"),
+            promiseMirrors.getPromiseMirror(concatenated, "1"),
+        ]
+
+        expect(new Set(mirrors).size).to.be(4)
+        assignPath(leftChain, ["0"], 9)
+        pending.resolve(1)
+
+        expect(await exportValue(new Chain(concatenated), [])).to.eql([1, 1])
+        expect(exportValue(leftChain, [])).to.eql([9])
+        expect(exportValue(new Chain(right), [])).to.eql([1])
+        verifyRefCounts(concatenated, leftChain._state.value, right)
+    })
+
+    it("materializes ineligible slice and concat results", () => {
+        const slicedSource = importValue([1, 2, 3])
+        const concatSource = importValue([1, 2])
+        const middle = run(
+            new Chain([1, 2, 3]),
+            [],
+            "slice",
+            false,
+            0,
+            2,
+        )
+        const sliced = run(
+            new Chain(slicedSource),
+            [],
+            "slice",
+            false,
+            1,
+        )
+        const concatenated = run(
+            new Chain(concatSource),
+            [],
+            "concat",
+            false,
+            [3],
+        )
+        const middleConcat = run(
+            new Chain(middle),
+            [],
+            "concat",
+            false,
+            [4],
+        )
+
+        expect(Array.isArray(sliced)).to.be(true)
+        expect(Array.isArray(concatenated)).to.be(true)
+        expect(Array.isArray(middleConcat)).to.be(true)
+        expect(sliced).to.eql([2, 3])
+        expect(concatenated).to.eql([1, 2, 3])
+        expect(middleConcat).to.eql([1, 2, 4])
+        expect(slicedSource).to.eql([1, 2, 3])
+        expect(concatSource).to.eql([1, 2])
     })
 
     it("forks Promise property versions at the operation position", async () => {
@@ -505,9 +646,11 @@ describe("run", () => {
         const chain = new Chain(source)
         const result = run(chain, [], "push", false, 3)
         const cleared = run(new Chain([1]), [], "fill", false)
+        const spliced = run(new Chain([1, 2, 3]), [], "splice", false, 1, 1, 9)
 
         expect([...result]).to.eql([1, 2, 3])
         expect(cleared).to.eql([undefined])
+        expect(spliced).to.eql([1, 9, 3])
         expect(exportValue(chain, [])).to.eql([1, 2])
     })
 
@@ -566,6 +709,39 @@ describe("run", () => {
         expect(run(chain, [], "push", true, 3)).to.be(3)
         expect(chain._state.value).to.be(source)
         expect(source).to.eql([1, 2, 3])
+    })
+
+    it("does not scan unused sparse indexes while remapping", () => {
+        const length = 10000
+        const cases = [
+            ["push", true, [3]],
+            ["pop", true, []],
+            ["fill", true, [3, length - 2, length - 1]],
+            ["copyWithin", true, [length - 1, 0, 1]],
+            ["splice", true, [length - 1, 1]],
+            ["toReversed", false, []],
+        ]
+
+        for (const [method, mutate, args] of cases) {
+            let descriptorReads = 0
+            const target = new Array(length)
+            target[0] = 1
+            target[length - 1] = 2
+            const source = new Proxy(target, {
+                getOwnPropertyDescriptor(target, key) {
+                    if (arrayViews.isArrayIndex(String(key))) {
+                        descriptorReads++
+                    }
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+            const result = run(
+                new Chain(source), [], method, mutate, ...args,
+            )
+
+            expect(result instanceof Error).to.be(false)
+            expect(descriptorReads < 20).to.be(true)
+        }
     })
 
     it("copy-on-writes a shared mutation receiver", () => {
