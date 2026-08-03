@@ -2,6 +2,7 @@ import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
 import { Chain as InternalChain } from "../src/chain.js"
+import { updateReadLease } from "../src/meta.js"
 import {
     Chain,
     assignPath,
@@ -31,6 +32,13 @@ describe("enter", () => {
             .to.be.a(TypeError)
         expect(thrownBy(() => enter(chain, [], true, undefined)))
             .to.be.a(TypeError)
+    })
+
+    it("rejects a read lease underflow", () => {
+        const failure = thrownBy(() => updateReadLease({}, -1))
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Read lease underflow")
     })
 
     it("initializes when imported without the package facade", () => {

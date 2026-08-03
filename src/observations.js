@@ -267,8 +267,6 @@ function walkObservationPath(
                     propertyValue,
                     index,
                     mirror.importBoundary ?? importBoundary,
-                    parent,
-                    key,
                     true,
                 )
             })
@@ -277,8 +275,6 @@ function walkObservationPath(
             value,
             index,
             importBoundary,
-            parent,
-            key,
             present,
         )
     }
@@ -287,8 +283,6 @@ function walkObservationPath(
         value,
         index,
         inheritedImportBoundary,
-        parent,
-        key,
         present,
     ) {
         const importBoundary = metadata.nodeImportBoundary(
@@ -300,8 +294,6 @@ function walkObservationPath(
                 value,
                 importBoundary,
                 present,
-                parent,
-                key,
             )
         }
         if (
@@ -318,8 +310,6 @@ function walkObservationPath(
                 errorUtils.pathAccessError(),
                 importBoundary,
                 false,
-                parent,
-                key,
             )
         }
         return walkFromParent(value, index + 1, importBoundary)

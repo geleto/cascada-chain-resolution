@@ -16,7 +16,6 @@ import {
     walkObservationPath,
 } from "./observations.js"
 import * as resolution from "./resolution.js"
-import * as refcounts from "./refcounts.js"
 import * as stringInvocation from "./string-invocation.js"
 
 function run(chain, path, method, mutateArray, ...args) {
@@ -60,8 +59,6 @@ function runObservation(chain, path, method, args) {
 
             const callable = getOrdinaryMethod(targetValue)
             if (languageValues.isError(callable)) return callable
-            const argumentError = args.find(languageValues.isError)
-            if (argumentError) return argumentError
 
             const thisValue =
                 callable !== undefined &&
@@ -112,7 +109,6 @@ function runObservation(chain, path, method, args) {
             if (importNativeCallResult) {
                 imports.import(value, "run method result")
             }
-            refcounts.buildRefIndex(value)
             return value
         }
         if (!languageValues.isPromise(operationResult)) {
@@ -138,6 +134,7 @@ function runObservation(chain, path, method, args) {
 
     function getOrdinaryMethod(targetValue) {
         const isArray = arrayViews.isLogicalArray(targetValue)
+        // Undefined selects controlled intrinsic Array dispatch.
         if (isArray && arrayInvocation.isArrayMutator(method)) return
 
         const tracked = languageValues.isTracked(targetValue)

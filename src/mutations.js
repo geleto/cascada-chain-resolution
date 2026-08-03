@@ -583,11 +583,13 @@ function walkMutationPath(
 
         // Asserted after the COW: copies carry only own enumerable keys, so
         // this fires only on genuinely un-shadowable intermediate shapes.
-        languageProperties.assertCanMutateLanguageProperty(
-            parent,
-            key,
-            valueImportBoundary?.errorContext,
-        )
+        if (!(key === "length" && arrayViews.isLogicalArray(parent))) {
+            languageProperties.assertCanMutateLanguageProperty(
+                parent,
+                key,
+                valueImportBoundary?.errorContext,
+            )
+        }
 
         const child = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(child)) {

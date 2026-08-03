@@ -11,7 +11,7 @@ import * as propertyOrigins from "./property-capture.js"
 
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { exportArgs: [true], result: materializeElement },
+    at: { exportArgs: [true], implementation: getElementAt },
     concat: { prepare: prepareConcatArguments, arrayView: true },
     copyWithin: { mutate: true, exportArgs: [true, true, true] },
     fill: { mutate: true, exportArgs: [false, true, true] },
@@ -20,27 +20,60 @@ const ARRAY_METHODS = {
     indexOf: { prepare: prepareSearchArguments },
     join: { exportArgs: [true] },
     lastIndexOf: { prepare: prepareSearchArguments },
-    pop: { mutate: true, endpoint: true, result: materializeElement },
+    pop: { mutate: true, endpoint: true, elementResult: materializeElement },
     push: { mutate: true, endpoint: true, restValues: true },
     reverse: { mutate: true },
-    shift: { mutate: true, endpoint: true, result: materializeElement },
+    shift: { mutate: true, endpoint: true, elementResult: materializeElement },
     slice: {
         exportArgs: [true, true],
         arrayView: true,
-        result: arrayRemaps.createArrayFromRemap,
+        remapResult: arrayRemaps.createArrayFromRemap,
     },
     sort: {
         mutate: true,
         prepare: prepareSortArguments,
         mutationRemap: prepareAndSortAndRemap,
     },
-    splice: { mutate: true, exportArgs: [true, true], restValues: true, result: arrayRemaps.createArrayFromRemap },
-    toReversed: { result: arrayRemaps.createArrayFromRemap },
+    splice: {
+        mutate: true,
+        exportArgs: [true, true],
+        restValues: true,
+        remapResult: materializeRemovedElements,
+    },
+    toReversed: { remapResult: arrayRemaps.createArrayFromRemap },
     toSorted: { prepare: prepareSortArguments },
-    toSpliced: { exportArgs: [true, true], restValues: true, result: arrayRemaps.createArrayFromRemap },
+    toSpliced: {
+        exportArgs: [true, true],
+        restValues: true,
+        remapResult: arrayRemaps.createArrayFromRemap,
+    },
     toString: {},
     unshift: { mutate: true, endpoint: true, restValues: true },
-    with: { exportArgs: [true, false], result: arrayRemaps.createArrayFromRemap },
+    with: {
+        exportArgs: [true, false],
+        remapResult: arrayRemaps.createArrayFromRemap,
+    },
+}
+
+function getElementAt(thisValue, args) {
+    const receiver = new Proxy(
+        { length: arrayViews.logicalArrayLength(thisValue) },
+        {
+            get(target, key) {
+                return key === "length"
+                    ? target.length
+                    : propertyOrigins.getOrigin(thisValue, key)
+            },
+        },
+    )
+    const origin = invocation.invokeDataFunctionOrPoison(
+        Array.prototype.at,
+        receiver,
+        args,
+    )
+    return languageValues.isError(origin)
+        ? origin
+        : materializeElement(origin)
 }
 
 function prepareConcatArguments(args) {
@@ -438,11 +471,20 @@ function materializeElement(element, retained = true) {
         : result
 }
 
+function materializeRemovedElements(remap, retained = true) {
+    return arrayRemaps.createArrayFromRemap(
+        remap,
+        undefined,
+        retained,
+    )
+}
+
 export {
     ARRAY_METHODS,
     concat,
     createConcatRemap,
     flat,
+    getElementAt,
     includes,
     indexOf,
     join,

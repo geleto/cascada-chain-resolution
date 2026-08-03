@@ -144,23 +144,29 @@ function applyRemapToArray(array, remap, operations) {
     }
 }
 
-function createArrayFromRemap(remap, refIndexSource = undefined) {
+function createArrayFromRemap(
+    remap,
+    refIndexSource = undefined,
+    retained = true,
+) {
     const output = new Array(remap.length)
-    placeRemap(output, remap)
+    placeRemap(output, remap, 0, retained)
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(refIndexSource, output)
     }
     return output
 }
 
-function placeRemap(destination, remap, offset = 0) {
+function placeRemap(destination, remap, offset = 0, retained = true) {
     remap.forEach((entry, index) => {
         const key = String(offset + index)
         if (propertyOrigins.isOrigin(entry)) {
-            placeOrigin(destination, key, entry)
+            placeOrigin(destination, key, entry, retained)
         } else {
             setProperty(destination, key, entry)
-            if (!languageValues.isPromise(entry)) metadata.markShared(entry)
+            if (retained && !languageValues.isPromise(entry)) {
+                metadata.markShared(entry)
+            }
         }
     })
 }

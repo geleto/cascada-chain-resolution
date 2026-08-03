@@ -7,10 +7,13 @@ import {
     assignPath,
     countPromiseRegistrations,
     deferred,
+    enter,
     expect,
     exportValue,
+    getRefCounter,
     importValue,
     lookupPath,
+    metaOf,
     registerDataClass,
     run,
     verifyRefCounts,
@@ -759,6 +762,34 @@ describe("run", () => {
         }
     })
 
+    it("transfers wholly removed splice elements from an owned receiver", () => {
+        const removedValue = { value: 1 }
+        const chain = new Chain([removedValue, 2])
+
+        const removed = run(chain, [], "splice", true, 0, 1)
+
+        expect(removed).to.eql([removedValue])
+        expect(metaOf(removedValue)?.shared).not.to.be(true)
+        assignPath(new Chain(removed), ["0", "value"], 3)
+        expect(removedValue.value).to.be(3)
+        expect(chain._state.value).to.eql([2])
+    })
+
+    it("shares splice results retained by a copy-on-write source", () => {
+        const removedValue = { value: 1 }
+        const source = [removedValue, 2]
+        const chain = new Chain(source)
+        lookupPath(chain, [])
+
+        const removed = run(chain, [], "splice", true, 0, 1)
+        assignPath(new Chain(removed), ["0", "value"], 3)
+
+        expect(source[0]).to.be(removedValue)
+        expect(removedValue.value).to.be(1)
+        expect(removed[0]).to.eql({ value: 3 })
+        expect(chain._state.value).to.eql([2])
+    })
+
     it("returns transformed Arrays from mutators in observation mode", () => {
         const source = [1, 2]
         const chain = new Chain(source)
@@ -827,6 +858,35 @@ describe("run", () => {
         expect(run(chain, [], "push", true, 3)).to.be(3)
         expect(chain._state.value).to.be(source)
         expect(source).to.eql([1, 2, 3])
+    })
+
+    it("keeps observation results lazily ref-indexed", () => {
+        const result = run(new Chain([{ value: 1 }]), [], "slice", false)
+
+        expect(getRefCounter(result)).to.be(undefined)
+    })
+
+    it("preserves imported cycles through structural mutations", () => {
+        const cases = [
+            ["reverse", []],
+            ["splice", [0, 1]],
+            ["sort", [(left, right) => left.rank - right.rank]],
+        ]
+        for (const [method, args] of cases) {
+            const cyclic = { rank: 2 }
+            cyclic.self = cyclic
+            const other = { rank: 1 }
+            const source = [cyclic, other]
+            importValue(source, `run ${method} cycle`)
+            const chain = new Chain(source)
+
+            const result = run(chain, [], method, true, ...args)
+
+            expect(source).to.eql([cyclic, other])
+            expect(cyclic.self).to.be(cyclic)
+            expect(result instanceof Error).to.be(false)
+            verifyRefCounts(source, chain._state.value, result)
+        }
     })
 
     it("does not scan unused sparse indexes while remapping", () => {
@@ -1317,6 +1377,44 @@ describe("run", () => {
 
         expect(await result).to.be(1)
         expect(chain._state.value.value).to.be(2)
+    })
+
+    it("balances nested entry and method-argument read leases", async () => {
+        const argument = deferred()
+        const record = { value: 1 }
+        Object.defineProperty(record, "read", {
+            enumerable: false,
+            value(addend) {
+                return this.value + addend
+            },
+        })
+
+        const result = enter(new Chain(record), [], false, entered => {
+            const observed = run(
+                entered,
+                [],
+                "read",
+                false,
+                argument.promise,
+            )
+            expect(metaOf(record).readEnterCount).to.be(2)
+            return observed
+        })
+
+        argument.resolve(2)
+        expect(await result).to.be(3)
+        expect(metaOf(record).readEnterCount).to.be(undefined)
+    })
+
+    it("installs an Error for a missing mutation receiver", () => {
+        const root = {}
+        const chain = new Chain(root)
+
+        const result = run(chain, ["missing"], "push", true, 1)
+
+        expect(result instanceof Error).to.be(true)
+        expect(root.missing).to.be(result)
+        expect(Object.keys(root)).to.eql(["missing"])
     })
 
     it("allows trusted Array overrides while deferring native callbacks", () => {

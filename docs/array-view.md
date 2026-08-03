@@ -46,7 +46,7 @@ Its iterator reads the current logical length and yields every logical position,
 
 A derivation is allowed only when the receiver is not imported.
 
-The first derivation attaches the source projection. A native source prepares each retained property on derivation because an earlier contraction may have excluded it; a published `ArrayView` already owns prepared retained properties. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own mirrors. The mirrors remain logically independent even though their properties use the same backing slot.
+The first derivation attaches the source projection. Every derivation prepares its retained properties because an earlier contraction or extension may have changed which properties the source identity owns. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own mirrors. The mirrors remain logically independent even though their properties use the same backing slot.
 
 `pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. Non-empty `unshift` requires the logical start to equal the physical start; after the native prepend, increasing the shared base offset absorbs the physical movement for all earlier views. Adding no values derives a new view without touching the backing.
 

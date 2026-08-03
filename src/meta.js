@@ -54,6 +54,9 @@ function updateReadLease(value, change) {
     const meta = ensureMeta(value)
     const count = meta.readEnterCount ?? 0
     const next = count + change
+    if (next < 0) {
+        errorUtils.reportFatalError(new Error("Read lease underflow"))
+    }
     if (next === 0) delete meta.readEnterCount
     else meta.readEnterCount = next
 }

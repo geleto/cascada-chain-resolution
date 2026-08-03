@@ -93,8 +93,7 @@ function joinLogicalArray(
             conversions[index] = ""
             continue
         }
-        conversions[index] =
-            resolution.continueOperationUnlessPoison(
+        conversions[index] = resolution.continueOperationUnlessPoison(
             propertyOrigins.resolveOriginValueAtKey(array, key),
             value => {
                 if (value === undefined || value === null) return ""

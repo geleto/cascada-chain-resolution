@@ -78,7 +78,7 @@ function invokeArrayObservationMethod(
                 if (arrayView !== undefined) return arrayView
             }
 
-            const implementation = methods[method]
+            const implementation = definition.implementation ?? methods[method]
             if (implementation) {
                 return implementation(thisValue, preparedArgs)
             }
@@ -92,8 +92,8 @@ function invokeArrayObservationMethod(
             if (definition.mutate) {
                 return arrayRemaps.createArrayFromRemap(remap)
             }
-            return definition.result
-                ? definition.result(nativeResult)
+            return definition.remapResult
+                ? definition.remapResult(nativeResult)
                 : nativeResult
         },
     )
@@ -117,7 +117,7 @@ function invokeArrayMutationMethod(
         )
         if (arrayView !== undefined) {
             let result = arrayView.length
-            if (definition.result) {
+            if (definition.elementResult) {
                 const length = arrayViews.logicalArrayLength(thisValue)
                 const origin = length > 0
                     ? propertyOrigins.getOrigin(
@@ -125,7 +125,7 @@ function invokeArrayMutationMethod(
                         String(method === "shift" ? 0 : length - 1),
                     )
                     : undefined
-                result = definition.result(origin)
+                result = definition.elementResult(origin)
             }
             return { mutatedValue: arrayView, result }
         }
@@ -146,12 +146,14 @@ function invokeArrayMutationMethod(
     )
     if (languageValues.isError(nativeResult)) return nativeResult
 
-    const result = definition.result && nativeResult !== working
-        ? definition.result(
-            nativeResult,
-            definition.endpoint ? replaceReceiver : undefined,
-        )
-        : nativeResult
+    let result = nativeResult
+    if (nativeResult !== working) {
+        if (definition.elementResult) {
+            result = definition.elementResult(nativeResult, replaceReceiver)
+        } else if (definition.remapResult) {
+            result = definition.remapResult(nativeResult, replaceReceiver)
+        }
+    }
     const outcome = commitArrayMutation(remap, operations)
     if (languageValues.isError(outcome.result) || nativeResult === working) {
         return outcome
@@ -186,6 +188,7 @@ function tryArrayViewMethod(
     if (method === "push") return tryAppendArrayView(thisValue, args)
     if (method === "unshift") return tryPrependArrayView(thisValue, args)
 
+    // The remaining endpoint methods are shift and pop.
     const length = arrayViews.logicalArrayLength(thisValue)
     return method === "shift"
         ? deriveArrayView(thisValue, Math.min(1, length), length)

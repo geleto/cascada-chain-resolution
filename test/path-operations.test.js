@@ -364,6 +364,24 @@ describe("path assignment", () => {
         expect(root).to.eql([1])
     })
 
+    it("treats intermediate Array length as a primitive path", () => {
+        const root = { values: [1, 2] }
+        const chain = new Chain(root)
+
+        const failure = thrownBy(() => {
+            assignPath(chain, ["values", "length", "x"], 1)
+        })
+
+        expect(failure).to.be(undefined)
+        expect(chain._state.value).to.be(root)
+        expect(root.values).to.eql([1, 2])
+        const observed = lookupPath(chain, ["values", "length", "x"])
+        expect(observed instanceof Error).to.be(true)
+        expect(observed.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
+    })
+
     it("grows Array length with holes and rejects invalid lengths unchanged", () => {
         const root = [1]
         const chain = new Chain(root)

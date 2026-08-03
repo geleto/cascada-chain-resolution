@@ -8,6 +8,7 @@ import * as resolution from "./resolution.js"
 const PROPERTY_ORIGIN = Symbol("Property origin")
 
 // An origin lazily captures one property version for resolution or remapping.
+// Resolution replaces that captured Promise version with its settled value.
 function getOrigin(owner, key) {
     const stringKey = String(key)
     if (!languageProperties.hasLanguageProperty(owner, stringKey)) {

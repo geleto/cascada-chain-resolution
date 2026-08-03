@@ -183,19 +183,14 @@ function prepareRetainedArrayProperties(
     destinationKeyFor,
 ) {
     const mirrors = metadata.metaOf(source)?.mirrors
-    const nativeSource = Array.isArray(source)
-    if (!nativeSource && !mirrors) return
-    const keys = nativeSource
-        ? languageProperties.enumerableLanguageKeys(source)
-        : Object.keys(mirrors)
-    for (const key of keys) {
+    for (const key of languageProperties.enumerableLanguageKeys(source)) {
         const destinationKey = destinationKeyFor
             ? destinationKeyFor(key)
             : key
         if (destinationKey === undefined) continue
         const value = languageProperties.readLanguageProperty(source, key)
         if (!languageValues.isPromise(value)) {
-            if (nativeSource) metadata.markShared(value)
+            if (languageValues.isTracked(value)) metadata.markShared(value)
             continue
         }
         const sourceMirror = mirrors?.[key] ?? getOrCreatePromiseMirror(

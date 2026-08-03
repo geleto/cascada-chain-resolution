@@ -8,6 +8,9 @@ import {
     expect,
     exportValue,
     flushMicrotasks,
+    getErrors,
+    hasError,
+    metaOf,
     run,
     verifyRefCounts,
 } from "./support.js"
@@ -146,6 +149,44 @@ describe("ArrayView", () => {
 
         expect(await exportValue(new Chain(derived), [])).to.eql([1])
         expect(exportValue(chain, [])).to.eql([9])
+    })
+
+    it("shares tracked values retained by another view", () => {
+        const retained = { value: 1 }
+        const first = run(new Chain([0]), [], "push", false)
+        const extendedChain = new Chain(first)
+        assignPath(extendedChain, ["1"], retained)
+        const extended = extendedChain._state.value
+
+        expect(metaOf(retained)?.shared).not.to.be(true)
+        const second = run(new Chain(extended), [], "push", false, 2)
+
+        expect(metaOf(retained).shared).to.be(true)
+        const changed = new Chain(retained)
+        assignPath(changed, ["value"], 3)
+        expect(changed._state.value).not.to.be(retained)
+        expect(extended.get("1")).to.be(retained)
+        expect(second.get("1")).to.be(retained)
+        expect(retained.value).to.be(1)
+    })
+
+    it("projects error queries and export through a view", async () => {
+        const pending = deferred()
+        const error = new Error("view error")
+        const source = [{ error }, pending.promise]
+        const view = run(new Chain(source), [], "push", false, 3)
+        const chain = new Chain(view)
+
+        expect(hasError(chain, [])).to.be(true)
+        const errors = getErrors(chain, [])
+        const exported = exportValue(chain, [])
+
+        pending.resolve({ ready: true })
+        expect(await errors).to.eql([error])
+        const outcome = await exported
+        expect(outcome instanceof Error).to.be(true)
+        expect(outcome.errors).to.eql([error])
+        verifyRefCounts(view, source)
     })
 
     it("orders view forks between earlier and later mutations", async () => {
