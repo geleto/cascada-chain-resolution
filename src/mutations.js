@@ -256,9 +256,36 @@ function assignPath(chain, path, value) {
                 return
             }
             setProperty(parent, key, value, importBoundary, attachmentPath)
-        })
+        }, undefined, tryArrayViewAssignment)
         return result ?? operationError
     })
+
+    function tryArrayViewAssignment(
+        array,
+        key,
+        importBoundary,
+        attachmentPath,
+    ) {
+        const projection = arrayViews.projectionOf(array)
+        if (!arrayViews.isArrayView(projection)) return undefined
+        const end = Number(key) + 1
+        const growth = end - projection.length
+        if (
+            growth <= 0 ||
+            metadata.nodeImportBoundary(array, importBoundary) ||
+            !projection.canAssignEnd(growth)
+        ) return undefined
+
+        const extended = new arrayViews.ArrayView(array, 0, end)
+        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+            array,
+            extended,
+            undefined,
+            importBoundary,
+        )
+        setProperty(extended, key, value, importBoundary, attachmentPath)
+        return extended
+    }
 }
 
 function assignLengthPath(chain, receiverPath, value) {
@@ -345,8 +372,7 @@ function assignLengthPath(chain, receiverPath, value) {
             length => {
                 let mutatedValue = targetValue
                 const projection = arrayViews.projectionOf(targetValue)
-                const currentLength =
-                    arrayViews.logicalArrayLength(targetValue)
+                const currentLength = projection.length
                 const preserve =
                     attachmentPath !== undefined ||
                     metadata.requiresCopyOnWrite(targetValue)
@@ -383,9 +409,8 @@ function toArrayLength(value) {
 }
 
 function setArrayLengthReady(array, length) {
-    const current = arrayViews.logicalArrayLength(array)
-
     const projection = arrayViews.projectionOf(array)
+    const current = projection.length
     if (arrayViews.isArrayView(projection)) {
         if (length >= current) {
             if (!projection.setLength(length)) {
@@ -433,7 +458,13 @@ function setArrayLengthReady(array, length) {
 // path identifies the complete mutation target. The walk starts at the private
 // holder, where an empty path targets its value key, and write-back
 // continuations install copied branches into their enclosing keys.
-function walkMutationPath(chain, path, onTarget, onComplete = undefined) {
+function walkMutationPath(
+    chain,
+    path,
+    onTarget,
+    onComplete = undefined,
+    tryTargetMutation = undefined,
+) {
     chain.assertState()
     const state = chain._state
     if (!state.mutates) {
@@ -497,13 +528,35 @@ function walkMutationPath(chain, path, onTarget, onComplete = undefined) {
             const error = errorUtils.pathAccessError()
             return complete(writeBack, error)
         }
+        if (
+            index === targetPath.length - 1 &&
+            !languageProperties.isArrayLanguageKey(value, key)
+        ) {
+            writeBack(value)
+            const error = errorUtils.validationError(
+                "Arrays support only indexes and length",
+            )
+            return onComplete ? onComplete(error) : error
+        }
 
         // Root-only import attribution is inherited until a nested boundary
         // overrides it. Once COW starts, attachmentPath keeps every remaining
         // path node in the shared branch.
         const valueImportBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
+        const mutatedValue = index === targetPath.length - 1
+            ? tryTargetMutation?.(
+                value,
+                key,
+                valueImportBoundary,
+                attachmentPath,
+            )
+            : undefined
+        if (mutatedValue !== undefined) {
+            return complete(writeBack, mutatedValue)
+        }
         let parent = value
-        const parentInsideSharedBranch = attachmentPath !== undefined ||
+        const parentInsideSharedBranch =
+            attachmentPath !== undefined ||
             metadata.requiresCopyOnWrite(value) ||
             arrayViews.requiresArrayMaterialization(value)
 

@@ -6,7 +6,7 @@ Implemented. Registered JavaScript data-class instances participate in the langu
 
 ## Tracked values
 
-The runtime tracks Arrays, plain objects, null-prototype records, registered data-class instances, and the internal `ArrayView`. Their own enumerable string keys are language properties.
+The runtime tracks Arrays, plain objects, null-prototype records, registered data-class instances, and the internal `ArrayView`. Objects and registered instances expose own enumerable string keys. Arrays expose canonical indexes plus `length`; other string properties are not Array data.
 
 Other objects, including `Date`, `Map`, `Set`, RegExp, typed arrays, and unregistered class instances, remain opaque values. The runtime preserves their identity but does not traverse, index, import, export-copy, or attach metadata to them. They may be assigned, returned, and exported, but a path cannot enter them and `run` cannot use them as receivers. External mutation of an opaque value is outside Cascada's guarantees.
 

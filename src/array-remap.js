@@ -13,7 +13,6 @@ import * as propertyOrigins from "./property-origin.js"
 import * as propertyTransitions from "./property-transitions.js"
 import * as refcounts from "./refcounts.js"
 
-const NAMED_PROPERTIES = Symbol("Array remap named properties")
 const KIND_ADD = 0
 const KIND_DELETE = 1
 const KIND_LENGTH = 2
@@ -26,12 +25,6 @@ function createInitialRemap(array) {
         const origin = propertyOrigins.getOrigin(array, index)
         if (origin) remap[index] = origin
     }
-    const named = []
-    for (const key of languageProperties.enumerableLanguageKeys(array)) {
-        if (arrayViews.isArrayIndex(key)) continue
-        named.push([key, propertyOrigins.getOrigin(array, key)])
-    }
-    remap[NAMED_PROPERTIES] = named
     return remap
 }
 
@@ -128,9 +121,6 @@ function createArrayFromRemap(remap, refIndexSource = undefined) {
             if (!languageValues.isPromise(entry)) metadata.markShared(entry)
         }
     })
-    for (const [key, origin] of remap[NAMED_PROPERTIES] ?? []) {
-        placeOrigin(output, key, origin)
-    }
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(refIndexSource, output)
     }

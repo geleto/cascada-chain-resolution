@@ -377,9 +377,11 @@ the runtime shallow-copies only `doc` and `body`, installs the new title, and
 reuses every off-path child. Reused tracked children are marked shared because
 both worlds can now reach them.
 
-The language-visible property surface is own enumerable string keys. Arrays
-preserve their length during copying. Runtime metadata is outside that surface
-and is reconstructed only where needed; it is never copied as language data.
+The language-visible object-property surface is own enumerable string keys.
+Arrays expose only canonical indexes plus `length`; other string properties
+cannot be assigned or deleted through Cascada. Arrays preserve their length
+during copying. Runtime metadata is outside that surface and is reconstructed
+only where needed; it is never copied as language data.
 
 ## Subtree counters
 

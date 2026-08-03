@@ -6,7 +6,14 @@ const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 // This module owns the descriptor policy and physical access for
 // language-visible properties.
 
-// Language data is own enumerable string keys only.
+// Arrays expose canonical indexes only; other tracked values expose their own
+// enumerable string keys.
+function isArrayLanguageKey(parent, key) {
+    if (!arrayViews.isLogicalArray(parent)) return true
+    key = String(key)
+    return key === "length" || arrayViews.isArrayIndex(key)
+}
+
 function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = getLanguagePropertyDescriptor(parent, key)
     if (descriptor && !descriptor.enumerable) {
@@ -19,13 +26,10 @@ function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) 
 }
 
 function getLanguagePropertyDescriptor(parent, key) {
-    if (arrayViews.isLogicalArray(parent)) {
-        key = String(key)
-        parent = arrayViews.projectionOf(parent)
-        if (arrayViews.isArrayView(parent)) {
-            return parent.descriptor(key)
-        }
-    }
+    parent = arrayViews.projectionOf(parent)
+    key = String(key)
+    if (!isArrayLanguageKey(parent, key)) return undefined
+    if (arrayViews.isArrayView(parent)) return parent.descriptor(key)
     return Object.getOwnPropertyDescriptor(parent, key)
 }
 
@@ -80,14 +84,10 @@ function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) 
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
 function writeLanguageProperty(parent, key, value) {
-    if (arrayViews.isLogicalArray(parent)) {
-        key = String(key)
-        const projection = arrayViews.projectionOf(parent)
-        if (arrayViews.isArrayView(projection)) {
-            projection.set(key, value)
-            return
-        }
-        parent = projection
+    parent = arrayViews.projectionOf(parent)
+    if (arrayViews.isArrayView(parent)) {
+        parent.set(String(key), value)
+        return
     }
     if (Object.hasOwn(parent, key)) {
         parent[key] = value
@@ -102,16 +102,13 @@ function writeLanguageProperty(parent, key, value) {
 }
 
 function readLanguageProperty(parent, key) {
-    if (arrayViews.isLogicalArray(parent)) {
-        key = String(key)
-        const projection = arrayViews.projectionOf(parent)
-        if (arrayViews.isArrayView(projection)) return projection.get(key)
-        if (key === "length") return projection.length
-        parent = projection
-    }
+    parent = arrayViews.projectionOf(parent)
+    key = String(key)
+    if (!isArrayLanguageKey(parent, key)) return undefined
+    if (arrayViews.isArrayView(parent)) return parent.get(key)
     if (
-        typeof parent === "string" &&
-        String(key) === "length"
+        (Array.isArray(parent) || typeof parent === "string") &&
+        key === "length"
     ) {
         return parent.length
     }
@@ -119,33 +116,30 @@ function readLanguageProperty(parent, key) {
 }
 
 function hasLanguageProperty(parent, key) {
-    if (arrayViews.isLogicalArray(parent)) {
-        key = String(key)
-        const projection = arrayViews.projectionOf(parent)
-        if (arrayViews.isArrayView(projection)) return projection.has(key)
-        return key === "length" || propertyIsEnumerable.call(projection, key)
-    }
-    if (typeof parent === "string" && String(key) === "length") return true
+    parent = arrayViews.projectionOf(parent)
+    key = String(key)
+    if (!isArrayLanguageKey(parent, key)) return false
+    if (arrayViews.isArrayView(parent)) return parent.has(key)
+    if (
+        (Array.isArray(parent) || typeof parent === "string") &&
+        key === "length"
+    ) return true
     return propertyIsEnumerable.call(parent, key)
 }
 
 function deleteLanguageProperty(parent, key) {
-    if (arrayViews.isLogicalArray(parent)) {
-        const projection = arrayViews.projectionOf(parent)
-        key = String(key)
-        return arrayViews.isArrayView(projection)
-            ? projection.delete(key)
-            : delete projection[key]
-    }
+    parent = arrayViews.projectionOf(parent)
+    if (arrayViews.isArrayView(parent)) return parent.delete(String(key))
     return delete parent[key]
 }
 
 function enumerableLanguageKeys(value) {
-    if (!arrayViews.isLogicalArray(value)) return Object.keys(value)
-    const projection = arrayViews.projectionOf(value)
-    return arrayViews.isArrayView(projection)
-        ? projection.keys()
-        : Object.keys(projection)
+    value = arrayViews.projectionOf(value)
+    if (arrayViews.isArrayView(value)) return value.keys()
+    const keys = Object.keys(value)
+    return Array.isArray(value)
+        ? keys.filter(arrayViews.isArrayIndex)
+        : keys
 }
 
 export {
@@ -157,6 +151,7 @@ export {
     enumerableLanguageKeys,
     getLanguagePropertyDescriptor,
     hasLanguageProperty,
+    isArrayLanguageKey,
     readLanguageProperty,
     writeLanguageProperty,
 }

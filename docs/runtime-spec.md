@@ -28,9 +28,11 @@ executable descriptors outside the graph. Prototype methods on registered class
 instances are likewise outside the language-property surface. The kernel does
 not promise proactive callable validation at every assignment boundary.
 
-Language-visible properties are own enumerable string keys. Inherited and own
-non-enumerable properties are not readable as language data. Arrays are tracked
-objects with the same property rules.
+Language-visible object properties are own enumerable string keys. Arrays
+instead expose canonical Array-index strings and the special `length`
+property; other string properties are outside their language surface and
+cannot be assigned or deleted through Cascada. Inherited and own
+non-enumerable properties are not readable as language data.
 
 Registered data-class COW and exact prototype preservation are
 implemented support for class instances as data. Construction and mutating
@@ -110,7 +112,7 @@ position.
 The copy contains only language-visible keys:
 
 - arrays, including subclasses and cross-realm arrays, become local ordinary
-  arrays with the same length and enumerable keys;
+  arrays with the same length and enumerable indexed keys;
 - plain objects, including cross-realm plain objects, become local plain
   objects;
 - null-prototype records retain `null`;
@@ -247,25 +249,30 @@ language Error values.
 ## Promise-backed properties
 
 One mirror represents one Promise-backed property version. Assigning the same
-Promise again creates a new mirror.
+Promise again, copying the property, or retaining it in a distinct ArrayView
+creates a new mirror at that operation's FIFO position. ArrayViews may still
+share the property's physical backing slot.
 
-While a mirror is live, its parent/key property is authoritative. It initially
-contains the Promise. The first resolver consumes fulfillment or converts
-rejection to Error, prepares the value, and replaces the Promise. Later
-resolvers use the canonical Promise only as a FIFO readiness signal, read the
-latest physical property value, and synchronously apply their operation.
-Ordinary reads of a resolved property do not consult the retained mirror.
+While a mirror is live, its property is authoritative. An assigned or
+discovered mirror consumes fulfillment or converts rejection to Error, prepares
+the value, and publishes it. A fork instead uses the canonical Promise only as
+a FIFO readiness signal and samples its source mirror at the fork position.
+Later operations likewise read the latest mirror state rather than raw
+settlement. Ordinary reads of a resolved property do not consult the retained
+mirror.
 
-A later overwrite or deletion detaches the mirror. Detachment captures the
-physical value as `detachedValue` and removes the live map entry. Resolvers
-already registered for that property version continue against this private
-value and cannot affect the replacement property. A live resolved mirror stays
-installed until such a replacement because queued resolvers still identify
-their exact property version through it.
+A retained ArrayView mirror may run after the source mirror has already changed
+their shared backing slot. Its settlement therefore replaces that logical
+edge's known pending-Promise contribution instead of recapturing the physical
+old value. The mirrors and their later operations remain independent.
 
-The mirror stores no source Promise, parent, key, consumer count, or duplicate
-current value. It retains only unresolved import context and, after
-detachment, `detachedValue`.
+A later overwrite or deletion detaches the mirror and captures the property's
+current value in `detachedValue`. Resolvers already registered for that property
+version continue against its private value and cannot affect a replacement
+property.
+
+The mirror stores no source Promise, parent, key, or duplicate live value. It
+retains only unresolved import context and, after detachment, `detachedValue`.
 
 ## Errors and fatal failures
 
@@ -393,7 +400,7 @@ The compiler and host layer must:
 The kernel relies on these rules instead of validating trusted data for aliases
 or cycles.
 
-Planned `run` keeps two narrow executable-boundary exceptions. First, a
+`run` keeps two narrow executable-boundary exceptions. First, a
 runtime-controlled structural Array intrinsic may receive Cascada values when
 retaining or relocating those exact identities is the defined language
 operation. Its wrapper owns slot classification, entering ownership, Promise

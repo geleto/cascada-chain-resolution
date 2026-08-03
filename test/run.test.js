@@ -521,7 +521,7 @@ describe("run", () => {
 
         expect([...result]).to.eql([1, 2])
         expect([...original]).to.eql([1])
-        expect(original.push).to.be(0)
+        expect(Object.hasOwn(original, "push")).to.be(false)
     })
 
     it("rejects executable concat protocols", () => {

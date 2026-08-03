@@ -1,14 +1,34 @@
 import * as arrayViews from "../src/array-view.js"
+import * as promiseMirrors from "../src/promise-mirrors.js"
 import {
     Chain,
+    assignPath,
+    buildRefIndex,
     deferred,
     expect,
     exportValue,
+    flushMicrotasks,
     run,
     verifyRefCounts,
 } from "./support.js"
 
 describe("ArrayView", () => {
+    it("recognizes only canonical JavaScript Array indexes", () => {
+        for (const key of ["0", "1", "4294967294"]) {
+            expect(arrayViews.isArrayIndex(key)).to.be(true)
+        }
+        for (const key of [
+            "",
+            "01",
+            "1.0",
+            "1e0",
+            "-0",
+            "4294967295",
+        ]) {
+            expect(arrayViews.isArrayIndex(key)).to.be(false)
+        }
+    })
+
     it("keeps representation fields outside the language surface", () => {
         const source = [1, 2]
         Object.defineProperty(source, "hidden", {
@@ -21,7 +41,7 @@ describe("ArrayView", () => {
 
         expect(arrayViews.isArrayView(view)).to.be(true)
         expect(Object.getOwnPropertyNames(view)).to.eql([
-            "_array",
+            "_storage",
             "_start",
             "_end",
         ])
@@ -37,7 +57,7 @@ describe("ArrayView", () => {
             "2",
         ])
         expect(view.has("hidden")).to.be(false)
-        expect(view.descriptor("hidden").enumerable).to.be(false)
+        expect(view.descriptor("hidden")).to.be(undefined)
         expect([...view]).to.eql([1, 2, 3])
     })
 
@@ -55,14 +75,106 @@ describe("ArrayView", () => {
         expect(exportValue(new Chain(source), [])).to.eql([1, , 3])
     })
 
-    it("falls back without attaching when retained Promises overlap", () => {
+    it("interprets constructor bounds relative to the logical source", () => {
+        const source = [1, 2, 3]
+        const original = arrayViews.ArrayView.attachTo(source)
+        const tail = new arrayViews.ArrayView(original, 1, 3)
+        const last = new arrayViews.ArrayView(tail, 1, 2)
+        const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
+        const extended = original.extend(true, [0], () => {})
+
+        expect([...tail]).to.eql([2, 3])
+        expect([...last]).to.eql([3])
+        expect([...throughAttachment]).to.eql([2, 3])
+        expect([...extended]).to.eql([0, 1, 2, 3])
+        expect([...original]).to.eql([1, 2, 3])
+        expect([...tail]).to.eql([2, 3])
+        expect([...throughAttachment]).to.eql([2, 3])
+    })
+
+    it("forks retained Promise mirrors for each endpoint view", async () => {
         const pending = deferred()
         const source = [pending.promise, 2]
-        const result = run(new Chain(source), [], "push", false, 3)
+        const sourceMirror = promiseMirrors.getOrCreatePromiseMirror(
+            source,
+            "0",
+            pending.promise,
+        )
+        const pushed = run(new Chain(source), [], "push", false, 3)
+        const grownChain = new Chain(pushed)
+        assignPath(grownChain, ["4"], 5)
+        const grown = grownChain._state.value
+        const prepended = run(new Chain(pushed), [], "unshift", false, 0)
+        const shifted = run(new Chain(prepended), [], "shift", false)
+        const popped = run(new Chain(shifted), [], "pop", false)
 
-        expect(Array.isArray(result)).to.be(true)
-        expect(arrayViews.projectionOf(source)).to.be(source)
+        expect(arrayViews.isArrayView(pushed)).to.be(true)
+        const mirrors = [
+            sourceMirror,
+            promiseMirrors.getPromiseMirror(pushed, "0"),
+            promiseMirrors.getPromiseMirror(grown, "0"),
+            promiseMirrors.getPromiseMirror(prepended, "1"),
+            promiseMirrors.getPromiseMirror(shifted, "0"),
+            promiseMirrors.getPromiseMirror(popped, "0"),
+        ]
+        expect(mirrors.every(Boolean)).to.be(true)
+        expect(new Set(mirrors).size).to.be(mirrors.length)
+
+        const arrays = [source, pushed, grown, prepended, shifted, popped]
+        for (const array of arrays) buildRefIndex(array)
         pending.resolve(1)
+        expect(await exportValue(new Chain(source), [])).to.eql([1, 2])
+        expect(exportValue(new Chain(pushed), [])).to.eql([1, 2, 3])
+        expect(exportValue(grownChain, [])).to.eql([1, 2, 3, , 5])
+        expect(exportValue(new Chain(prepended), [])).to.eql([0, 1, 2, 3])
+        expect(exportValue(new Chain(shifted), [])).to.eql([1, 2, 3])
+        expect(exportValue(new Chain(popped), [])).to.eql([1, 2])
+        verifyRefCounts(...arrays)
+    })
+
+    it("orders view forks between earlier and later mutations", async () => {
+        const pending = deferred()
+        const sourceChain = new Chain([pending.promise])
+
+        assignPath(sourceChain, ["0", "before"], 1)
+        const view = run(sourceChain, [], "push", false, 2)
+        const changed = new Chain(view)
+        assignPath(changed, ["0", "after"], 2)
+
+        pending.resolve({})
+        expect(await exportValue(sourceChain, [])).to.eql([
+            { before: 1 },
+        ])
+        expect(await exportValue(new Chain(view), [])).to.eql([
+            { before: 1 },
+            2,
+        ])
+        expect(await exportValue(changed, [])).to.eql([
+            { before: 1, after: 2 },
+            2,
+        ])
+        verifyRefCounts(sourceChain._state.value, view, changed._state.value)
+    })
+
+    it("forks a Promise first retained after source attachment", async () => {
+        const pending = deferred()
+        const source = [pending.promise, 1]
+
+        run(new Chain(source), [], "shift", false)
+        const retained = run(new Chain(source), [], "push", false, 2)
+        const sourceMirror = promiseMirrors.getPromiseMirror(source, "0")
+        const retainedMirror = promiseMirrors.getPromiseMirror(retained, "0")
+
+        expect(sourceMirror).to.be.ok()
+        expect(retainedMirror).to.be.ok()
+        expect(retainedMirror).not.to.be(sourceMirror)
+        buildRefIndex(source)
+        buildRefIndex(retained)
+
+        pending.resolve(0)
+        expect(await exportValue(new Chain(source), [])).to.eql([0, 1])
+        expect(exportValue(new Chain(retained), [])).to.eql([0, 1, 2])
+        verifyRefCounts(source, retained)
     })
 
     it("allows an endpoint Promise that belongs only to one identity", async () => {
@@ -91,7 +203,27 @@ describe("ArrayView", () => {
         verifyRefCounts(contracted)
     })
 
-    it("materializes non-extensible sources", () => {
+    it("keeps a retained Promise fork after source contraction", async () => {
+        const pending = deferred()
+        const original = run(
+            new Chain([1]),
+            [],
+            "push",
+            false,
+            pending.promise,
+        )
+        const retained = run(new Chain(original), [], "push", false, 3)
+        const changed = new Chain(original)
+
+        assignPath(changed, ["length"], 1)
+        pending.resolve(2)
+
+        expect(await exportValue(changed, [])).to.eql([1])
+        expect(await exportValue(new Chain(retained), [])).to.eql([1, 2, 3])
+        verifyRefCounts(changed._state.value, retained)
+    })
+
+    it("materializes non-extensible physical extensions", () => {
         const source = Object.preventExtensions([1, 2])
         const result = run(new Chain(source), [], "push", false, 3)
 
@@ -99,5 +231,91 @@ describe("ArrayView", () => {
         expect(result).to.eql([1, 2, 3])
         expect(arrayViews.projectionOf(source)).to.be(source)
         expect(source).to.eql([1, 2])
+    })
+
+    it("contracts a non-extensible backing without modifying it", () => {
+        const source = Object.freeze([1, 2])
+        const result = run(new Chain(source), [], "pop", false)
+
+        expect(arrayViews.isArrayView(result)).to.be(true)
+        expect([...result]).to.eql([1])
+        expect(source).to.eql([1, 2])
+    })
+
+    it("derives an empty extension without writing the backing length", () => {
+        const source = [1]
+        const view = run(new Chain(source), [], "push", false, 2)
+        Object.defineProperty(source, "length", { writable: false })
+
+        const result = run(new Chain(view), [], "push", false)
+
+        expect(arrayViews.isArrayView(result)).to.be(true)
+        expect([...result]).to.eql([1, 2])
+    })
+
+    it("extends at the physical end through indexed assignment", () => {
+        const source = [1, 2]
+        const prototype = Object.create(Array.prototype)
+        Object.defineProperty(prototype, "5", {
+            set() { throw new Error("Inherited setter called") },
+        })
+        Object.setPrototypeOf(source, prototype)
+        const sourceChain = new Chain(source)
+        const view = run(sourceChain, [], "push", false, 3)
+        const chain = new Chain(view)
+
+        expect(assignPath(chain, ["5"], 6)).to.be(undefined)
+        const grown = chain._state.value
+
+        expect(arrayViews.isArrayView(grown)).to.be(true)
+        expect(grown.length).to.be(6)
+        expect([...grown]).to.eql([1, 2, 3, undefined, undefined, 6])
+        expect(grown.has("3")).to.be(false)
+        expect(grown.has("4")).to.be(false)
+        expect([...view]).to.eql([1, 2, 3])
+        expect(exportValue(sourceChain, [])).to.eql([1, 2])
+    })
+
+    it("materializes indexed growth away from the physical end", () => {
+        const source = [1, 2]
+        const sourceChain = new Chain(source)
+        const extended = run(sourceChain, [], "push", false, 3)
+        const changed = new Chain(source)
+
+        expect(assignPath(changed, ["2"], 9)).to.be(undefined)
+
+        expect(Array.isArray(changed._state.value)).to.be(true)
+        expect(changed._state.value).to.eql([1, 2, 9])
+        expect([...extended]).to.eql([1, 2, 3])
+        expect(exportValue(sourceChain, [])).to.eql([1, 2])
+    })
+
+    it("installs a Promise mirror when indexed growth adds a Promise", async () => {
+        const pending = deferred()
+        const view = run(new Chain([1]), [], "push", false, 2)
+        const chain = new Chain(view)
+
+        expect(assignPath(chain, ["2"], pending.promise)).to.be(undefined)
+        expect(arrayViews.isArrayView(chain._state.value)).to.be(true)
+
+        pending.resolve(3)
+        expect(await exportValue(chain, [])).to.eql([1, 2, 3])
+        expect([...view]).to.eql([1, 2])
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("keeps delayed indexed growth in FIFO order", async () => {
+        const pending = deferred()
+        const view = run(new Chain([1]), [], "push", false, 2)
+        const chain = new Chain({ list: pending.promise })
+
+        assignPath(chain, ["list", "2"], 3)
+        assignPath(chain, ["list", "0"], 9)
+        pending.resolve(view)
+        await flushMicrotasks()
+
+        expect(exportValue(chain, ["list"])).to.eql([9, 2, 3])
+        expect([...view]).to.eql([1, 2])
+        verifyRefCounts(chain._state.value)
     })
 })

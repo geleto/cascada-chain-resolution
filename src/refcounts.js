@@ -147,10 +147,12 @@ function commitLiveEdge(
     owner,
     key,
     updateProperty,
+    knownOldState,
 ) {
     const counter = getRefCounter(owner)
-    const oldState = counter ? getPropertyRefState(owner, key) : undefined
-
+    const oldState = counter
+        ? knownOldState ?? getPropertyRefState(owner, key)
+        : undefined
     updateProperty()
     if (!counter) return
 
@@ -162,6 +164,16 @@ function commitLiveEdge(
         nextState.counts[0] - oldState.counts[0],
         nextState.counts[1] - oldState.counts[1],
         nextState.counts[2] - oldState.counts[2],
+    )
+}
+
+function commitPendingPromiseEdge(owner, key, updateProperty) {
+    // An ArrayView fork can remain logically pending after its backing advances.
+    commitLiveEdge(
+        owner,
+        key,
+        updateProperty,
+        { child: undefined, counts: [1, 0, 0] },
     )
 }
 
@@ -202,6 +214,7 @@ function applyCountDelta(node, promiseDelta, errorDelta, cycleCutDelta) {
 export {
     buildRefIndex,
     commitLiveEdge,
+    commitPendingPromiseEdge,
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,

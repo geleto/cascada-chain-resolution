@@ -31,6 +31,7 @@ function setMirrorValue(
     mirror,
     newValue,
     prepareImportedValue,
+    sharedBacking = false,
 ) {
     if (languageValues.isPromise(newValue)) {
         errorUtils.reportFatalError(
@@ -46,21 +47,23 @@ function setMirrorValue(
             newValue, mirror.importBoundary,
         )
         languageProperties.assertCanUpdatePromiseProperty(
-            owner, key, importBoundary?.errorContext,
+            owner,
+            key,
+            importBoundary?.errorContext,
         )
     }
-    // An indexed observer may still own a detached mirror version. Its resolved
-    // branch needs counters even though it no longer contributes to this edge.
     refcounts.indexValueIfSourceIndexed(owner, newValue)
 
     if (isLive) {
-        refcounts.commitLiveEdge(owner, key, () => {
+        const commit = sharedBacking
+            ? refcounts.commitPendingPromiseEdge
+            : refcounts.commitLiveEdge
+        commit(owner, key, () => {
             languageProperties.writeLanguageProperty(owner, key, newValue)
             if (cycleCut) imports.setCycleCut(owner, key)
             else imports.clearCycleCut(owner, key)
         })
     } else {
-        // A detached version has no placement for a cycle cut.
         mirror.detachedValue = newValue
     }
     delete mirror.importBoundary

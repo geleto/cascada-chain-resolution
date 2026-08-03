@@ -8,7 +8,7 @@ designing data-class COW. None is part of plan step 20.
 These extensions are independent of the completed data-class COW
 step. String and array convenience behavior can be implemented as
 language-defined operations without first adding native container support.
-Planned [`ArrayView`](../array-view.md) is one Array-specific logical-property
+The internal [`ArrayView`](../array-view.md) is one Array-specific logical-property
 integration in step 23; it does not generalize the graph to Map, Set, or other
 virtual containers.
 

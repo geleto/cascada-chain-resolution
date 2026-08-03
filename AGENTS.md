@@ -24,7 +24,8 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 ## Promise Mirrors
 
-- A mirror stands for one version of one property. Assigning again, even the same Promise, makes a new mirror.
+- A mirror stands for one property version. Assigning again, even the same Promise, makes a new mirror.
+- Distinct logical properties have distinct mirrors even when an ArrayView makes them share physical storage. A retained Promise property forks its mirror at view derivation.
 - A mirror is live only while the parent's mirror map holds that exact instance.
 - While it is live, the value lives in the property itself, including a writable imported Promise property whose settlement import hands to the runtime. Once detached, the value lives in `detachedValue`.
 - Replacing or deleting the property detaches the old mirror. Operations that already captured it keep working against its private state.

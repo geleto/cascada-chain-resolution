@@ -51,8 +51,9 @@ Import preparation never builds subtree counters.
 
 ## Graph walk
 
-`prepareImportedData` performs a depth-first walk over own enumerable string
-properties. Each synchronous segment keeps:
+`prepareImportedData` performs a depth-first walk over language properties:
+own enumerable string keys for objects and canonical indexed elements for
+Arrays. Each synchronous segment keeps:
 
 - `currentPath`, the active DFS ancestry; and
 - `visited`, identities already entered in that segment.

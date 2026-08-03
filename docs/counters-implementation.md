@@ -58,6 +58,11 @@ A retained live mirror does not alter the contribution after its first resolver
 has replaced the Promise. It remains only as property-version identity for
 already-registered resolvers.
 
+Distinct ArrayViews have distinct property mirrors. A retained view mirror may
+settle after its source mirror has already changed their shared backing slot;
+its transition replaces the view edge's known `[1, 0, 0]` contribution instead
+of recapturing that physical old value.
+
 Every tracked value reachable in the raw graph below an indexed root is
 indexed. Ordinary properties connect those counters through reverse parent
 edges; cuts separate them into independent components. A missing child counter
@@ -122,9 +127,9 @@ live-edge transaction.
 Descriptor failures are checked before preparation. A fatal preparation leaves
 the attached edge unchanged.
 
-Every live assignment, deletion, cycle-cut change, and Promise resolver update
-is performed by `src/property-transitions.js` or `src/import.js` inside one
-`refcounts.commitLiveEdge` transaction:
+Every live assignment, deletion, cycle-cut change, and ordinary Promise resolver
+update is performed by `src/property-transitions.js` or `src/import.js` inside
+one `refcounts.commitLiveEdge` transaction:
 
 1. Snapshot the old projected counts and counted child.
 2. Perform the validated physical/mirror/cycle update.
@@ -135,6 +140,10 @@ is performed by `src/property-transitions.js` or `src/import.js` inside one
 The commit is atomic in the JavaScript execution sense: no other operation can
 interleave with the synchronous transition. It does not attempt rollback after
 an internal fatal failure.
+
+A retained ArrayView mirror uses the same transition with its known old
+pending-Promise contribution because another mirror may already have updated
+the shared physical slot.
 
 A newly assigned Promise installs a fresh mirror and immediately contributes
 `[1, 0, 0]`. Deletion removes only the old contribution. Detached mirror state
@@ -151,12 +160,13 @@ parent maps, or placement-specific cycle cuts.
 ## Promise mirrors
 
 One internal `PromiseMirror` represents one Promise-backed property version.
-While it is live, the physical property is authoritative. The first resolver
-uses `resolveInitialValueOrPoison` to consume fulfillment or convert rejection to a Poison,
-prepares the result, and publishes it through the ordinary live-edge
-transaction. Later resolvers use `onLaterPromiseReady`, ignore the raw Promise
-result, and read the latest state left by earlier FIFO resolvers. All resolvers
-for one callable thenable register on its shared canonical native Promise.
+While it is live, the physical property is authoritative. An assigned or
+discovered mirror uses `resolveInitialValueOrPoison` to consume fulfillment or
+convert rejection to a Poison, prepares the result, and publishes it through
+the ordinary live-edge transaction. A fork uses `onLaterPromiseReady`, ignores
+the raw Promise result, and samples its source mirror at the fork position.
+All resolvers for one callable thenable register on its shared canonical native
+Promise.
 
 Replacing or deleting the property detaches its mirror inside the same live
 transition. Detachment captures the old physical value as `detachedValue` and
@@ -173,7 +183,8 @@ A state-changing live resolver:
 1. validates that the property still exists as an own enumerable writable data
    property;
 2. prepares and indexes the entering tracked value when required;
-3. snapshots the old physical contribution;
+3. captures the old contribution, using the known pending state for a retained
+   ArrayView fork whose physical slot has already advanced;
 4. writes the new value and cycle-cut state; and
 5. updates reverse edges and propagates one exact delta.
 

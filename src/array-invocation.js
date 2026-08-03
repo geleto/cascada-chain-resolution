@@ -1,7 +1,6 @@
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as helpers from "./helpers.js"
-import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as methods from "./array-methods.js"
@@ -138,7 +137,7 @@ function invokeArrayMutationMethod(
             remap => commitArrayMutation(remap),
         )
     }
-    // TODO: Bypass remapping when owned native storage has no placement-sensitive state.
+    // TODO: Bypass remapping when owned native storage has no indexed state.
     const remap = arrayRemaps.createInitialRemap(thisValue)
     let working = remap
     let operations
@@ -189,18 +188,19 @@ function tryArrayViewOperation(
     }
     const adding = method === "push" || method === "unshift"
     const atStart = method === "shift" || method === "unshift"
-    const length = arrayViews.logicalArrayLength(thisValue)
-    const retainedStart = !adding && atStart ? 1 : 0
-    const retainedEnd = !adding && !atStart
-        ? Math.max(length - 1, 0)
-        : length
-    if (!viewOverlapIsEligible()) {
-        return undefined
-    }
+    let projection = arrayViews.projectionOf(thisValue)
+    const length = projection.length
+    const removedIndex = adding
+        ? undefined
+        : atStart ? 0 : length - 1
+    const offset = atStart ? (adding ? args.length : -1) : 0
+    const destinationKey = key => Number(key) === removedIndex
+        ? undefined
+        : String(Number(key) + offset)
     if (
         adding &&
         !arrayViews.ArrayView.canExtendBacking(
-            thisValue,
+            projection,
             atStart,
             args.length,
         )
@@ -208,10 +208,9 @@ function tryArrayViewOperation(
         return undefined
     }
 
-    let projection = arrayViews.projectionOf(thisValue)
-    if (!arrayViews.isArrayView(projection)) {
+    const firstDerivation = !arrayViews.isArrayView(projection)
+    if (firstDerivation) {
         projection = arrayViews.ArrayView.attachTo(thisValue)
-        if (!projection) return undefined
     }
 
     let arrayView
@@ -220,35 +219,32 @@ function tryArrayViewOperation(
         arrayView = projection.extend(
             atStart,
             args,
-            addArrayViewPromiseMirrors,
+            prepareExtendedView,
         )
     } else {
         arrayView = projection.contract(atStart)
+        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+            thisValue,
+            arrayView,
+            destinationKey,
+            importBoundary,
+        )
     }
 
-    shareLogicalArrayValues(arrayView)
-    return arrayView
-
-    function viewOverlapIsEligible() {
-        return languageProperties.enumerableLanguageKeys(thisValue).every(key => {
-            if (arrayViews.isArrayIndex(key)) {
-                const index = Number(key)
-                if (index < retainedStart || index >= retainedEnd) return true
-            }
-            return !languageValues.isPromise(
-                languageProperties.readLanguageProperty(thisValue, key),
-            )
-        })
-    }
-
-    function shareLogicalArrayValues(array) {
-        for (const key of languageProperties.enumerableLanguageKeys(array)) {
-            const value = languageProperties.readLanguageProperty(array, key)
+    if (adding) {
+        for (const value of args) {
             if (!languageValues.isPromise(value)) metadata.markShared(value)
         }
     }
+    return arrayView
 
-    function addArrayViewPromiseMirrors(view) {
+    function prepareExtendedView(view) {
+        promiseMirrors.forkUnresolvedPromiseMirrorsFromArray(
+            thisValue,
+            view,
+            destinationKey,
+            importBoundary,
+        )
         const start = atStart ? 0 : length
         for (let index = 0; index < args.length; index++) {
             const value = args[index]

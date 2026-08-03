@@ -1,5 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
+import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
 
@@ -31,7 +32,9 @@ function installPromiseMirror(parent, key, mirror) {
 
 class PromiseMirror {
     constructor(importBoundary) {
+        // importBoundary: imported root and error context used for preparation.
         if (importBoundary) this.importBoundary = importBoundary
+        // detachedValue: current value after this property version detaches.
     }
 
     isLive(parent, key) {
@@ -45,7 +48,10 @@ class PromiseMirror {
     }
 
     detach(parent, key) {
-        this.detachedValue = languageProperties.readLanguageProperty(parent, key)
+        this.detachedValue = languageProperties.readLanguageProperty(
+            parent,
+            key,
+        )
         const mirrors = metadata.metaOf(parent)?.mirrors
         if (mirrors) delete mirrors[key]
     }
@@ -136,6 +142,7 @@ function forkPromiseMirror(
         destinationKey = sourceKey,
         install = true,
         fallbackImportBoundary,
+        sharedBacking = false,
     } = {},
 ) {
     const mirror = new PromiseMirror(
@@ -160,6 +167,7 @@ function forkPromiseMirror(
             mirror,
             value,
             prepareImportedValue,
+            sharedBacking,
         )
         // The resolver is synchronous, so sharing is established before the
         // next FIFO resolver can observe this retained value.
@@ -167,6 +175,45 @@ function forkPromiseMirror(
     })
     if (install) installPromiseMirror(destination, destinationKey, mirror)
     return mirror
+}
+
+function forkUnresolvedPromiseMirrorsFromArray(
+    source,
+    destination,
+    mapKey,
+    importBoundary,
+) {
+    const mirrors = metadata.metaOf(source)?.mirrors
+    const arraySource = Array.isArray(source)
+    if (!arraySource && !mirrors) return
+    const keys = arraySource
+        ? languageProperties.enumerableLanguageKeys(source)
+        : Object.keys(mirrors)
+    for (const key of keys) {
+        const destinationKey = mapKey ? mapKey(key) : key
+        if (destinationKey === undefined) continue
+        const value = languageProperties.readLanguageProperty(source, key)
+        if (!languageValues.isPromise(value)) {
+            if (arraySource) metadata.markShared(value)
+            continue
+        }
+        const sourceMirror = mirrors?.[key] ?? getOrCreatePromiseMirror(
+            source,
+            key,
+            value,
+            importBoundary,
+        )
+        forkPromiseMirror(
+            source,
+            destination,
+            key,
+            value,
+            true,
+            sourceMirror.importBoundary,
+            undefined,
+            { sourceMirror, destinationKey, sharedBacking: true },
+        )
+    }
 }
 
 // TRANSFER moves one already-detached property version into a private Chain
@@ -197,6 +244,7 @@ export {
     createAssignedPromiseMirror,
     detachPromiseMirror,
     forkPromiseMirror,
+    forkUnresolvedPromiseMirrorsFromArray,
     getOrCreatePromiseMirror,
     getPromiseMirror,
     getRequiredPromiseMirror,

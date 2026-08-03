@@ -54,7 +54,7 @@ Before an Error is found, the raw walk creates one plain-data output graph:
 - opaque values retain their identity;
 - aliases retain one output identity;
 - cycles point back into the output graph;
-- only own enumerable string keys are copied;
+- object own enumerable string keys and Array indexed elements are copied;
 - own-key enumeration order is preserved;
 - an own enumerable `__proto__` key is defined as ordinary data; and
 - runtime metadata, mirrors, counters, descriptors, and prototypes are omitted.

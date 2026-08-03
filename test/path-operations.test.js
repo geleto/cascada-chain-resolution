@@ -272,11 +272,9 @@ describe("path assignment", () => {
             writable: true,
             configurable: true,
         })
-        const arrayAssigned = thrownBy(() => {
-            assignPath(new Chain(array), ["hidden"], 2)
-        })
+        const arrayAssigned = assignPath(new Chain(array), ["hidden"], 2)
         expect(arrayAssigned.message).to.be(
-            "Cannot mutate non-enumerable property",
+            "Arrays support only indexes and length",
         )
         expect(array.hidden).to.be(1)
     })
@@ -621,6 +619,55 @@ describe("path assignment", () => {
         expect(0 in next).to.be(false)
         expect(next[1]).to.be("one")
         expect(next[2]).to.be("two")
+    })
+
+    it("uses canonical string indexes and rejects named Array keys", () => {
+        const root = []
+        const chain = new Chain(root)
+
+        expect(assignPath(chain, ["0"], "zero")).to.be(undefined)
+        expect(assignPath(chain, [2], "two")).to.be(undefined)
+        expect(root.length).to.be(3)
+        expect(root["0"]).to.be("zero")
+        expect(1 in root).to.be(false)
+        expect(root[2]).to.be("two")
+
+        expect(assignPath(chain, [-0], "numeric minus zero")).to.be(undefined)
+        expect(root[0]).to.be("numeric minus zero")
+
+        for (const key of [
+            "01",
+            "1.0",
+            "1e0",
+            "-0",
+            "4294967295",
+            "name",
+        ]) {
+            const assigned = assignPath(chain, [key], key)
+            const deleted = deletePath(chain, [key])
+
+            expect(assigned instanceof Error).to.be(true)
+            expect(deleted instanceof Error).to.be(true)
+            expect(Object.hasOwn(root, key)).to.be(false)
+            expect(lookupPath(chain, [key])).to.be(undefined)
+        }
+
+        root.name = "host-only"
+        expect(assignPath(chain, ["name"], "changed") instanceof Error).to.be(
+            true,
+        )
+        expect(deletePath(chain, ["name"]) instanceof Error).to.be(true)
+        expect(lookupPath(chain, ["name"])).to.be(undefined)
+        expect(root.name).to.be("host-only")
+
+        const imported = importValue([], "indexed growth")
+        const importedChain = new Chain(imported)
+        expect(assignPath(importedChain, ["2"], "value")).to.be(undefined)
+        expect(importedChain._state.value).not.to.be(imported)
+        expect(imported.length).to.be(0)
+        expect(importedChain._state.value.length).to.be(3)
+        expect(1 in importedChain._state.value).to.be(false)
+        expect(importedChain._state.value[2]).to.be("value")
     })
 
     it("copies frozen arrays before mutating nested values", () => {

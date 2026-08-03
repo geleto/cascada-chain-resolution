@@ -536,11 +536,12 @@ describe("export", () => {
         expect(metaOf(output.value).cycleCuts.has("back")).to.be(true)
     })
 
-    it("copies sparse arrays and preserves DAG identity", () => {
+    it("copies sparse indexes and omits named Array properties", () => {
         const child = { x: 1 }
         const ignoredSymbol = Symbol("ignored")
         const root = new Array(4)
         root[1] = child
+        root[3] = child
         root.extra = child
         root[ignoredSymbol] = "symbol value"
         Object.defineProperty(root, "hidden", {
@@ -554,8 +555,9 @@ describe("export", () => {
         expect(copy.length).to.be(4)
         expect(0 in copy).to.be(false)
         expect(1 in copy).to.be(true)
-        expect(copy[1]).to.be(copy.extra)
+        expect(copy[1]).to.be(copy[3])
         expect(copy[1]).not.to.be(child)
+        expect(Object.hasOwn(copy, "extra")).to.be(false)
         expect(Object.prototype.hasOwnProperty.call(copy, "hidden")).to.be(false)
         expect(Object.getOwnPropertySymbols(copy)).to.eql([])
         expect(metaOf(copy)).to.be(undefined)
@@ -583,7 +585,7 @@ describe("export", () => {
             arrayResult,
         ])
         expect(Object.keys(objectCopy)).to.eql(["first", "second"])
-        expect(Object.keys(arrayCopy)).to.eql(["0", "first", "second"])
+        expect(Object.keys(arrayCopy)).to.eql(["0"])
     })
 
     it("copies own enumerable __proto__ as data", () => {
