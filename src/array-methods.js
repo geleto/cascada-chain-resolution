@@ -148,7 +148,7 @@ function prepareFlatArguments(args) {
 
 function flat(thisValue, depth) {
     depth = Math.max(depth, 0)
-    return resolution.resolveOperationResultOrFatal(
+    return resolution.continueOperationUnlessPoison(
         prepareFlatArray(thisValue, depth),
         prepared => {
             const result = invocation.invokeDataFunctionOrPoison(
@@ -163,19 +163,33 @@ function flat(thisValue, depth) {
     )
 }
 
-function prepareFlatArray(array, depth) {
+function prepareFlatArray(array, depth, ancestry = undefined) {
+    if (depth === Infinity) {
+        for (let current = ancestry; current; current = current.parent) {
+            if (current.array === array) {
+                return new RangeError(
+                    "Cannot flat an Array cycle to unlimited depth",
+                )
+            }
+        }
+    }
     const source = arrayRemaps.createInitialRemap(array)
     const output = new Array(source.length)
     const pending = []
+    const nestedAncestry = depth === Infinity
+        ? { array, parent: ancestry }
+        : undefined
     for (let index = 0; index < source.length; index++) {
         const origin = source[index]
         if (!origin) continue
         const prepared = prepareFlatProperty(
             origin,
             depth,
+            nestedAncestry,
         )
+        if (languageValues.isError(prepared)) return prepared
         if (languageValues.isPromise(prepared)) {
-            pending.push(resolution.resolveOperationResultOrFatal(
+            pending.push(resolution.continueOperationUnlessPoison(
                 prepared,
                 value => ({ index, value }),
             ))
@@ -183,19 +197,21 @@ function prepareFlatArray(array, depth) {
             output[index] = prepared
         }
     }
-    return resolution.resolveOperationResultsOrFatal(pending, entries => {
-        for (const { index, value } of entries) output[index] = value
+    return resolution.continueOperationsUnlessPoison(pending, entries => {
+        for (const { index, value } of entries) {
+            output[index] = value
+        }
         return output
     })
 }
 
-function prepareFlatProperty(origin, depth) {
+function prepareFlatProperty(origin, depth, ancestry) {
     if (depth === 0) return origin
     return resolution.resolveOperationResultOrFatal(
         propertyOrigins.resolveOriginValue(origin),
         value => {
             if (arrayViews.isLogicalArray(value)) {
-                return prepareFlatArray(value, depth - 1)
+                return prepareFlatArray(value, depth - 1, ancestry)
             }
             return origin
         },
@@ -484,7 +500,6 @@ export {
     concat,
     createConcatRemap,
     flat,
-    getElementAt,
     includes,
     indexOf,
     join,

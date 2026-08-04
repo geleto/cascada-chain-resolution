@@ -31,6 +31,8 @@ copyWithin fill pop push reverse shift sort splice unshift
 
 A logical Array mutator is selected intrinsically by name even when a receiver property shadows that name. The same-named method on a non-Array object remains an ordinary observation.
 
+Method lookup for a logical Array uses the backing Array, so a view and its source identity select the same executable surface. The materialized receiver passed to an ordinary selected method is a temporary native shape that is never published or ref-indexed.
+
 Ordinary lookup preserves JavaScript shadowing. An own enumerable language property shadows the prototype but is never an executable method. Otherwise normal property access selects a callable own non-enumerable or prototype value, including one supplied by a getter. Lookup and the selected method must be trusted read-only and must not retain inputs or cause external side effects; other side-effecting methods are unsupported.
 
 String methods use the ordinary observation path. Custom String dispatch protocols such as `Symbol.match`, `Symbol.replace`, and `Symbol.split` are unsupported; intrinsic RegExp dispatch remains available. Callable arguments such as replacement callbacks are allowed, subject to exported-argument and result-admission boundaries. Controlled Array intrinsics support the methods declared by the Array method table; `sort` and `toSorted` additionally support the comparator contract below. Array callback methods such as `map`, `filter`, `reduce`, and `forEach` are deferred. Array `keys`, `values`, and `entries` are outside the controlled method table; direct Array iteration and spread use the runtime iterator path.
@@ -78,7 +80,7 @@ After comparator and element preparation, the comparator overload invokes native
 
 ## Argument readiness
 
-An assignment-style Array payload is neither exported nor awaited after the ready argument list passes Error poisoning. A tracked payload gains another owner and becomes shared. A Promise payload is installed immediately as a Promise-valued property, with one fresh property-version mirror per destination. It is data, not operation readiness, and does not create an argument wrapper or mutation gate; if it later rejects, the resulting Error is an Array element rather than retroactive operation failure.
+An assignment-style Array payload is neither exported nor awaited after the ready argument list passes Error poisoning. A tracked payload gains another owner and becomes shared. A Promise payload is installed immediately as a Promise-valued property, with one fresh property-version mirror per destination; each destination marks the value it resolves to shared at its own FIFO position, so one Promise reaching several placements never leaves them aliasing an unprotected value. It is data, not operation readiness, and does not create an argument wrapper or mutation gate; if it later rejects, the resulting Error is an Array element rather than retroactive operation failure.
 
 The search value for `includes`, `indexOf`, or `lastIndexOf` is also not exported, but a top-level Promise must resolve before comparison and Error-poisons the call if it rejects. A `concat` item resolves only when its top-level value is needed to decide whether to spread a logical Array and likewise Error-poisons the call; non-spread items and spread elements remain logical values. Comparator readiness follows Sort comparison. Native-bound argument export and logical preparation scan their inputs synchronously and create no Promise wrapper when everything is ready.
 
@@ -170,13 +172,15 @@ Array `length` is a visible, non-enumerable, non-configurable virtual property o
 
 String `length` is a visible, non-enumerable, non-configurable, read-only virtual property. Its read resolves only the receiver path. Assignment or deletion returns a language Error without changing the receiver; deleting Array `length` does the same.
 
+A `run` receiver path ending at either virtual `length` selects a number, never an Array. Mutation mode therefore returns its validation Error directly, because a virtual length is not a placement that can hold that Error.
+
 ## Errors
 
 A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. An Array mutation on a missing or non-Array final receiver installs its validation Error at that path and returns the same Error.
 
-A synchronous invoked-method throw and a returned method-Promise rejection become language Error results. Another mutation failure publishes the unchanged receiver or any partial mutation whose completed edge transitions are already accounted for, then returns the operation Error. An observational mutator discards its private working copy.
+A synchronous invoked-method throw and a returned method-Promise rejection become language Error results. Unlimited `flat` of a logical Array cycle has no finite result and returns a language RangeError corresponding to native stack overflow. Another mutation failure publishes the unchanged receiver or any partial mutation whose completed edge transitions are already accounted for, then returns the operation Error. An observational mutator discards its private working copy.
 
-A kernel invariant, bookkeeping failure, or trusted-call contract violation is fatal. An installed receiver or result gate remains unresolved after fatal abort.
+A kernel invariant, bookkeeping failure, or trusted-call contract violation is fatal. An installed receiver or result gate remains unresolved after fatal abort. A partial native mutation converts only the descriptor failures raised by the language-property assertions; every other throw during replay stays fatal.
 
 ## Implementation boundary
 

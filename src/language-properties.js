@@ -2,6 +2,7 @@ import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
+const propertyShapeErrors = new WeakSet()
 
 // This module owns the descriptor policy and physical access for
 // language-visible properties.
@@ -14,10 +15,20 @@ function isArrayLanguageKey(parent, key) {
     return key === "length" || arrayViews.isArrayIndex(key)
 }
 
+function propertyShapeError(message, errorContext) {
+    const error = errorUtils.validationError(message, errorContext)
+    propertyShapeErrors.add(error)
+    return error
+}
+
+function isPropertyShapeError(error) {
+    return propertyShapeErrors.has(error)
+}
+
 function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
     const descriptor = getLanguagePropertyDescriptor(parent, key)
     if (descriptor && !descriptor.enumerable) {
-        throw errorUtils.validationError(
+        throw propertyShapeError(
             "Cannot mutate non-enumerable property",
             errorContext,
         )
@@ -33,6 +44,29 @@ function getLanguagePropertyDescriptor(parent, key) {
     return Object.getOwnPropertyDescriptor(parent, key)
 }
 
+// Validate before edge accounting; ArrayView writes are preflighted.
+function assertCanCreateLanguageProperty(parent, key, errorContext) {
+    parent = arrayViews.projectionOf(parent)
+    if (arrayViews.isArrayView(parent)) return
+    if (!Object.isExtensible(parent)) {
+        throw propertyShapeError(
+            "Cannot add a property to a non-extensible object",
+            errorContext,
+        )
+    }
+    if (
+        Array.isArray(parent) &&
+        arrayViews.isArrayIndex(key) &&
+        Number(key) >= parent.length &&
+        !Object.getOwnPropertyDescriptor(parent, "length").writable
+    ) {
+        throw propertyShapeError(
+            "Cannot grow an Array with a read-only length",
+            errorContext,
+        )
+    }
+}
+
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
 // descriptor before new-value preparation can publish any imported state.
 function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
@@ -41,15 +75,19 @@ function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
         key,
         errorContext,
     )
+    if (!descriptor) {
+        assertCanCreateLanguageProperty(parent, String(key), errorContext)
+        return descriptor
+    }
 
-    if (descriptor && !("value" in descriptor)) {
-        throw errorUtils.validationError(
+    if (!("value" in descriptor)) {
+        throw propertyShapeError(
             "Cannot assign to accessor property",
             errorContext,
         )
     }
-    if (descriptor && !descriptor.writable) {
-        throw errorUtils.validationError(
+    if (!descriptor.writable) {
+        throw propertyShapeError(
             "Cannot assign to non-writable property",
             errorContext,
         )
@@ -74,7 +112,7 @@ function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) 
         errorContext,
     )
     if (descriptor && !descriptor.configurable) {
-        throw errorUtils.validationError(
+        throw propertyShapeError(
             "Cannot delete non-configurable property",
             errorContext,
         )
@@ -152,6 +190,7 @@ export {
     getLanguagePropertyDescriptor,
     hasLanguageProperty,
     isArrayLanguageKey,
+    isPropertyShapeError,
     readLanguageProperty,
     writeLanguageProperty,
 }

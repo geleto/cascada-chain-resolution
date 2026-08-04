@@ -1,5 +1,4 @@
 import * as arrayViews from "./array-view.js"
-import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -22,7 +21,11 @@ function createInitialRemap(array) {
     const length = arrayViews.logicalArrayLength(array)
     const remap = new Array(length)
     for (const key of languageProperties.enumerableLanguageKeys(array)) {
-        remap[key] = propertyOrigins.getOrigin(array, key)
+        languageProperties.writeLanguageProperty(
+            remap,
+            key,
+            propertyOrigins.getOrigin(array, key),
+        )
     }
     return remap
 }
@@ -53,6 +56,7 @@ function traceMutation(array) {
             }
             if (Object.hasOwn(target, key)) return target[key]
             if (deleted.has(key) || Number(key) >= sourceLength) return undefined
+            // Assignment could invoke an inherited numeric setter.
             const origin = propertyOrigins.getOrigin(array, key)
             if (origin) languageProperties.writeLanguageProperty(
                 target, key, origin,
@@ -61,17 +65,17 @@ function traceMutation(array) {
         },
         set(target, key, value) {
             if (key === "length") {
-                operations.push({ kind: KIND_LENGTH, value })
+                record({ kind: KIND_LENGTH, value })
                 sourceLength = Math.min(sourceLength, value)
             } else if (arrayViews.isArrayIndex(key)) {
-                operations.push(createPlacementOperation(value, Number(key)))
+                record(createPlacementOperation(value, Number(key)))
             }
             return Reflect.set(target, key, value, target)
         },
         deleteProperty(target, key) {
             if (arrayViews.isArrayIndex(key)) {
                 deleted.add(key)
-                operations.push({
+                record({
                     kind: KIND_DELETE,
                     index: Number(key),
                 })
@@ -80,6 +84,14 @@ function traceMutation(array) {
         },
     })
     return { remap, working, operations }
+
+    function record(operation) {
+        languageProperties.writeLanguageProperty(
+            operations,
+            String(operations.length),
+            operation,
+        )
+    }
 }
 
 function createPlacementOperation(entry, newIndex) {
@@ -124,23 +136,17 @@ function applyRemapToArray(array, remap, operations) {
                 continue
             }
             const key = String(operation.newIndex)
-            if (operation.kind === KIND_MOVE) {
-                placeOrigin(
-                    array,
-                    key,
-                    operation.origin,
-                    (placementCount.get(operation.origin) ?? 0) > 1,
-                )
-            } else {
-                setProperty(array, key, operation.value)
-                if (!languageValues.isPromise(operation.value)) {
-                    metadata.markShared(operation.value)
-                }
-            }
+            const entry = operation.kind === KIND_MOVE
+                ? operation.origin
+                : operation.value
+            const retained = operation.kind === KIND_ADD ||
+                (placementCount.get(entry) ?? 0) > 1
+            placeEntry(array, key, entry, retained)
         }
         return undefined
     } catch (error) {
-        return errorUtils.toPoison(error)
+        if (!languageProperties.isPropertyShapeError(error)) throw error
+        return error
     }
 }
 
@@ -160,15 +166,18 @@ function createArrayFromRemap(
 function placeRemap(destination, remap, offset = 0, retained = true) {
     remap.forEach((entry, index) => {
         const key = String(offset + index)
-        if (propertyOrigins.isOrigin(entry)) {
-            placeOrigin(destination, key, entry, retained)
-        } else {
-            setProperty(destination, key, entry)
-            if (retained && !languageValues.isPromise(entry)) {
-                metadata.markShared(entry)
-            }
-        }
+        placeEntry(destination, key, entry, retained)
     })
+}
+
+function placeEntry(destination, key, entry, retained) {
+    if (propertyOrigins.isOrigin(entry)) {
+        placeOrigin(destination, key, entry, retained)
+        return
+    }
+    setProperty(destination, key, entry)
+    // The fresh mirror publishes before this FIFO sharing mark.
+    if (retained) metadata.markShared(entry)
 }
 
 function placeOrigin(

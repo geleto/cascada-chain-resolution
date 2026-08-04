@@ -65,7 +65,6 @@ function runObservation(chain, path, method, args) {
                 arrayViews.requiresArrayMaterialization(targetValue)
                     ? arrayRemaps.createArrayFromRemap(
                         arrayRemaps.createInitialRemap(targetValue),
-                        targetValue,
                     )
                     : targetValue
             const stringMethod =
@@ -207,7 +206,13 @@ function runMutation(chain, path, method, args) {
     return walkMutationPath(
         chain,
         path,
-        (parent, key, importBoundary, attachmentPath) => {
+        (parent, key, importBoundary, attachmentPath, virtualLength) => {
+            if (virtualLength) {
+                result = errorUtils.validationError(
+                    "Array mutation receiver is not an Array",
+                )
+                return
+            }
             result = transformProperty(
                 parent,
                 key,

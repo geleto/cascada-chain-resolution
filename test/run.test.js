@@ -10,12 +10,16 @@ import {
     enter,
     expect,
     exportValue,
+    flushMicrotasks,
     getRefCounter,
+    hasError,
     importValue,
     lookupPath,
     metaOf,
     registerDataClass,
     run,
+    setFatalErrorReporter,
+    thrownBy,
     verifyRefCounts,
 } from "./support.js"
 
@@ -1440,6 +1444,146 @@ describe("run", () => {
             false,
             value => value,
         ) instanceof Error).to.be(true)
+    })
+
+    it("returns a validation Error for virtual length receivers", () => {
+        for (const receiver of ["abc", [1, 2]]) {
+            const root = { target: receiver }
+            const chain = new Chain(root)
+
+            const result = run(chain, ["target", "length"], "push", true, 1)
+
+            expect(result instanceof Error).to.be(true)
+            expect(root.target).to.be(receiver)
+            expect(root.target.length).to.be(receiver.length)
+        }
+    })
+
+    it("isolates one Promise payload reaching several placements", async () => {
+        const cases = [
+            { method: "push", source: [], args: promise => [promise, promise] },
+            {
+                method: "unshift",
+                source: [],
+                args: promise => [promise, promise],
+            },
+            {
+                method: "splice",
+                source: [],
+                args: promise => [0, 0, promise, promise],
+            },
+            { method: "fill", source: [0, 0], args: promise => [promise] },
+        ]
+        for (const { method, source, args } of cases) {
+            const payload = { answer: 1 }
+            const chain = new Chain(source)
+
+            run(chain, [], method, true, ...args(Promise.resolve(payload)))
+            await flushMicrotasks()
+            assignPath(chain, ["0", "answer"], 2)
+            await flushMicrotasks()
+
+            const exported = await exportValue(chain, [])
+            expect(exported[0].answer).to.be(2)
+            expect(exported[1].answer).to.be(1)
+            expect(payload.answer).to.be(1)
+            verifyRefCounts(chain._state.value)
+        }
+    })
+
+    it("keeps a temporary method receiver out of the ref index", () => {
+        const element = { value: 1 }
+        const chain = new Chain({ items: [element] })
+        run(chain, ["items"], "push", false, 2)
+        hasError(chain, [])
+        const items = chain._state.value.items
+        Object.defineProperty(items, "size", {
+            enumerable: false,
+            value() {
+                return this.length
+            },
+        })
+
+        expect(run(chain, ["items"], "size", false)).to.be(1)
+
+        expect([...getRefCounter(element).parents.keys()]).to.eql([items])
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("reports a bookkeeping failure during replay fatally", () => {
+        const element = { value: 1 }
+        const chain = new Chain([element, 2])
+        hasError(chain, [])
+        // Corrupt downward closure: the element is still reachable from an
+        // indexed owner but no longer carries its own counter.
+        delete metaOf(element).parents
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        const failure = thrownBy(() => run(chain, [], "reverse", true))
+
+        expect(failure instanceof Error).to.be(true)
+        expect(failure.message).to.be("Ref counts require a ref-indexed value")
+        expect(reported).to.be(failure)
+    })
+
+    it("reports an unlimited flat of an Array cycle as a language Error", () => {
+        const cyclic = [1]
+        cyclic.push(cyclic)
+        importValue(cyclic)
+        const chain = new Chain({ items: cyclic })
+
+        const unlimited = run(chain, ["items"], "flat", false, Infinity)
+        const bounded = run(chain, ["items"], "flat", false, 2)
+
+        expect(unlimited instanceof RangeError).to.be(true)
+        expect(bounded instanceof Error).to.be(false)
+        expect(bounded.length).to.be(4)
+        expect(bounded.slice(0, 3)).to.eql([1, 1, 1])
+        expect(bounded[3]).to.be(cyclic)
+    })
+
+    it("does not invoke inherited numeric setters while building remaps", () => {
+        const descriptor = Object.getOwnPropertyDescriptor(
+            Array.prototype,
+            "5",
+        )
+        const observedSource = [0, 1, 2, 3, 4, 5, 6]
+        const mutatedSource = [0, 1, 2, 3, 4, 5, 6]
+        let observed
+        let mutationResult
+        try {
+            Object.defineProperty(Array.prototype, "5", {
+                configurable: true,
+                set() {
+                    throw new Error("Inherited numeric setter was invoked")
+                },
+            })
+            observed = run(
+                new Chain(observedSource),
+                [],
+                "reverse",
+                false,
+            )
+            mutationResult = run(
+                new Chain(mutatedSource),
+                [],
+                "reverse",
+                true,
+            )
+        } finally {
+            if (descriptor) {
+                Object.defineProperty(Array.prototype, "5", descriptor)
+            } else {
+                delete Array.prototype[5]
+            }
+        }
+
+        expect(mutationResult instanceof Error).to.be(false)
+        expect([...observed]).to.eql([6, 5, 4, 3, 2, 1, 0])
+        expect(mutatedSource).to.eql([6, 5, 4, 3, 2, 1, 0])
     })
 
     it("materializes a view before an ordinary indexed write", () => {
