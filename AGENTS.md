@@ -24,31 +24,32 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 ## Promise Mirrors
 
-- A mirror stands for one property version. Assigning again, even the same Promise, makes a new mirror.
-- Distinct logical properties have distinct mirrors even when an ArrayView makes them share physical storage. A retained Promise property forks its mirror at view derivation.
-- A mirror is live only while the parent's mirror map holds that exact instance.
-- A mirror defines the logical state of its property version. Physical writeback is only a storage optimization; graph operations must not assume it occurred.
-- A live imported property preserves its external Promise and keeps its settled logical value in `resolvedValue`. Once detached, every mirror keeps its value in `detachedValue`.
-- Replacing or deleting the property detaches the old mirror. Operations that already captured it keep working against its private state.
+- A mirror represents one logical property version. Every assignment creates a new version, even when it assigns the same Promise.
+- Each logical property version has its own mirror, even when several properties share physical storage.
+- Mirror state is authoritative. Physical writeback is only an optimization and graph operations must not depend on it.
+- An imported Promise property retains its external Promise; settlement changes only its logical mirror state.
+- Replacing or deleting a property detaches its old mirror. Operations that captured that version continue against its private state.
 - Each operation that reaches a pending property registers a resolver at its own program position. A settling Promise changes nothing on its own; state changes only when the first resolver completes its transition.
 - Later resolvers ignore the settled payload and work from the latest state earlier resolvers left.
 
 ## Ownership
 
 - Classify a property container and its stored value independently: the container determines whether Cascada may write the property; the value's identity and provenance determine whether that value is imported or shared.
+- Every value originating outside Cascada enters through import, regardless of how it was obtained.
+- A Chain preserves its value's existing ownership and provenance; it creates neither.
+- Imported data is borrowed and never changed. All runtime state, including metadata and logical Promise settlement, lives outside it.
 - A non-shared language value has one owner and may be mutated in place.
-- Imported data is borrowed storage. Cascada may attach metadata and maintain logical state, but it never changes the data's language-visible contents because outside code retains ownership.
+- Giving the same tracked identity another owner makes it shared; observing it does not.
+- Non-sharing extraction is valid only for a pure read or a transfer that ends the prior ownership.
 - Storing an externally sourced value in a runtime-owned container does not make that container imported.
-- Sharing records reuse of the same tracked identity, not the fact that a value was observed. Reuse in another variable/property goes through lookup, which marks it shared by default.
-- Pass `sharedOwnership: false` only for a pure read, or when ownership is ceded to the caller.
 - Shared or imported data is protected by copy-on-write; mutation must not affect another owner or external data.
-- Cascada does not create non-extensible language data. Such data is external; non-extensibility only forces copy-on-write and may move metadata to the WeakMap. It does not change logical semantics.
+- Cascada never creates non-extensible language data. Such data is imported and has no special runtime semantics.
 
 ## Copy-on-Write
 
 - Language mutation never changes a shared or imported node in place. It shallow-copies each level along the path down to the changed spot, puts the new value there, and reuses everything else untouched.
-- Copying starts at the first shared level, not always the root. Once that level is copied, the old one still points at its children, so they must be copied too, down to the target.
-- A shallow copy is a new runtime-owned container and carries no metadata from its source. Its mirrors and counters are created for its own world as needed.
+- Copying starts at the first level that must be preserved, not always the root. Once copied, the old level still points at its children, so copying continues down to the target.
+- A shallow copy is a new runtime-owned container outside the import boundary and carries no metadata from its source.
 - Reused imported children remain imported; other reused tracked children are marked shared. Whichever side writes first copies again.
 - It copies a path, not a graph. If `root.self === root`, changing `root.a` gives a new root whose `self` still points at the original.
 - A copied Promise key gets a fresh mirror at the copier's program position, so the two worlds diverge exactly there. Creating it later would seed from the raw settled value and drop writes issued before the copy.

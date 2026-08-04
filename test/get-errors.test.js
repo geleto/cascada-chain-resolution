@@ -262,6 +262,7 @@ describe("getErrors", () => {
             value: hiddenError,
             enumerable: false,
         })
+        importValue(root.frozen, "frozen immediate path")
 
         expectErrors(getErrors(new Chain(root), ["branch"]), [nestedError])
         expectErrors(getErrors(new Chain(root), ["blocked", "x"]), [pathError])
@@ -314,6 +315,7 @@ describe("getErrors", () => {
         const error = new Error("bad")
         const frozen = Object.freeze({ nested: Object.freeze({ clean: true }) })
         const branch = { frozen, error }
+        importValue(frozen, "frozen clean branch")
 
         expectErrors(getErrors(new Chain({ branch }), ["branch"]), [error])
         expect(getRefCounter(frozen).errorCount).to.be(0)
@@ -382,15 +384,17 @@ describe("getErrors", () => {
         const branch = { direct: child, delayed: delayed.promise }
         const root = importValue({ branch }, "shared path branch")
 
+        const branchMeta = metaOf(branch)
+        const childMeta = metaOf(child)
         const result = getErrors(new Chain(root), ["branch"])
         expect(registrations()).to.be(2)
-        expect(metaOf(branch).shared).to.be(undefined)
-        expect(metaOf(child).shared).to.be(undefined)
+        expect(branchMeta.shared).to.be(true)
+        expect(childMeta.shared).to.be(true)
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
         expect(registrations()).to.be(2)
-        expect(metaOf(child).shared).to.be(true)
+        expect(metaOf(child)).to.be(childMeta)
 
         pending.reject("bad")
         const errors = await result
@@ -720,6 +724,7 @@ describe("getErrors", () => {
     it("reads terminal promises on sealed parents through mirrors", async () => {
         const pending = deferred()
         const sealed = Object.seal({ pending: pending.promise })
+        importValue(sealed, "sealed terminal")
 
         const result = getErrors(new Chain(sealed), ["pending"])
         pending.reject("sealed terminal")
@@ -727,7 +732,10 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be("sealed terminal")
-        expect(sealed.pending).to.be(errors[0])
+        expect(sealed.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.be(
+            errors[0],
+        )
         expect(metaOf(sealed).mirrors.pending).not.to.be(undefined)
         expect(getRefCounter(sealed)).to.be(undefined)
     })

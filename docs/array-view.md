@@ -18,6 +18,8 @@ The constructor accepts an Array or `ArrayView`; `start` and `end` are relative 
 
 When a native Array first becomes backing, its metadata stores an attached view covering the whole Array. That view is the native Array identity's projection; the native Array continues to own its metadata, parent edges, and Promise property versions. A separately published `ArrayView` is a distinct logical identity with its own metadata.
 
+Imported Arrays are never backing. Operations materialize them into runtime-owned Arrays, preserving the borrowed host data and its externally stored metadata.
+
 `ArrayView` is not exported from the package.
 
 ## Logical surface

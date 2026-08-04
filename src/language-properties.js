@@ -49,12 +49,6 @@ function getLanguagePropertyDescriptor(parent, key) {
 function assertCanCreateLanguageProperty(parent, key, errorContext) {
     parent = arrayViews.projectionOf(parent)
     if (arrayViews.isArrayView(parent)) return
-    if (!Object.isExtensible(parent)) {
-        throw propertyShapeError(
-            "Cannot add a property to a non-extensible object",
-            errorContext,
-        )
-    }
     if (
         Array.isArray(parent) &&
         arrayViews.isArrayIndex(key) &&

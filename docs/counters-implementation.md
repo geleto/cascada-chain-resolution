@@ -32,9 +32,8 @@ Other META fields belong to their own subsystems. Promise mirrors and cycle
 cuts affect property contributions, shared/import fields affect
 ownership and preparation.
 
-Inline metadata uses an own non-enumerable Symbol when possible. WeakMap mode,
-and inline mode's fallback for non-extensible nodes, provide identical
-semantics.
+Inline metadata uses an own non-enumerable Symbol on runtime-owned nodes.
+Imported metadata and all metadata in WeakMap mode live externally.
 
 ## Property projection
 
@@ -112,9 +111,9 @@ Index construction starts at the branch requested by the counter operation. It
 does not widen that work to the stored import root or unrelated imported
 siblings.
 
-Frozen, sealed, and otherwise non-extensible nodes use the same index rules.
-Imported Promise data properties need not be writable. Runtime-owned Promise
-properties write through and therefore must be writable.
+Frozen, sealed, and otherwise non-extensible nodes enter through import and use
+the same index rules. Imported Promise data properties need not be writable.
+Runtime-owned Promise properties write through and therefore must be writable.
 
 ## Property transitions
 

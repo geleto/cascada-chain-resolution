@@ -129,10 +129,6 @@ const ARRAY_MODES = [
     mutationMode("imported copy-on-write", 8, {
         receiver: "imported",
     }),
-    mutationMode("frozen shared-target copy-on-write", 4, {
-        frozen: true,
-        receiver: "shared",
-    }),
     mutationMode("frozen imported copy-on-write", 4, {
         frozen: true,
         receiver: "imported",
@@ -639,14 +635,6 @@ function viewModes(mutate) {
             name: `attached source-version ${operation}`,
             receiver: "attached",
             shapeSource: attachedSource,
-        },
-        {
-            name: `non-extensible ArrayView ${operation}`,
-            receiver: "view",
-            restriction: "non-extensible",
-            shapeSource: (source, index) => viewSource(
-                source, index, "full",
-            ),
         },
         {
             name: `fixed-length ArrayView ${operation}`,

@@ -10,6 +10,7 @@ import {
     flushMicrotasks,
     getErrors,
     hasError,
+    importValue,
     metaOf,
     run,
     verifyRefCounts,
@@ -280,8 +281,9 @@ describe("ArrayView", () => {
         verifyRefCounts(changed._state.value, retained)
     })
 
-    it("materializes non-extensible physical extensions", () => {
+    it("materializes imported non-extensible physical extensions", () => {
         const source = Object.preventExtensions([1, 2])
+        importValue(source, "non-extensible extension")
         const result = run(new Chain(source), [], "push", false, 3)
 
         expect(Array.isArray(result)).to.be(true)
@@ -313,12 +315,14 @@ describe("ArrayView", () => {
         expect(source[0]).to.be(7)
     })
 
-    it("contracts a non-extensible backing without modifying it", () => {
+    it("materializes an imported frozen contraction", () => {
         const source = Object.freeze([1, 2])
+        importValue(source, "frozen contraction")
         const result = run(new Chain(source), [], "pop", false)
 
-        expect(arrayViews.isArrayView(result)).to.be(true)
-        expect([...result]).to.eql([1])
+        expect(Array.isArray(result)).to.be(true)
+        expect(arrayViews.isArrayView(result)).to.be(false)
+        expect(result).to.eql([1])
         expect(source).to.eql([1, 2])
     })
 

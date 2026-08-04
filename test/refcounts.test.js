@@ -119,7 +119,7 @@ describe("subtree counters", () => {
         verifyRefCounts(assigned, deleted)
     })
 
-    it("uses one fresh metadata record for shared marks, mirrors, and counters", () => {
+    it("uses one metadata record per ownership world", () => {
         const deferredValue = deferred()
         const root = { pending: deferredValue.promise, child: { x: 1 } }
 
@@ -129,13 +129,7 @@ describe("subtree counters", () => {
         const rootSymbols = Object.getOwnPropertySymbols(root)
         const rootMeta = metaOf(root)
 
-        if (STORE_META_IN_WEAKMAP) {
-            expect(rootSymbols.length).to.be(0)
-        } else {
-            expect(rootSymbols.length).to.be(1)
-            expect(root[rootSymbols[0]]).to.be(rootMeta)
-            expect(Object.getOwnPropertyDescriptor(root, rootSymbols[0]).enumerable).to.be(false)
-        }
+        expect(rootSymbols.length).to.be(0)
         expect(getRefCounter(root)).to.be(rootMeta)
         expect(rootMeta.promiseCount).to.be(1)
 
@@ -148,7 +142,7 @@ describe("subtree counters", () => {
         if (STORE_META_IN_WEAKMAP) {
             expect(nextSymbols.length).to.be(0)
         } else {
-            expect(nextSymbols).to.eql(rootSymbols)
+            expect(nextSymbols.length).to.be(1)
             expect(next[nextSymbols[0]]).to.be(nextMeta)
         }
         expect(nextMeta).not.to.be(rootMeta)
@@ -184,6 +178,8 @@ describe("subtree counters", () => {
         expectCounts(Promise.resolve(1), 1, 0)
         expectCounts(new Error("bad"), 0, 1)
 
+        importValue(frozen, "frozen counter root")
+        importValue(frozenDAG, "frozen DAG counter root")
         expect(buildRefIndex(frozen)).to.be(frozen)
         expect(buildRefIndex(frozenDAG)).to.be(frozenDAG)
         expectCounts(frozen, 0, 0)

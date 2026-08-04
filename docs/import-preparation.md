@@ -1,9 +1,9 @@
 # Imported graph preparation
 
 `import(value, errorContext)` is the only boundary for external data. It marks
-the imported root shared, records attribution, prepares aliases and cycles in
-the reachable graph, and registers the first resolver for every nested Promise.
-Subtree counters remain lazy until an Error query needs them.
+each reached tracked identity imported and shared, prepares aliases and cycles,
+and registers the first resolver for every nested Promise. Subtree counters
+remain lazy until an Error query needs them.
 
 Cycle-cut and counter semantics are specified in
 [`cycles-as-data.md`](cycles-as-data.md).
@@ -16,14 +16,12 @@ A direct import boundary stores:
 { root, errorContext }
 ```
 
-The context must be truthy. Descendants inherit the nearest boundary while a
-walk remains inside imported data; they do not all receive direct boundary
-metadata. A tracked value receives its own boundary when it becomes
-independently usable, such as after extraction.
+The context must be truthy. Each newly imported tracked identity receives its
+own boundary, so it retains its provenance when used independently. A shallow
+COW copy receives no boundary and is runtime-owned.
 
-Imported roots are shared. Repeated identities discovered below them are also
-marked shared. Language mutation therefore COWs before writing external or
-aliased data.
+Every imported tracked identity is shared because its external owner remains.
+Language mutation therefore COWs before writing it through any path or Chain.
 
 META presence is the durable prepared-identity signal. A META-bearing value is
 either an already prepared imported identity or trusted runtime data, so a
@@ -31,8 +29,8 @@ later imported walk treats it as an island instead of repeating full
 preparation. This relies on the language contract that all external values pass
 through `import`.
 
-Non-extensible values store metadata in the WeakMap fallback and are implicitly
-shared.
+New metadata for every imported value is stored in the WeakMap. Every imported
+identity carries a direct boundary; non-extensibility has no separate semantics.
 
 ## Root import
 
@@ -61,15 +59,14 @@ Arrays. Each synchronous segment keeps:
 For each tracked property value:
 
 1. Stop at an existing cycle cut.
-2. If the value is on `currentPath`, the property closes a cycle. Mark the
-   repeated identity shared, publish a cut on that property, and do not enter
-   it.
+2. If the value is on `currentPath`, the property closes a cycle. Publish a cut
+   on that property and do not enter it.
 3. If the value is in `visited`, it is an alias already handled in this
-   segment. Mark it shared and stop.
+   segment. Stop.
 4. If the value already has META, mark it shared and scan that prepared island
    only for references into the current ancestry.
-5. Otherwise create its META, add it to the traversal sets, and walk its
-   properties.
+5. Otherwise create its imported, shared META, add it to the traversal sets,
+   and walk its properties.
 
 `Object.keys` order makes synchronous discovery deterministic.
 
@@ -173,9 +170,8 @@ the new placements instead of copying cut metadata blindly.
 Cycle discovery, ref-index construction, language mutation, and Promise
 settlement do not change imported string-key data. A settled Promise property's
 mirror stores its logical value; frozen and writable imported objects use the
-same path. Inline metadata falls back to the WeakMap for non-extensible values.
-Native code receives runtime data only through `export`, which returns a
-metadata-free copy.
+same path. All newly created imported metadata lives in the WeakMap. Native code
+receives runtime data only through `export`, which returns a metadata-free copy.
 
 ## Enumerable `__proto__`
 

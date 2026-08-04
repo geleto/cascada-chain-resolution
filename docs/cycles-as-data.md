@@ -189,9 +189,9 @@ Finite `lookupPath`, `assignPath`, and `deletePath` ignore cut metadata and
 follow logical properties or the exact detached Promise state captured by an
 earlier operation. Their finite path length guarantees termination.
 
-Imported roots and repeated identities are shared. Mutation COWs before writing
-them. A copied placement receives a cut only if preparation establishes that
-the new placement closes a cycle.
+Every imported identity is shared. Mutation COWs before writing it through any
+path or root. A copied placement receives a cut only if preparation establishes
+that the new placement closes a cycle.
 
 ## Verification
 

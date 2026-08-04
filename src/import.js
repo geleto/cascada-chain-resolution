@@ -161,7 +161,8 @@ function prepareImportedData(importBoundary) {
                 new Set(state.currentPath),
             )
         }
-        metadata.ensureMeta(value)
+        // Imported identities keep their provenance when used independently.
+        metadata.markImported(value, inheritedBoundary.errorContext)
 
         const valueImportBoundary = metadata.nodeImportBoundary(
             value,

@@ -176,6 +176,7 @@ function tryArrayViewMethod(
     args,
     importBoundary,
 ) {
+    // Imported Arrays materialize; ArrayView backing is always runtime-owned.
     if (metadata.nodeImportBoundary(thisValue, importBoundary)) {
         return undefined
     }

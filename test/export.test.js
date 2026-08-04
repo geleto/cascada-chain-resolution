@@ -1038,15 +1038,16 @@ describe("export", () => {
         const root = { branch }
 
         importValue(root, "export import")
-        expect(metaOf(branch).shared).to.be(undefined)
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        const branchMeta = metaOf(branch)
+        expect(branchMeta.shared).to.be(true)
+        expect(branchMeta.importBoundary.root).to.be(branch)
         const value = exportValue(new Chain(root), ["branch"])
 
         expect(value).not.to.be(branch)
         expect(value.cyclic.self).to.be(value.cyclic)
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
-        expect(metaOf(branch).shared).to.be(undefined)
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(metaOf(branch)).to.be(branchMeta)
+        expect(branchMeta.importBoundary.root).to.be(branch)
         expect(getRefCounter(branch).errorCount).to.be(0)
         expect(getRefCounter(branch).cycleCutCount).to.be(1)
     })
@@ -1059,11 +1060,13 @@ describe("export", () => {
         const root = { branch }
 
         importValue(root, "synchronous cyclic Error")
+        const branchMeta = metaOf(branch)
         const result = exportValue(new Chain(root), ["branch"])
 
         expectExportErrors(result, [error])
-        expect(metaOf(branch).shared).to.be(undefined)
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(metaOf(branch)).to.be(branchMeta)
+        expect(branchMeta.shared).to.be(true)
+        expect(branchMeta.importBoundary.root).to.be(branch)
     })
 
     it("waits on imported branches without pinning or re-rooting them", async () => {
@@ -1072,15 +1075,17 @@ describe("export", () => {
         const root = { branch }
 
         importValue(root, "pending export")
+        const branchMeta = metaOf(branch)
         const result = exportValue(new Chain(root), ["branch"])
 
-        expect(metaOf(branch).shared).to.be(undefined)
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(branchMeta.shared).to.be(true)
+        expect(branchMeta.importBoundary.root).to.be(branch)
         expect(getRefCounter(branch)).to.be(undefined)
 
         pending.resolve("done")
         expect(await result).to.eql({ pending: "done" })
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(metaOf(branch)).to.be(branchMeta)
+        expect(branchMeta.importBoundary.root).to.be(branch)
     })
 
     it("exports promises inside sealed branches through mirrors", async () => {

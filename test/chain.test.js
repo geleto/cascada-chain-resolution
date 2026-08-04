@@ -16,6 +16,14 @@ import {
 } from "./support.js"
 
 describe("Chain root state", () => {
+    it("preserves the initial value's ownership and provenance", () => {
+        const value = { meaning: 42 }
+        const chain = new Chain(value)
+
+        expect(chain._state.value).to.be(value)
+        expect(metaOf(value)).to.be(undefined)
+    })
+
     it("owns its capability mode and closure", async () => {
         expect(thrownBy(() => new Chain({}, "yes"))).to.be.a(TypeError)
 

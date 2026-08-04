@@ -593,14 +593,14 @@ describe("enter", () => {
         expect(external.target).to.be(pending.promise)
     })
 
-    it("re-roots a read-only imported target for nested attribution", () => {
+    it("preserves imported attribution through read-only entry", () => {
         const child = { value: 1 }
         const target = { child }
         const external = { target }
         const chain = new Chain(importValue(external, "read target"))
         let extracted
 
-        expect(metaOf(target).importBoundary).to.be(undefined)
+        expect(metaOf(target).importBoundary.root).to.be(target)
         const result = enter(chain, ["target"], false, entered => {
             extracted = lookupPath(entered, ["child"])
             return "read"

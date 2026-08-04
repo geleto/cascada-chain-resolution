@@ -154,7 +154,7 @@ host-state holder is not added to the language graph.
 A read-only `enter(..., false, onEntered)` installs no gate and invokes its
 callback only after capturing a protected root. Every tracked root
 increments `META.readEnterCount`, including values already protected by
-sharing, import, or non-extensibility; primitives require no metadata.
+sharing or import; primitives require no metadata.
 If the target was reached through an inherited import boundary, entry first
 makes it an independently attributed imported root.
 Overlapping readers increment independently. Live mutation then uses
@@ -289,10 +289,11 @@ External JavaScript data has no such guarantees. It may contain repeated
 identities, cycles, non-extensible objects, and Promises at any depth. Every
 external value enters through `import(value, errorContext)`, which:
 
-- marks the imported boundary shared;
+- marks each imported tracked identity shared;
 - retains the attribution context;
 - prepares aliases and cycle-closing properties;
-- registers imported Promise continuations in issue order; and
+- registers imported Promise continuations in issue order;
+- stores newly needed metadata outside the host values; and
 - leaves subtree counters lazy until a branch query needs them.
 
 Language mutation never changes imported host objects; it copies the imported
@@ -366,9 +367,8 @@ diverge independently afterward.
 
 ## Copy-on-write
 
-A tracked node starts owned. Shared lookup, import, repeated imported identity,
-and non-extensibility establish shared ownership. A shared node is never
-mutated in place.
+A tracked node starts owned. Shared lookup and import establish shared
+ownership. A shared node is never mutated in place.
 
 For a write such as:
 
@@ -437,10 +437,9 @@ One META record per tracked node contains only the fields whose subsystems have
 become active: ownership marks, import state, Promise mirrors, cycle
 cuts, counters, and reverse parents.
 
-Inline mode stores META in an own non-enumerable Symbol property when possible.
-WeakMap mode stores it externally, and inline mode uses the same WeakMap
-fallback for non-extensible nodes. Both modes have identical behavior and run
-the complete test suite.
+Inline mode stores runtime-owned META in an own non-enumerable Symbol property.
+Imported META and all META in WeakMap mode live externally. Both modes have
+identical behavior and run the complete test suite.
 
 The detailed invariants and transitions live in
 [`counters-implementation.md`](docs/counters-implementation.md).

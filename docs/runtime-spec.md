@@ -98,8 +98,8 @@ Compiler-created tracked data is tree-shaped and singly owned.
 proven final ownership transfer. An extracted imported value remains imported
 and shared even when this argument is false.
 
-Non-extensible tracked nodes are implicitly shared. Mutation copies them before
-writing.
+Non-extensible tracked nodes are external and must enter through import. Their
+imported ownership, rather than their physical shape, causes copy-on-write.
 
 ## Copy-on-write
 
@@ -157,21 +157,23 @@ establishing its boundary and preparing every currently reachable synchronous
 part of the graph. For a Promise root, import returns a derived Promise that
 performs the same boundary work on its settled value before exposing it.
 
-An import boundary:
+Import preparation:
 
-- marks its tracked root shared;
+- gives each newly imported tracked identity a direct boundary and shared ownership;
 - stores the root and attribution context;
 - discovers repeated identities and cycle-closing properties;
 - registers continuations for nested Promises without awaiting them; and
 - does not build subtree counters.
 
-Newly reached host objects receive metadata recording completed preparation.
+Newly reached host objects receive externally stored metadata recording their
+provenance and completed preparation.
 Existing runtime metadata identifies a previously prepared or runtime-owned
-identity. The imported boundary is shared, so language mutation copy-on-writes
-before changing its data. A Promise property discovered inside that boundary is
+identity. Every imported identity remains externally owned, so language mutation
+copy-on-writes before changing its data even when that identity is used as a
+root. A Promise property discovered inside its boundary is
 not replaced: its mirror keeps the prepared logical value while the external
 property retains its Promise. Frozen imported data therefore follows the same
-path as writable imported data; its metadata uses the WeakMap fallback.
+path as writable imported data.
 
 External code must not mutate an imported graph after import. Native code must
 receive tracked Cascada data through `export`, not through a direct

@@ -106,6 +106,7 @@ describe("hasError", () => {
         const error = new Error("bad")
         const bad = Object.seal({ nested: { bad: error } })
 
+        importValue(clean, "clean frozen probe")
         importValue(pending, "pending frozen probe")
         importValue(bad, "error frozen probe")
 
@@ -130,6 +131,8 @@ describe("hasError", () => {
         const badPending = deferred()
         const cleanRoot = Object.seal({ pending: cleanPending.promise })
         const badRoot = Object.seal({ pending: badPending.promise })
+        importValue(cleanRoot, "clean sealed terminal")
+        importValue(badRoot, "bad sealed terminal")
 
         const cleanResult = hasError(new Chain(cleanRoot), ["pending"])
         const badResult = hasError(new Chain(badRoot), ["pending"])
@@ -139,8 +142,8 @@ describe("hasError", () => {
 
         expect(await cleanResult).to.be(false)
         expect(await badResult).to.be(true)
-        expect(cleanRoot.pending).to.be(undefined)
-        expect(badRoot.pending instanceof Error).to.be(true)
+        expect(cleanRoot.pending).to.be(cleanPending.promise)
+        expect(badRoot.pending).to.be(badPending.promise)
         expect(metaOf(cleanRoot).mirrors.pending).not.to.be(undefined)
         expect(metaOf(badRoot).mirrors.pending).not.to.be(undefined)
         expect(getRefCounter(cleanRoot)).to.be(undefined)

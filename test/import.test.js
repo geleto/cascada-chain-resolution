@@ -71,6 +71,47 @@ describe("import", () => {
         expect(next.delta.x).to.be(5)
     })
 
+    it("preserves imported descendants used as independent roots", () => {
+        const child = { value: 1 }
+        const sealed = Object.seal({ value: 1 })
+        importValue({ child, sealed }, "independent descendants")
+
+        for (const source of [child, sealed]) {
+            expect(metaOf(source).importBoundary.root).to.be(source)
+            const chain = new Chain(source)
+            assignPath(chain, ["value"], 2)
+
+            expect(chain._state.value).not.to.be(source)
+            expect(chain._state.value.value).to.be(2)
+            expect(source.value).to.be(1)
+        }
+    })
+
+    it("stores imported graph metadata without modifying host objects", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const root = { child }
+        const rootKeys = Reflect.ownKeys(root)
+        const childKeys = Reflect.ownKeys(child)
+
+        importValue(root, "external metadata")
+        buildRefIndex(root)
+
+        expect(Reflect.ownKeys(root)).to.eql(rootKeys)
+        expect(Reflect.ownKeys(child)).to.eql(childKeys)
+
+        const resolved = { done: true }
+        const resolvedKeys = Reflect.ownKeys(resolved)
+        pending.resolve(resolved)
+        await flushMicrotasks()
+
+        expect(child.pending).to.be(pending.promise)
+        expect(Reflect.ownKeys(root)).to.eql(rootKeys)
+        expect(Reflect.ownKeys(child)).to.eql(childKeys)
+        expect(Reflect.ownKeys(resolved)).to.eql(resolvedKeys)
+        expect(lookupPath(new Chain(child), ["pending"], false)).to.be(resolved)
+    })
+
     it("preserves imported Promises and writes runtime-owned results", async () => {
         const externalPending = deferred()
         const runtimePending = deferred()
@@ -167,13 +208,6 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("does not allocate metadata merely to share a clean non-extensible value", () => {
-        const value = Object.freeze({ x: 1 })
-
-        expect(lookupPath(new Chain(value), [])).to.be(value)
-        expect(metaOf(value)).to.be(undefined)
-    })
-
     it("prepares imported descendants and promises eagerly", async () => {
         const outer = deferred()
         const inner = deferred()
@@ -186,21 +220,21 @@ describe("import", () => {
         expect(imported).to.be(root)
         expect(metaOf(root).importBoundary.root).to.be(root)
         expect(metaOf(root).importBoundary.errorContext).to.be("recursive import")
-        expect(metaOf(child).shared).to.be(undefined)
-        expect(metaOf(child).importBoundary).to.be(undefined)
+        expect(metaOf(child).shared).to.be(true)
+        expect(metaOf(child).importBoundary.root).to.be(child)
         expect(metaOf(child).mirrors.value).not.to.be(undefined)
         expect(child.value).to.be(outer.promise)
 
         buildRefIndex(root)
-        expect(metaOf(child).shared).to.be(undefined)
-        expect(metaOf(child).importBoundary).to.be(undefined)
+        expect(metaOf(child).shared).to.be(true)
+        expect(metaOf(child).importBoundary.root).to.be(child)
 
         const resolved = { leaf, inner: inner.promise }
         outer.resolve(resolved)
         await flushMicrotasks()
 
         expect(metaOf(resolved).importBoundary.root).to.be(resolved)
-        expect(metaOf(leaf).shared).to.be(undefined)
+        expect(metaOf(leaf).shared).to.be(true)
 
         const nested = { done: true }
         inner.resolve(nested)
@@ -226,14 +260,15 @@ describe("import", () => {
         expect(metaOf(shared).shared).to.be(true)
     })
 
-    it("detects repeated imported identities across import calls", () => {
+    it("reuses imported identities across import calls", () => {
         const shared = { value: 1 }
 
         importValue({ first: shared }, "first owner")
-        expect(metaOf(shared).shared).to.be(undefined)
+        const meta = metaOf(shared)
+        expect(meta.shared).to.be(true)
 
         importValue({ second: shared }, "second owner")
-        expect(metaOf(shared).shared).to.be(true)
+        expect(metaOf(shared)).to.be(meta)
     })
 
     it("checks one imported promise under each captured ancestry", async () => {
@@ -281,7 +316,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved.nested).shared).to.be(undefined)
+        expect(metaOf(resolved.nested).shared).to.be(true)
     })
 
     it("keeps import preparation on its mirror when the same promise is reassigned", async () => {
@@ -388,7 +423,7 @@ describe("import", () => {
         expect(metaOf(internal).cycleCuts.has("self")).to.be(true)
         expect(metaOf(resolved).cycleCuts).to.be(undefined)
         expect(hasCycleCut(ancestor, "pending")).to.be(true)
-        expect(metaOf(unique).shared).to.be(undefined)
+        expect(metaOf(unique).shared).to.be(true)
         expect(getErrors(new Chain(root), [])).to.eql([])
         verifyRefCounts(root)
     })
@@ -419,7 +454,7 @@ describe("import", () => {
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
 
         expect(metaOf(root).cycleCuts).to.be(undefined)
-        expect(metaOf(branch).importBoundary).to.be(undefined)
+        expect(metaOf(branch).importBoundary.root).to.be(branch)
         verifyRefCounts(root, branch)
     })
 

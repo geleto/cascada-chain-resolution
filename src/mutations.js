@@ -99,12 +99,8 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
     // counters, and marks never enter the copy. The source keeps its own marks.
-    // Reused children from a shared branch are marked shared so their shared
-    // references stay protected -- except the path key, which the walk's
-    // inherited state protects until it is replaced or copied. Every tracked
-    // child of an imported node receives its own import boundary. A path
-    // child's next shallow copy omits that META, so every new path node remains
-    // language-owned without a separate path exception here.
+    // Reused off-path children are marked shared because both copies retain
+    // them. The path child is replaced or copied by the current walk.
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
         const retainedOffPath = key !== pathKeyString
         const sourceMirror = promiseMirrors.getPromiseMirror(source, key)
@@ -135,10 +131,6 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
                 propertyImportBoundary,
                 prepareImportedValue,
             )
-        } else if (propertyImportBoundary && languageValues.isTracked(value)) {
-            // The source child remains external; a later shallow copy of a path
-            // child drops this boundary together with its other META.
-            imports.import(value, propertyImportBoundary.errorContext)
         } else if (retainedOffPath && languageValues.isTracked(value)) {
             metadata.markShared(value)
         }

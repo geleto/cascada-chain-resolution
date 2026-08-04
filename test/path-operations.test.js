@@ -768,6 +768,7 @@ describe("path assignment", () => {
     it("copies frozen arrays before mutating nested values", () => {
         const child = { x: 1 }
         const root = Object.freeze([child])
+        importValue(root, "frozen nested mutation")
         const chain = new Chain(root)
 
         assignPath(chain, [0, "x"], 2)

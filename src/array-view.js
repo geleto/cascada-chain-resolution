@@ -34,7 +34,7 @@ class ArrayView {
         return view
     }
 
-    static canGrowEnd(source, count, writesProperties = false) {
+    static canGrowEnd(source, count) {
         if (count === 0) return true
         const projection = projectionOf(source)
         const backing = backingOf(projection)
@@ -43,14 +43,11 @@ class ArrayView {
             projection._end + projection._storage.baseIndex !== backing.length
         ) return false
         if (backing.length + count > 0xffffffff) return false
-        if (!Object.getOwnPropertyDescriptor(backing, "length").writable) {
-            return false
-        }
-        return !writesProperties || Object.isExtensible(backing)
+        return Object.getOwnPropertyDescriptor(backing, "length").writable
     }
 
     static tryExtendEnd(source, count, beforeWrite) {
-        if (!ArrayView.canGrowEnd(source, count, true)) return
+        if (!ArrayView.canGrowEnd(source, count)) return
         return ArrayView.attachTo(source).#extendEnd(count, beforeWrite)
     }
 
@@ -69,7 +66,6 @@ class ArrayView {
         ) return false
         if (
             backing.length + count > 0xffffffff ||
-            !Object.isExtensible(backing) ||
             !Object.getOwnPropertyDescriptor(backing, "length").writable
         ) return false
 

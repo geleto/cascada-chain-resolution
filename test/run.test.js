@@ -502,7 +502,8 @@ describe("run", () => {
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
         expect(Array.isArray(middleConcat)).to.be(true)
-        expect(metaOf(nestedSource.values).importBoundary).to.be(undefined)
+        expect(metaOf(nestedSource.values).importBoundary.root)
+            .to.be(nestedSource.values)
         expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])
@@ -929,6 +930,17 @@ describe("run", () => {
         expect(exportValue(chain, [])).to.eql({
             values: [1, 2, 3],
         })
+    })
+
+    it("keeps independently rooted imported Arrays materialized", () => {
+        const values = [1, 2, 3]
+        importValue({ values })
+
+        const result = run(new Chain(values), [], "slice", false, 1)
+
+        expect(Array.isArray(result)).to.be(true)
+        expect(result).to.eql([2, 3])
+        expect(values).to.eql([1, 2, 3])
     })
 
     it("gates delayed mutation preparation and returns its result separately", async () => {
