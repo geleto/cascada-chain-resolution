@@ -1491,23 +1491,43 @@ describe("run", () => {
         }
     })
 
-    it("keeps a temporary method receiver out of the ref index", () => {
+    it("keeps a temporary method receiver outside ownership", async () => {
         const element = { value: 1 }
-        const chain = new Chain({ items: [element] })
-        run(chain, ["items"], "push", false, 2)
-        hasError(chain, [])
-        const items = chain._state.value.items
-        Object.defineProperty(items, "size", {
+        const argument = deferred()
+        const backing = [0]
+        Object.defineProperty(backing, "read", {
             enumerable: false,
-            value() {
-                return this.length
+            value(addend) {
+                return this[1].value + addend
             },
         })
+        const first = run(new Chain(backing), [], "push", false)
+        const viewChain = new Chain(first)
+        assignPath(viewChain, ["1"], element)
+        const items = viewChain._state.value
+        const chain = new Chain({ items })
+        hasError(chain, [])
 
-        expect(run(chain, ["items"], "size", false)).to.be(1)
+        const result = run(
+            chain,
+            ["items"],
+            "read",
+            false,
+            argument.promise,
+        )
+        expect(metaOf(element).shared).to.be(undefined)
+        assignPath(chain, ["items", "1", "value"], 2)
+        argument.resolve(0)
 
+        expect(await result).to.be(1)
+        expect(metaOf(element).shared).to.be(undefined)
         expect([...getRefCounter(element).parents.keys()]).to.eql([items])
-        verifyRefCounts(chain._state.value)
+
+        importValue(items, "temporary method receiver")
+        expect(metaOf(element).importBoundary).to.be(undefined)
+        expect(run(new Chain(items), [], "read", false, 0)).to.be(1)
+        expect(metaOf(element).importBoundary).to.be(undefined)
+        verifyRefCounts(chain._state.value, items)
     })
 
     it("reports a bookkeeping failure during replay fatally", () => {

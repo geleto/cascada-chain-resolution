@@ -65,6 +65,8 @@ function runObservation(chain, path, method, args) {
                 arrayViews.requiresArrayMaterialization(targetValue)
                     ? arrayRemaps.createArrayFromRemap(
                         arrayRemaps.createInitialRemap(targetValue),
+                        undefined,
+                        false,
                     )
                     : targetValue
             const stringMethod =

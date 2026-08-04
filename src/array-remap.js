@@ -220,10 +220,12 @@ function placeOrigin(
         return
     }
 
-    if (origin.importBoundary && languageValues.isTracked(value)) {
-        imports.import(value, origin.importBoundary.errorContext)
-    } else if (retained) {
-        metadata.markShared(value)
+    if (retained) {
+        if (origin.importBoundary && languageValues.isTracked(value)) {
+            imports.import(value, origin.importBoundary.errorContext)
+        } else {
+            metadata.markShared(value)
+        }
     }
     propertyTransitions.replaceProperty(
         destination,

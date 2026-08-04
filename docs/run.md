@@ -31,7 +31,7 @@ copyWithin fill pop push reverse shift sort splice unshift
 
 A logical Array mutator is selected intrinsically by name even when a receiver property shadows that name. The same-named method on a non-Array object remains an ordinary observation.
 
-Method lookup for a logical Array uses the backing Array, so a view and its source identity select the same executable surface. The materialized receiver passed to an ordinary selected method is a temporary native shape that is never published or ref-indexed.
+Method lookup for a logical Array uses the backing Array, so a view and its source identity select the same executable surface. The materialized receiver passed to an ordinary selected method is a temporary native shape that is never published, ref-indexed, or treated as another language owner.
 
 Ordinary lookup preserves JavaScript shadowing. An own enumerable language property shadows the prototype but is never an executable method. Otherwise normal property access selects a callable own non-enumerable or prototype value, including one supplied by a getter. Lookup and the selected method must be trusted read-only and must not retain inputs or cause external side effects; other side-effecting methods are unsupported.
 
