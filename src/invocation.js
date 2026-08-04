@@ -28,21 +28,16 @@ function invokeObservationMethodWithExportedArgs(
     callable,
     thisValue,
     args,
-    validatePreparedArguments,
 ) {
     return resolution.continueOperationsUnlessPoison(
         args.map(exportArgument),
-        preparedArgs => {
-            const error = validatePreparedArguments?.(preparedArgs)
-            if (error) return error
-            return resolution.resolveInitialValueOrPoison(
-                invokeDataFunctionOrPoison(
-                    callable,
-                    thisValue,
-                    preparedArgs,
-                ),
-            )
-        },
+        preparedArgs => resolution.resolveInitialValueOrPoison(
+            invokeDataFunctionOrPoison(
+                callable,
+                thisValue,
+                preparedArgs,
+            ),
+        ),
     )
 }
 

@@ -16,7 +16,6 @@ import {
     walkObservationPath,
 } from "./observations.js"
 import * as resolution from "./resolution.js"
-import * as stringInvocation from "./string-invocation.js"
 
 function run(chain, path, method, mutateArray, ...args) {
     if (typeof method !== "string") {
@@ -69,10 +68,6 @@ function runObservation(chain, path, method, args) {
                         false,
                     )
                     : targetValue
-            const stringMethod =
-                typeof targetValue === "string" &&
-                stringInvocation.getStandardStringMethod(method, callable)
-
             const operationResult = callable === undefined
                 ? arrayInvocation.invokeArrayObservationMethod(
                     targetValue,
@@ -80,22 +75,16 @@ function runObservation(chain, path, method, args) {
                     args,
                     importBoundary,
                 )
-                : stringMethod
-                    ? stringInvocation.invokeStringObservationMethod(
-                        thisValue,
-                        stringMethod,
-                        args,
-                    )
-                    : invocation.invokeObservationMethodWithExportedArgs(
-                        callable,
-                        thisValue,
-                        args,
-                    )
+                : invocation.invokeObservationMethodWithExportedArgs(
+                    callable,
+                    thisValue,
+                    args,
+                )
 
             return finishObservation(
                 thisValue === targetValue ? targetValue : undefined,
                 operationResult,
-                callable !== undefined && !stringMethod,
+                callable !== undefined,
             )
         },
     )
@@ -103,11 +92,11 @@ function runObservation(chain, path, method, args) {
     function finishObservation(
         leaseValue,
         operationResult,
-        importNativeCallResult,
+        importResult,
     ) {
         const admit = value => {
             if (!languageValues.isTracked(value)) return value
-            if (importNativeCallResult) {
+            if (importResult) {
                 imports.import(value, "run method result")
             }
             return value

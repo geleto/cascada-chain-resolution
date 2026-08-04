@@ -171,7 +171,7 @@ describe("run", () => {
         })
     })
 
-    it("uses ordinary String invocation and allows callbacks", async () => {
+    it("uses ordinary String invocation and imports results", async () => {
         const replacement = deferred()
         const chain = new Chain("abc")
         const replacementResult = run(
@@ -197,27 +197,12 @@ describe("run", () => {
         const partsChain = new Chain(parts)
         run(partsChain, [], "push", true, "c")
 
-        expect(partsChain._state.value).to.be(parts)
-        expect(parts).to.eql(["a", "b", "c"])
+        expect(parts).to.eql(["a", "b"])
+        expect(partsChain._state.value).to.eql(["a", "b", "c"])
+        expect(partsChain._state.value).not.to.be(parts)
     })
 
-    it("allows intrinsic RegExp dispatch but rejects custom protocols", async () => {
-        const crossRealmRegExp = runInNewContext("/b/")
-        expect(run(
-            new Chain("abc"),
-            [],
-            "match",
-            false,
-            /b/,
-        )[0]).to.be("b")
-        expect(run(
-            new Chain("abc"),
-            [],
-            "search",
-            false,
-            crossRealmRegExp,
-        )).to.be(1)
-
+    it("allows String dispatch protocols and imports their results", () => {
         let calls = 0
         const external = { value: 1 }
         class Matcher {
@@ -226,74 +211,42 @@ describe("run", () => {
                 return external
             }
         }
-        expect(run(
+        const result = run(
             new Chain("abc"),
             [],
             "match",
             false,
             new Matcher(),
-        ) instanceof Error).to.be(true)
+        )
+        const resultChain = new Chain(result)
+        assignPath(resultChain, ["value"], 2)
 
-        const pending = deferred()
-        const delayed = run(
+        expect(calls).to.be(1)
+        expect(result).to.be(external)
+        expect(external).to.eql({ value: 1 })
+        expect(resultChain._state.value).to.eql({ value: 2 })
+        expect(resultChain._state.value).not.to.be(external)
+    })
+
+    it("imports results delegated through intrinsic String methods", () => {
+        const external = ["a"]
+        const matcher = /a/
+        matcher.exec = () => external
+
+        const result = run(
             new Chain("abc"),
             [],
             "match",
             false,
-            pending.promise,
+            matcher,
         )
-        pending.resolve(new Matcher())
-        expect(await delayed instanceof Error).to.be(true)
-        expect(calls).to.be(0)
-        expect(external).to.eql({ value: 1 })
-    })
+        const resultChain = new Chain(result)
+        assignPath(resultChain, ["0"], "changed")
 
-    it("imports custom and replaced String method results", () => {
-        class Separator {
-            [Symbol.split]() {
-                throw new Error("Custom split protocol was invoked")
-            }
-        }
-        for (const method of ["cascadaResult", "split"]) {
-            const previous = Object.getOwnPropertyDescriptor(
-                String.prototype,
-                method,
-            )
-            const external = { value: 1 }
-            Object.defineProperty(String.prototype, method, {
-                configurable: true,
-                value() {
-                    return external
-                },
-            })
-
-            try {
-                const result = run(
-                    new Chain("source"),
-                    [],
-                    method,
-                    false,
-                    ...(method === "split" ? [new Separator()] : []),
-                )
-                const resultChain = new Chain(result)
-                assignPath(resultChain, ["value"], 2)
-
-                expect(result).to.be(external)
-                expect(external).to.eql({ value: 1 })
-                expect(resultChain._state.value).to.eql({ value: 2 })
-                expect(resultChain._state.value).not.to.be(external)
-            } finally {
-                if (previous) {
-                    Object.defineProperty(
-                        String.prototype,
-                        method,
-                        previous,
-                    )
-                } else {
-                    delete String.prototype[method]
-                }
-            }
-        }
+        expect(result).to.be(external)
+        expect(external).to.eql(["a"])
+        expect(resultChain._state.value).to.eql(["changed"])
+        expect(resultChain._state.value).not.to.be(external)
     })
 
     it("uses normal property access for ordinary methods", () => {

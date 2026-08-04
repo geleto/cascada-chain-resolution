@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 
-import { STRING_METHODS } from "../src/string-methods.js"
 import { Chain, run } from "./support.js"
 import {
     VALUES,
@@ -87,7 +86,6 @@ describe("String native equivalence", () => {
             Object.keys(STRING_METHOD_FACTS).sort(),
             expected,
         )
-        assert.deepEqual(Object.keys(STRING_METHODS).sort(), expected)
     })
 
     for (const mode of STRING_MODES) {
