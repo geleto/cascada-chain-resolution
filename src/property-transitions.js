@@ -6,8 +6,8 @@ import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as refcounts from "./refcounts.js"
 
-// Coordinate physical property state while refcounts transparently account
-// for the same update when the owner already belongs to an index.
+// Coordinate logical property state while refcounts transparently account for
+// the same update when the owner already belongs to an index.
 
 function replaceProperty(
     owner, key, propertyMirror, newValue, cycleCut = false,
@@ -33,7 +33,7 @@ function setMirrorValue(
     key,
     mirror,
     newValue,
-    prepareImportedValue,
+    cycleCut = false,
     sharedBacking = false,
 ) {
     if (languageValues.isPromise(newValue)) {
@@ -41,14 +41,10 @@ function setMirrorValue(
             new Error("A Promise requires a fresh property version"),
         )
     }
-    const cycleCut = prepareImportedValue?.(
-        newValue, mirror.importBoundary,
-    )
     const isLive = mirror.isLive(owner, key)
-    if (isLive) {
-        const importBoundary = metadata.nodeImportBoundary(
-            newValue, mirror.importBoundary,
-        )
+    const resolvesPrivately = mirror.importBoundary !== undefined
+    if (isLive && !resolvesPrivately) {
+        const importBoundary = metadata.nodeImportBoundary(newValue)
         languageProperties.assertCanUpdatePromiseProperty(
             owner,
             key,
@@ -62,14 +58,14 @@ function setMirrorValue(
             ? refcounts.commitPendingPromiseEdge
             : refcounts.commitLiveEdge
         commit(owner, key, () => {
-            languageProperties.writeLanguageProperty(owner, key, newValue)
+            if (resolvesPrivately) mirror.resolvedValue = newValue
+            else languageProperties.writeLanguageProperty(owner, key, newValue)
             if (cycleCut) imports.setCycleCut(owner, key)
             else imports.clearCycleCut(owner, key)
         })
     } else {
         mirror.detachedValue = newValue
     }
-    delete mirror.importBoundary
 }
 
 function removeProperty(owner, key, remove) {

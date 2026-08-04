@@ -112,10 +112,10 @@ At settlement the first resolver:
 5. marks a resolved tracked value with the inherited import boundary; and
 6. publishes the prepared value and placement cut in one transition.
 
-If the mirror remains live, publication replaces the physical Promise property.
-If a later operation already replaced that property, publication updates only
-the mirror's private `detachedValue`. It never changes the former owner or its
-counters.
+If the mirror remains live, publication preserves the imported Promise property
+and stores the logical value in `resolvedValue`. If a later operation already
+replaced that property, publication updates only `detachedValue`. It never
+changes the former owner.
 
 Later operations registered on the same Promise use it only as a FIFO readiness
 signal. They ignore its settlement payload and read the latest live or detached
@@ -135,9 +135,11 @@ A match publishes a cut on the new owner/key placement.
 
 A fresh assigned or forked Promise captures its destination ancestry at birth.
 Its first resolver performs the equivalent attachment scan before publishing
-the value. An already imported pending branch needs no second asynchronous
-classifier: its original import resolver is already first in FIFO order and
-prepares the value before later consumers can observe it.
+the value. A COW fork remains runtime-owned: import attribution is used only
+during that scan, then its prepared result is written into the copied property.
+An already imported pending branch needs no second asynchronous classifier: its
+original import resolver is already first in FIFO order and prepares the value
+before later consumers can observe it.
 
 When a pending attachment is captured, the destination root is marked shared.
 A later mutation therefore COWs away and cannot alter the issue-time ancestry.
@@ -166,21 +168,14 @@ The raw graph remains available:
 Replacing or deleting the exact cut property removes its cut. COW reconstructs
 the new placements instead of copying cut metadata blindly.
 
-## Physical host data
+## External host data
 
-Cycle discovery and ref-index construction do not change language-visible
-string-key data, though inline metadata may add a non-enumerable Symbol.
-Language mutation first COWs and therefore does not write the imported object.
-
-Promise settlement is the deliberate exception. A live Promise placement must
-remain an own enumerable writable data property, and its first resolver writes
-the prepared value there. Existing writable properties on sealed or otherwise
-non-extensible holders are valid. A missing, accessor, non-enumerable, or
-non-writable Promise property is a fatal host-boundary violation.
-
-Ordinary frozen data remains valid when it contains no Promise property that
-needs settlement. Native code receives runtime data only through `export`,
-which returns a metadata-free copy.
+Cycle discovery, ref-index construction, language mutation, and Promise
+settlement do not change imported string-key data. A settled Promise property's
+mirror stores its logical value; frozen and writable imported objects use the
+same path. Inline metadata falls back to the WeakMap for non-extensible values.
+Native code receives runtime data only through `export`, which returns a
+metadata-free copy.
 
 ## Enumerable `__proto__`
 
@@ -205,6 +200,6 @@ imported attachment, cycle cuts, and import-specific first resolvers.
 
 `src/meta.js` owns metadata and ownership marks.
 `src/promise-mirrors.js` owns live/detached property-version identity.
-`src/property-transitions.js` coordinates physical property and mirror changes.
+`src/property-transitions.js` coordinates logical property and mirror changes.
 `src/refcounts.js` consumes the prepared projection and owns atomic count and
 parent-edge accounting around those changes.

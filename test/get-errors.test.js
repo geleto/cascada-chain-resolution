@@ -11,6 +11,7 @@ import {
     getRefCounter,
     hasError,
     importValue,
+    lookupPath,
     metaOf,
     exportValue,
     thrownBy,
@@ -214,7 +215,10 @@ describe("getErrors", () => {
             await result,
             [directError, promisedError],
         )
-        expect(sealed.pending).to.eql({ promisedError })
+        expect(sealed.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.eql({
+            promisedError,
+        })
         verifyRefCounts(second)
     })
 
@@ -634,7 +638,8 @@ describe("getErrors", () => {
         const errors = await result
         expect(errors).to.eql([])
         expect(chain._state.value.pending).to.be("replacement")
-        expect(branch.pending).to.be(branch)
+        expect(branch.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(branch), ["pending"], false)).to.be(branch)
     })
 
     it("does not report a detached terminal cycle after a COW overwrite", async () => {

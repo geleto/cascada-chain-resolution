@@ -168,12 +168,10 @@ An import boundary:
 Newly reached host objects receive metadata recording completed preparation.
 Existing runtime metadata identifies a previously prepared or runtime-owned
 identity. The imported boundary is shared, so language mutation copy-on-writes
-before changing its data. Promise settlement is an ownership handoff: every
-Promise property discovered by import must remain an own enumerable writable
-data property, and its first resolver writes the prepared value physically.
-Ordinary non-Promise frozen data remains valid. A non-writable, accessor,
-non-enumerable, or later-deleted Promise property is a fatal host-contract
-violation.
+before changing its data. A Promise property discovered inside that boundary is
+not replaced: its mirror keeps the prepared logical value while the external
+property retains its Promise. Frozen imported data therefore follows the same
+path as writable imported data; its metadata uses the WeakMap fallback.
 
 External code must not mutate an imported graph after import. Native code must
 receive tracked Cascada data through `export`, not through a direct
@@ -252,26 +250,26 @@ Promise again, copying the property, or retaining it in a distinct ArrayView
 creates a new mirror at that operation's FIFO position. ArrayViews may still
 share the property's physical backing slot.
 
-While a mirror is live, its property is authoritative. An assigned or
-discovered mirror consumes fulfillment or converts rejection to Error, prepares
-the value, and publishes it. A fork instead uses the canonical Promise only as
-a FIFO readiness signal and samples its source mirror at the fork position.
-Later operations likewise read the latest mirror state rather than raw
-settlement. Ordinary reads of a resolved property do not consult the retained
-mirror.
+While a mirror is live, its property is normally authoritative. If the mirror
+carries an import boundary, resolution preserves the external property and
+stores the logical result in `resolvedValue`; the boundary remains with that
+imported placement. An assigned or discovered mirror consumes fulfillment or
+converts rejection to Error and prepares the value. A fork instead uses the
+canonical Promise only as a FIFO readiness signal, samples its source mirror at
+the fork position, and writes the result into its runtime-owned destination.
 
 A retained ArrayView mirror may run after the source mirror has already changed
 their shared backing slot. Its settlement therefore replaces that logical
 edge's known pending-Promise contribution instead of recapturing the physical
 old value. The mirrors and their later operations remain independent.
 
-A later overwrite or deletion detaches the mirror and captures the property's
-current value in `detachedValue`. Resolvers already registered for that property
-version continue against its private value and cannot affect a replacement
-property.
+A later overwrite or deletion detaches the mirror and moves its current logical
+value to `detachedValue`. Resolvers already registered for that property version
+continue against its private value and cannot affect a replacement property.
 
-The mirror stores no source Promise, parent, key, or duplicate live value. It
-retains only unresolved import context and, after detachment, `detachedValue`.
+The mirror stores no source Promise, parent, or key. It retains an import
+boundary only for an imported property, optional `resolvedValue` for that
+preserved live property, or `detachedValue` after detachment.
 
 ## Errors and fatal failures
 

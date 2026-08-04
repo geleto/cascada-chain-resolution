@@ -366,6 +366,22 @@ describe("run", () => {
         expect(exportValue(new Chain(source), [])).to.eql([0, 1, 2, 3, 4])
     })
 
+    it("derives views from physically resolved COW Promise forks", async () => {
+        const imported = importValue({ value: 1 }, "fork result")
+        const pending = deferred()
+        const chain = new Chain({ values: [pending.promise, "b"] })
+
+        lookupPath(chain, ["values"])
+        assignPath(chain, ["values", "1"], "B")
+        pending.resolve(imported)
+        await flushMicrotasks()
+
+        const values = chain._state.value.values
+        const sliced = run(new Chain(values), [], "slice", false, 0, 2)
+        expect(values[0]).to.be(imported)
+        expect(lookupPath(new Chain(sliced), ["0"], false)).to.be(imported)
+    })
+
     it("appends concat items to the receiver backing", () => {
         const left = [1, , 3]
         const right = [, 5]
@@ -445,6 +461,7 @@ describe("run", () => {
     it("materializes ineligible slice and concat results", () => {
         const slicedSource = importValue([1, 2, 3])
         const concatSource = importValue([1, 2])
+        const nestedSource = importValue({ values: [1, 2, 3] })
         const middle = run(
             new Chain([1, 2, 3]),
             [],
@@ -474,13 +491,23 @@ describe("run", () => {
             false,
             [4],
         )
+        const nestedSlice = run(
+            new Chain(nestedSource),
+            ["values"],
+            "slice",
+            false,
+            1,
+        )
 
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
         expect(Array.isArray(middleConcat)).to.be(true)
+        expect(metaOf(nestedSource.values).importBoundary).to.be(undefined)
+        expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])
         expect(middleConcat).to.eql([1, 2, 4])
+        expect(nestedSlice).to.eql([2, 3])
         expect(slicedSource).to.eql([1, 2, 3])
         expect(concatSource).to.eql([1, 2])
     })

@@ -161,15 +161,18 @@ describe("data class copy-on-write", () => {
         await flushMicrotasks()
 
         expect(copy instanceof PendingPoint).to.be(true)
-        expect(source.pending).to.eql({ done: true })
-        expect(copy.pending).to.eql({ done: true })
-        expect(source.pending).to.be(copy.pending)
+        const sourceValue = lookupPath(new Chain(source), ["pending"], false)
+        const copyValue = lookupPath(new Chain(copy), ["pending"], false)
+        expect(source.pending).to.be(pending.promise)
+        expect(copy.pending).to.be(sourceValue)
+        expect(sourceValue).to.eql({ done: true })
+        expect(copyValue).to.be(sourceValue)
 
         assignPath(chain, ["pending", "done"], false)
 
-        expect(source.pending.done).to.be(true)
+        expect(sourceValue.done).to.be(true)
         expect(chain._state.value.pending.done).to.be(false)
-        expect(source.pending).not.to.be(chain._state.value.pending)
+        expect(sourceValue).not.to.be(chain._state.value.pending)
         verifyRefCounts(source, copy)
     })
 
@@ -197,13 +200,19 @@ describe("data class copy-on-write", () => {
         pending.resolve({ done: true })
         await flushMicrotasks()
 
-        expect(source.pending.done).to.be(true)
+        expect(lookupPath(new Chain(source), ["pending", "done"], false)).to.be(
+            true,
+        )
         expect(reassigned.pending.done).to.be(true)
-        expect(fork.pending.done).to.be(true)
+        expect(lookupPath(new Chain(fork), ["pending", "done"], false)).to.be(
+            true,
+        )
 
         assignPath(chain, ["pending", "done"], false)
 
-        expect(source.pending.done).to.be(true)
+        expect(lookupPath(new Chain(source), ["pending", "done"], false)).to.be(
+            true,
+        )
         expect(reassigned.pending.done).to.be(true)
         expect(chain._state.value.pending.done).to.be(false)
         verifyRefCounts(source, reassigned, fork, chain._state.value)

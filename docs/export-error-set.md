@@ -83,13 +83,12 @@ Promise may expose a different Error.
 The raw walk begins immediately:
 
 - synchronously available data is copied before export returns;
-- a physical Promise property registers through its exact `PromiseMirror`;
+- a logical Promise property registers through its exact `PromiseMirror`;
 - its first resolver runs before export's later readiness resolver;
-- export then reads the latest value from the live property or captured
-  `detachedValue`;
+- export then reads the latest live logical value or captured `detachedValue`;
 - recursively exposed Promises are registered synchronously in the parent
   resolver; and
-- an already resolved physical property is read normally and causes no
+- an already resolved logical property is read synchronously and causes no
   duplicate Promise registration.
 
 Every callable thenable has one canonical native Promise. Every resolver uses
@@ -119,12 +118,12 @@ the Chain.
 ## Mirror and metadata effects
 
 Export creates no shared mark, ref index, or settlement state. It may install a
-Promise mirror when raw traversal first discovers a physical Promise on an
-unindexed owner. Registration is synchronous and preserves FIFO order.
+Promise mirror when traversal first discovers a logical Promise on an unindexed
+owner. Registration is synchronous and preserves FIFO order.
 
 Mirror acquisition enforces downward closure:
 
-- an indexed owner must already have the mirror for every physical Promise
+- an indexed owner must already have the mirror for every logical Promise
   property; absence is fatal corruption; and
 - an unindexed owner may lazily create the mirror.
 
@@ -202,8 +201,8 @@ The inline and WeakMap suites cover:
 - live and detached Promise property versions;
 - a missing required mirror below an indexed owner failing fatally;
 - an unindexed owner discovered by export and indexed before settlement;
-- valid writable Promise properties on sealed holders and invalid frozen or
-  accessor properties;
+- writable runtime Promise properties, non-writable imported Promise data
+  properties, and invalid accessor properties;
 - concurrent exports with independent state;
 - metadata-free successful output; and
 - fatal internal readiness rejection.

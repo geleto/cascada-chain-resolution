@@ -2,6 +2,7 @@ import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import { hasCycleCut } from "../src/import.js"
+import { detachPromiseMirror } from "../src/promise-mirrors.js"
 import { setMirrorValue } from "../src/property-transitions.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -363,6 +364,29 @@ describe("promise mirrors and lookupPath", () => {
         expect(detachedRoot.value).to.be("replacement")
     })
 
+    it("moves an imported overlay into detached mirror state", async () => {
+        const pending = deferred()
+        const resolved = { value: 1 }
+        const root = { value: pending.promise }
+        importValue(root, "detached imported Promise")
+        const mirror = metaOf(root).mirrors.value
+
+        pending.resolve(resolved)
+        await flushMicrotasks()
+
+        expect(root.value).to.be(pending.promise)
+        expect(mirror.getValue(root, "value")).to.be(resolved)
+        expect(Object.hasOwn(mirror, "resolvedValue")).to.be(true)
+
+        detachPromiseMirror(root, "value")
+
+        expect(mirror.isLive(root, "value")).to.be(false)
+        expect(mirror.getValue(root, "value")).to.be(resolved)
+        expect(mirror.detachedValue).to.be(resolved)
+        expect(Object.hasOwn(mirror, "resolvedValue")).to.be(false)
+        expect(root.value).to.be(pending.promise)
+    })
+
     it("writes through existing writable properties on sealed holders", async () => {
         const pending = deferred()
         const error = new Error("settled")
@@ -427,7 +451,8 @@ describe("promise mirrors and lookupPath", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
-        expect(root.value).to.be(root)
+        expect(root.value).to.be(pending.promise)
+        expect(lookupPath(new Chain(root), ["value"], false)).to.be(root)
         expect(publishedCycleCut).to.be(true)
         expect(countsAfterPublication).to.eql([0, 0, 1])
         expect(hasCycleCut(root, "value")).to.be(true)
@@ -1228,7 +1253,8 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.again).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
-        expect(resolved.again).to.be(resolved)
+        expect(resolved.again).to.be(pending.promise)
+        expect(lookupPath(new Chain(resolved), ["again"], false)).to.be(resolved)
         expect(hasCycleCut(resolved, "again")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
@@ -1253,7 +1279,10 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue).not.to.be(root)
         expect(exportedValue.value.next.back).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
-        expect(firstValue.next).to.be(secondValue)
+        expect(firstValue.next).to.be(second.promise)
+        expect(lookupPath(new Chain(firstValue), ["next"], false)).to.be(
+            secondValue,
+        )
         expect(hasCycleCut(firstValue, "next")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)

@@ -208,7 +208,6 @@ function placeOrigin(
                 sourceMirror: origin.mirror,
                 destinationKey: stringKey,
                 install: false,
-                fallbackImportBoundary: origin.importBoundary,
             },
         )
         propertyTransitions.replaceProperty(

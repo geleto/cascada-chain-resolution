@@ -106,9 +106,12 @@ function verifyCycleCuts(node) {
             node,
             key,
         )
-        if (!mirror || !descriptor?.enumerable || !("value" in descriptor) ||
-            !descriptor.writable) {
-            fatal("Live Promise mirror requires a writable language property")
+        if (!mirror || !descriptor?.enumerable ||
+            !("value" in descriptor) ||
+            (!descriptor.writable && mirror.importBoundary === undefined) ||
+            (Object.hasOwn(mirror, "resolvedValue") &&
+                mirror.importBoundary === undefined)) {
+            fatal("Live Promise mirror has no valid language property")
         }
     }
 }

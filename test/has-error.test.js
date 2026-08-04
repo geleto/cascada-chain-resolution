@@ -120,7 +120,8 @@ describe("hasError", () => {
         expect(getRefCounter(bad.nested).errorCount).to.be(1)
         expect(await pendingResult).to.be(false)
         expect(getRefCounter(pending).promiseCount).to.be(0)
-        expect(pending.pending).to.be(1)
+        expect(pending.pending instanceof Promise).to.be(true)
+        expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
         verifyRefCounts(clean, pending, bad)
     })
 
@@ -690,7 +691,8 @@ describe("hasError", () => {
 
         expect(await result).to.be(false)
         expect(chain._state.value.branch.pending).to.be("fixed")
-        expect(branch.pending).to.be(branch)
+        expect(branch.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(branch), ["pending"], false)).to.be(branch)
         verifyRefCounts(root, chain._state.value)
     })
 

@@ -44,19 +44,19 @@ reverse-edge bookkeeping:
 
 | Property state | Contribution |
 | --- | --- |
-| Physical Promise | `[1, 0, 0]` |
+| Logical Promise | `[1, 0, 0]` |
 | Published cycle cut | `[0, 0, 1]` |
 | Error | `[0, 1, 0]` |
 | Indexed tracked child | Child totals |
 | Primitive or missing value | `[0, 0, 0]` |
 
-Promises and cycle cuts return no child. Other states return the physical
-value; only an indexed tracked child receives a reverse parent edge. A physical
-Promise and a cycle cut on the same placement are invalid.
+Promises and cycle cuts return no child. Other states return the logical value;
+only an indexed tracked child receives a reverse parent edge. A logical Promise
+and a cycle cut on the same placement are invalid.
 
 A retained live mirror does not alter the contribution after its first resolver
-has replaced the Promise. It remains only as property-version identity for
-already-registered resolvers.
+has published the logical result. It remains only as property-version identity
+for already-registered resolvers.
 
 Distinct ArrayViews have distinct property mirrors. A retained view mirror may
 settle after its source mirror has already changed their shared backing slot;
@@ -82,7 +82,7 @@ properties have mirrors plus their import consumers. Details live in
 Index construction walks the prepared graph as cut-separated projected
 components:
 
-1. A physical Promise contributes `[1, 0, 0]` and is not entered.
+1. A logical Promise contributes `[1, 0, 0]` and is not entered.
 2. A cycle cut contributes `[0, 0, 1]`, installs no reverse edge, and queues its
    tracked target as the root of another component.
 3. An ordinary tracked child is indexed recursively and receives a reverse
@@ -113,7 +113,8 @@ does not widen that work to the stored import root or unrelated imported
 siblings.
 
 Frozen, sealed, and otherwise non-extensible nodes use the same index rules.
-Promise properties must still be writable; ordinary frozen values are valid.
+Imported Promise data properties need not be writable. Runtime-owned Promise
+properties write through and therefore must be writable.
 
 ## Property transitions
 
@@ -124,15 +125,15 @@ asks refcounting to index the entering child when the owner is already indexed,
 then publishes the property and its optional Promise mirror through one
 live-edge transaction.
 
-Descriptor failures are checked before preparation. A fatal preparation leaves
-the attached edge unchanged.
+The property shape is checked before mirror creation and a live write-through
+is revalidated before its commit. A fatal transition does not publish an edge.
 
 Every live assignment, deletion, cycle-cut change, and ordinary Promise resolver
 update is performed by `src/property-transitions.js` or `src/import.js` inside
 one `refcounts.commitLiveEdge` transaction:
 
 1. Snapshot the old projected counts and counted child.
-2. Perform the validated physical/mirror/cycle update.
+2. Perform the validated logical property, mirror, and cycle-cut update.
 3. Read the new projected counts and counted child.
 4. Remove and add reverse edges as needed.
 5. Propagate exactly one count delta.
@@ -160,45 +161,45 @@ parent maps, or placement-specific cycle cuts.
 ## Promise mirrors
 
 One internal `PromiseMirror` represents one Promise-backed property version.
-While it is live, the physical property is authoritative. An assigned or
-discovered mirror uses `resolveInitialValueOrPoison` to consume fulfillment or
-convert rejection to a Poison, prepares the result, and publishes it through
-the ordinary live-edge transaction. A fork uses `onLaterPromiseReady`, ignores
-the raw Promise result, and samples its source mirror at the fork position.
-All resolvers for one callable thenable register on its shared canonical native
-Promise.
+While it is live, the physical property is normally authoritative. A mirror
+whose property belongs to imported data retains its import boundary, preserves
+that property, and stores its logical value in `resolvedValue`. Assigned and
+discovered mirrors use `resolveInitialValueOrPoison`; forks use
+`onLaterPromiseReady` and sample their source mirror at the fork position. A
+fork mirror is runtime-owned and writes through. All resolvers for one callable
+thenable register on its shared canonical Promise.
 
 Replacing or deleting the property detaches its mirror inside the same live
-transition. Detachment captures the old physical value as `detachedValue` and
-removes the map entry. Already-issued resolvers then update only that private
-value. Detached state contributes nothing to the former parent's counters.
+transition. Detachment moves the current logical value to `detachedValue`,
+removes any `resolvedValue`, and removes the map entry. Already-issued resolvers
+then update only that private value. Detached state contributes nothing to the
+former parent's counters.
 
-A live resolved mirror remains installed until replacement because queued
-resolvers still use its identity. Ordinary reads and recounts ignore it and use
-the physical value. The mirror itself stores no Promise, parent, key, consumer
-count, duplicate current value, or cycle cut.
+A live resolved mirror remains installed because queued resolvers still use its
+identity. It stores no Promise, parent, key, consumer count, or cycle cut; its
+only optional value fields are `resolvedValue` while preserving an imported
+property and `detachedValue` after displacement.
 
 A state-changing live resolver:
 
-1. validates that the property still exists as an own enumerable writable data
-   property;
+1. validates a write-through property immediately before changing it;
 2. prepares and indexes the entering tracked value when required;
 3. captures the old contribution, using the known pending state for a retained
    ArrayView fork whose physical slot has already advanced;
-4. writes the new value and cycle-cut state; and
+4. writes the physical property or private `resolvedValue` together with the
+   cycle-cut state; and
 5. updates reverse edges and propagates one exact delta.
 
-The first resolver for imported data performs import preparation and cycle
-classification before this publication. A rejected first result is published
-as one Error; later readiness callbacks do not convert the rejection again.
+The resolver performs any import preparation and cycle classification before
+publication. A rejected first result is published as one Error; later readiness
+callbacks do not convert the rejection again.
 
-## Physical reads
+## Logical reads
 
-`readLanguageProperty(parent, key)` returns only the own enumerable physical
-property. Mirror lookup occurs only when that value is a Promise or when a
-replacement must detach an existing property version. `mirror.getValue(...)`
-is reserved for callbacks that captured that mirror: it reads the physical
-property while live and `detachedValue` afterward.
+`readLanguageProperty(parent, key)` first returns `resolvedValue` from the
+current live mirror when present, then falls back to the own enumerable physical
+property. A captured mirror reads its own overlay or the physical property while
+live and `detachedValue` afterward.
 
 ## Delta propagation
 
@@ -210,7 +211,7 @@ The projected parent graph is acyclic:
 
 - trusted language data is tree-shaped;
 - imported aliases retain finite edge multiplicity;
-- physical Promise placements are frontiers; and
+- logical Promise placements are frontiers; and
 - every imported cycle has a cut with no reverse edge.
 
 Zero deltas stop immediately.
@@ -247,10 +248,10 @@ indexed by their first resolver before query continuations inspect them.
 - compares exact Promise, Error, and cycle-cut totals;
 - checks reverse-edge multiplicity;
 - checks raw-reachable counter closure, including across cuts;
-- verifies cut shape, physical Promise/cut exclusivity, and live mirror property
+- verifies cut shape, logical Promise/cut exclusivity, and live mirror property
   descriptors; and
 - treats a cycle in the projected parents graph as a fatal invariant failure.
 
-A physical Promise always recounts as `[1, 0, 0]`. A retained mirror over a
-resolved physical value has no special count. Verification never changes
-runtime state.
+A logical Promise always recounts as `[1, 0, 0]`. A live `resolvedValue` is
+counted like an ordinary property value. Verification never changes runtime
+state.

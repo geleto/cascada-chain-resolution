@@ -128,7 +128,7 @@
 
     **Promise settlement.** Eager preparation registers one full-preparation continuation at every newly reached pending imported placement without awaiting sibling work. Cross-segment duplicates, assigned attachment, and retained imported Promise forks register fixed-path continuations. `mirror.importPreparationRegistered` tells the mandatory consumer to retain only `mirror.currentValue`; the following import continuation classifies and prepares it before later FIFO consumers run. Each continuation resumes only its registering work: full preparation uses copied growing ancestry, while a fixed-path scan retains one immutable comparison path. A synchronous fixed-path match propagates to the entering mirror, so full-preparation and attachment scans of the same resolved value converge idempotently instead of publishing cuts on both the mirror and an inner shared property. A nested Promise reached by the scan owns any cut from its later settlement. Assigned attachment additionally pins its destination root; a retained fork scans the ancestry captured at fork creation without pinning the owner. Every completed walk builds a child index only if its owner is already indexed; a later walk may still atomically publish additional path-dependent cuts before its own successor. Settlement creates no nested direct boundary; root promises retain the public import wrapper because no object root exists to carry a boundary before they settle.
 
-    **Attribution and non-extensible data.** Imported provenance remains inherited from the relevant boundary root until extraction marks its result or COW retains a tracked source child. A path child's next shallow copy omits that metadata and becomes owned again. A Promise mirror carries property-level provenance, including after drain; forks sample it in FIFO order, retained properties preserve it, and an active mutation path consumes it. Nested Promise results otherwise inherit provenance without receiving direct boundaries. Preparation gives every tracked identity META but adds the shared mark only to repeated identities; descendants do not otherwise receive direct boundaries. Non-extensible values are implicitly shared, store metadata in the WeakMap fallback, and otherwise follow ordinary indexing rules.
+    **Attribution and non-extensible data.** Imported provenance remains inherited from the relevant boundary root until extraction marks its result or COW retains a tracked source child. A path child's next shallow copy omits that metadata and becomes owned again. A Promise mirror on an imported placement retains property-level provenance; forks sample it in FIFO order and pass it transiently into preparation without putting it on their runtime-owned destination mirrors. Nested Promise results otherwise inherit provenance without receiving direct boundaries. Preparation gives every tracked identity META but adds the shared mark only to repeated identities; descendants do not otherwise receive direct boundaries. Non-extensible values are implicitly shared, store metadata in the WeakMap fallback, and otherwise follow ordinary indexing rules.
 
     Error queries keep one operation-local `visited` WeakSet across their cut-separated fenced traversal and captured promise tree. Other deduplication remains local to its semantics: imported preparation uses durable META plus one per-segment weak set, each fixed-path cycle scan owns its own visited set, export preserves output graph identity with an old-to-new map, and verification uses its own synchronous seen set. Do not introduce one generic deduplication abstraction across these different policies.
 
@@ -137,7 +137,7 @@
 12. **Superseded by item 17: imported cycle Errors.** This item records the
     attributed-Error cut model that item 17 replaced with boolean cycle cuts.
 
-    **Imported-cycle boundaries.** The public `import(value, errorContext)` operation, eager imported-data preparation, imported attachment, and cycle-Error handling live in `src/import.js`; all recursive cycle walks are private. Import validates the truthy context, stores `{ root, errorContext }` on the boundary root (or wraps a root promise), ensures META on newly encountered host objects, and immediately runs `prepareImportedData` on the detached graph. A pre-existing META island remains runtime-owned. The walk publishes mirrors, actual back-edge cuts in fresh data, and entering-placement cuts for fixed-path matches in prepared data. At a Promise it copies the current path, then resumes full preparation with the inherited boundary and a fresh segment set. META-bearing repeats, assigned attachment, and retained Promise forks use the same private fixed-path scanner; assigned attachment additionally retains and pins its post-COW destination path. No generic prospective property scan exists and no other subsystem detects or creates cycle Errors. `src/property-transitions.js` coordinates physical property state, while `src/refcounts.js` owns generic index construction and atomic count transactions over the prepared projection. Generic metadata storage remains in `src/meta.js`.
+    **Imported-cycle boundaries.** The public `import(value, errorContext)` operation, eager imported-data preparation, imported attachment, and cycle-Error handling live in `src/import.js`; all recursive cycle walks are private. Import validates the truthy context, stores `{ root, errorContext }` on the boundary root (or wraps a root promise), ensures META on newly encountered host objects, and immediately runs `prepareImportedData` on the detached graph. A pre-existing META island remains runtime-owned. The walk publishes mirrors, actual back-edge cuts in fresh data, and entering-placement cuts for fixed-path matches in prepared data. At a Promise it copies the current path, then resumes full preparation with the inherited boundary and a fresh segment set. META-bearing repeats, assigned attachment, and retained Promise forks use the same private fixed-path scanner; assigned attachment additionally retains and pins its post-COW destination path. No generic prospective property scan exists and no other subsystem detects or creates cycle Errors. `src/property-transitions.js` coordinates logical property state, while `src/refcounts.js` owns generic index construction and atomic count transactions over the prepared projection. Generic metadata storage remains in `src/meta.js`.
 
     Native code receives tracked Cascada data only through metadata-free
     export output. Preparation creates META on every first-reached
@@ -200,7 +200,7 @@
 
     When an import continuation finds that the final Promise placement closes a cycle, it retains the raw prepared value in `mirror.currentValue`, stores the attributed Error in `mirror.cycleError`, and the final drain commits the indexed parent directly from `[1,0]` to `[0,1]` without attaching a reverse edge to the raw target. Do not install either the Error or cycle-closing value into an external or non-extensible property; an extensible owned holder may store the raw final value because its counter graph remains cut by the Error. Intrinsic cyclic properties inside a resolved object receive `meta.cycleErrors` entries during that walk. An earlier FIFO advance is included in classification and a later valid language advance may repair the edge; only the final prepared Error/value state contributes to the live parent.
 
-    A mirror on an imported host holder remains authoritative after a valid drain: retain the original Promise in that holder while logical operations use `mirror.currentValue`. Physical ownership is read from `mirror.node` at drain time rather than inferred from import attribution. The mirror retains its boundary separately for attribution and later traversal. A retained off-path COW fork carries that boundary; an active path fork omits it because the walk carries attribution until it produces an owned copy. Both belong to a new runtime-owned holder and write their final drained value physically only if that holder is still extensible, as do assigned and other ordinary runtime-owned mirrors. Consequently imported and non-extensible data remain physically unchanged without a promise exception.
+    A mirror on an imported host holder remains authoritative after a valid drain: retain the original Promise in that holder while logical operations use `mirror.currentValue`. Its boundary remains with that imported placement. A COW fork captures source attribution only for settlement preparation; its runtime-owned destination mirror has no boundary and writes its final value physically. An active path fork likewise remains runtime-owned. Consequently imported data remains physically unchanged without weakening ordinary write-through semantics.
 
     Live, revoked, and forked mirrors use the same prepared-edge state. Revoked preparation receives the owner, key, and mirror explicitly, records each private raw value plus any cycle Error without changing former parent counts, and remains available to operations that captured it; its successful drain reaches zero but performs no attached-edge commit. A fork reads the source's prepared logical value at its FIFO position but prepares against the fork's own owner/key; an edge cyclic in the source need not be cyclic in the copy. Every later mirror advance goes through `preparePropertyTransition`, never an unchecked `currentValue` assignment. Overwrite/delete clears the live mirror only during its own committed edge swap; already-registered consumers continue draining the revoked mirror privately.
 
@@ -216,7 +216,7 @@
     - Mirror-drain ordering: writeback, an advance, and a query registered on one promise run in order; a later operation issued from an unrelated microtask cannot overtake the advance; and a mutation registered during the settlement-to-writeback gap remains pending when a previously queued unrelated continuation issues a read. Assert that the read falls back through the mirror rather than using stale `currentValue` synchronously.
     - Counter visibility during that residual window: hasError/getErrors follow the mirror frontier while `pendingConsumerCount > 0`; ancestor `promiseCount` never transiently reaches zero, and the last consumer of a non-fatal drain applies exactly one delta to the final value/Error/nested-promise counts. Export independently captures that mirror at its own FIFO position without reading counters.
     - Already-drained mirror reads, including a final `undefined`, remaining synchronous; preparation, queries, COW, and export output materialization honoring existing mirror/edge state rather than the physical promise; later reads register no duplicate continuation. Also cover a consumer exposing another promise, re-entrant registration before the outer consumer returns, synchronous fatal completion retaining one count without publication, later queued consumers being unable to reach zero, and overwrite/delete while the old mirror drains privately.
-    - Ordinary valid settlement in a nested external imported holder retaining the exact physical Promise property while logical operations observe its settled value; an assigned mirror and a COW fork carrying the same import boundary write only their final drained value while their language-owned holders remain extensible. `export` produces host-facing data containing the settled logical value and no runtime metadata.
+    - Ordinary valid settlement in a nested external imported holder retaining the exact physical Promise property while logical operations observe its settled value; an assigned mirror and a COW fork use ordinary physical write-through in their language-owned holders. `export` produces host-facing data containing the settled logical value and no runtime metadata.
     - Counted error-query collection reuses the mirror minted by ref-index preparation and reports a deliberately corrupted indexed branch with a missing mirror fatally; raw collection behind a cycle cut may create or reuse a mirror and recursively extend the query's wait frontier.
     - Raw export returning a metadata-free copy synchronously when no captured promises remain; waiting for recursively exposed promises even when they sit behind counter cuts; preserving self-cycles, multi-node cycles, DAG aliases, and clean siblings; and collecting every ordinary Error identity found anywhere in the raw walk.
     - Unrelated mutation, repeated cyclic path segments, overwrite/delete of cycle cuts, partial and complete repair, replacement of an imported boundary, and later observations; assert exact-placement cycle-Error invalidation, no sibling-driven cycle rescan, unchanged host data, and the path-copy topology.
@@ -245,17 +245,17 @@
 
 13. **Implemented: uniform non-extensible node support.** Frozen, sealed, and otherwise non-extensible objects are ordinary tracked nodes. They are implicitly shared, store runtime metadata through the WeakMap fallback, and participate in the same lazy ref index as extensible nodes. Import prepares cycles and Promise continuations eagerly, but only a counter-based operation pays to index the reached branch.
 
-    Error values and own enumerable `__proto__` data properties remain ordinary language data. A Promise placement is valid only while it is an own enumerable writable data property because its first resolver publishes the prepared value physically. Writable properties on sealed or `Object.preventExtensions` holders are supported; a frozen or otherwise non-writable Promise property is a fatal host-contract violation. Ordinary frozen data without such a Promise placement remains valid. Language assignment and deletion still COW through non-extensible parents before writing.
+    Error values and own enumerable `__proto__` data properties remain ordinary language data. Write-through Promise mirrors require writable properties, while imported mirrors preserve their physical properties and publish logical results through `resolvedValue`. Frozen imported Promise data is therefore supported without a special case. Language assignment and deletion still COW through non-extensible parents before writing.
 
     No non-extensible-specific META or mirror field exists. The COW predicate derives their implicit sharedness, `markShared` leaves them unchanged, and inline metadata storage falls back to the same WeakMap used by explicit WeakMap mode. Imported preparation ensures META only as required for preparation; other operations add metadata only for boundaries, counters, mirrors, cycle cuts, active read entries, or explicit shared marks.
 
     **One counter invariant.** After `buildRefIndex` succeeds, every raw-reachable tracked value has a counter regardless of extensibility. A cycle cut contributes its own count and omits the crossing reverse edge, while its raw target starts an independently indexed component. Error queries remain counter-fenced across every component, and export remains a counter-free raw walk.
 
-    Required-counter checks enforce downward closure for Error queries, Promise continuations, verification, and live reverse-edge bookkeeping. An indexed Promise property must already have its matching mirror; an unindexed trusted or already-prepared derived property may create one lazily. The first resolver prepares and indexes an entering tracked value before a live physical publication, while a detached resolver updates only its private property version.
+    Required-counter checks enforce downward closure for Error queries, Promise continuations, verification, and live reverse-edge bookkeeping. An indexed Promise property must already have its matching mirror; an unindexed trusted or already-prepared derived property may create one lazily. The first resolver prepares and indexes an entering tracked value before logical publication, while a detached resolver updates only its private property version.
 
-    `Object.isExtensible` has two semantic roles: selecting metadata storage and deriving implicit shared/COW behavior. Promise publication instead validates the actual property descriptor immediately before writing. Own accessor, non-writable, non-enumerable, and non-configurable descriptor rules remain independent of object extensibility.
+    `Object.isExtensible` has two semantic roles: selecting metadata storage and deriving implicit shared/COW behavior. A write-through Promise publication validates the property immediately before writing; an imported mirror preserves the property and needs no extensibility or writability branch.
 
-    The demand-driven tradeoff is deliberate: querying a non-extensible branch allocates metadata, counters, mirrors, and reverse edges just like querying a mutable branch. Coverage under both metadata modes includes frozen ordinary data, synchronous Errors, writable Promise properties on sealed and non-extensible holders, fatal frozen Promise-property validation, arrays, aliases, cycles, lazy indexing, exact counter transitions, COW assignment/deletion, and verification.
+    The demand-driven tradeoff is deliberate: querying a non-extensible branch allocates metadata, counters, mirrors, and reverse edges just like querying a mutable branch. Imported Promise properties preserve their physical Promises and store settled logical values in their mirrors, so frozen, sealed, and extensible imports use one path. Coverage under both metadata modes includes frozen data, synchronous Errors, Promise properties, arrays, aliases, cycles, lazy indexing, exact counter transitions, COW assignment/deletion, and verification.
 
 14. **Implemented: in-place consolidation cleanups.** Imported cycle traversal uses explicit plain-property and captured-mirror entry paths, so no optional `{ parent, key, mirror? }` record or mixed cycle resolver remains. `prepareImportedData` owns growing-path discovery with durable META identity and one per-segment weak set. META-bearing repeats and imported attachment use one private fixed-path scanner; the attachment entry captures only the applicable copied ancestry, and only assigned pending attachment pins its root. `onImportedPromiseResolve` receives the exact mirror, and observational path resolution reduces its two internal paths to the cycle facts callers need. Counter-based observations index only the value delivered by path resolution. The full suite covers the result under both metadata modes.
 
@@ -264,13 +264,13 @@
     - `src/mutations.js` owns assignment, deletion, mutation-path walking, shallow COW, Promise forks, and mutation-only property helpers.
     - `src/observations.js` owns lookup, export, `hasError`, `getErrors`, observational path walking, indexed Error dispatch, and the counter-fenced Error-search traversal. `walkObservationPath` is exported only for internal entry setup; its other walkers and operation-local state remain private.
     - `src/raw-walk.js` is the identity-aware primitive for metadata-free export copying and exhaustive export Error collection.
-    - `src/import.js` owns graph preparation, `src/property-transitions.js` coordinates physical property state, and `src/refcounts.js` owns counters and the atomic accounting wrapper around indexed updates.
+    - `src/import.js` owns graph preparation, `src/property-transitions.js` coordinates logical property state, and `src/refcounts.js` owns counters and the atomic accounting wrapper around indexed updates.
 
     Neither operation module depends on the other or on `src/index.js`; both depend only on lower-level runtime modules. Each subsystem keeps its own identity policy, and no generic visited/deduplication helper is introduced.
 
 16. **Implemented: `PromiseMirror` lifecycle and `export` terminology.** **Promise mirror** is the canonical term: one internal `PromiseMirror` identifies one Promise-backed property version. `src/promise-mirrors.js`, `meta.mirrors`, and the create/get/install/fork helpers retain that vocabulary. Local code uses `mirror` where the type is clear and role-specific names such as `sourceMirror` or `propertyMirror` only when several mirrors have distinct jobs. Ordinary properties use parent/key directly, while suspended operations retain the exact captured mirror.
 
-    The class has stable identity and survives detachment while captured resolvers finish. Its narrow lifecycle methods are `isLive(parent, key)`, `getValue(parent, key)`, and `detach(parent, key)`. A live mirror reads the physical property; detachment captures that property in the lazily created `detachedValue`. Promise registration, value preparation, cycle cuts, counters, parent edges, import scanning, and COW remain with their owning modules.
+    The class has stable identity and survives detachment while captured resolvers finish. Its narrow lifecycle methods are `isLive(parent, key)`, `getValue(parent, key)`, and `detach(parent, key)`. A live mirror reads the logical property, including an optional `resolvedValue` overlay for a preserved imported property; detachment moves that value to the lazily created `detachedValue`. Promise registration, value preparation, cycle cuts, counters, parent edges, import scanning, and COW remain with their owning modules.
 
     ASSIGN, DISCOVERY, and FORK retain separate creation factories because they establish different birth ordering and source semantics. There is no generic state enum: liveness is derived from exact mirror-map identity, and pending state is derived from whether the authoritative live or detached value is a Promise.
 
@@ -316,26 +316,26 @@
     walk and aggregate readiness use the fatal boundary. Full design:
     `docs/export-error-set.md`.
 
-19. **Implemented: live-property Promise mirrors.** Use one direct
-    state rule: while a mirror is live, its physical parent/key property is the
-    authoritative evolving value; after the mirror is detached, its lazily
-    created `detachedValue` is authoritative. A mirror is live only while the
-    parent's mirror map contains that exact instance.
+19. **Implemented: live-property Promise mirrors.** A mirror is live only while
+    the parent's mirror map contains that exact instance. A live mirror normally
+    uses its physical parent/key property. When an import boundary is present,
+    resolution preserves that property and creates `resolvedValue`; the boundary
+    remains with the imported placement. A COW fork or transfer mirror has no
+    boundary and writes through. After detachment, `detachedValue` is
+    authoritative.
 
     Runtime state is derived rather than stored:
 
-    | State | Authoritative value | Placement cut | Import boundary |
-    | --- | --- | --- | --- |
-    | live, pending | physical property is the Promise | none | mirror |
-    | live, resolved | physical property is the latest value | parent META | cleared |
-    | detached, pending | `detachedValue` is the Promise | none | mirror |
-    | detached, resolved | `detachedValue` is the latest value | none | cleared |
+    | State | Authoritative value | Physical property |
+    | --- | --- | --- |
+    | live, no `resolvedValue` | physical property | Promise or latest value |
+    | live, with `resolvedValue` | `resolvedValue` | preserved Promise |
+    | detached | `detachedValue` | no longer relevant |
 
-    "Resolved" means the first resolver has completed its synchronous
-    transition. The source Promise may already be physically settled while that
-    resolver is queued, but the runtime state is still pending because the
-    authoritative location still contains the Promise. There is no
-    live-resolved state whose authoritative value is a Promise.
+    Field presence distinguishes a legitimate resolved `undefined` without a
+    sentinel or Boolean state. Ownership comes only from `importBoundary`;
+    `resolvedValue` is storage, not another ownership flag. Liveness remains
+    exact mirror-map identity and Promise equality does not participate.
 
     **Property-version lifecycle.** The first operation to reach an unmirrored
     Promise property creates and installs the mirror and synchronously registers
@@ -343,8 +343,9 @@
     Every resolver captures the Promise, parent, key, and exact mirror at
     registration time. The first resolver alone consumes the raw settlement
     payload, prepares it, performs any operation-specific synchronous work, and
-    publishes the resulting state. If the mirror is still live it writes the
-    physical property; otherwise it writes `detachedValue`.
+    publishes the resulting state. A live imported mirror writes
+    `resolvedValue`, another live mirror writes the property, and a detached
+    mirror writes `detachedValue`.
 
     Lazy discovery remains necessary for trusted object literals, initial Chain
     values, assigned subgraphs containing nested Promises, and derived Promises
@@ -361,37 +362,28 @@
     recommit unchanged state.
 
     `PromiseMirror` stores no `promise`, `node`, `key`, `currentValue`,
-    `pendingConsumerCount`, or resolved flag. It keeps only state unavailable
-    from a live placement: the unresolved `importBoundary`, plus optional
-    `detachedValue` created on detachment. Keep
+    `pendingConsumerCount`, or resolved flag. It keeps only `importBoundary`
+    for an imported placement, optional live `resolvedValue`,
+    and optional detached `detachedValue`. Keep
     `isLive(parent, key)`, `getValue(parent, key)`, and `detach(parent, key)` as
     narrow lifecycle operations. Remove `isDrained()`,
     `PromiseMirror.onResolve`, `commitMirrorDrain`, and all draining state.
 
-    A live mirror remains installed after its first resolver replaces the
-    physical Promise with a value. Already-registered resolvers need that exact
-    property-version identity even though synchronous operations now see an
-    ordinary value. Only replacement, deletion, and same-Promise reassignment
-    remove it; there is no settlement-time mirror cleanup. Those operations
-    detach the old mirror inside the same `commitLiveEdge` update that replaces
-    the property, after the old refcount state has been captured and before the
-    physical write. `detach(parent, key)` captures the old physical value as
-    `detachedValue`, discards any live placement cut, and removes the mirror-map
-    entry. Operations that already captured the mirror then continue against
-    their private value, while the new property version proceeds independently.
+    A live mirror remains installed after its first resolver because registered
+    resolvers need that exact property-version identity. Only replacement,
+    deletion, and same-Promise reassignment remove it. Those operations detach
+    the old mirror inside the same `commitLiveEdge` update: `detach(parent, key)`
+    moves the current logical value to `detachedValue`, deletes `resolvedValue`,
+    and removes the mirror-map entry. Captured operations then continue against
+    their private value while the new property version proceeds independently.
 
-    **Reads and cuts.** Ordinary `readLanguageProperty(parent, key)` is a purely
-    physical own-enumerable read and never consults mirror state. Mirror
-    acquisition runs only when that physical value is a Promise; a synchronous
-    operation on a resolved physical value ignores the retained mirror.
-    Lifecycle code that replaces a property still looks up that retained mirror
-    so it can detach it correctly. This removes the metadata and mirror-map
-    lookup from every ordinary property read in mutation, ref-index, export, and
-    Error-query walks.
-
-    `getValue(parent, key)` reads the physical language property while the
-    mirror is live and `detachedValue` otherwise. Live cycle cuts use the
-    ordinary parent-META `cycleCuts` set. A detached placement is absent from
+    **Reads and cuts.** `readLanguageProperty(parent, key)` checks the current
+    live mirror for `resolvedValue`, then falls back to the own-enumerable
+    physical property. This single logical read boundary serves mutation,
+    ref-index, export, Error-query, import, and COW walks. A captured mirror
+    reads its own overlay or the physical property while live and
+    `detachedValue` otherwise. Live cycle
+    cuts use the ordinary parent-META `cycleCuts` set. A detached placement is absent from
     the indexed graph and retains no placement cut; intrinsic cuts inside its
     tracked value remain on those nodes. Every state-changing live resolver
     replaces the previous parent-META cut state, clearing an obsolete cut unless
@@ -400,10 +392,9 @@
     retains a displaced property version. Remove `hasPublishedCycleCut`,
     separate plain/mirror cut setters, and mirror/plain live-cut exclusivity.
 
-    A physical Promise and a published parent-META cut are mutually exclusive.
-    Pending publication clears any old cut before installing the Promise, and
-    resolving publication replaces the Promise and cut in one transition. The
-    refcount verifier checks this invariant.
+    A logically pending Promise and a published parent-META cut are mutually
+    exclusive. An imported physical Promise may remain after logical resolution,
+    so counters and verification always read through the logical boundary.
 
     **FIFO command contract.** Every operation processes its synchronously
     available path immediately. The helpers canonicalize every callable
@@ -413,8 +404,8 @@
     Same-Promise reactions therefore evolve one property version in order: the
     first resolver produces `V`, and later mutations/readers observe `V`, `V'`,
     `V''`, and so on. A reader issued after an earlier resolver completed reads
-    the physical value synchronously; one issued while the property still
-    contains the Promise registers behind every already-issued resolver.
+    the logical value synchronously; one issued while the logical property is
+    still pending registers behind every already-issued resolver.
 
     When one canonical Promise settles, JavaScript enqueues all reactions
     already registered on it as one contiguous FIFO batch. Another Promise's
@@ -463,25 +454,24 @@
     owned by a fresh property version, never as a later resolver that delays an
     existing mirror.
 
-    Assignment, same-Promise reassignment, and COW fork create fresh property
+    Assignment, same-Promise reassignment, and a pending COW fork create fresh property
     versions. Their first resolvers capture their own destination ancestry.
     A fork waits at its FIFO position, reads the source mirror's current
     live/detached state, derives import attribution from that sampled value
     rather than provisional creation-time state, marks a retained off-path
     tracked value shared, performs destination-specific cycle preparation, and
-    publishes once. A Promise returned by a root import is already prepared
-    before that derived Promise settles; assigning it still creates a fresh
+    publishes physically into its runtime-owned destination. Only the original
+    imported placement updates `resolvedValue` while preserving its external
+    Promise. A Promise returned by a root import is
+    already prepared before that derived Promise settles; assigning it still creates a fresh
     destination property version whose first resolver owns attachment checking.
 
-    `importBoundary` exists only while the property version is unresolved. It
-    belongs to the mirror rather than the whole parent because one owned COW
-    node can retain pending properties from different imported boundaries. The
-    successful first transition clears it for both live and detached mirrors.
-    A resolved tracked value carries any continuing direct boundary in its own
-    META; a primitive, Error, or operation-produced owned value needs none.
-    Later operations derive import state from the current value or their own
-    synchronous destination context and never overwrite a pending mirror's
-    boundary with context from a later FIFO position.
+    `importBoundary` remains on a mirror whose live physical property belongs to
+    imported data. It is never copied onto a COW fork or transfer mirror. A
+    retained fork instead samples source attribution at its FIFO position and
+    passes it directly into destination-specific preparation; the prepared
+    tracked child then carries any continuing boundary in its own META. A
+    primitive, Error, or operation-produced owned value needs none.
 
     This sequencing removes both `importPreparationRegistered` and any need for
     `pendingPreparationCount`: there is no generic raw writeback followed by a
@@ -489,36 +479,24 @@
 
     **Atomic transitions and counters.** A live resolver computes its final
     value and placement cut before publication. One `commitLiveEdge` transition
-    writes both while retaining the exact mirror-map entry, then derives the new
-    counts. The old physical Promise contributes `[1, 0, 0]`; the prepared
-    replacement contributes its actual Promise/Error/cycle-cut/child counts.
-    Any entering tracked child is indexed before the physical write, and reverse
-    edges plus propagated deltas change atomically with it. Later
-    state-changing resolvers perform the same exact transition from the current
-    physical state.
+    writes the physical property or `resolvedValue` together with the cut while
+    retaining the exact mirror-map entry, then derives the new logical counts.
+    Any entering tracked child is indexed before publication, and reverse edges
+    plus propagated deltas change atomically with it.
 
     A detached resolver changes only `detachedValue`; it never updates its
     former parent's property, cuts, counters, or reverse edges. If that owner
     was indexed, the resolver prepares/indexes the detached branch before an
-    earlier Error query consumes it. Verification derives live state solely from
-    the physical property and parent META: a physical Promise counts as pending,
-    a live cut counts as a cut, and an ordinary value contributes normally.
-    Detached mirrors are absent from the indexed graph.
+    earlier Error query consumes it. Verification derives live state through
+    `readLanguageProperty` and parent META. Detached mirrors are absent from the
+    indexed graph.
 
-    **Physical-write requirement.** A live mirror is valid only while its
-    property exists as an own enumerable writable data property. Discovery of
-    an existing Promise property validates that complete descriptor before
-    installing a mirror. Assignment to a missing key instead uses the ordinary
-    property transition, which creates the valid data property and installs its
-    fresh mirror atomically. Immediately before every later live resolver write,
-    require the property still to exist with the complete valid descriptor: a
-    missing property, accessor conversion, non-enumerability, or loss of
-    writability is the same fatal host-boundary violation. Existing writable
-    properties on sealed or otherwise non-extensible holders remain valid
-    because replacing their value is legal. Ordinary non-Promise frozen data
-    remains supported. Writable imported Promise properties receive their
-    resolved physical values, so import transfers settlement ownership of those
-    properties to the runtime. Host-facing output still goes through `export`.
+    **Write-through requirement.** Only a mirror that updates its physical
+    property requires that property to remain writable. Imported mirrors do not
+    write through: their retained `importBoundary` selects private resolution,
+    while `resolvedValue` contains only the logical result. There is no
+    frozen, sealed, extensibility, or physical-owner branch. Non-extensible
+    metadata already uses the WeakMap fallback.
 
     Removing `mirror.promise` deliberately removes the old
     different-Promise identity check. Required acquisition still reports a
@@ -539,8 +517,9 @@
     indexing for an earlier query; attachment of an existing pending imported
     branch without a second classifier; synchronous resolved attachment; an
     indexed placement cut committed with its resolved value; two pending
-    properties with different boundaries on one owned COW parent; writable
-    sealed holders; rejected accessor/non-writable imported Promise properties;
+    properties from different boundaries copied onto one owned COW parent;
+    physical write-through on those forked properties and runtime holders;
+    sealed and frozen imported Promise properties;
     a property deleted or changed to an accessor/non-enumerable/non-writable
     descriptor after mirror creation; resolved `undefined`; live cut replacement
     and repair; detached resolution retaining no placement cut; and both
@@ -565,7 +544,7 @@
 
     After `onEntered` returns directly or its returned Promise fulfills, both modes call the entered Chain's one-shot `close()` method, which deletes `state.mutates` and prevents new issuance without cancelling already-issued work. `new Chain(value, mutates = true)` validates and stores that exact Boolean capability, so entry creates its private Chain directly without entry-specific construction or closure helpers. Read-only completion then releases the exact value captured at acquisition and returns or forwards the operation result. Mutating setup retains the gate resolver lexically rather than storing the gate or resolver on the Chain. Completion stores the current `state.value`; if direct, it calls that resolver immediately, while a Promise value receives one `onLaterPromiseReady` callback that later reads `state.value` and calls it. The private-root mirror's transfer or assignment resolver and every earlier private operation precede that callback in the Promise's FIFO order, so they update the authoritative slot first. Root replacement is synchronous, and closure forbids later issuance, so no mirror lookup is needed for this stable slot; ordinary detachable graph properties still use their captured mirrors. Passing the stored Promise directly to the gate resolver remains forbidden because native assimilation would consume raw settlement, could invoke a callable thenable again, and could reject the gate. This readiness callback affects only publication, not the operation result or Chain lifetime. `enter` returns or forwards the operation result without waiting for the gate or its consumers. The operation result is never stored on the Chain, and no continuation is registered on the gate merely to delay it; result forwarding supports higher-level callback consumers without a separate result channel. Ordinary and mutating entered Chains use `mutates: true`, read-only entered Chains use `false`, and absence remains the sole closed-Chain authority. `close()` does not publish; `enter` retains automatic publication ownership. No lifecycle field retains the source Chain or captured placement. `setMirrorValue` globally rejects a Promise before import preparation, ref indexing, descriptor mutation, or publication; new Promise values must use `replaceProperty` and a fresh version. Mutating completion nevertheless keeps a local non-Promise assertion immediately before calling the resolver, protecting that boundary if raw compiler or host mutation bypassed the property transition. No suspended earlier-issued operation can install a later `state.value` version: root replacement targets the always-available private holder and runs synchronously when issued. Already-issued private continuations may remain suspended and operate on the eventually public graph through their existing mirrors, so no Chain-wide completion queue or recursive root readiness tree is added. Returning an inner mutating `enter` result naturally keeps an outer mutating operation active until the inner callback completes; the outer graph may publish with the inner gate still pending, and that gate preserves ordering without a LIFO stack or explicit cleanup branch.
 
-    Import attribution remains version-local: pending mutating targets carry it in their source and transfer mirrors, while prepared tracked values—including read-only targets re-rooted from an inherited boundary—carry their own META boundary. The private Chain receives no sticky inherited boundary. The gate mirror carries the owning walk's normal imported-attachment preparer. Its ordinary Promise assignment permanently pins a fresh COW attachment root because private work may later publish imported data even when the current ancestry is clean. Repeated entries on such a path may therefore re-COW it; entries issued only after prior publication keep one live gate, while earlier issuance retains the ordinary gate backlog. An immediate Promise-target callback may finish before target readiness, so awaiting only operation results does not bound this backlog; doing so would require a separate publication signal. Avoiding the attachment pin would require either a static no-import guarantee or a temporary pin spanning every recursive import-preparation frontier.
+    Import attribution remains version-local: pending mutating targets carry it in their source mirrors, while prepared tracked values—including read-only targets re-rooted from an inherited boundary—carry their own META boundary. Transfer mirrors and the private Chain receive no sticky inherited boundary. The gate mirror carries the owning walk's normal imported-attachment preparer. Its ordinary Promise assignment permanently pins a fresh COW attachment root because private work may later publish imported data even when the current ancestry is clean. Repeated entries on such a path may therefore re-COW it; entries issued only after prior publication keep one live gate, while earlier issuance retains the ordinary gate backlog. An immediate Promise-target callback may finish before target readiness, so awaiting only operation results does not bound this backlog; doing so would require a separate publication signal. Avoiding the attachment pin would require either a static no-import guarantee or a temporary pin spanning every recursive import-preparation frontier.
 
     Chain capability is checked only at the shared observation- and mutation-walker issuance boundaries: observation accepts either exact Boolean, mutation requires `true`, and absence of `mutates` rejects new issuance; already-issued inner continuations do not recheck. Read-only entry uses the shared `metadata.updateReadLease` transition to increment the captured tracked value at acquisition and decrement it at completion, deleting its zero count; primitives need no metadata. `enter` and `run` each own and release only their own lease. Before either mode forwards a tracked result, its consumer applies ordinary ownership preparation: an identity with another language owner, including reachability from entered `state.value` at scope completion, becomes shared, while a wholly new result may be ceded to the caller. Every `enter` consumer owns that preparation. Only `enter` is exported internally from `src/enter.js`; its mode-specific paths, completion routines, and abort routines remain private. A non-Boolean `mutates`, non-callable `onEntered`, read-only/closed Chain misuse, invalid descriptor or publication contract, callback throw, or completion-Promise rejection remains fatal without changing existing path-operation result shapes. Callback throw or rejection first aborts the entered scope: both modes delete `state.mutates`, read-only mode releases an acquired read entry exactly once, and mutating mode leaves its gate unresolved rather than publishing potentially corrupted private state. The callback's Promise is a control-flow completion signal, not a data Promise; lowering converts expected data rejection to an Error value before that boundary, while unexpected rejection remains fatal. `onEntered` returning directly or fulfilling its returned Promise defines the entered scope's complete lifetime. Detached later issuance is a trusted lowering violation; a statically visible self-wait is rejected, while a dynamic self-wait remains a lowering deadlock. Automatic successful completion and abnormal closure remove caller-managed cleanup and normal gate-abandonment paths. The complete lifecycle, ownership, ordering, failure, deadlock, nesting, and test design is [`enter.md`](enter.md).
 

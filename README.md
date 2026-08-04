@@ -257,7 +257,7 @@ completed, deferred, and pending work.
   accounting around indexed property transitions.
 - `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle.
 - `src/raw-walk.js` owns metadata-free export copying and Error collection.
-- `src/language-properties.js` owns descriptor validation and safe physical
+- `src/language-properties.js` owns descriptor validation and logical reads and
   writes for language-visible properties.
 - The remaining small source modules own metadata and fatal errors.
   Refcount verification is test-only in `test/verify-refcounts.js`.
@@ -296,10 +296,10 @@ external value enters through `import(value, errorContext)`, which:
 - leaves subtree counters lazy until a branch query needs them.
 
 Language mutation never changes imported host objects; it copies the imported
-path first. Promise settlement is the one deliberate handoff: an own enumerable
-writable Promise property receives its prepared value physically. A Promise
-property that is missing, non-enumerable, an accessor, or non-writable is
-invalid imported data. Ordinary frozen data remains supported.
+path first. Promise settlement also preserves an imported property: its mirror
+stores the logical result while the external Promise remains physically in
+place. Imported Promise properties must be own enumerable data properties, but
+need not be writable. Frozen data uses the same path.
 
 Cycle cuts live in metadata. A cut is structural bookkeeping, not an Error:
 finite paths cross it normally, Error queries ignore it as data, and export
@@ -344,22 +344,25 @@ an earlier lookup, export, or Error query observes.
 ## Promise mirrors
 
 Each Promise-backed property has a mirror identifying that exact property
-version. While the mirror is live, the physical property is its authoritative
-state: first the Promise, then each value produced by FIFO operations. The
-first resolver consumes fulfillment or converts rejection to Error and
-publishes it. Later resolvers use the Promise only as a readiness signal and
-read the latest property value left by earlier resolvers.
+version. A live mirror normally writes each resolved value back to the property.
+An imported property instead preserves its external Promise and keeps the
+logical value in `resolvedValue` on the mirror. The first resolver consumes
+fulfillment or converts rejection to Error and publishes that logical value.
+Later resolvers use the Promise only as a readiness signal and read the latest
+value left by earlier resolvers.
 
 Overwriting or deleting the property detaches its mirror. At that moment the
-old value is captured as `detachedValue`; already-issued operations continue
+logical value is moved to `detachedValue`; already-issued operations continue
 against that private state and cannot write into the replacement property.
 Reassigning even the same Promise creates a fresh mirror because it is a new
 property version.
 
 When copy-on-write copies a node containing a pending property, the copy gets
 its own mirror at the copy's issue position. Its FIFO resolver samples the
-source at that exact position, so the two worlds include the same earlier
-operations and diverge independently afterward.
+source at that exact position and writes the result into the runtime-owned copy.
+If the source already has a logical result, COW copies that result immediately
+and creates no mirror. The two worlds include the same earlier operations and
+diverge independently afterward.
 
 ## Copy-on-write
 

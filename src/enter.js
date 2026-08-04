@@ -123,7 +123,7 @@ function enterMutating(chain, path, onEntered) {
 }
 
 function publishEnteredValue(state, resolveGate) {
-    const value = state.value
+    const value = languageProperties.readLanguageProperty(state, "value")
     if (!languageValues.isPromise(value)) {
         resolveGate(value)
         return
@@ -133,7 +133,10 @@ function publishEnteredValue(state, resolveGate) {
     // mirror and all earlier private commands therefore update state.value
     // first in the same canonical FIFO batch.
     resolution.onLaterPromiseReady(value, () => {
-        const publishedValue = state.value
+        const publishedValue = languageProperties.readLanguageProperty(
+            state,
+            "value",
+        )
         if (languageValues.isPromise(publishedValue)) {
             errorUtils.reportFatalError(
                 new Error("Entered root remained pending at publication"),

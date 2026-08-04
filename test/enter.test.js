@@ -562,12 +562,35 @@ describe("enter", () => {
         pending.resolve(resolved)
         await flushMicrotasks()
 
-        expect(external.target).to.be(resolved)
-        expect(external.target.value).to.be(1)
+        expect(external.target).to.be(pending.promise)
+        expect(lookupPath(new Chain(external), ["target"], false)).to.be(resolved)
+        expect(resolved.value).to.be(1)
         expect(chain._state.value).not.to.be(external)
         expect(chain._state.value.target).not.to.be(resolved)
         expect(chain._state.value.target.value).to.be(2)
         verifyRefCounts(chain._state.value, external)
+    })
+
+    it("writes a transferred imported result into private state", async () => {
+        const pending = deferred()
+        const external = { target: pending.promise }
+        const chain = new Chain(importValue(external, "transferred target"))
+        const fatalErrors = []
+        let entered
+
+        setFatalErrorReporter(error => fatalErrors.push(error))
+        expect(enter(chain, ["target"], true, privateChain => {
+            entered = privateChain
+            return "done"
+        })).to.be("done")
+        const published = lookupPath(chain, ["target"], false)
+        const resolved = { value: 1 }
+        pending.resolve(resolved)
+
+        expect(await published).to.be(resolved)
+        expect(entered._state.value).to.be(resolved)
+        expect(fatalErrors).to.eql([])
+        expect(external.target).to.be(pending.promise)
     })
 
     it("re-roots a read-only imported target for nested attribution", () => {
@@ -607,8 +630,9 @@ describe("enter", () => {
         await flushMicrotasks()
 
         const published = chain._state.value.target
-        expect(external.target).to.be(cycle)
-        expect(external.target.changed).to.be(undefined)
+        expect(external.target).to.be(pending.promise)
+        expect(lookupPath(new Chain(external), ["target"], false)).to.be(cycle)
+        expect(cycle.changed).to.be(undefined)
         expect(published).not.to.be(cycle)
         expect(published.changed).to.be(true)
         expect(published.self).to.be(cycle)

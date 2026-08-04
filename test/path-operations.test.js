@@ -161,8 +161,12 @@ describe("path assignment", () => {
         deferredValue.resolve(resolved)
         await flushMicrotasks()
 
-        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(resolved)
-        expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(resolved)
+        expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(
+            deferredValue.promise,
+        )
+        expect(Object.getOwnPropertyDescriptor(next, "__proto__").value).to.be(
+            resolved,
+        )
         expect(Object.getPrototypeOf(next)).to.be(Object.prototype)
         expect(lookupPath(new Chain(next), ["__proto__"])).to.be(resolved)
         expect({}.safe).to.be(undefined)

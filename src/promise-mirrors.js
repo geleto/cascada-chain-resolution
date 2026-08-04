@@ -32,8 +32,9 @@ function installPromiseMirror(parent, key, mirror) {
 
 class PromiseMirror {
     constructor(importBoundary) {
-        // importBoundary: imported root and error context used for preparation.
+        // A live boundary means this physical property belongs to imported data.
         if (importBoundary) this.importBoundary = importBoundary
+        // resolvedValue: logical value while an imported promise property is not back-written.
         // detachedValue: current value after this property version detaches.
     }
 
@@ -48,17 +49,14 @@ class PromiseMirror {
     }
 
     detach(parent, key) {
-        this.detachedValue = languageProperties.readLanguageProperty(
-            parent,
-            key,
-        )
+        this.detachedValue = this.getValue(parent, key)
+        delete this.resolvedValue
         const mirrors = metadata.metaOf(parent)?.mirrors
         if (mirrors) delete mirrors[key]
     }
 }
 
-// The first FIFO reaction passes optional import preparation into the property
-// transition, which prepares the value before indexing and publishing it.
+// The first FIFO reaction prepares imported data before publishing it.
 function createPromiseMirror(
     parent,
     key,
@@ -68,7 +66,8 @@ function createPromiseMirror(
 ) {
     const mirror = new PromiseMirror(importBoundary)
     resolution.resolveInitialValueOrPoison(promise, value => {
-        setMirrorValue(parent, key, mirror, value, prepareImportedValue)
+        const cycleCut = prepareImportedValue?.(value, importBoundary)
+        setMirrorValue(parent, key, mirror, value, cycleCut)
     })
     return mirror
 }
@@ -107,11 +106,15 @@ function getOrCreatePromiseMirror(
         return getRequiredPromiseMirror(parent, key)
     }
 
-    languageProperties.assertCanSetLanguageProperty(
-        parent,
-        key,
-        importBoundary?.errorContext,
-    )
+    if (importBoundary) {
+        languageProperties.assertPromisePropertyShape(
+            parent,
+            key,
+            importBoundary.errorContext,
+        )
+    } else {
+        languageProperties.assertCanSetLanguageProperty(parent, key)
+    }
     const mirror = createPromiseMirror(
         parent,
         key,
@@ -130,43 +133,36 @@ function forkPromiseMirror(
     sourceKey,
     promise,
     retained,
-    importBoundary,
+    sourceImportBoundary,
     prepareImportedValue,
     {
         sourceMirror = getOrCreatePromiseMirror(
             source,
             sourceKey,
             promise,
-            importBoundary,
+            sourceImportBoundary,
         ),
         destinationKey = sourceKey,
         install = true,
-        fallbackImportBoundary,
         sharedBacking = false,
     } = {},
 ) {
-    const mirror = new PromiseMirror(
-        retained ? importBoundary : undefined,
-    )
+    const mirror = new PromiseMirror()
     resolution.onLaterPromiseReady(promise, () => {
         const value = sourceMirror.getValue(source, sourceKey)
         const sampledBoundary = retained
             ? metadata.nodeImportBoundary(
                 value,
-                sourceMirror.importBoundary ?? fallbackImportBoundary,
+                sourceMirror.importBoundary ?? sourceImportBoundary,
             )
             : undefined
-        if (sampledBoundary) {
-            mirror.importBoundary = sampledBoundary
-        } else {
-            delete mirror.importBoundary
-        }
+        const cycleCut = prepareImportedValue?.(value, sampledBoundary)
         setMirrorValue(
             destination,
             destinationKey,
             mirror,
             value,
-            prepareImportedValue,
+            cycleCut,
             sharedBacking,
         )
         // The resolver is synchronous, so sharing is established before the
@@ -177,6 +173,8 @@ function forkPromiseMirror(
     return mirror
 }
 
+// Callers materialize imported arrays because a derived view shares their
+// physical slots and cannot represent a resolved mirror overlay.
 function prepareRetainedArrayProperties(
     source,
     destination,
@@ -221,7 +219,7 @@ function transferDetachedPromiseMirror(
     promise,
     attachmentPath,
 ) {
-    const mirror = new PromiseMirror(sourceMirror.importBoundary)
+    const mirror = new PromiseMirror()
     resolution.onLaterPromiseReady(promise, () => {
         const value = sourceMirror.detachedValue
         setMirrorValue(destination, key, mirror, value)

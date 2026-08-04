@@ -270,7 +270,8 @@ describe("export", () => {
 
         expect(copy.back.value).to.be(copy)
         expect(mirror.isLive(root, "value")).to.be(true)
-        expect(root.value).to.be(resolved)
+        expect(root.value).to.be(pending.promise)
+        expect(lookupPath(new Chain(root), ["value"], false)).to.be(resolved)
         expect(metaOf(root).cycleCuts.has("value")).to.be(true)
         expect(metaOf(resolved).cycleCuts).to.be(undefined)
         verifyRefCounts(root)
@@ -318,7 +319,10 @@ describe("export", () => {
         expect(copy).not.to.be(left)
         expect(copy.right.left).to.be(copy)
         expect(copy.right.pending).to.eql({ done: true })
-        expect(right.pending).to.eql({ done: true })
+        expect(right.pending).to.be(pending.promise)
+        expect(lookupPath(chain, ["right", "pending"], false)).to.eql({
+            done: true,
+        })
         expect(lookupPath(chain, ["right", "pending", "done"], false)).to.be(true)
         verifyRefCounts(left, right)
     })
@@ -1091,7 +1095,7 @@ describe("export", () => {
         expect(copied).to.eql({ x: 1 })
         expect(copied).not.to.be(valid)
         expect(await exported).to.eql({ pending: 1 })
-        expect(pending.pending).to.be(1)
+        expect(pending.pending).to.be(promise)
         expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
         expect(getRefCounter(valid)).to.be(undefined)
         expect(getRefCounter(pending)).to.be(undefined)
@@ -1110,7 +1114,10 @@ describe("export", () => {
         pending.resolve({ done: true })
 
         expect(await exported).to.eql({ pending: { done: true } })
-        expect(sealed.pending).to.eql({ done: true })
+        expect(sealed.pending).to.be(promise)
+        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.eql({
+            done: true,
+        })
         expect(getRefCounter(sealed).promiseCount).to.be(0)
         verifyRefCounts(sealed)
     })

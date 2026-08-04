@@ -259,7 +259,7 @@ describe("subtree counters", () => {
         pending.resolve("done")
         await flushMicrotasks()
 
-        expect(earlier.pending).to.be("done")
+        expect(earlier.pending).to.be(pending.promise)
         expect(lookupPath(new Chain(root), ["earlier", "pending"], false)).to.be("done")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, earlier, protoValue)
@@ -483,7 +483,7 @@ describe("subtree counters", () => {
         delete metaOf(mirrored).cycleCuts
         delete mirrored.pending
         expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
-            "Live Promise mirror requires a writable language property",
+            "Live Promise mirror has no valid language property",
         )
     })
 

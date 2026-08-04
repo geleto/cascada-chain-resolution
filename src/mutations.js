@@ -533,7 +533,10 @@ function walkMutationPath(
         // Root-only import attribution is inherited until a nested boundary
         // overrides it. Once COW starts, attachmentPath keeps every remaining
         // path node in the shared branch.
-        const valueImportBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
+        let valueImportBoundary = metadata.nodeImportBoundary(
+            value,
+            inheritedImportBoundary,
+        )
         const mutatedValue = index === targetPath.length - 1
             ? tryTargetMutation?.(
                 value,
@@ -560,6 +563,7 @@ function walkMutationPath(
             )
             parent = copied.value
             attachmentPath = copied.attachmentPath
+            valueImportBoundary = undefined
         }
         if (index === targetPath.length - 1) {
             const targetResult = onTarget(

@@ -1,10 +1,11 @@
 import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
+import * as metadata from "./meta.js"
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 const propertyShapeErrors = new WeakSet()
 
-// This module owns the descriptor policy and physical access for
+// This module owns the descriptor policy and logical access for
 // language-visible properties.
 
 // Arrays expose canonical indexes only; other tracked values expose their own
@@ -96,13 +97,40 @@ function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
 }
 
 function assertCanUpdatePromiseProperty(parent, key, errorContext = undefined) {
-    const descriptor = assertCanSetLanguageProperty(parent, key, errorContext)
+    const descriptor = assertPromisePropertyShape(
+        parent,
+        key,
+        errorContext,
+    )
+    if (!descriptor.writable) {
+        throw propertyShapeError(
+            "Cannot assign to non-writable property",
+            errorContext,
+        )
+    }
+}
+
+// Promise discovery requires a stable data property; imported properties need
+// not be writable because their logical results are stored in the mirror.
+function assertPromisePropertyShape(parent, key, errorContext = undefined) {
+    const descriptor = assertCanMutateLanguageProperty(
+        parent,
+        key,
+        errorContext,
+    )
     if (!descriptor) {
         throw errorUtils.validationError(
             "Cannot resolve missing Promise property",
             errorContext,
         )
     }
+    if (!("value" in descriptor)) {
+        throw propertyShapeError(
+            "Cannot assign to accessor property",
+            errorContext,
+        )
+    }
+    return descriptor
 }
 
 function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) {
@@ -140,9 +168,16 @@ function writeLanguageProperty(parent, key, value) {
 }
 
 function readLanguageProperty(parent, key) {
-    parent = arrayViews.projectionOf(parent)
     key = String(key)
+    const logicalParent = parent
+    parent = arrayViews.projectionOf(parent)
     if (!isArrayLanguageKey(parent, key)) return undefined
+
+    const mirror = metadata.metaOf(logicalParent)?.mirrors?.[key]
+    if (mirror && Object.hasOwn(mirror, "resolvedValue")) {
+        return mirror.resolvedValue
+    }
+
     if (arrayViews.isArrayView(parent)) return parent.get(key)
     if (
         (Array.isArray(parent) || typeof parent === "string") &&
@@ -183,6 +218,7 @@ function enumerableLanguageKeys(value) {
 export {
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
+    assertPromisePropertyShape,
     assertCanSetLanguageProperty,
     assertCanUpdatePromiseProperty,
     deleteLanguageProperty,

@@ -44,20 +44,21 @@ Each selected cycle-closing owner/key property is present in the optional
 
 Cycle cuts are live property facts:
 
-- a physical Promise property has no published cut;
+- a logically pending Promise property has no published cut;
 - its first resolver publishes the prepared value and any cut together;
 - replacing or deleting the property clears the cut; and
 - a detached Promise mirror retains only its private value, not a former
   placement cut.
 
-A physical Promise and a published cut on the same owner/key are mutually
-exclusive.
+A logically pending Promise and a published cut on the same owner/key are
+mutually exclusive. An imported physical Promise may remain after its logical
+value and cut are published.
 
 ## Counter projection
 
 Ref-indexed nodes store three independent totals:
 
-- `promiseCount`: physical Promise placements;
+- `promiseCount`: logically pending Promise placements;
 - `errorCount`: ordinary Error placements; and
 - `cycleCutCount`: projected cycle-cut placements.
 
@@ -65,7 +66,7 @@ Property contributions are triples:
 
 | Property state | Contribution |
 | --- | --- |
-| Physical Promise | `[1, 0, 0]` |
+| Logical Promise | `[1, 0, 0]` |
 | Cycle cut | `[0, 0, 1]` |
 | Ordinary Error | `[0, 1, 0]` |
 | Indexed tracked child | Child totals |
@@ -139,14 +140,15 @@ back-edge cannot re-enter an active recursive frame.
 Every live property transition:
 
 1. reads the old counts and counted child;
-2. commits the physical value, mirror identity, and cut update;
+2. commits the logical value and cut update;
 3. reads the new counts and counted child;
 4. replaces reverse parent edges; and
 5. propagates all three deltas.
 
-Assignment, deletion, and Promise resolution therefore update physical state,
-cuts, counters, and parents in one synchronous transition. A detached Promise
-resolver changes only its mirror's `detachedValue`.
+Assignment, deletion, and Promise resolution therefore update logical state,
+cuts, counters, and parents in one synchronous transition. An imported live
+resolver changes `resolvedValue` instead of the external property; a detached
+resolver changes only `detachedValue`.
 
 ## Error queries
 
@@ -184,7 +186,7 @@ contain the full distinct Error set. See
 ## Path operations and ownership
 
 Finite `lookupPath`, `assignPath`, and `deletePath` ignore cut metadata and
-follow physical properties or the exact detached Promise state captured by an
+follow logical properties or the exact detached Promise state captured by an
 earlier operation. Their finite path length guarantees termination.
 
 Imported roots and repeated identities are shared. Mutation COWs before writing
@@ -196,13 +198,13 @@ the new placement closes a cycle.
 `test/verify-refcounts.js` independently checks:
 
 - exact `promiseCount`, `errorCount`, and `cycleCutCount`;
-- `[1, 0, 0]` for every physical Promise;
+- `[1, 0, 0]` for every logically pending Promise;
 - `[0, 0, 1]` for every published cut;
-- mutual exclusion of a physical Promise and a cut;
+- mutual exclusion of a logical Promise and a cut;
 - every cut key names an existing own enumerable tracked property;
 - every indexed Promise property has its required live mirror;
-- every live mirror property is own, enumerable, writable, and a data
-  property;
+- every write-through live mirror has a writable language property, while an
+  imported mirror may preserve a non-writable property;
 - no reverse parent edge through a Promise or cut;
 - downward counter closure through ordinary tracked edges;
 - independent counters for raw cut targets;
@@ -219,7 +221,7 @@ graph invalid. Import-focused tests separately prove cut coverage.
 - `src/meta.js`: store optional `cycleCuts`.
 - `src/promise-mirrors.js`: retain exact live or detached Promise-property
   versions.
-- `src/property-transitions.js`: coordinate physical property and mirror
+- `src/property-transitions.js`: coordinate logical property and mirror
   changes.
 - `src/refcounts.js`: count triples and update parent graphs.
 - `src/observations.js`: counter-fenced Error queries and export policy.
@@ -239,8 +241,8 @@ The inline and WeakMap suites cover:
 - rejected Promises becoming ordinary Errors;
 - COW forks, detached property versions, arrays, enumerable `__proto__`, and
   parent multiplicity;
-- writable Promise properties on sealed holders and invalid frozen/accessor
-  placements; and
+- writable runtime Promise properties, non-writable imported Promise data
+  properties, and invalid accessor placements; and
 - verifier failures for wrong counts, stale cuts, crossed parent edges,
   missing mirrors, invalid descriptors, and uncut projected cycles.
 

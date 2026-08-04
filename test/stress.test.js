@@ -42,7 +42,7 @@ describe("bounded stress", () => {
             sourceNode = sourceNode.next
             copiedNode = copiedNode.next
         }
-        expect(sourceNode.pending).to.be("done")
+        expect(sourceNode.pending).to.be(pending.promise)
         expect(lookupPath(chain, [
             ...Array.from({ length: depth }, () => "next"),
             "pending",
