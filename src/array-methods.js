@@ -7,7 +7,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
-import * as propertyOrigins from "./property-capture.js"
+import * as propertyVersions from "./property-versions.js"
 
 const ARRAY_METHODS = {
     __proto__: null,
@@ -62,7 +62,7 @@ function getElementAt(thisValue, args) {
             get(target, key) {
                 return key === "length"
                     ? target.length
-                    : propertyOrigins.getOrigin(thisValue, key)
+                    : propertyVersions.getPropertyReference(thisValue, key)
             },
         },
     )
@@ -208,7 +208,7 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
 function prepareFlatProperty(origin, depth, ancestry) {
     if (depth === 0) return origin
     return resolution.resolveOperationResultOrFatal(
-        propertyOrigins.resolveOriginValue(origin),
+        propertyVersions.resolvePropertyValue(origin),
         value => {
             if (arrayViews.isLogicalArray(value)) {
                 return prepareFlatArray(value, depth - 1, ancestry)
@@ -283,7 +283,7 @@ function prepareAndSortAndRemap(
             holeCount++
             continue
         }
-        const valueResult = propertyOrigins.resolveOriginValue(origin)
+        const valueResult = propertyVersions.resolvePropertyValue(origin)
         records.push(resolution.resolveOperationResultOrFatal(
             valueResult,
             value => {
@@ -393,7 +393,7 @@ function includes(
         resolveResult = resolve
     })
     for (const key of pending) {
-        const valueResult = propertyOrigins.resolveOriginValueAtKey(
+        const valueResult = propertyVersions.resolvePropertyValueAtKey(
             thisValue,
             key,
         )
@@ -451,7 +451,7 @@ function orderedIndexSearch(
             )
             if (languageValues.isPromise(value)) {
                 return resolution.resolveOperationResultOrFatal(
-                    propertyOrigins.resolveOriginValueAtKey(thisValue, key),
+                    propertyVersions.resolvePropertyValueAtKey(thisValue, key),
                     resolved => resolved === searchValue
                         ? current
                         : next(),
@@ -476,8 +476,8 @@ function normalizeBackwardStart(fromIndex, length) {
 }
 
 function materializeElement(element, retained = true) {
-    const result = propertyOrigins.isOrigin(element)
-        ? propertyOrigins.resolveOriginValue(element)
+    const result = propertyVersions.isPropertyReference(element)
+        ? propertyVersions.resolvePropertyValue(element)
         : element
     return retained
         ? resolution.resolveOperationResultOrFatal(result, value => {

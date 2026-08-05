@@ -1,6 +1,5 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import * as promiseMirrors from "./promise-mirrors.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 
@@ -60,12 +59,12 @@ function getPropertyRefState(parent, key) {
     return { child, counts: getRefCounts(child) }
 }
 
-function buildRefIndex(value) {
+function buildRefIndex(value, preparePromiseProperty) {
     if (!languageValues.isTracked(value) || getRefCounter(value)) return value
 
     const cutTargetQueue = []
     const active = new WeakSet()
-    indexComponent(value, cutTargetQueue, active)
+    indexComponent(value, cutTargetQueue, active, preparePromiseProperty)
 
     // A cut blocks count propagation, not indexing. Defer its target until the
     // current component is published so a closing back edge cannot re-enter an
@@ -73,21 +72,26 @@ function buildRefIndex(value) {
     for (let index = 0; index < cutTargetQueue.length; index++) {
         const target = cutTargetQueue[index]
         if (!getRefCounter(target)) {
-            indexComponent(target, cutTargetQueue, active)
+            indexComponent(
+                target,
+                cutTargetQueue,
+                active,
+                preparePromiseProperty,
+            )
         }
     }
     return value
 }
 
-function indexValueIfSourceIndexed(source, value) {
-    if (getRefCounter(source)) buildRefIndex(value)
+function indexValueIfSourceIndexed(source, value, preparePromiseProperty) {
+    if (getRefCounter(source)) buildRefIndex(value, preparePromiseProperty)
 }
 
 // Index the prospective child, then ask the maintained reverse-edge DAG
 // whether adding parent -> child would close a cycle.
-function prepareRefEdge(parent, child) {
+function prepareRefEdge(parent, child, preparePromiseProperty) {
     if (!getRefCounter(parent)) return false
-    buildRefIndex(child)
+    buildRefIndex(child, preparePromiseProperty)
     if (!languageValues.isTracked(child)) return false
     if (parent === child) return true
 
@@ -109,7 +113,12 @@ function prepareRefEdge(parent, child) {
 
 // Recursively index one cut-free projected component. Its cuts become roots of
 // later components in the same build.
-function indexComponent(node, cutTargetQueue, active) {
+function indexComponent(
+    node,
+    cutTargetQueue,
+    active,
+    preparePromiseProperty,
+) {
     if (!languageValues.isTracked(node)) return [0, 0, 0]
 
     const existing = getRefCounter(node)
@@ -136,7 +145,7 @@ function indexComponent(node, cutTargetQueue, active) {
         }
 
         if (languageValues.isPromise(child)) {
-            promiseMirrors.getOrCreatePromiseMirror(node, key, child)
+            preparePromiseProperty(node, key, child)
             promiseCount++
             continue
         }
@@ -155,7 +164,12 @@ function indexComponent(node, cutTargetQueue, active) {
             continue
         }
 
-        const childCounts = indexComponent(child, cutTargetQueue, active)
+        const childCounts = indexComponent(
+            child,
+            cutTargetQueue,
+            active,
+            preparePromiseProperty,
+        )
         promiseCount += childCounts[0]
         errorCount += childCounts[1]
         cycleCutCount += childCounts[2]
@@ -177,16 +191,18 @@ function indexComponent(node, cutTargetQueue, active) {
 function commitLiveEdge(
     owner,
     key,
+    value,
+    preparePromiseProperty,
     updateProperty,
-    knownOldState,
 ) {
+    const cycleCut = prepareRefEdge(owner, value, preparePromiseProperty)
     const counter = getRefCounter(owner)
-    const oldState = counter
-        ? knownOldState ?? getPropertyRefState(owner, key)
-        : undefined
+    const oldState = counter ? getPropertyRefState(owner, key) : undefined
     updateProperty()
     if (!counter) return
 
+    if (cycleCut) setCycleCut(owner, key)
+    else clearCycleCut(owner, key)
     const nextState = getPropertyRefState(owner, key)
     removeParentEdge(oldState.child, owner)
     addParentEdge(nextState.child, owner)
@@ -195,16 +211,6 @@ function commitLiveEdge(
         nextState.counts[0] - oldState.counts[0],
         nextState.counts[1] - oldState.counts[1],
         nextState.counts[2] - oldState.counts[2],
-    )
-}
-
-function commitPendingPromiseEdge(owner, key, updateProperty) {
-    // An ArrayView fork can remain logically pending after its backing advances.
-    commitLiveEdge(
-        owner,
-        key,
-        updateProperty,
-        { child: undefined, counts: [1, 0, 0] },
     )
 }
 
@@ -244,14 +250,10 @@ function applyCountDelta(node, promiseDelta, errorDelta, cycleCutDelta) {
 
 export {
     buildRefIndex,
-    clearCycleCut,
     commitLiveEdge,
-    commitPendingPromiseEdge,
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,
     hasCycleCut,
     indexValueIfSourceIndexed,
-    prepareRefEdge,
-    setCycleCut,
 }

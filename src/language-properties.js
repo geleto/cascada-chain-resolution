@@ -168,9 +168,7 @@ function readLanguageProperty(parent, key) {
     if (!isArrayLanguageKey(parent, key)) return undefined
 
     const mirror = metadata.metaOf(logicalParent)?.mirrors?.[key]
-    if (mirror && Object.hasOwn(mirror, "resolvedValue")) {
-        return mirror.resolvedValue
-    }
+    if (mirror) return mirror.value
 
     if (arrayViews.isArrayView(parent)) return parent.get(key)
     if (

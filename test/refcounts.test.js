@@ -611,7 +611,7 @@ describe("subtree counters", () => {
 
         const overlaid = { pending: deferred().promise }
         buildRefIndex(overlaid)
-        metaOf(overlaid).mirrors.pending.resolvedValue = {}
+        metaOf(overlaid).mirrors.pending.value = {}
         expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
             "Live Promise mirror has no valid language property",
         )
@@ -802,7 +802,7 @@ describe("subtree counters", () => {
 
         const counter = getRefCounter(resolved)
         expect(root.value).to.be("fixed")
-        expect(mirror.detachedValue).to.be(resolved)
+        expect(mirror.value).to.be(resolved)
         expect(counter).not.to.be(undefined)
         expect(counter.promiseCount).to.be(1)
         expect(counter.errorCount).to.be(1)

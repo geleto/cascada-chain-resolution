@@ -78,10 +78,11 @@ export {
 export { runFatal } from "../src/error.js"
 
 export {
-    buildRefIndex,
     getRefCounter,
     getRefCounts,
 } from "../src/refcounts.js"
+
+export { buildRefIndex } from "../src/property-versions.js"
 
 export {
     metaOf,

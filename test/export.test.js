@@ -270,7 +270,7 @@ describe("export", () => {
         const copy = await exported
 
         expect(copy.back.value).to.be(copy)
-        expect(mirror.isLive(root, "value")).to.be(true)
+        expect(metaOf(root).mirrors.value).to.be(mirror)
         expect(root.value).to.be(pending.promise)
         expect(lookupPath(new Chain(root), ["value"], false)).to.be(resolved)
         buildRefIndex(root)
@@ -468,14 +468,13 @@ describe("export", () => {
         await observed
 
         const mirror = metaOf(root).mirrors.pending
-        expect(mirror.isLive(root, "pending")).to.be(true)
-        expect(Object.hasOwn(mirror, "detachedValue")).to.be(false)
+        expect(metaOf(root).mirrors.pending).to.be(mirror)
 
         const exported = exportValue(chain, [])
 
         expect(exported.then).to.be(undefined)
         expect(exported).to.eql({ pending: { value: 1 } })
-        expect(mirror.isLive(root, "pending")).to.be(true)
+        expect(metaOf(root).mirrors.pending).to.be(mirror)
     })
 
     it("does not expose imported metadata", () => {

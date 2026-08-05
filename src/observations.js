@@ -3,7 +3,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
-import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyVersions from "./property-versions.js"
 import * as rawWalk from "./raw-walk.js"
 import * as resolution from "./resolution.js"
 
@@ -77,7 +77,7 @@ function hasErrorAtPathValue(value) {
     if (languageValues.isError(value)) return true
     if (!languageValues.isTracked(value)) return false
 
-    refcounts.buildRefIndex(value)
+    propertyVersions.buildRefIndex(value)
     const counter = refcounts.getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
     if (counter.cycleCutCount === 0 && counter.promiseCount === 0) return false
@@ -118,7 +118,7 @@ function getErrors(chain, path) {
         if (languageValues.isError(value)) {
             state.foundError(value)
         } else if (languageValues.isTracked(value)) {
-            refcounts.buildRefIndex(value)
+            propertyVersions.buildRefIndex(value)
             readiness = collectFencedErrorWaits(value, state)
         }
         return readiness
@@ -194,18 +194,21 @@ function collectFencedErrorWaits(value, state) {
     }
 
     function collectPromiseErrors(parent, key, promise) {
-        const mirror = promiseMirrors.getRequiredPromiseMirror(parent, key)
-        return resolution.onLaterPromiseReady(promise, () => {
-            if (state.stopped) return undefined
-            const value = mirror.getValue(parent, key)
-            if (languageValues.isError(value)) {
-                state.foundError(value)
-                return undefined
-            }
-            if (!languageValues.isTracked(value)) return undefined
+        return propertyVersions.continuePropertyValue(
+            parent,
+            key,
+            promise,
+            value => {
+                if (state.stopped) return undefined
+                if (languageValues.isError(value)) {
+                    state.foundError(value)
+                    return undefined
+                }
+                if (!languageValues.isTracked(value)) return undefined
 
-            return collectFencedErrorWaits(value, state)
-        })
+                return collectFencedErrorWaits(value, state)
+            },
+        )
     }
 }
 
@@ -227,15 +230,12 @@ function walkObservationPath(chain, path, onResolved) {
         const present = languageProperties.hasLanguageProperty(parent, key)
         const value = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(value)) {
-            const mirror = promiseMirrors.getOrCreatePromiseMirror(
+            return propertyVersions.continuePropertyValue(
                 parent,
                 key,
                 value,
+                propertyValue => walkValue(propertyValue, index, true),
             )
-            return resolution.onLaterPromiseReady(value, () => {
-                const propertyValue = mirror.getValue(parent, key)
-                return walkValue(propertyValue, index, true)
-            })
         }
         return walkValue(value, index, present)
     }

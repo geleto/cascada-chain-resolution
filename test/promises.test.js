@@ -2,8 +2,11 @@ import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import { hasCycleCut } from "../src/refcounts.js"
-import { detachPromiseMirror } from "../src/promise-mirrors.js"
-import { setMirrorValue } from "../src/property-transitions.js"
+import { markShared } from "../src/meta.js"
+import {
+    advancePromiseVersion,
+    getPromiseMirror,
+} from "../src/property-versions.js"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -303,48 +306,56 @@ describe("promise helpers", () => {
 })
 
 describe("promise mirrors and lookupPath", () => {
-    it("rejects a Promise before changing an existing mirror version", async () => {
+    it("rejects a Promise at the synchronous sharing boundary", () => {
+        const error = thrownBy(() => markShared(Promise.resolve("value")))
+        expect(error.message).to.be(
+            "A Promise must be shared by its property version",
+        )
+    })
+
+    it("rejects a Promise before advancing a property version", async () => {
         const pending = deferred()
         const root = {}
         assignPath(new Chain(root), ["value"], pending.promise)
-        const mirror = metaOf(root).mirrors.value
-        const replacement = Promise.resolve("replacement")
+        const mirror = getPromiseMirror(root, "value")
 
         const error = thrownBy(() => {
-            setMirrorValue(root, "value", mirror, replacement)
+            advancePromiseVersion(
+                root,
+                "value",
+                mirror,
+                Promise.resolve("replacement"),
+            )
         })
 
         expect(error.message).to.be(
             "A Promise requires a fresh property version",
         )
         expect(root.value).to.be(pending.promise)
-        expect(mirror.isLive(root, "value")).to.be(true)
+        expect(mirror.value).to.be(pending.promise)
 
         pending.resolve("settled")
         await flushMicrotasks()
         expect(root.value).to.be("settled")
     })
 
-    it("uses the property while live and private state after detachment", async () => {
+    it("keeps one authoritative value before and after detachment", async () => {
         const livePending = deferred()
         const liveRoot = {}
         assignPath(new Chain(liveRoot), ["value"], livePending.promise)
         const liveMirror = metaOf(liveRoot).mirrors.value
 
-        expect(liveMirror.constructor.name).to.be("PromiseMirror")
-        expect(liveMirror.isLive(liveRoot, "value")).to.be(true)
-        expect(liveMirror.getValue(liveRoot, "value")).to.be(
-            livePending.promise,
-        )
-        expect(Object.hasOwn(liveMirror, "detachedValue")).to.be(false)
+        expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
+        expect(liveMirror.value).to.be(livePending.promise)
+        expect(Object.keys(liveMirror)).to.eql(["value"])
 
         livePending.resolve("live")
         await flushMicrotasks()
 
-        expect(liveMirror.isLive(liveRoot, "value")).to.be(true)
+        expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
         expect(liveRoot.value).to.be("live")
-        expect(liveMirror.getValue(liveRoot, "value")).to.be("live")
-        expect(Object.hasOwn(liveMirror, "detachedValue")).to.be(false)
+        expect(liveMirror.value).to.be("live")
+        expect(Object.keys(liveMirror)).to.eql(["value"])
 
         const detachedPending = deferred()
         const detachedRoot = {}
@@ -353,38 +364,16 @@ describe("promise mirrors and lookupPath", () => {
         const detachedMirror = metaOf(detachedRoot).mirrors.value
         assignPath(detachedChain, ["value"], "replacement")
 
-        expect(detachedMirror.isLive(detachedRoot, "value")).to.be(false)
-        expect(detachedMirror.detachedValue).to.be(detachedPending.promise)
+        expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
+        expect(detachedMirror.value).to.be(detachedPending.promise)
 
         detachedPending.resolve("detached")
         await flushMicrotasks()
 
-        expect(detachedMirror.isLive(detachedRoot, "value")).to.be(false)
-        expect(detachedMirror.detachedValue).to.be("detached")
+        expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
+        expect(detachedMirror.value).to.be("detached")
+        expect(Object.keys(detachedMirror)).to.eql(["value"])
         expect(detachedRoot.value).to.be("replacement")
-    })
-
-    it("moves an imported overlay into detached mirror state", async () => {
-        const pending = deferred()
-        const resolved = { value: 1 }
-        const root = { value: pending.promise }
-        importValue(root, "detached imported Promise")
-        const mirror = metaOf(root).mirrors.value
-
-        pending.resolve(resolved)
-        await flushMicrotasks()
-
-        expect(root.value).to.be(pending.promise)
-        expect(mirror.getValue(root, "value")).to.be(resolved)
-        expect(Object.hasOwn(mirror, "resolvedValue")).to.be(true)
-
-        detachPromiseMirror(root, "value")
-
-        expect(mirror.isLive(root, "value")).to.be(false)
-        expect(mirror.getValue(root, "value")).to.be(resolved)
-        expect(mirror.detachedValue).to.be(resolved)
-        expect(Object.hasOwn(mirror, "resolvedValue")).to.be(false)
-        expect(root.value).to.be(pending.promise)
     })
 
     it("writes through existing writable properties on sealed holders", async () => {

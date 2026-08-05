@@ -1,4 +1,3 @@
-import "./init.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
@@ -9,7 +8,7 @@ import {
     walkMutationPath,
 } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
-import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 function enter(chain, path, mutates, onEntered) {
@@ -60,7 +59,7 @@ function enterMutating(chain, path, onEntered) {
             const value = languageProperties.readLanguageProperty(parent, key)
             const privateChain = new Chain(value, true)
             const sourceMirror = languageValues.isPromise(value)
-                ? promiseMirrors.getOrCreatePromiseMirror(
+                ? propertyVersions.getOrCreatePromiseMirror(
                     parent,
                     key,
                     value,
@@ -83,12 +82,12 @@ function enterMutating(chain, path, onEntered) {
             )
 
             if (sourceMirror) {
-                promiseMirrors.transferDetachedPromiseMirror(
+                propertyVersions.placePromiseVersion(
                     sourceMirror,
+                    value,
                     privateChain._state,
                     "value",
-                    value,
-                    attachmentRoot,
+                    Boolean(attachmentRoot),
                 )
             } else if (attachmentRoot) {
                 metadata.markShared(value)
@@ -126,11 +125,18 @@ function publishEnteredValue(state, resolveGate) {
     // Registration happens only after callback issuance has stopped. The root
     // mirror and all earlier private commands therefore update state.value
     // first in the same canonical FIFO batch.
-    resolution.onLaterPromiseReady(value, () => {
-        const publishedValue = languageProperties.readLanguageProperty(
-            state,
-            "value",
-        )
+    const mirror = propertyVersions.getPromiseMirror(state, "value")
+    if (!mirror) {
+        // Preserve publication ordering for corrupt raw Promise state: issuance
+        // is already closed; report the invariant failure from this FIFO slot.
+        resolution.onLaterPromiseReady(value, () => {
+            errorUtils.reportFatalError(
+                new Error("Entered root remained pending at publication"),
+            )
+        })
+        return
+    }
+    propertyVersions.continuePromiseVersion(value, mirror, publishedValue => {
         if (languageValues.isPromise(publishedValue)) {
             errorUtils.reportFatalError(
                 new Error("Entered root remained pending at publication"),

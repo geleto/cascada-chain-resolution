@@ -1,5 +1,5 @@
 import * as arrayViews from "../src/array-view.js"
-import * as promiseMirrors from "../src/promise-mirrors.js"
+import * as propertyVersions from "../src/property-versions.js"
 import { hasCycleCut } from "../src/refcounts.js"
 import {
     Chain,
@@ -100,7 +100,7 @@ describe("ArrayView", () => {
     it("forks retained Promise mirrors for each endpoint view", async () => {
         const pending = deferred()
         const source = [pending.promise, 2]
-        const sourceMirror = promiseMirrors.getOrCreatePromiseMirror(
+        const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
             source,
             "0",
             pending.promise,
@@ -116,11 +116,11 @@ describe("ArrayView", () => {
         expect(arrayViews.isArrayView(pushed)).to.be(true)
         const mirrors = [
             sourceMirror,
-            promiseMirrors.getPromiseMirror(pushed, "0"),
-            promiseMirrors.getPromiseMirror(grown, "0"),
-            promiseMirrors.getPromiseMirror(prepended, "1"),
-            promiseMirrors.getPromiseMirror(shifted, "0"),
-            promiseMirrors.getPromiseMirror(popped, "0"),
+            propertyVersions.getPromiseMirror(pushed, "0"),
+            propertyVersions.getPromiseMirror(grown, "0"),
+            propertyVersions.getPromiseMirror(prepended, "1"),
+            propertyVersions.getPromiseMirror(shifted, "0"),
+            propertyVersions.getPromiseMirror(popped, "0"),
         ]
         expect(mirrors.every(Boolean)).to.be(true)
         expect(new Set(mirrors).size).to.be(mirrors.length)
@@ -162,8 +162,8 @@ describe("ArrayView", () => {
         const derived = run(chain, [], "push", false)
 
         expect(
-            promiseMirrors.getPromiseMirror(chain._state.value, "0") ===
-                promiseMirrors.getPromiseMirror(derived, "0"),
+            propertyVersions.getPromiseMirror(chain._state.value, "0") ===
+                propertyVersions.getPromiseMirror(derived, "0"),
         ).to.be(false)
         assignPath(chain, ["0"], 9)
         pending.resolve(1)
@@ -240,8 +240,8 @@ describe("ArrayView", () => {
 
         run(new Chain(source), [], "shift", false)
         const retained = run(new Chain(source), [], "push", false, 2)
-        const sourceMirror = promiseMirrors.getPromiseMirror(source, "0")
-        const retainedMirror = promiseMirrors.getPromiseMirror(retained, "0")
+        const sourceMirror = propertyVersions.getPromiseMirror(source, "0")
+        const retainedMirror = propertyVersions.getPromiseMirror(retained, "0")
 
         expect(sourceMirror).to.be.ok()
         expect(retainedMirror).to.be.ok()

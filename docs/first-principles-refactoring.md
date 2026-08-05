@@ -4,96 +4,7 @@
 
 This document applies the first principles in `AGENTS.md` to source-wide refactoring. It starts from Cascada's fixed observable contracts and seeks the simplest general mechanisms that make special state, paths, and coupling unnecessary. `AGENTS.md` is authoritative; these proposals should be removed as they are completed.
 
-The phases are ranked by architectural value. Implementation order also considers dependencies and risk. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
-
-## 1. Make property versions and publication authoritative
-
-### Problem
-
-A Promise-backed property version currently stores its logical value in one of three places:
-
-- the physical property while an ordinary mirror is live;
-- `resolvedValue` while an imported mirror is live; or
-- `detachedValue` after the mirror is displaced.
-
-That storage split spreads one property-version transition across several mechanisms:
-
-- `PromiseMirror.getValue(parent, key)` locates the current storage;
-- detachment moves state between fields;
-- imported settlement needs a separate overlay;
-- retained ArrayView forks pass `sharedBacking`;
-- refcounting needs `commitPendingPromiseEdge` when shared physical storage advances first; and
-- logical property reads probe for `resolvedValue` directly.
-
-Property-version behavior is also divided among `promise-mirrors.js`, `property-capture.js`, `property-transitions.js`, and the post-load injection in `init.js`. Mutation, observation, raw export, and Error search repeat capture, FIFO registration, and exact-version reads.
-
-Ownership publication is split too. A retained Promise value is marked shared in mirror callbacks, while one remap path can pass a Promise to the otherwise synchronous-looking `markShared`. That asynchronous branch is `meta.js`'s only dependency on `resolution.js`.
-
-### Simplest target
-
-Every mirror owns one `value`, containing the current logical value of its property version:
-
-1. A new mirror starts with its Promise as `value`.
-2. The first settlement resolver advances `mirror.value` in its FIFO transition.
-3. Logical reads of a mirrored property read `mirror.value`.
-4. Detachment removes the mirror from the live map but does not move its value.
-5. Advancing a live runtime-owned version also writes the property physically.
-6. Advancing an imported or detached version changes only the mirror; an imported property retains its physical Promise.
-
-Every mirror gains one value field immediately. Some runtime-owned properties may also duplicate that value physically, but logical graph operations no longer choose between storage locations.
-
-Build one property-version protocol around that state, with purpose-specific entry points for:
-
-- creating a property reference that fixes owner, key, and presence when structure is observed;
-- lazily capturing its logical value and mirror at the consumer's exact program position;
-- continuing a captured version at a consumer's FIFO position;
-- assigning and discovering versions;
-- forking and transferring versions; and
-- advancing, detaching, and publishing versions.
-
-These entry points share one internal publication transition instead of configuring behavior through flags. Publication coordinates the mirror value, import and ownership classification, refcounts, cycle cuts, and required physical writeback synchronously.
-
-Publication owns placement effects, while the boundary that knows whether the source survives decides ownership. It offers purpose-specific retained and exclusive placement: retained placement marks the value shared before a later continuation can observe it, while exclusive placement does not add an owner. Phase 3 maps method and lookup outcomes directly to these entry points, without preserving `sharedOwnership` or another Boolean adapter.
-
-Promise placement therefore never relies on asynchronous `markShared`. Make `markShared` synchronous: it marks a tracked identity, ignores nontracked non-Promise values such as primitives and Errors, and treats a Promise as a fatal invariant violation. The resolver responsible for a Promise placement must classify its settled value.
-
-One protocol means one owner for coordination, not one module that absorbs every concern. Language-property code continues to own descriptors and physical access, resolution owns the canonical Promise queue, import owns external classification, and refcounting owns its graph projection. Where a subsystem both requests and participates in publication, split those roles instead of replacing the current injection with another cycle.
-
-Removing `initPromiseMirrors` requires an acyclic dependency direction, not merely moving publication. Today `indexComponent` requests mirror discovery while publication updates refcounts; import also requests mirror discovery while publication performs import classification. Separate those roles so no subsystem both calls the property-version protocol and is called back by it.
-
-### Must preserve
-
-- `mirror.value` is authoritative only for logical value. The physical descriptor remains authoritative for property presence, shape, writability, and configurability.
-- Every mirrored property requires a stable own data-property shape. While runtime-owned writeback remains observable, a live runtime-owned property must also be writable and must fail validation at the same program position as today; an imported property need not be writable.
-- Every Promise placement creates a fresh mirror, including reassignment of the same Promise.
-- Structural presence is fixed when a property is referenced; its logical value and mirror are captured only when the operation consumes it. A direct walk may do both consecutively, but native remapping must keep capture lazy so access and Promise registration do not move earlier.
-- Structural discovery may establish property-version state, but it does not register an operation as a consumer. Consumers register only where they actually depend on the pending version.
-- A value resolving through an imported property is classified before publication, and the imported container remains physically unchanged.
-- Settlement payload is consumed only by the version's first resolver. Later consumers and forks read the latest state of the captured mirror.
-- A fork or transfer samples its source version at its own FIFO position.
-- Retained values become shared before a later continuation can observe them; transferred values do not gain a second owner.
-- Detached versions remain usable by operations that captured them and receive any bookkeeping those operations need.
-- Identity, property-version, placement, and operation facts remain at their natural scopes.
-- Captured presence and own-key order remain stable across suspended operations.
-
-### Expected removals
-
-- `resolvedValue` and `detachedValue`;
-- the live/detached value-storage branch;
-- the parent/key parameters from mirror value reads;
-- `isLive` as a storage selector;
-- the `resolvedValue` presence check in logical property reads;
-- `sharedBacking` and `commitPendingPromiseEdge`;
-- asynchronous Promise handling in `markShared` and the `meta.js` dependency on `resolution.js`;
-- `initPromiseMirrors` and `init.js` bootstrap wiring;
-- repeated `getOrCreatePromiseMirror` + `onLaterPromiseReady` + `getValue` sequences; and
-- fork options made redundant by mirror-owned values and one publication transition.
-
-### Verification
-
-Representation-pinning tests must be migrated in the same change. Prefer public observations of settlement, detachment, import preservation, and version isolation. Keep direct mirror inspection only in focused invariant tests that cannot verify corruption or bookkeeping precisely through public behavior, and update those tests to the new representation.
-
-Cover same-Promise reassignment, lazy property capture and registration order, imported-value promotion, frozen and writable imported properties remaining physically unchanged, host-visible runtime-owned writeback, detached consumers, retained ArrayView forks, and refcount correctness.
+The remaining phases are ranked by architectural value. Implementation order also considers dependencies and risk. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
 
 ## 2. Propagate refcount deltas over the projection DAG once
 
@@ -249,36 +160,11 @@ Once `setProperty` no longer owns intrinsic length policy, move low-level proper
 
 Cover synchronous and Promise-converted lengths, ordinary object `length`, read-only Array and String length, ArrayView growth and contraction, partial contraction failure, deletion, copy-on-write isolation, import attribution, and refcount correctness through public operations.
 
-## 5. Deduplicate Promise-frontier discovery within one import
-
-### Problem
-
-When import reaches a metadata-bearing runtime-owned identity, `discoverPromiseMirrors` starts a fresh graph walk. With `M` overlapping runtime-owned islands across `N` reachable identities, one import can approach `O(N × M)` scanning. Persisted discovery state would go stale, but no persistent state is needed.
-
-### Simplest target
-
-Create one discovery `WeakSet` for each import preparation and pass it through every runtime-island discovery walk. Each available tracked identity is then scanned at most once during that import, while a later import starts with a fresh frontier.
-
-### Must preserve
-
-- Discovery reads logical language properties and stops descent at each Promise placement.
-- It creates missing mirrors but does not register the import operation as a consumer.
-- Cycles terminate without changing sharing, ownership, or import classification.
-- Runtime-owned islands retain their ownership, and later mutations can expose a new frontier to a later import.
-
-### Verification
-
-Verify that overlapping runtime-owned islands are scanned once per import, using focused instrumentation if public behavior cannot expose the work. A later import must still discover a Promise inserted or exposed after an earlier import. Ownership and import classification, mirror creation, and consumer registration must remain unchanged.
-
-### Possible follow-up
-
-`containsPromise`, runtime-island discovery, and import preparation share a narrow available-frontier traversal shape. Extract a common primitive only if it can express early success, revisits, promotion, and Promise-leaf actions directly, without becoming a configurable callback walker. Raw export, ref indexing, and Error search do not belong in that primitive.
-
 ## Fixed contract: opaque method receivers
 
 Controlled intrinsics read logical graph properties. An ordinary trusted method is an opaque host call: Cascada resolves its receiver path and exported arguments, then invokes the method with the resolved receiver directly as `this`. An internal ArrayView is first materialized, and the resulting native Array is `this`. Cascada does not mediate property reads inside the method, discover nested Promise dependencies, or replace the receiver with a logical snapshot or Proxy.
 
-Exact host receiver behavior makes runtime-owned physical writeback observable. Phase 1 must therefore keep writing an advancing live runtime-owned Promise version into its property. Imported and detached versions remain mirror-only, so an imported method receiver retains its external Promise. This difference follows directly from exact host identity and the rule that imported data is never modified.
+Exact host receiver behavior makes runtime-owned physical writeback observable. The property-version protocol therefore writes an advancing live runtime-owned version into its property. Imported and detached versions remain mirror-only, so an imported method receiver retains its external Promise. This difference follows directly from exact host identity and the rule that imported data is never modified.
 
 A pending ordinary invocation continues to preserve its captured receiver, and tracked ordinary-method results remain imported at admission. Mirror-owned logical settlement requires a stable data-property shape; host-visible runtime-owned writeback additionally requires writability and its existing validation timing. Virtualizing the receiver or removing this writeback would be a separate public contract change.
 
@@ -316,7 +202,7 @@ Creating a Promise or composing readiness Promises is not the same as registerin
 
 ### Generic graph walkers
 
-Ref indexing, raw export, and Error search differ in traversal order, stopping, cycle handling, ownership, and Promise consumption. A generic callback walker would hide required transitions rather than remove them. Only the narrower available-frontier follow-up above warrants joint evaluation.
+Ref indexing, import preparation, raw export, Error search, and `containsPromise` differ in traversal order, stopping, cycle handling, ownership, and Promise consumption. A generic callback walker would hide required transitions rather than remove them. Share a traversal only if its full contract is identical at every caller.
 
 ### Resolution helper split
 
@@ -332,20 +218,19 @@ The presence of the exact `mutates` Boolean is the Chain's issuance capability. 
 
 ## Recommended sequence
 
-- **Property versions:** Rewrite mirror state, exact-version capture, publication, and retained ownership together so no transitional storage adapter survives.
 - **Refcount propagation:** Replace recursive per-path propagation after the publication boundary is stable.
 - **Method dispatch:** Make Array and ordinary dispatch, result strategy, result ownership, and ArrayView attachment explicit together.
 - **Property policy:** Unify intrinsic property behavior, then lower assignment and deletion to remove the mutation/remap cycle.
 
-Import-local frontier deduplication can land before the property-version rewrite. Otherwise fold it into Phase 1, because both reshape version discovery. Error-query and ancestry cleanups should land only when they simplify touched code without introducing a new framework. Stack-depth changes should accompany their owning area; moving Chain capability off the language surface can land independently.
+Error-query and ancestry cleanups should land only when they simplify touched code without introducing a new framework. Stack-depth changes should accompany their owning area; moving Chain capability off the language surface can land independently.
 
-The opaque receiver contract is fixed: no phase virtualizes an ordinary method receiver, and Phase 1 preserves host-visible runtime-owned writeback while simplifying mirror storage and internal logical reads.
+The opaque receiver contract is fixed: no phase virtualizes an ordinary method receiver, and the property-version protocol preserves host-visible runtime-owned writeback.
 
 Each phase should remove the mechanisms it supersedes in the same change and pass the complete suite with both inline and WeakMap metadata. Prefer integration tests through public operations; use focused unit tests only for load-bearing invariants that public behavior cannot verify precisely. Behavioral tests must not pin mirror fields, helper boundaries, cycle-cut placement, or exact counter totals; a focused invariant test may inspect representation only when public behavior cannot verify that invariant precisely.
 
 ## Baseline
 
-Reviewed on 2026-08-05 against source commit `8e2c1e3`. The complete suite passed in both metadata modes:
+Verified after the property-version refactoring on 2026-08-05. The complete suite passed in both metadata modes:
 
-- 628 tests with inline metadata; and
-- 628 tests with WeakMap metadata.
+- 632 tests with inline metadata; and
+- 632 tests with WeakMap metadata.

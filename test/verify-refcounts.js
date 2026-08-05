@@ -3,7 +3,7 @@
 // rejects cycles in the projected parent graph.
 import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
-import * as promiseMirrors from "../src/promise-mirrors.js"
+import * as propertyVersions from "../src/property-versions.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
 
@@ -101,21 +101,24 @@ function verifyCycleCuts(node) {
     }
 
     for (const key of Object.keys(meta?.mirrors ?? {})) {
-        const mirror = promiseMirrors.getPromiseMirror(node, key)
+        const mirror = propertyVersions.getPromiseMirror(node, key)
         const descriptor = languageProperties.getLanguagePropertyDescriptor(
             node,
             key,
         )
-        const preservesPromise = mirror &&
-            Object.hasOwn(mirror, "resolvedValue")
-        const physicalPromise = languageValues.isPromise(descriptor?.value)
         const imported = metadata.importBoundaryOf(node) !== undefined
-        if (!mirror || !descriptor?.enumerable ||
-            !("value" in descriptor) ||
-            (
-                (!descriptor.writable || preservesPromise) &&
-                (!imported || !physicalPromise)
-            )) {
+        const validShape = mirror &&
+            Object.hasOwn(mirror, "value") &&
+            descriptor?.enumerable &&
+            "value" in descriptor
+        const physicalMatches = Object.is(descriptor?.value, mirror?.value)
+        const validStorage = imported
+            ? physicalMatches || (
+                !languageValues.isPromise(mirror?.value) &&
+                languageValues.isPromise(descriptor?.value)
+            )
+            : descriptor?.writable && physicalMatches
+        if (!validShape || !validStorage) {
             fatal("Live Promise mirror has no valid language property")
         }
     }
@@ -156,7 +159,7 @@ function verifyParentGraph(node, states) {
 
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key) {
-    const mirror = promiseMirrors.getPromiseMirror(node, key)
+    const mirror = propertyVersions.getPromiseMirror(node, key)
     const child = readPropertyForRecount(node, key)
     if (languageValues.isPromise(child)) {
         if (!mirror) {

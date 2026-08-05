@@ -4,14 +4,9 @@
 //   delete a.k  -> deletePath(a, ["k"])
 //   P(V)        -> a promise P that resolves to value V
 //
-// A Promise mirror identifies one parent/key property version. A live imported
-// property preserves its Promise and keeps the logical value in the mirror;
-// only a displaced version owns detachedValue.
-// ASSIGN and DISCOVERY seed from raw settlement. FORK samples a live source
-// mirror at the copier's FIFO position and writes through its runtime-owned
-// destination; TRANSFER does the same from a detached source mirror.
-
-import "./init.js"
+// A Promise mirror owns one logical property version. Assignment and discovery
+// consume raw settlement; retained and exclusive placements sample a captured
+// source mirror at their own FIFO positions.
 
 // Load-bearing helper contract:
 // The initial resolver converts data rejection through

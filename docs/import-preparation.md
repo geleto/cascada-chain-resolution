@@ -47,9 +47,8 @@ in its registration closure. At settlement it:
 2. classifies newly exposed external identities; and
 3. publishes the logical value synchronously.
 
-The external property remains the original Promise. Its mirror stores the
-logical result in `resolvedValue`. If the property version was already
-replaced, the result belongs only to that mirror's `detachedValue`.
+The external property remains the original Promise. Its mirror's single `value`
+field holds the logical result whether the version is live or detached.
 
 The mirror stores no import token. Later operations use the same canonical
 Promise only as a FIFO readiness signal and read the latest live or detached
@@ -87,9 +86,9 @@ keys are defined as own properties so inherited setters never run.
 
 ## Module boundary
 
-- `src/import.js` owns external identity classification and Promise-frontier
-  discovery.
+- `src/import.js` owns the public import boundary.
+- `src/import-preparation.js` owns external identity classification and
+  Promise-frontier discovery.
 - `src/meta.js` owns import tokens and external metadata storage.
-- `src/promise-mirrors.js` owns Promise-backed property versions.
-- `src/property-transitions.js` applies settlement through ordinary logical
-  publication.
+- `src/property-versions.js` owns Promise-backed property versions and applies
+  settlement through ordinary logical publication.

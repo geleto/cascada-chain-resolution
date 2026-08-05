@@ -108,7 +108,7 @@ If the owning property is superseded while mutating entry setup waits, the mutat
 
 When the mutation walk reaches a Promise-valued target, it obtains the source mirror and creates the private Chain with that same Promise in `state.value`. It installs the gate, synchronously detaching the source mirror, then installs the private transfer mirror and registers the transfer through `onLaterPromiseReady` at mutating `enter`'s FIFO position. Promise reactions cannot run between those synchronous steps. After graph reconstruction, `onEntered` runs immediately.
 
-Promise reactions cannot run until the synchronous gate transition returns. The source version's earlier resolver therefore writes the logical value to `sourceMirror.detachedValue` before the transfer callback reads it. The transfer retains neither source parent nor key, never consumes the raw settlement, marks the value shared when `attachmentRoot` shows that an old COW world retained it, and writes it through the private transfer mirror. Target-dependent commands issued through the Chain register on the same canonical source Promise after this transfer; target-independent callback work proceeds immediately and may complete before the target. A derived proxy Promise would fragment the source's FIFO batch and is forbidden. This single transfer mirror restores concurrency without an Entry object, readiness Promise, or command queue.
+Promise reactions cannot run until the synchronous gate transition returns. The source version's earlier resolver therefore advances `sourceMirror.value` before the transfer callback reads it. The transfer retains neither source parent nor key, never consumes the raw settlement, marks the value shared when `attachmentRoot` shows that an old COW world retained it, and writes it through the private transfer mirror. Target-dependent commands issued through the Chain register on the same canonical source Promise after this transfer; target-independent callback work proceeds immediately and may complete before the target. A derived proxy Promise would fragment the source's FIFO batch and is forbidden. This single transfer mirror restores concurrency without an Entry object, readiness Promise, or command queue.
 
 ### Promise-valued read-only target
 
@@ -120,15 +120,15 @@ Pending descendants do not delay entry setup in either mode. They remain ordinar
 
 ## Completion and publication
 
-Here `state` means the entered Chain's private `_state` holder. After the callback returns directly or its returned Promise fulfills, `enter` automatically completes the scope. Both modes first delete `state.mutates`, preventing new issuance. Read-only completion then releases the exact root acquired at setup and returns or forwards the operation result. Mutating completion stores the current `state.value`; if it is direct, the lexically captured gate resolver publishes it immediately, while a Promise value receives one `onLaterPromiseReady` callback that reads the current `state.value` and publishes it. The operation result is then returned or forwarded without waiting for publication.
+Here `state` means the entered Chain's private `_state` holder. After the callback returns directly or its returned Promise fulfills, `enter` automatically completes the scope. Both modes first delete `state.mutates`, preventing new issuance. Read-only completion then releases the exact root acquired at setup and returns or forwards the operation result. Mutating completion reads the current `state.value`; if it is direct, the lexically captured gate resolver publishes it immediately, while a Promise value captures its mirror and registers one readiness callback that publishes the mirror's current value. The operation result is then returned or forwarded without waiting for publication.
 
-Only gate publication needs this readiness callback; it does not extend the Chain lifetime or delay the operation result. The private-root mirror's transfer or assignment resolver and every earlier private operation are already registered on the stored Promise, so `onLaterPromiseReady` runs after they have written the latest logical value to the authoritative `state.value` slot. Root replacement itself is synchronous and new issuance is then forbidden, so this slot cannot be superseded before the callback reads it. Ordinary graph properties still require their captured mirrors because they may detach; this closed private-root slot does not.
+Only gate publication needs this readiness callback; it does not extend the Chain lifetime or delay the operation result. The private-root mirror's transfer or assignment resolver and every earlier private operation are already registered on the stored Promise, so the publication callback reads the latest logical value from that captured mirror. Root replacement itself is synchronous and new issuance is then forbidden, so the version cannot be superseded before publication.
 
 Passing the stored Promise directly to the gate resolver would instead use native resolver assimilation, which observes the raw settlement rather than the later `state.value`, can invoke a callable thenable again, and can reject the gate.
 
 After successful scope completion, the gate is always fulfilled. Language Errors are values, and completion never passes a Promise to the gate resolver because Promise resolver assimilation would consume raw settlement and could reject or bypass mirror state.
 
-Mutating completion waits on at most one stored `state.value` Promise. Canonical Promise fulfillment is assimilated before the first mirror resolver publishes it, and `setMirrorValue` never publishes a Promise into an existing version. Assigning a new Promise, including the same Promise again, synchronously replaces the root slot with a fresh version and mirror. A suspended operation cannot create a later root version after closure. Therefore `state.value` must be non-Promise when the readiness callback runs. Seeing a Promise is fatal invariant corruption.
+Mutating completion waits on at most one stored `state.value` Promise. Canonical Promise fulfillment is assimilated before the first mirror resolver publishes it, and property-version advancement never publishes a Promise into an existing version. Assigning a new Promise, including the same Promise again, synchronously replaces the root slot with a fresh version and mirror. A suspended operation cannot create a later root version after closure. Therefore the captured mirror value must be non-Promise when the readiness callback runs. Seeing a Promise is fatal invariant corruption.
 
 Pending descendant operations may complete after publication. They registered their mirrors before callback completion, while later public consumers register after the gate, so ordinary FIFO ordering preserves their effects. The controlling rule is:
 
@@ -217,7 +217,7 @@ Imported-data validation produces a language Error with the existing attribution
 - mutation through a read-only Chain;
 - new issuance through a closed Chain;
 - invalid property descriptors during gate installation or publication; and
-- a Promise reaching `setMirrorValue` or the gate-resolver boundary.
+- a Promise reaching property-version advancement or the gate-resolver boundary.
 
 ## Implementation contracts
 
@@ -226,11 +226,11 @@ The implementation lives primarily in:
 ```text
 src/chain.js
 src/enter.js
-src/init.js
+src/property-versions.js
 test/enter.test.js
 ```
 
-`src/index.js` re-exports `Chain` from `src/chain.js`, preserving its package identity while allowing `enter.js` to create private Chains without importing the package entry module. Both entry points import `init.js`, which owns the circular Promise-mirror/property-transition wiring; internal `enter` therefore does not rely on prior package-facade evaluation. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, Promise mirrors own source sampling, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains the language root in `value` and its issuance capability in `mutates`; path operations traverse only through `value`. A root value may be primitive, shared, or replaced, while a mirror may be absent or detached, so neither language META nor `PromiseMirror` owns this lifecycle.
+`src/index.js` re-exports `Chain` from `src/chain.js`, preserving its package identity while allowing `enter.js` to create private Chains without importing the package entry module. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains the language root in `value` and its issuance capability in `mutates`; path operations traverse only through `value`. A root value may be primitive, shared, or replaced, while a mirror may be absent or detached, so neither language META nor `PromiseMirror` owns this lifecycle.
 
 ### Chain capability and read entries
 
@@ -283,13 +283,13 @@ The writeback continuations belong only to active mutation-walk call frames. Ord
 
 ### Gate transitions
 
-For a Promise target, setup obtains the source mirror before gate installation. Successful gate replacement detaches that source; `transferDetachedPromiseMirror` then installs an ordinary `PromiseMirror` on private `state.value` and registers one source-sampling callback. The source version's earlier resolver writes the logical value to `detachedValue`; the transfer callback reads that field, applies the `attachmentRoot` sharing rule, and calls `setMirrorValue` on the transfer mirror. The asynchronous callback therefore retains no source placement. The private holder is unindexed, and its runtime-owned mirror writes the value physically. `forkPromiseMirror` remains separate because a fork may need to sample a live source placement.
+For a Promise target, setup obtains the source mirror before gate installation. Successful gate replacement detaches that source; retained or exclusive placement then installs a fresh `PromiseMirror` on private `state.value` and registers one source-sampling callback. The source version's earlier resolver advances its mirror value; the transfer callback samples that value and publishes it through the private mirror, marking it shared only when `attachmentRoot` shows that the old COW world retained it. The callback therefore retains no source placement. The private holder is unindexed, and its runtime-owned mirror writes the value physically. The same placement protocol samples live and detached source versions.
 
 Gate installation creates an assigned mirror and calls `replaceProperty`, whose `commitLiveEdge` transaction captures the old contribution, detaches the old mirror, writes the gate, removes the old tracked child's reverse-parent edge, substitutes the gate's pending-Promise contribution, and propagates the delta through indexed ancestors. For a Promise target, the detached source and new gate each represent one pending version, so the immediate count delta is normally zero; later source settlement cannot affect the public edge. An unindexed parent has no reverse edge or counters to update.
 
-Gate publication uses `setMirrorValue` through the same transaction: it indexes the published root when the public owner is indexed, adds its reverse-parent edge when tracked, and replaces the gate's pending contribution with the root's counters. The private `chain._state` holder is host state rather than a language-graph parent, so capturing a root adds no reverse-parent edge. When COW retained the source target, direct setup or the transfer sampler has already marked the private root shared.
+Gate publication uses property-version advancement through the same transaction: it indexes the published root when the public owner is indexed, adds its reverse-parent edge when tracked, and replaces the gate's pending contribution with the root's counters. The private `chain._state` holder is host state rather than a language-graph parent, so capturing a root adds no reverse-parent edge. When COW retained the source target, direct setup or retained placement has already marked the private root shared.
 
-`setMirrorValue` fatally rejects `languageValues.isPromise(newValue)` before ref indexing, descriptor changes, or publication. A new Promise always goes through `replaceProperty` and receives a fresh version. Gate assignment uses the ordinary property transition.
+Property-version advancement fatally rejects `languageValues.isPromise(newValue)` before ref indexing, descriptor changes, or publication. A new Promise always goes through assignment and receives a fresh version. Gate assignment uses the ordinary property transition.
 
 ## Verification
 
@@ -311,7 +311,7 @@ Ordering and Promise targets:
 - detached-source-to-transfer-mirror sampling preserving prior effects, COW, attribution, Error identity, cyclic data, and one canonical FIFO batch;
 - immediate callback and independent work for a Promise target, while target-dependent commands and publication wait through its private-root transfer mirror;
 - direct target capture without a root mirror, Promise target capture with exactly one transfer mirror, and one publication registration for any pending private root; and
-- `setMirrorValue` rejection before side effects, the local publication guard after raw-state corruption, and FIFO gate publication.
+- Promise advancement rejection before side effects, the local publication guard after raw-state corruption, and FIFO gate publication.
 
 Ownership and read entries:
 

@@ -250,27 +250,22 @@ Promise again, copying the property, or retaining it in a distinct ArrayView
 creates a new mirror at that operation's FIFO position. ArrayViews may still
 share the property's physical backing slot.
 
-While a mirror is live, its property is normally authoritative. Its first
-resolver captures the property's import boundary at creation. If present,
-resolution preserves the external property and stores the logical result in
-`resolvedValue`. Every state-changing resolver uses the property import status it
-captured at registration. The boundary remains on the imported owner and
-imported tracked values, not the mirror. A fork instead uses the canonical
-Promise only as a FIFO readiness signal, samples its source mirror at the fork
-position, and writes the result into its runtime-owned destination.
+The mirror's single `value` field is the property version's authoritative logical
+value. Its first resolver captures the property's import boundary at creation.
+Every state-changing resolver uses the import status captured at registration;
+the boundary remains on the imported owner and imported tracked values, not the
+mirror. A live runtime-owned version also writes through to its physical
+property, while an imported version preserves the external Promise.
 
-A retained ArrayView mirror may run after the source mirror has already changed
-their shared backing slot. Its settlement therefore replaces that logical
-edge's known pending-Promise contribution instead of recapturing the physical
-old value. The mirrors and their later operations remain independent.
+A fork uses the canonical Promise only as a FIFO readiness signal and samples
+its source mirror at the fork position. Retained ArrayView properties have
+distinct mirrors even when they share a physical backing slot, so their logical
+edges and later operations remain independent.
 
-A later overwrite or deletion detaches the mirror and moves its current logical
-value to `detachedValue`. Resolvers already registered for that property version
-continue against its private value and cannot affect a replacement property.
-
-The mirror stores no source Promise, parent, key, or import boundary. Its only
-optional value fields are `resolvedValue` for a preserved live property and
-`detachedValue` after detachment.
+A later overwrite or deletion detaches the mirror by removing it from the live
+map. The mirror keeps its current value; resolvers already registered for that
+property version continue against it and cannot affect a replacement property.
+The mirror stores no source Promise, parent, key, or import boundary.
 
 ## Errors and fatal failures
 

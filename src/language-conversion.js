@@ -3,7 +3,7 @@ import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import * as propertyOrigins from "./property-capture.js"
+import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 const stringConcat = String.prototype.concat
@@ -94,7 +94,7 @@ function joinLogicalArray(
             continue
         }
         conversions[index] = resolution.continueOperationUnlessPoison(
-            propertyOrigins.resolveOriginValueAtKey(array, key),
+            propertyVersions.resolvePropertyValueAtKey(array, key),
             value => {
                 if (value === undefined || value === null) return ""
                 return toStringValue(value, ancestry)

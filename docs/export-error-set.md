@@ -85,7 +85,7 @@ The raw walk begins immediately:
 - synchronously available data is copied before export returns;
 - a logical Promise property registers through its exact `PromiseMirror`;
 - its first resolver runs before export's later readiness resolver;
-- export then reads the latest live logical value or captured `detachedValue`;
+- export then reads that captured mirror's latest value;
 - recursively exposed Promises are registered synchronously in the parent
   resolver; and
 - an already resolved logical property is read synchronously and causes no

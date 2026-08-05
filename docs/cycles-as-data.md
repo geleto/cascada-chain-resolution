@@ -88,7 +88,7 @@ and acyclicity of the projected parent graph.
 ## Module boundary
 
 - `src/refcounts.js` owns cut storage and maintains the acyclic projection.
-- `src/property-transitions.js` publishes property, cut, and counter changes
+- `src/property-versions.js` publishes property, cut, and counter changes
   atomically.
 - `src/observations.js` follows counter frontiers.
 - `src/raw-walk.js` traverses the unprojected graph.

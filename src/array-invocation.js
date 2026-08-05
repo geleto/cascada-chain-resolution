@@ -5,8 +5,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as methods from "./array-methods.js"
 import { exportArgument } from "./observations.js"
-import * as propertyOrigins from "./property-capture.js"
-import * as promiseMirrors from "./promise-mirrors.js"
+import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 function isArrayMutator(method) {
@@ -116,7 +115,7 @@ function invokeArrayMutationMethod(
             if (definition.transformResult) {
                 const length = arrayViews.logicalArrayLength(thisValue)
                 const origin = length > 0
-                    ? propertyOrigins.getOrigin(
+                    ? propertyVersions.getPropertyReference(
                         thisValue,
                         String(method === "shift" ? 0 : length - 1),
                     )
@@ -210,7 +209,7 @@ function deriveArrayView(thisValue, start, end) {
     if (start === end) return []
     const projection = arrayViews.ArrayView.attachTo(thisValue)
     const view = new arrayViews.ArrayView(projection, start, end)
-    promiseMirrors.prepareRetainedArrayProperties(
+    propertyVersions.prepareRetainedArrayProperties(
         thisValue,
         view,
         key => {
@@ -233,7 +232,7 @@ function tryAppendArrayView(thisValue, suffix) {
     const view = arrayViews.ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,
-        derived => promiseMirrors.prepareRetainedArrayProperties(
+        derived => propertyVersions.prepareRetainedArrayProperties(
             thisValue, derived,
         ),
     )
@@ -248,7 +247,7 @@ function tryPrependArrayView(thisValue, values) {
     const view = arrayViews.ArrayView.tryPrepend(
         thisValue,
         values,
-        derived => promiseMirrors.prepareRetainedArrayProperties(
+        derived => propertyVersions.prepareRetainedArrayProperties(
             thisValue,
             derived,
             key => String(Number(key) + offset),

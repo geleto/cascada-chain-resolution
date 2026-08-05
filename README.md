@@ -135,16 +135,16 @@ transfer sampler marks its logical value before target-dependent private work. A
 Promise-valued target first replaces the public placement with its gate, which
 synchronously detaches the source mirror. It then installs the private-root
 transfer before invoking the callback. The source version's earlier resolver
-writes `detachedValue`, which the transfer samples without retaining the source
+writes its mirror value, which the transfer samples without retaining the source
 parent or key. The callback starts immediately with
 the source Promise while
 target-independent work overlaps its resolution. Target-dependent commands
 register behind the transfer on the source's canonical FIFO queue and receive
 the logical value. If callback work leaves the
 private Chain's `state.value` holding a Promise, publication registers once
-through `onLaterPromiseReady`. After the root mirror and earlier FIFO operations
-have updated the authoritative slot, that callback opens the gate with the
-current `state.value` rather than letting the gate resolver assimilate the raw
+through its captured property version. After the root mirror and earlier FIFO
+operations have advanced that version, the callback opens the gate with the
+current mirror value rather than letting the gate resolver assimilate the raw
 Promise. Another root Promise assignment would have occurred synchronously
 before completion and would therefore be the value registered instead.
 Gate installation and publication use ordinary atomic property transitions, so
@@ -237,8 +237,6 @@ completed, deferred, and pending work.
 ## Source layout
 
 - `src/index.js` owns the public API and re-exports `Chain` from `src/chain.js`.
-- `src/init.js` owns the circular runtime wiring shared by the
-  package facade and internal entry points.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
 - `src/language-values.js` owns value classification and the data-class
   registry.
@@ -249,13 +247,12 @@ completed, deferred, and pending work.
 - `src/run.js` owns restricted method routing and common observation handling.
 - `src/array-view.js`, `src/array-invocation.js`, `src/array-methods.js`, and
   `src/array-remap.js` own logical Array representation and method execution.
-- `src/import.js` classifies imported identities and discovers their Promise
-  frontier.
-- `src/property-transitions.js` coordinates property replacement, deletion,
-  Promise-mirror publication, and cycle-cut changes.
+- `src/import.js` owns the public import boundary; `src/import-preparation.js`
+  classifies imported identities and discovers their Promise frontier.
+- `src/property-versions.js` owns exact property references, Promise mirrors,
+  retained and exclusive placement, and property publication.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
   accounting around indexed property transitions.
-- `src/promise-mirrors.js` owns the `PromiseMirror` lifecycle.
 - `src/raw-walk.js` owns metadata-free export copying and Error collection.
 - `src/language-properties.js` owns descriptor validation and logical reads and
   writes for language-visible properties.
@@ -346,19 +343,19 @@ an earlier lookup, export, or Error query observes.
 ## Promise mirrors
 
 Each Promise-backed property has a mirror identifying that exact property
-version. A live mirror normally writes each resolved value back to the property.
-An imported property instead preserves its external Promise and keeps the
-logical value in `resolvedValue` on the mirror. Its first resolver captures the
-property's import boundary without storing it on the mirror, consumes fulfillment
-or converts rejection to Error, and publishes that logical value. Later resolvers
-use the Promise only as a readiness signal and read the latest value left by
-earlier resolvers.
+version. The mirror's single `value` field is always that version's authoritative
+logical value. Its first resolver captures the property's import boundary without
+storing it on the mirror, consumes fulfillment or converts rejection to Error,
+and publishes the logical value. A live runtime-owned version also writes through
+to its physical property; an imported version preserves the external Promise.
+Later resolvers use the Promise only as a readiness signal and read the latest
+mirror value left by earlier resolvers.
 
-Overwriting or deleting the property detaches its mirror. At that moment the
-logical value is moved to `detachedValue`; already-issued operations continue
-against that private state and cannot write into the replacement property.
-Reassigning even the same Promise creates a fresh mirror because it is a new
-property version.
+Overwriting or deleting the property detaches its mirror by removing it from the
+owner's live map. The mirror keeps its value, so already-issued operations
+continue against that private state and cannot write into the replacement
+property. Reassigning even the same Promise creates a fresh mirror because it is
+a new property version.
 
 When copy-on-write copies a node containing a pending property, the copy gets
 its own mirror at the copy's issue position. Its FIFO resolver samples the

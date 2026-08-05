@@ -1,4 +1,3 @@
-import "./init.js"
 import * as arrayInvocation from "./array-invocation.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"

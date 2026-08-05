@@ -1,6 +1,5 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
-import * as resolution from "./resolution.js"
 
 const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
@@ -69,14 +68,14 @@ function updateReadLease(value, change) {
     else meta.readEnterCount = next
 }
 
-// Bare promises crossing an ownership boundary resolve to shared values.
-// Promise-backed properties classify their logical value in their resolver.
 function markShared(value) {
-    return resolution.resolveInitialValueOrPoison(value, resolved => {
-        if (!languageValues.isTracked(resolved)) return resolved
-        ensureMeta(resolved).shared = true
-        return resolved
-    })
+    if (languageValues.isPromise(value)) {
+        errorUtils.reportFatalError(
+            new TypeError("A Promise must be shared by its property version"),
+        )
+    }
+    if (languageValues.isTracked(value)) ensureMeta(value).shared = true
+    return value
 }
 
 // Every identity reached by one import shares its attribution token.

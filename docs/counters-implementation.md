@@ -75,14 +75,14 @@ One `PromiseMirror` represents one property version. A logically pending
 property contributes `[1, 0, 0]`. Its first FIFO resolver publishes the result
 through the same property transition as an ordinary assignment.
 
-Imported physical Promise properties keep their Promise and expose the logical
-result through `resolvedValue`; runtime-owned properties write through. A
-detached version uses `detachedValue`. These storage choices do not change the
-counter rules.
+Each mirror's `value` is the authoritative logical edge. Imported physical
+properties keep their Promise, runtime-owned live properties also write through,
+and detached versions retain their private mirror value. These storage choices
+do not change the counter rules.
 
 Distinct logical ArrayView properties have distinct mirrors even when they
-share a physical slot. Their settlement supplies the known old pending
-contribution because another view may already have changed the backing slot.
+share a physical slot. Refcounting reads each mirror's logical edge, independent
+of changes another view made to the backing slot.
 
 ## Delta propagation
 

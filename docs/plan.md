@@ -16,10 +16,10 @@ intermediate designs used to reach it.
 - Represent each Promise-backed property version with one `PromiseMirror`.
 - Create a new version for every assignment, copy, or distinct logical
   placement, even when the Promise identity is unchanged.
-- Keep live state in the logical property, using `resolvedValue` only when an
-  imported physical Promise must be preserved.
-- Move displaced versions to `detachedValue` so already-issued operations keep
-  their exact world.
+- Keep the version's authoritative logical state in the mirror's single `value`
+  field.
+- Write live runtime-owned advancement through to the physical property, while
+  imported and detached versions remain mirror-only.
 
 ## 3. Ownership and import
 

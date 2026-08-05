@@ -5,11 +5,9 @@ import * as metadata from "./meta.js"
 import {
     deleteProperty,
     setProperty,
+    setRetainedProperty,
 } from "./mutations.js"
-import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyOrigins from "./property-capture.js"
-import * as propertyTransitions from "./property-transitions.js"
-import * as refcounts from "./refcounts.js"
+import * as propertyVersions from "./property-versions.js"
 
 const KIND_ADD = 0
 const KIND_DELETE = 1
@@ -23,7 +21,7 @@ function createInitialRemap(array) {
         languageProperties.writeLanguageProperty(
             remap,
             key,
-            propertyOrigins.getOrigin(array, key),
+            propertyVersions.getPropertyReference(array, key),
         )
     }
     return remap
@@ -56,7 +54,7 @@ function traceMutation(array) {
             if (Object.hasOwn(target, key)) return target[key]
             if (deleted.has(key) || Number(key) >= sourceLength) return undefined
             // Assignment could invoke an inherited numeric setter.
-            const origin = propertyOrigins.getOrigin(array, key)
+            const origin = propertyVersions.getPropertyReference(array, key)
             if (origin) languageProperties.writeLanguageProperty(
                 target, key, origin,
             )
@@ -94,7 +92,7 @@ function traceMutation(array) {
 }
 
 function createPlacementOperation(entry, newIndex) {
-    return propertyOrigins.isOrigin(entry)
+    return propertyVersions.isPropertyReference(entry)
         ? {
             kind: KIND_MOVE,
             origin: entry,
@@ -111,7 +109,7 @@ function applyRemapToArray(array, remap, operations) {
     })
     const placementCount = new Map()
     remap.forEach(origin => {
-        if (!propertyOrigins.isOrigin(origin)) return
+        if (!propertyVersions.isPropertyReference(origin)) return
         placementCount.set(
             origin,
             (placementCount.get(origin) ?? 0) + 1,
@@ -119,7 +117,7 @@ function applyRemapToArray(array, remap, operations) {
     })
     for (const operation of operations) {
         if (operation.kind === KIND_MOVE) {
-            propertyOrigins.captureOrigin(operation.origin)
+            propertyVersions.capturePropertyVersion(operation.origin)
         }
     }
 
@@ -157,7 +155,7 @@ function createArrayFromRemap(
     const output = new Array(remap.length)
     placeRemap(output, remap, 0, retained)
     if (refIndexSource !== undefined) {
-        refcounts.indexValueIfSourceIndexed(refIndexSource, output)
+        propertyVersions.indexValueIfSourceIndexed(refIndexSource, output)
     }
     return output
 }
@@ -170,13 +168,12 @@ function placeRemap(destination, remap, offset = 0, retained = true) {
 }
 
 function placeEntry(destination, key, entry, retained) {
-    if (propertyOrigins.isOrigin(entry)) {
+    if (propertyVersions.isPropertyReference(entry)) {
         placeOrigin(destination, key, entry, retained)
         return
     }
-    setProperty(destination, key, entry)
-    // The fresh mirror publishes before this FIFO sharing mark.
-    if (retained) metadata.markShared(entry)
+    const place = retained ? setRetainedProperty : setProperty
+    place(destination, key, entry)
 }
 
 function placeOrigin(
@@ -185,7 +182,7 @@ function placeOrigin(
     origin,
     retained = true,
 ) {
-    propertyOrigins.captureOrigin(origin)
+    propertyVersions.capturePropertyVersion(origin)
     const stringKey = String(key)
     languageProperties.assertCanSetLanguageProperty(
         destination,
@@ -195,34 +192,17 @@ function placeOrigin(
 
     const value = origin.value
     if (languageValues.isPromise(value)) {
-        const mirror = promiseMirrors.forkPromiseMirror(
-            origin.owner,
-            destination,
-            origin.key,
+        propertyVersions.placePromiseVersion(
+            origin.mirror,
             value,
-            {
-                retained,
-                sourceMirror: origin.mirror,
-                destinationKey: stringKey,
-                install: false,
-            },
-        )
-        propertyTransitions.replaceProperty(
             destination,
             stringKey,
-            mirror,
-            value,
+            retained,
         )
         return
     }
 
-    if (retained) metadata.markShared(value)
-    propertyTransitions.replaceProperty(
-        destination,
-        stringKey,
-        undefined,
-        value,
-    )
+    propertyVersions.assignProperty(destination, stringKey, value, retained)
 }
 
 export {

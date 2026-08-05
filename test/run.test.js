@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm"
 
-import * as promiseMirrors from "../src/promise-mirrors.js"
+import * as propertyVersions from "../src/property-versions.js"
 import * as arrayViews from "../src/array-view.js"
 import {
     Chain,
@@ -269,6 +269,35 @@ describe("run", () => {
         expect(run(new Chain(source), [], "fail", false)).to.be(failure)
     })
 
+    it("exposes physical Promise writeback to ordinary methods", async () => {
+        const runtimePending = deferred()
+        const runtimeOwned = { pending: runtimePending.promise }
+        Object.defineProperty(runtimeOwned, "stillPending", {
+            value() {
+                return this.pending === runtimePending.promise
+            },
+        })
+        lookupPath(new Chain(runtimeOwned), ["pending"], false)
+
+        const importedPending = deferred()
+        const imported = { pending: importedPending.promise }
+        Object.defineProperty(imported, "stillPending", {
+            value() {
+                return this.pending === importedPending.promise
+            },
+        })
+        importValue(imported, "ordinary receiver")
+
+        runtimePending.resolve("runtime")
+        importedPending.resolve("imported")
+        await flushMicrotasks()
+
+        expect(run(new Chain(runtimeOwned), [], "stillPending", false)).to.be(
+            false,
+        )
+        expect(run(new Chain(imported), [], "stillPending", false)).to.be(true)
+    })
+
     it("imports an ordinary method result that aliases its receiver", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
@@ -463,10 +492,10 @@ describe("run", () => {
             right,
         )
         const mirrors = [
-            promiseMirrors.getPromiseMirror(leftChain._state.value, "0"),
-            promiseMirrors.getPromiseMirror(right, "0"),
-            promiseMirrors.getPromiseMirror(concatenated, "0"),
-            promiseMirrors.getPromiseMirror(concatenated, "1"),
+            propertyVersions.getPromiseMirror(leftChain._state.value, "0"),
+            propertyVersions.getPromiseMirror(right, "0"),
+            propertyVersions.getPromiseMirror(concatenated, "0"),
+            propertyVersions.getPromiseMirror(concatenated, "1"),
         ]
 
         expect(new Set(mirrors).size).to.be(4)
@@ -551,12 +580,12 @@ describe("run", () => {
         const pending = deferred()
         const chain = new Chain([pending.promise, pending.promise])
         const source = chain._state.value
-        const source0 = promiseMirrors.getOrCreatePromiseMirror(
+        const source0 = propertyVersions.getOrCreatePromiseMirror(
             source,
             "0",
             pending.promise,
         )
-        const source1 = promiseMirrors.getOrCreatePromiseMirror(
+        const source1 = propertyVersions.getOrCreatePromiseMirror(
             source,
             "1",
             pending.promise,
@@ -566,8 +595,8 @@ describe("run", () => {
         run(chain, [], "reverse", true)
 
         const reversed = chain._state.value
-        const reversed0 = promiseMirrors.getPromiseMirror(reversed, "0")
-        const reversed1 = promiseMirrors.getPromiseMirror(reversed, "1")
+        const reversed0 = propertyVersions.getPromiseMirror(reversed, "0")
+        const reversed1 = propertyVersions.getPromiseMirror(reversed, "1")
         expect(reversed0 === reversed1).to.be(false)
         expect(reversed0 === source1).to.be(false)
         expect(reversed1 === source0).to.be(false)
@@ -575,8 +604,8 @@ describe("run", () => {
         const copied = new Chain([pending.promise, 0])
         run(copied, [], "copyWithin", true, 1, 0, 1)
         expect(
-            promiseMirrors.getPromiseMirror(copied._state.value, "0") ===
-                promiseMirrors.getPromiseMirror(copied._state.value, "1"),
+            propertyVersions.getPromiseMirror(copied._state.value, "0") ===
+                propertyVersions.getPromiseMirror(copied._state.value, "1"),
         ).to.be(false)
 
         pending.resolve(1)

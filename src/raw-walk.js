@@ -1,8 +1,7 @@
 import * as arrayViews from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import * as promiseMirrors from "./promise-mirrors.js"
-import * as resolution from "./resolution.js"
+import * as propertyVersions from "./property-versions.js"
 
 // Raw traversal deliberately ignores cycle cuts. Identity state makes cycles
 // finite and spans every Promise continuation captured by this operation.
@@ -81,23 +80,22 @@ function walkRawBranch(value, state) {
 // Keep pending continuations independent from the caller's output local. The
 // first Error can then drop the copy map without a pending closure retaining it.
 function walkRawPromise(parent, key, promise, state) {
-    const mirror = promiseMirrors.getOrCreatePromiseMirror(
+    return propertyVersions.continuePropertyValue(
         parent,
         key,
         promise,
+        value => {
+            const readiness = walkRawBranch(value, state)
+            if (state.copying) {
+                languageProperties.writeLanguageProperty(
+                    state.copies.get(parent),
+                    key,
+                    getCopiedValue(value, state),
+                )
+            }
+            return readiness
+        },
     )
-    return resolution.onLaterPromiseReady(promise, () => {
-        const value = mirror.getValue(parent, key)
-        const readiness = walkRawBranch(value, state)
-        if (state.copying) {
-            languageProperties.writeLanguageProperty(
-                state.copies.get(parent),
-                key,
-                getCopiedValue(value, state),
-            )
-        }
-        return readiness
-    })
 }
 
 function getCopiedValue(value, state) {

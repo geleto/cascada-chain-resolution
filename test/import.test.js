@@ -139,6 +139,27 @@ describe("import", () => {
         expect(lookupPath(new Chain(root), ["pending"], false)).to.be(resolved)
     })
 
+    it("imports an already-advanced runtime property version", async () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        lookupPath(new Chain(root), ["pending"], false)
+
+        const resolved = { value: 1 }
+        pending.resolve(resolved)
+        await flushMicrotasks()
+        expect(root.pending).to.be(resolved)
+
+        importValue(root, "advanced runtime version")
+        buildRefIndex(root)
+        verifyRefCounts(root)
+
+        const chain = new Chain(root)
+        assignPath(chain, ["pending", "value"], 2)
+        expect(chain._state.value.pending.value).to.be(2)
+        expect(root.pending).to.be(resolved)
+        expect(resolved.value).to.be(1)
+    })
+
     it("preserves imported Promises and writes runtime-owned results", async () => {
         const externalPending = deferred()
         const runtimePending = deferred()
@@ -158,7 +179,6 @@ describe("import", () => {
         const mirror = metaOf(external).mirrors.pending
         expect(metaOf(external).importBoundary).not.to.be(undefined)
         expect(Object.hasOwn(mirror, "importBoundary")).to.be(false)
-        expect(mirror.resolvedValue).to.be("external")
     })
 
     it("writes through Promise properties of runtime islands", async () => {
@@ -175,6 +195,58 @@ describe("import", () => {
 
         expect(child.pending).to.be(resolved)
         expect(metaOf(resolved)?.importBoundary).to.be(undefined)
+    })
+
+    it("scans overlapping runtime islands once per import", () => {
+        let scans = 0
+        const nested = new Proxy({}, {
+            ownKeys(target) {
+                scans++
+                return Reflect.ownKeys(target)
+            },
+        })
+        const outer = { nested }
+        lookupPath(new Chain(outer), [])
+        lookupPath(new Chain(nested), [])
+
+        importValue({ outer, nested }, "overlapping islands")
+        expect(scans).to.be(1)
+
+        const pending = deferred()
+        nested.pending = pending.promise
+        importValue({ outer, nested }, "later frontier")
+
+        expect(scans).to.be(2)
+        expect(metaOf(nested).mirrors.pending.value).to.be(pending.promise)
+    })
+
+    it("imports a direct alias regardless of runtime-island scan order", async () => {
+        for (const runtimeFirst of [true, false]) {
+            const pending = deferred()
+            const child = { pending: pending.promise }
+            const runtimeOwned = { child }
+            lookupPath(new Chain(runtimeOwned), [])
+            const external = runtimeFirst
+                ? { runtimeOwned, direct: child }
+                : { direct: child, runtimeOwned }
+            const errorContext = runtimeFirst
+                ? "runtime island first"
+                : "direct alias first"
+
+            importValue(external, errorContext)
+            expect(metaOf(child).importBoundary.errorContext).to.be(
+                errorContext,
+            )
+
+            const resolved = { done: true }
+            pending.resolve(resolved)
+            await flushMicrotasks()
+
+            expect(child.pending).to.be(pending.promise)
+            expect(lookupPath(new Chain(child), ["pending"], false)).to.be(
+                resolved,
+            )
+        }
     })
 
     it("reuses one runtime mirror across imported wrappers", async () => {
@@ -199,7 +271,7 @@ describe("import", () => {
         verifyRefCounts(first, second, child)
     })
 
-    it("distinguishes an imported undefined result by field presence", async () => {
+    it("preserves an imported undefined result", async () => {
         const pending = deferred()
         const external = { pending: pending.promise }
         importValue(external, "undefined result")
@@ -207,10 +279,7 @@ describe("import", () => {
         pending.resolve(undefined)
         await flushMicrotasks()
 
-        const mirror = metaOf(external).mirrors.pending
         expect(external.pending).to.be(pending.promise)
-        expect(Object.hasOwn(mirror, "resolvedValue")).to.be(true)
-        expect(mirror.resolvedValue).to.be(undefined)
         expect(lookupPath(new Chain(external), ["pending"], false)).to.be(undefined)
     })
 
@@ -1416,7 +1485,6 @@ describe("import", () => {
         const chain = new Chain(root)
         assignPath(chain, ["path", "added"], 2)
         const next = chain._state.value
-        const mirrors = metaOf(next).mirrors
 
         expect(metaOf(next).importBoundary).to.be(undefined)
 
@@ -1435,7 +1503,6 @@ describe("import", () => {
         expect(next.retained).to.eql({
             sibling: true,
         })
-        expect(Object.hasOwn(mirrors.retained, "resolvedValue")).to.be(false)
     })
 
     it("cuts a runtime-owned Promise result that reaches its copied path", async () => {
@@ -1669,7 +1736,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be("fixed")
-        expect(mirror.detachedValue).to.be(errorValue)
+        expect(mirror.value).to.be(errorValue)
         expectCounts(errorValue, 0, 1)
         expect(getErrors(new Chain(errorValue), [])[0]).to.be(errorValue.bad)
         expectCounts(root, 0, 0)

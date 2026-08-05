@@ -2,13 +2,10 @@ import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
-import * as refcounts from "./refcounts.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as promiseMirrors from "./promise-mirrors.js"
-import * as propertyTransitions from "./property-transitions.js"
-import * as propertyOrigins from "./property-capture.js"
+import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 const KEEP_TARGET = Symbol("KEEP_TARGET")
@@ -31,20 +28,20 @@ function setProperty(
         key,
         importBoundary?.errorContext,
     )
-    // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
-    // mirror. Two assignments of the same promise are divergent worlds.
     if (attachmentRoot && containsPromise(value)) {
         metadata.markShared(attachmentRoot)
     }
-    let mirror
-    if (languageValues.isPromise(value)) {
-        mirror = promiseMirrors.createAssignedPromiseMirror(
-            parent,
-            key,
-            value,
-        )
-    }
-    propertyTransitions.replaceProperty(parent, key, mirror, value)
+    propertyVersions.assignProperty(parent, key, value)
+}
+
+function setRetainedProperty(parent, key, value) {
+    const importBoundary = metadata.importBoundaryOf(parent)
+    languageProperties.assertCanSetLanguageProperty(
+        parent,
+        key,
+        importBoundary?.errorContext,
+    )
+    propertyVersions.assignProperty(parent, key, value, true)
 }
 
 function containsPromise(value, visited = new WeakSet()) {
@@ -78,7 +75,7 @@ function deleteProperty(parent, key) {
         key,
         importBoundary?.errorContext,
     )
-    propertyTransitions.removeProperty(parent, key)
+    propertyVersions.removeProperty(parent, key)
 }
 
 function copyForWrite(source, pathKey, attachmentRoot) {
@@ -104,29 +101,26 @@ function copyForWrite(source, pathKey, attachmentRoot) {
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
         const retainedOffPath = key !== pathKeyString
         const value = languageProperties.readLanguageProperty(source, key)
-        // Sanctioned write bypass: the copy is unobservable until it is installed
-        // through setProperty, or indexValueIfSourceIndexed reconstructs its index.
-        languageProperties.writeLanguageProperty(destination, key, value)
         if (languageValues.isPromise(value)) {
-            // BIRTH 3 - FORK. For every copied key holding a promise, mint the
-            // copy's mirror NOW, at the copier's program position.
-            //
-            // Its FIFO reaction samples the source after earlier operations and
-            // before later ones, so the two property versions diverge here.
-            //
-            // Why mark non-path captured values: they are reused by two worlds,
-            // so the first advance on either side must COW. The path key itself
-            // is protected by the walk's attachment state if we enter it, and
-            // may simply be replaced/deleted at the target.
-            promiseMirrors.forkPromiseMirror(
-                source, destination, key, value,
-                { retained: retainedOffPath },
+            const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
+                source,
+                key,
+                value,
             )
-        } else if (retainedOffPath && languageValues.isTracked(value)) {
-            metadata.markShared(value)
+            propertyVersions.placePromiseVersion(
+                sourceMirror,
+                value,
+                destination,
+                key,
+                retainedOffPath,
+            )
+            continue
         }
+        if (retainedOffPath) metadata.markShared(value)
+        // The copy remains unobservable until its owning path is installed.
+        languageProperties.writeLanguageProperty(destination, key, value)
     }
-    refcounts.indexValueIfSourceIndexed(source, destination)
+    propertyVersions.indexValueIfSourceIndexed(source, destination)
     return {
         value: destination,
         attachmentRoot,
@@ -141,8 +135,8 @@ function transformProperty(
     transform,
     returnResultPromise = true,
 ) {
-    const origin = propertyOrigins.getOrigin(parent, key)
-    propertyOrigins.captureOrigin(origin)
+    const origin = propertyVersions.getPropertyReference(parent, key)
+    propertyVersions.capturePropertyVersion(origin)
     const context = {
         present: origin !== undefined,
         rawValue: origin?.value,
@@ -151,7 +145,7 @@ function transformProperty(
     let originalValue
     const operation = resolution.resolveOperationResultsOrFatal(
         [
-            propertyOrigins.resolveOriginValue(origin),
+            propertyVersions.resolvePropertyValue(origin),
             prepareInput(context),
         ],
         ([resolvedTargetValue, preparedArguments]) => {
@@ -250,7 +244,7 @@ function assignPath(chain, path, value) {
         const extended = arrayViews.ArrayView.tryExtendEnd(
             projection,
             growth,
-            view => promiseMirrors.prepareRetainedArrayProperties(
+            view => propertyVersions.prepareRetainedArrayProperties(
                 array,
                 view,
             ),
@@ -410,7 +404,7 @@ function commitArrayLength(array, length) {
             )
         }
         if (property?.enumerable) {
-            propertyTransitions.removeProperty(
+            propertyVersions.removeProperty(
                 array,
                 key,
                 view ? () => view.setLength(index) : undefined,
@@ -544,21 +538,18 @@ function walkMutationPath(
 
         const child = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(child)) {
-            const mirror = promiseMirrors.getOrCreatePromiseMirror(
+            const pending = propertyVersions.continuePropertyValue(
                 parent,
                 key,
                 child,
-            )
-            const pending = resolution.onLaterPromiseReady(child, () => {
-                const propertyValue = mirror.getValue(parent, key)
-                return walk(
+                (propertyValue, mirror) => walk(
                     propertyValue,
                     index + 1,
                     next => {
                         if (next !== propertyValue) {
                             // An imported parent was copied before descent, so
                             // this property version is runtime-owned.
-                            propertyTransitions.setMirrorValue(
+                            propertyVersions.advancePromiseVersion(
                                 parent,
                                 key,
                                 mirror,
@@ -566,8 +557,8 @@ function walkMutationPath(
                             )
                         }
                     },
-                )
-            })
+                ),
+            )
             writeBack(parent)
             return onComplete === undefined ? undefined : pending
         }
@@ -616,6 +607,7 @@ export {
     deleteProperty,
     deletePath,
     setProperty,
+    setRetainedProperty,
     transformProperty,
     walkMutationPath,
 }
