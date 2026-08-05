@@ -79,6 +79,27 @@ describe("bounded stress", () => {
         verifyRefCounts(root)
     })
 
+    it("aggregates path multiplicity through stacked diamonds", async () => {
+        const layers = 22
+        const pending = deferred()
+        let root = { pending: pending.promise }
+        for (let i = 0; i < layers; i++) {
+            root = {
+                left: { child: root },
+                right: { child: root },
+            }
+        }
+
+        buildRefIndex(root)
+        expectCounts(root, 2 ** layers, 0)
+
+        pending.reject("bad")
+        await flushMicrotasks()
+
+        expectCounts(root, 0, 2 ** layers)
+        verifyRefCounts(root)
+    })
+
     it("settles a long recursively exposed promise chain", async () => {
         const depth = 48
         const pending = Array.from({ length: depth }, () => deferred())

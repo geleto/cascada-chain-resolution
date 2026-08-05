@@ -21,11 +21,11 @@ these counters.
 
 | Logical property | Contribution | Counted child |
 | --- | --- | --- |
-| Pending Promise | `[1, 0, 0]` | None |
-| Cycle cut | `[0, 0, 1]` | None |
-| Error | `[0, 1, 0]` | None |
+| Pending Promise | One Promise | None |
+| Cycle cut | One cycle cut | None |
+| Error | One Error | None |
 | Indexed tracked value | Child totals | The value |
-| Other value | `[0, 0, 0]` | None |
+| Other value | None | None |
 
 Every raw-reachable tracked value beneath an indexed root is indexed. Cuts
 separate that raw graph into projected components; their targets have
@@ -55,11 +55,11 @@ cut; every other edge receives the normal reverse-parent entry.
 
 `commitLiveEdge` performs one synchronous transition:
 
-1. capture the old property's counted child and triple;
+1. capture the old property's counted child and counts;
 2. publish its logical value, mirror, and cut state;
-3. capture the new child and triple;
+3. capture the new child and counts;
 4. replace reverse-parent multiplicities; and
-5. propagate the triple delta through `parents`.
+5. propagate the count delta once over the reachable parent DAG.
 
 Assignment, deletion, Promise settlement, Array remapping, and COW
 reconstruction all use this accounting. Detached mirror values are private;
@@ -72,8 +72,8 @@ parents, mirrors, and cuts are never copied as metadata.
 ## Promise mirrors
 
 One `PromiseMirror` represents one property version. A logically pending
-property contributes `[1, 0, 0]`. Its first FIFO resolver publishes the result
-through the same property transition as an ordinary assignment.
+property contributes one pending Promise. Its first FIFO resolver publishes the
+result through the same property transition as an ordinary assignment.
 
 Each mirror's `value` is the authoritative logical edge. Imported physical
 properties keep their Promise, runtime-owned live properties also write through,
@@ -86,10 +86,15 @@ of changes another view made to the backing slot.
 
 ## Delta propagation
 
-Count deltas propagate through each reverse parent edge multiplied by its
-multiplicity. The parent graph is a DAG by construction: pending properties and
-cuts have no reverse edge, initial indexing cuts DFS back edges, and later edge
-publication checks the existing parent DAG before committing.
+For each nonzero delta, a memoized DFS derives the reachable reverse-parent DAG
+and records parent-first postorder. Traversing that order in reverse multiplies
+each edge by its stored multiplicity, sums every path into one multiplier per
+node, and applies the scaled counts once to each node. This takes `O(V + E)`
+time and `O(V)` operation-local state without persistent topology.
+
+The parent graph is a DAG by construction: pending properties and cuts have no
+reverse edge, initial indexing cuts DFS back edges, and later edge publication
+checks the existing parent DAG before committing.
 
 ## Consumers and verification
 

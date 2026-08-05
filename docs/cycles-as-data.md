@@ -21,11 +21,11 @@ The property's projected contribution is:
 
 | State | Counts | Reverse parent edge |
 | --- | --- | --- |
-| Pending Promise | `[1, 0, 0]` | No |
-| Cycle cut | `[0, 0, 1]` | No |
-| Error | `[0, 1, 0]` | No |
+| Pending Promise | One Promise | No |
+| Cycle cut | One cycle cut | No |
+| Error | One Error | No |
 | Indexed tracked value | Child totals | Yes |
-| Other value | `[0, 0, 0]` | No |
+| Other value | None | No |
 
 A property cannot be both logically pending and cut. Replacing or deleting it
 clears its old cut.
@@ -81,7 +81,7 @@ reconstructs the actual graph.
 
 ## Verification
 
-`test/verify-refcounts.js` independently checks exact count triples, cut shape,
+`test/verify-refcounts.js` independently checks all three counts, cut shape,
 raw-reachable index closure, reverse-edge multiplicity, Promise mirror shape,
 and acyclicity of the projected parent graph.
 

@@ -682,6 +682,13 @@ describe("subtree counters", () => {
 
         const failure = thrownBy(() => verifyRefCounts(left))
         expect(failure.message).to.be("Ref-count parent graph contains a cycle")
+
+        const publicationFailure = thrownBy(() => {
+            assignPath(new Chain(left), ["error"], new Error("bad"))
+        })
+        expect(publicationFailure.message).to.be(
+            "Ref-count parent graph contains a cycle",
+        )
     })
 
     it("bookkeeps tracked branches after ref-indexing", () => {

@@ -400,10 +400,10 @@ Each indexed node stores:
 - reverse parent edges with exact structural multiplicity.
 
 Every committed property transition computes the old and new contribution,
-updates the reverse edge, and propagates one delta through indexed parents.
+updates the reverse edge, and aggregates one delta over the indexed parent DAG.
 Unqueried branches pay no counter maintenance cost.
 
-Cycles cannot participate directly in recursive parent propagation. Initial
+Cycles cannot participate directly in the parent DAG. Initial
 indexing cuts DFS back edges; a later indexed publication cuts its edge when
 the reverse-parent graph shows that it would close a cycle. A cut contributes
 only to `cycleCutCount` and installs no reverse parent edge. Ref-indexing resumes

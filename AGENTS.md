@@ -18,6 +18,7 @@ Metadata layout, helper boundaries, and the choice among valid refcount projecti
 - Use separate paths only when one general transition cannot preserve an observable contract or runtime invariant.
 - Keep each fact at the scope it describes: identity facts on identities, property-version facts on mirrors, placement facts on placements, and per-operation facts within the operation.
 - Derive a fact where it is needed. Persist it only when it cannot be recovered correctly, or repeated derivation has a demonstrated material cost; store it at the narrowest scope that can keep it correct.
+- Cascada does not expect unusually large or deep graphs. Keep recursive walks and Number arithmetic; do not introduce explicit stacks or BigInt.
 
 ## Ordering
 

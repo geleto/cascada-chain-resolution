@@ -28,14 +28,15 @@ function verifyReachable(node, seen) {
         const childEdges = new Map()
 
         for (const key of languageProperties.enumerableLanguageKeys(node)) {
-            const { child, counts } = recountProperty(node, key)
+            const state = recountProperty(node, key)
+            const { child } = state
             if (languageValues.isTracked(child) && !getRefCounter(child)) {
                 fatal("Ref-indexed parent contains non-ref-indexed child")
             }
 
-            promiseCount += counts[0]
-            errorCount += counts[1]
-            cycleCutCount += counts[2]
+            promiseCount += state.promiseCount
+            errorCount += state.errorCount
+            cycleCutCount += state.cycleCutCount
             if (getRefCounter(child)) {
                 childEdges.set(child, (childEdges.get(child) ?? 0) + 1)
             }
@@ -160,7 +161,10 @@ function verifyParentGraph(node, states) {
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key) {
     const mirror = propertyVersions.getPromiseMirror(node, key)
-    const child = readPropertyForRecount(node, key)
+    let child = readPropertyForRecount(node, key)
+    let promiseCount = 0
+    let errorCount = 0
+    let cycleCutCount = 0
     if (languageValues.isPromise(child)) {
         if (!mirror) {
             fatal("Indexed promise property has no mirror")
@@ -168,27 +172,22 @@ function recountProperty(node, key) {
         if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
             fatal("Pending Promise property also has a cycle cut")
         }
-        return { child: undefined, counts: [1, 0, 0] }
+        child = undefined
+        promiseCount = 1
+    } else if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
+        child = undefined
+        cycleCutCount = 1
+    } else if (languageValues.isError(child)) {
+        errorCount = 1
+    } else if (languageValues.isTracked(child)) {
+        const counter = getRefCounter(child)
+        if (counter) {
+            promiseCount = counter.promiseCount
+            errorCount = counter.errorCount
+            cycleCutCount = counter.cycleCutCount
+        }
     }
-    if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
-        return { child: undefined, counts: [0, 0, 1] }
-    }
-
-    if (languageValues.isError(child)) return { child, counts: [0, 1, 0] }
-    if (!languageValues.isTracked(child)) {
-        return { child, counts: [0, 0, 0] }
-    }
-
-    const counter = getRefCounter(child)
-    if (!counter) return { child, counts: [0, 0, 0] }
-    return {
-        child,
-        counts: [
-            counter.promiseCount,
-            counter.errorCount,
-            counter.cycleCutCount,
-        ],
-    }
+    return { child, promiseCount, errorCount, cycleCutCount }
 }
 
 function readPropertyForRecount(node, key) {

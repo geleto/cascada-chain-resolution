@@ -34,11 +34,11 @@ function countPromiseRegistrations(promise) {
 }
 
 function expectCounts(value, promiseCount, errorCount, cycleCutCount = 0) {
-    expect(refcounts.getRefCounts(value)).to.eql([
+    expect(refcounts.getRefCounts(value)).to.eql({
         promiseCount,
         errorCount,
         cycleCutCount,
-    ])
+    })
 }
 
 function thrownBy(fn) {

@@ -14,7 +14,7 @@ import {
     exportValue,
     flushMicrotasks,
     getErrors,
-    getRefCounts,
+    expectCounts,
     hasError,
     importValue,
     lookupPath,
@@ -205,13 +205,13 @@ describe("enter", () => {
         expect(callbackStarted).to.be(true)
         expect(root.target instanceof Promise).to.be(true)
         expect(root.target).not.to.be(target.promise)
-        expect(getRefCounts(root)).to.eql([1, 0, 0])
+        expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
         target.resolve({})
         await flushMicrotasks()
         expect(root.target).to.eql({ before: 1, inside: 2 })
-        expect(getRefCounts(root)).to.eql([0, 0, 0])
+        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 
@@ -746,14 +746,14 @@ describe("enter", () => {
             true,
             () => completion.promise,
         )
-        expect(getRefCounts(root)).to.eql([1, 0, 0])
+        expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
         completion.resolve("done")
         expect(await result).to.be("done")
         await flushMicrotasks()
 
-        expect(getRefCounts(root)).to.eql([0, 0, 0])
+        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 

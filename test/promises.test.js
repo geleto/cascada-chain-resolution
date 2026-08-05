@@ -443,7 +443,11 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.value).to.be(pending.promise)
         expect(lookupPath(new Chain(root), ["value"], false)).to.be(root)
         expect(publishedCycleCut).to.be(true)
-        expect(countsAfterPublication).to.eql([0, 0, 1])
+        expect(countsAfterPublication).to.eql({
+            promiseCount: 0,
+            errorCount: 0,
+            cycleCutCount: 1,
+        })
         expect(hasCycleCut(root, "value")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)

@@ -153,7 +153,7 @@ function createErrorSearchState(onError) {
     return state
 }
 
-// The fenced walk follows only nodes whose counter triple contains relevant
+// The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
 function collectFencedErrorWaits(value, state) {

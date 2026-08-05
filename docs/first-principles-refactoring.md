@@ -6,33 +6,6 @@ This document applies the first principles in `AGENTS.md` to source-wide refacto
 
 The remaining phases are ranked by architectural value. Implementation order also considers dependencies and risk. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
 
-## 2. Propagate refcount deltas over the projection DAG once
-
-### Problem
-
-`applyCountDelta` recursively follows every parent path. Cycle cuts guarantee termination and the resulting multiplicities are correct, but a DAG is traversed as if it were a tree. A stack of `N` diamonds can therefore require `O(2^N)` recursive visits, and a deep chain can exhaust the call stack.
-
-### Simplest target
-
-For each publication, use iterative worklists to derive the reachable parent DAG locally, accumulate the delta and edge multiplicity for each node, and apply the totals in child-before-parent topological order. Each reachable node and edge should be processed a bounded number of times while preserving the contribution of every distinct path and without relying on the call stack.
-
-Do not store a persistent topological order. The parent DAG changes with property placement, while the local order is recoverable from the maintained reverse edges.
-
-The local algorithm trades `O(V + E)` temporary state per propagation for bounded traversal. Measure ordinary chains and trees as well as stacked diamonds, including peak temporary memory. Do not add a persistent topology cache or a special fast path without evidence that this trade is unfavorable in practice.
-
-### Must preserve
-
-- A diamond ancestor receives the sum of every path contribution; a simple visited-set suppression would be incorrect.
-- Parent-edge multiplicity continues to multiply the propagated delta.
-- Cycle cuts remain projection boundaries and are not crossed as ordinary parent edges.
-- Promise, Error, and cycle-cut deltas remain one synchronous part of property publication.
-- The projection need not become canonical; this changes propagation cost, not cut placement or observable graph behavior.
-- Counter and parent-edge invariant failures remain fatal.
-
-### Verification
-
-Use focused invariant tests for repeated parent edges, single and stacked diamonds, cut components, and a deep chain. Integration tests must continue to verify Error queries and Promise settlement across shared and cyclic graphs without pinning a particular valid cut placement or counter total. Benchmark ordinary chains and trees against the current implementation, and verify that stacked diamonds grow linearly in visited nodes and edges.
-
 ## 3. Make method dispatch and result ownership declarative
 
 ### Problem
@@ -180,10 +153,6 @@ Do not force both through a generic race abstraction. `includes` has a fixed pen
 
 Unlimited Array flattening and recursive Array-to-string conversion use the same linked ancestry check. If a natural low-level home exists while those areas are edited, give this per-path cycle discipline one named helper. It must remain distinct from a global visited set, which would suppress legitimate revisits through separate paths.
 
-### Remove call-stack dependence from unbounded walks
-
-`indexComponent`, `containsPromise`, raw export, Error search, and mutation-path walking recurse with input depth. Treat unbounded synchronous depth as a correctness concern. When each area is changed, use operation-local iterative state and add deep-input coverage; do not turn the distinct traversals into a generic walker.
-
 ### Keep Chain capability off the language surface
 
 The Chain state holder participates in language-property and refcount machinery, so its own enumerable string keys are language-graph edges. `mutates` is an issuance capability, not language data. Keep the same exact Boolean and close-by-removal contract, but store it under a private Symbol or another non-language key. Verify mutable, read-only, closed, and entered Chains through public behavior, with a focused invariant test for ref-indexed state.
@@ -218,7 +187,6 @@ The presence of the exact `mutates` Boolean is the Chain's issuance capability. 
 
 ## Recommended sequence
 
-- **Refcount propagation:** Replace recursive per-path propagation after the publication boundary is stable.
 - **Method dispatch:** Make Array and ordinary dispatch, result strategy, result ownership, and ArrayView attachment explicit together.
 - **Property policy:** Unify intrinsic property behavior, then lower assignment and deletion to remove the mutation/remap cycle.
 
@@ -230,7 +198,7 @@ Each phase should remove the mechanisms it supersedes in the same change and pas
 
 ## Baseline
 
-Verified after the property-version refactoring on 2026-08-05. The complete suite passed in both metadata modes:
+Verified after the refcount propagation refactoring on 2026-08-05. The complete suite passed in both metadata modes:
 
-- 632 tests with inline metadata; and
-- 632 tests with WeakMap metadata.
+- 633 tests with inline metadata; and
+- 633 tests with WeakMap metadata.
