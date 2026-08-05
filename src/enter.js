@@ -1,7 +1,6 @@
 import "./init.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
-import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -28,12 +27,9 @@ function enter(chain, path, mutates, onEntered) {
 }
 
 function enterReadOnly(chain, path, onEntered) {
-    return walkObservationPath(chain, path, (value, importBoundary) => {
+    return walkObservationPath(chain, path, value => {
         if (languageValues.isError(value)) return value
 
-        if (importBoundary) {
-            imports.import(value, importBoundary.errorContext)
-        }
         const entered = new Chain(value, false)
         const leaseValue = languageValues.isTracked(value) ? value : undefined
         if (leaseValue) metadata.updateReadLease(leaseValue, 1)
@@ -60,7 +56,7 @@ function enterMutating(chain, path, onEntered) {
     return walkMutationPath(
         chain,
         path,
-        (parent, key, importBoundary, attachmentPath) => {
+        (parent, key, attachmentRoot) => {
             const value = languageProperties.readLanguageProperty(parent, key)
             const privateChain = new Chain(value, true)
             const sourceMirror = languageValues.isPromise(value)
@@ -68,7 +64,6 @@ function enterMutating(chain, path, onEntered) {
                     parent,
                     key,
                     value,
-                    importBoundary,
                 )
                 : undefined
 
@@ -84,8 +79,7 @@ function enterMutating(chain, path, onEntered) {
                 parent,
                 key,
                 gate,
-                importBoundary,
-                attachmentPath,
+                attachmentRoot,
             )
 
             if (sourceMirror) {
@@ -94,9 +88,9 @@ function enterMutating(chain, path, onEntered) {
                     privateChain._state,
                     "value",
                     value,
-                    attachmentPath,
+                    attachmentRoot,
                 )
-            } else if (attachmentPath) {
+            } else if (attachmentRoot) {
                 metadata.markShared(value)
             }
 

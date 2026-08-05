@@ -106,11 +106,16 @@ function verifyCycleCuts(node) {
             node,
             key,
         )
+        const preservesPromise = mirror &&
+            Object.hasOwn(mirror, "resolvedValue")
+        const physicalPromise = languageValues.isPromise(descriptor?.value)
+        const imported = metadata.importBoundaryOf(node) !== undefined
         if (!mirror || !descriptor?.enumerable ||
             !("value" in descriptor) ||
-            (!descriptor.writable && mirror.importBoundary === undefined) ||
-            (Object.hasOwn(mirror, "resolvedValue") &&
-                mirror.importBoundary === undefined)) {
+            (
+                (!descriptor.writable || preservesPromise) &&
+                (!imported || !physicalPromise)
+            )) {
             fatal("Live Promise mirror has no valid language property")
         }
     }

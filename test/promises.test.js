@@ -1,7 +1,7 @@
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
-import { hasCycleCut } from "../src/import.js"
+import { hasCycleCut } from "../src/refcounts.js"
 import { detachPromiseMirror } from "../src/promise-mirrors.js"
 import { setMirrorValue } from "../src/property-transitions.js"
 
@@ -817,9 +817,9 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
 
-        // The pre-existing mirror makes root a trusted runtime island, so its
-        // language-owned property receives the rejection Error physically.
-        expect(root.branch instanceof Error).to.be(true)
+        // Import promotes root's current property version. Earlier operations
+        // retain the old version, while the borrowed property stays untouched.
+        expect(root.branch).to.be(deferredBranch.promise)
         const rootError = lookupPath(new Chain(root), ["branch"], false)
         expect(rootError instanceof Error).to.be(true)
         expect(rootError.message).to.be("fork boom")
@@ -1283,7 +1283,10 @@ describe("promise mirrors and lookupPath", () => {
         expect(lookupPath(new Chain(firstValue), ["next"], false)).to.be(
             secondValue,
         )
-        expect(hasCycleCut(firstValue, "next")).to.be(true)
+        expect(
+            hasCycleCut(firstValue, "next") ||
+            hasCycleCut(secondValue, "back"),
+        ).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })

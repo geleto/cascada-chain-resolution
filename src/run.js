@@ -48,7 +48,7 @@ function runObservation(chain, path, method, args) {
     return walkObservationPath(
         chain,
         path,
-        (targetValue, importBoundary, present) => {
+        (targetValue, present) => {
             if (!present) {
                 return errorUtils.validationError(
                     "run receiver path does not exist",
@@ -73,7 +73,6 @@ function runObservation(chain, path, method, args) {
                     targetValue,
                     method,
                     args,
-                    importBoundary,
                 )
                 : invocation.invokeObservationMethodWithExportedArgs(
                     callable,
@@ -197,7 +196,7 @@ function runMutation(chain, path, method, args) {
     return walkMutationPath(
         chain,
         path,
-        (parent, key, importBoundary, attachmentPath, virtualLength) => {
+        (parent, key, attachmentRoot, virtualLength) => {
             if (virtualLength) {
                 result = errorUtils.validationError(
                     "Array mutation receiver is not an Array",
@@ -207,8 +206,7 @@ function runMutation(chain, path, method, args) {
             result = transformProperty(
                 parent,
                 key,
-                importBoundary,
-                attachmentPath,
+                attachmentRoot,
                 prepareMutationArguments,
                 invokeMutation,
             )
@@ -230,8 +228,7 @@ function runMutation(chain, path, method, args) {
         preparedArguments,
         {
             present,
-            importBoundary,
-            attachmentPath,
+            attachmentRoot,
         },
     ) {
         if (!present) {
@@ -250,7 +247,7 @@ function runMutation(chain, path, method, args) {
             return { mutatedValue: error, result: error }
         }
         const replaceReceiver =
-            attachmentPath !== undefined ||
+            attachmentRoot !== undefined ||
             metadata.requiresCopyOnWrite(thisValue) ||
             arrayViews.requiresArrayMaterialization(thisValue)
 
@@ -258,7 +255,6 @@ function runMutation(chain, path, method, args) {
             thisValue,
             method,
             preparedArguments,
-            importBoundary,
             replaceReceiver,
         )
     }

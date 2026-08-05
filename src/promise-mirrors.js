@@ -30,14 +30,9 @@ function installPromiseMirror(parent, key, mirror) {
     meta.mirrors[key] = mirror
 }
 
+// resolvedValue is the logical value of a live property whose physical Promise
+// is preserved. detachedValue belongs to a detached property version.
 class PromiseMirror {
-    constructor(importBoundary) {
-        // A live boundary means this physical property belongs to imported data.
-        if (importBoundary) this.importBoundary = importBoundary
-        // resolvedValue: logical value while an imported promise property is not back-written.
-        // detachedValue: current value after this property version detaches.
-    }
-
     isLive(parent, key) {
         return getPromiseMirror(parent, key) === this
     }
@@ -56,18 +51,18 @@ class PromiseMirror {
     }
 }
 
-// The first FIFO reaction prepares imported data before publishing it.
+// The first FIFO reaction publishes settlement before later consumers run.
 function createPromiseMirror(
     parent,
     key,
     promise,
-    importBoundary,
-    prepareImportedValue,
+    importBoundary = undefined,
 ) {
-    const mirror = new PromiseMirror(importBoundary)
+    const mirror = new PromiseMirror()
     resolution.resolveInitialValueOrPoison(promise, value => {
-        const cycleCut = prepareImportedValue?.(value, importBoundary)
-        setMirrorValue(parent, key, mirror, value, cycleCut)
+        setMirrorValue(parent, key, mirror, value, {
+            importBoundary,
+        })
     })
     return mirror
 }
@@ -77,15 +72,8 @@ function createAssignedPromiseMirror(
     parent,
     key,
     promise,
-    prepareImportedValue,
 ) {
-    return createPromiseMirror(
-        parent,
-        key,
-        promise,
-        undefined,
-        prepareImportedValue,
-    )
+    return createPromiseMirror(parent, key, promise)
 }
 
 // DISCOVERY is lazy for trusted literals and derived import Promises. A
@@ -94,15 +82,15 @@ function getOrCreatePromiseMirror(
     parent,
     key,
     promise,
-    importBoundary,
-    prepareImportedValue,
 ) {
-    const existing = getPromiseMirror(parent, key)
+    const meta = metadata.metaOf(parent)
+    const existing = meta?.mirrors?.[key]
     if (existing) return existing
+    const importBoundary = meta?.importBoundary
 
     // A completed index already contains every Promise mirror. Unindexed
-    // trusted or prepared data may still discover one lazily.
-    if (metadata.metaOf(parent)?.parents) {
+    // runtime-owned or imported data may still discover one lazily.
+    if (meta?.parents) {
         return getRequiredPromiseMirror(parent, key)
     }
 
@@ -120,27 +108,23 @@ function getOrCreatePromiseMirror(
         key,
         promise,
         importBoundary,
-        prepareImportedValue,
     )
     installPromiseMirror(parent, key, mirror)
     return mirror
 }
 
-// FORK samples the source property's prepared state at the copier's FIFO slot.
+// FORK creates a destination version that samples the source at this FIFO slot.
 function forkPromiseMirror(
     source,
     destination,
     sourceKey,
     promise,
-    retained,
-    sourceImportBoundary,
-    prepareImportedValue,
     {
+        retained = false,
         sourceMirror = getOrCreatePromiseMirror(
             source,
             sourceKey,
             promise,
-            sourceImportBoundary,
         ),
         destinationKey = sourceKey,
         install = true,
@@ -148,22 +132,15 @@ function forkPromiseMirror(
     } = {},
 ) {
     const mirror = new PromiseMirror()
+    const importBoundary = metadata.importBoundaryOf(destination)
     resolution.onLaterPromiseReady(promise, () => {
         const value = sourceMirror.getValue(source, sourceKey)
-        const sampledBoundary = retained
-            ? metadata.nodeImportBoundary(
-                value,
-                sourceMirror.importBoundary ?? sourceImportBoundary,
-            )
-            : undefined
-        const cycleCut = prepareImportedValue?.(value, sampledBoundary)
         setMirrorValue(
             destination,
             destinationKey,
             mirror,
             value,
-            cycleCut,
-            sharedBacking,
+            { importBoundary, sharedBacking },
         )
         // The resolver is synchronous, so sharing is established before the
         // next FIFO resolver can observe this retained value.
@@ -180,7 +157,6 @@ function prepareRetainedArrayProperties(
     destination,
     destinationKeyFor,
 ) {
-    const mirrors = metadata.metaOf(source)?.mirrors
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
         const destinationKey = destinationKeyFor
             ? destinationKeyFor(key)
@@ -191,39 +167,35 @@ function prepareRetainedArrayProperties(
             if (languageValues.isTracked(value)) metadata.markShared(value)
             continue
         }
-        const sourceMirror = mirrors?.[key] ?? getOrCreatePromiseMirror(
-            source,
-            key,
-            value,
-        )
         forkPromiseMirror(
             source,
             destination,
             key,
             value,
-            true,
-            sourceMirror.importBoundary,
-            undefined,
-            { sourceMirror, destinationKey, sharedBacking: true },
+            {
+                retained: true,
+                destinationKey,
+                sharedBacking: true,
+            },
         )
     }
 }
 
 // TRANSFER moves one already-detached property version into a private Chain
 // root. The source version's resolver is earlier on the same canonical Promise,
-// so detachedValue is prepared before this callback runs.
+// so detachedValue is current before this callback runs.
 function transferDetachedPromiseMirror(
     sourceMirror,
     destination,
     key,
     promise,
-    attachmentPath,
+    attachmentRoot,
 ) {
     const mirror = new PromiseMirror()
     resolution.onLaterPromiseReady(promise, () => {
         const value = sourceMirror.detachedValue
         setMirrorValue(destination, key, mirror, value)
-        if (attachmentPath) metadata.markShared(value)
+        if (attachmentRoot) metadata.markShared(value)
     })
     installPromiseMirror(destination, key, mirror)
 }

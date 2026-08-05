@@ -20,7 +20,7 @@ import {
     flushMicrotasks,
     expectCounts,
 } from "./support.js"
-import { hasCycleCut } from "../src/import.js"
+import { hasCycleCut } from "../src/refcounts.js"
 
 describe("import", () => {
     it("requires a truthy error context", () => {
@@ -77,7 +77,7 @@ describe("import", () => {
         importValue({ child, sealed }, "independent descendants")
 
         for (const source of [child, sealed]) {
-            expect(metaOf(source).importBoundary.root).to.be(source)
+            expect(metaOf(source).importBoundary).not.to.be(undefined)
             const chain = new Chain(source)
             assignPath(chain, ["value"], 2)
 
@@ -112,6 +112,33 @@ describe("import", () => {
         expect(lookupPath(new Chain(child), ["pending"], false)).to.be(resolved)
     })
 
+    it("moves runtime metadata out when its owner is imported", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const root = { pending: pending.promise }
+        const originalKeys = Reflect.ownKeys(root)
+        const earlierRead = lookupPath(new Chain(root), ["pending"], false)
+        expect(registrations()).to.be(2)
+
+        if (!STORE_META_IN_WEAKMAP) {
+            expect(Reflect.ownKeys(root).length).to.be(originalKeys.length + 1)
+        }
+
+        importValue(root, "promoted runtime owner")
+
+        expect(Reflect.ownKeys(root)).to.eql(originalKeys)
+        expect(metaOf(root).importBoundary).not.to.be(undefined)
+        expect(registrations()).to.be(3)
+
+        const resolved = { done: true }
+        pending.resolve(resolved)
+        expect(await earlierRead).to.be(resolved)
+        await flushMicrotasks()
+
+        expect(root.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(root), ["pending"], false)).to.be(resolved)
+    })
+
     it("preserves imported Promises and writes runtime-owned results", async () => {
         const externalPending = deferred()
         const runtimePending = deferred()
@@ -129,8 +156,47 @@ describe("import", () => {
         expect(runtimeOwned.pending).to.be("runtime")
         expect(lookupPath(new Chain(external), ["pending"], false)).to.be("external")
         const mirror = metaOf(external).mirrors.pending
-        expect(mirror.importBoundary.root).to.be(external)
+        expect(metaOf(external).importBoundary).not.to.be(undefined)
+        expect(Object.hasOwn(mirror, "importBoundary")).to.be(false)
         expect(mirror.resolvedValue).to.be("external")
+    })
+
+    it("writes through Promise properties of runtime islands", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        lookupPath(new Chain(child), [])
+
+        importValue({ child }, "runtime island")
+        expect(metaOf(child).importBoundary).to.be(undefined)
+
+        const resolved = { done: true }
+        pending.resolve(resolved)
+        await flushMicrotasks()
+
+        expect(child.pending).to.be(resolved)
+        expect(metaOf(resolved)?.importBoundary).to.be(undefined)
+    })
+
+    it("reuses one runtime mirror across imported wrappers", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const child = { pending: pending.promise }
+        const observed = lookupPath(new Chain(child), ["pending"], false)
+        const first = importValue({ child }, "first wrapper")
+        const second = importValue({ child }, "second wrapper")
+
+        expect(registrations()).to.be(2)
+
+        pending.resolve(second)
+        expect(await observed).to.be(second)
+        await flushMicrotasks()
+
+        expect(registrations()).to.be(2)
+        expect(child.pending).to.be(second)
+        buildRefIndex(second)
+        expect(hasCycleCut(child, "pending")).to.be(true)
+        buildRefIndex(first)
+        verifyRefCounts(first, second, child)
     })
 
     it("distinguishes an imported undefined result by field presence", async () => {
@@ -208,7 +274,7 @@ describe("import", () => {
         expect(next.branch.x).to.be(2)
     })
 
-    it("prepares imported descendants and promises eagerly", async () => {
+    it("classifies imported descendants and discovers promises eagerly", async () => {
         const outer = deferred()
         const inner = deferred()
         const leaf = { x: 1 }
@@ -216,31 +282,32 @@ describe("import", () => {
         const root = { child }
 
         const imported = importValue(root, "recursive import")
+        const importBoundary = metaOf(root).importBoundary
 
         expect(imported).to.be(root)
-        expect(metaOf(root).importBoundary.root).to.be(root)
-        expect(metaOf(root).importBoundary.errorContext).to.be("recursive import")
+        expect(importBoundary).to.eql({ errorContext: "recursive import" })
         expect(metaOf(child).shared).to.be(true)
-        expect(metaOf(child).importBoundary.root).to.be(child)
+        expect(metaOf(child).importBoundary).to.be(importBoundary)
         expect(metaOf(child).mirrors.value).not.to.be(undefined)
         expect(child.value).to.be(outer.promise)
 
         buildRefIndex(root)
         expect(metaOf(child).shared).to.be(true)
-        expect(metaOf(child).importBoundary.root).to.be(child)
+        expect(metaOf(child).importBoundary).to.be(importBoundary)
 
         const resolved = { leaf, inner: inner.promise }
         outer.resolve(resolved)
         await flushMicrotasks()
 
-        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
+        expect(metaOf(resolved).importBoundary).to.be(importBoundary)
         expect(metaOf(leaf).shared).to.be(true)
+        expect(metaOf(leaf).importBoundary).to.be(importBoundary)
 
         const nested = { done: true }
         inner.resolve(nested)
         await flushMicrotasks()
 
-        expect(metaOf(nested).importBoundary.root).to.be(nested)
+        expect(metaOf(nested).importBoundary).to.be(importBoundary)
         expect(child.value).to.be(outer.promise)
         expect(resolved.inner).to.be(inner.promise)
         expect(lookupPath(new Chain(root), ["child", "value"], false)).to.be(
@@ -271,7 +338,7 @@ describe("import", () => {
         expect(metaOf(shared)).to.be(meta)
     })
 
-    it("checks one imported promise under each captured ancestry", async () => {
+    it("reuses one nested Promise mirror across asynchronous aliases", async () => {
         const first = deferred()
         const second = deferred()
         const nested = deferred()
@@ -290,12 +357,12 @@ describe("import", () => {
 
         expect(registrations()).to.be(1)
         expect(metaOf(shared).shared).to.be(true)
-        expect(metaOf(shared).importBoundary.root).to.be(shared)
+        expect(metaOf(shared).importBoundary).not.to.be(undefined)
 
         const leaf = { done: true }
         nested.resolve(leaf)
         await flushMicrotasks()
-        expect(metaOf(leaf).importBoundary.root).to.be(leaf)
+        expect(metaOf(leaf).importBoundary).not.to.be(undefined)
     })
 
     it("eagerly registers one first resolver per promise placement", async () => {
@@ -319,7 +386,7 @@ describe("import", () => {
         expect(metaOf(resolved.nested).shared).to.be(true)
     })
 
-    it("keeps import preparation on its mirror when the same promise is reassigned", async () => {
+    it("keeps import classification with the original Promise version", async () => {
         const pending = deferred()
         const root = { branch: pending.promise }
         const chain = new Chain(root)
@@ -344,7 +411,7 @@ describe("import", () => {
         expect(lookupPath(chain, ["branch"], false)).not.to.be(firstValue)
     })
 
-    it("prepares a settled value before a later FIFO mutation", async () => {
+    it("classifies a settled value before a later FIFO mutation", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
         const chain = new Chain(root)
@@ -368,7 +435,7 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("uses a Promise's captured path when it joins visited branches", async () => {
+    it("indexes a Promise result that closes a cycle through an alias", async () => {
         const pending = deferred()
         const shared = { pending: pending.promise }
         const bridge = { back: shared }
@@ -387,7 +454,7 @@ describe("import", () => {
         verifyRefCounts(root, shared, bridge)
     })
 
-    it("checks a visited subtree against a Promise's captured path", async () => {
+    it("indexes a Promise result that closes a nested alias cycle", async () => {
         const pending = deferred()
         const ancestor = { pending: pending.promise }
         const tail = { back: ancestor }
@@ -406,11 +473,11 @@ describe("import", () => {
         verifyRefCounts(root, ancestor, bridge, tail)
     })
 
-    it("resumes detached preparation with a copied Promise path", async () => {
+    it("indexes cycles exposed by an imported Promise", async () => {
         const pending = deferred()
         const ancestor = { pending: pending.promise }
         const root = { ancestor }
-        importValue(root, "split preparation")
+        importValue(root, "split cycle")
 
         const internal = {}
         internal.self = internal
@@ -419,21 +486,21 @@ describe("import", () => {
 
         pending.resolve(resolved)
         await flushMicrotasks()
+        buildRefIndex(root)
 
         expect(metaOf(internal).cycleCuts.has("self")).to.be(true)
-        expect(metaOf(resolved).cycleCuts).to.be(undefined)
-        expect(hasCycleCut(ancestor, "pending")).to.be(true)
+        expect(hasCycleCut(resolved, "back")).to.be(true)
         expect(metaOf(unique).shared).to.be(true)
         expect(getErrors(new Chain(root), [])).to.eql([])
         verifyRefCounts(root)
     })
 
-    it("prepares cyclic imports before counting indexes the branch", () => {
+    it("defers imported cycle cuts until indexing", () => {
         const root = {}
         root.self = root
 
         const imported = importValue(root, "cycle import")
-        expect(metaOf(root).cycleCuts.has("self")).to.be(true)
+        expect(metaOf(root).cycleCuts).to.be(undefined)
         expect(getRefCounter(root)).to.be(undefined)
         const indexed = buildRefIndex(root)
 
@@ -441,41 +508,44 @@ describe("import", () => {
         expect(indexed).to.be(root)
         expect(getRefCounter(root).errorCount).to.be(0)
         expect(getRefCounter(root).cycleCutCount).to.be(1)
+        expect(metaOf(root).cycleCuts.has("self")).to.be(true)
         expect(root.self).to.be(root)
     })
 
-    it("uses the import root for eager cycle placement", () => {
+    it("indexes an imported cycle from its root", () => {
         const root = {}
         const branch = { back: root }
         root.branch = branch
-        importValue(root, "rooted preparation")
+        importValue(root, "rooted cycle")
+        buildRefIndex(root)
 
         expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
 
         expect(metaOf(root).cycleCuts).to.be(undefined)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).importBoundary).not.to.be(undefined)
         verifyRefCounts(root, branch)
     })
 
-    it("keeps an eager cycle cut when an extracted branch becomes a root", () => {
+    it("keeps an indexed cycle cut when a branch is extracted", () => {
         const root = {}
         const branch = { back: root }
         root.branch = branch
         importValue(root, "rerooted branch")
+        buildRefIndex(root)
 
         const extracted = lookupPath(new Chain(root), ["branch"], false)
         const chain = new Chain({})
         assignPath(chain, ["branch"], extracted)
 
         expect(hasError(chain, ["branch"])).to.be(false)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
+        expect(metaOf(branch).importBoundary).not.to.be(undefined)
         expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
         expect(metaOf(root).cycleCuts).to.be(undefined)
         verifyRefCounts(root, branch)
     })
 
-    it("marks stable first-repeat edges from the import root", () => {
+    it("cuts deterministic DFS back edges", () => {
         const left = {}
         const right = {}
         left.right = right
@@ -509,6 +579,7 @@ describe("import", () => {
         d.b = b
 
         importValue(x, "covered cycle")
+        buildRefIndex(x)
         expect(metaOf(c).cycleCuts.has("x")).to.be(true)
         expect(metaOf(b).cycleCuts.has("alternate")).to.be(true)
         expect(metaOf(d).cycleCuts).to.be(undefined)
@@ -573,6 +644,7 @@ describe("import", () => {
         first.next = second
         second.next = first
         importValue(first, "cycle lookup")
+        buildRefIndex(first)
 
         const extracted = lookupPath(new Chain(first), ["next"], false)
 
@@ -586,7 +658,7 @@ describe("import", () => {
         expect(metaOf(second).cycleCuts.has("next")).to.be(true)
     })
 
-    it("marks the imported property that closes a discovered cycle", () => {
+    it("cuts the DFS back edge when indexing imported data", () => {
         const batchParent = {}
         const batchChild = { back: batchParent }
         batchParent.child = batchChild
@@ -613,7 +685,7 @@ describe("import", () => {
         verifyRefCounts(next, child, owner)
     })
 
-    it("keeps detached preparation and imported attachment separate", async () => {
+    it("keeps detached settlement and attached ownership separate", async () => {
         const pending = deferred()
         const nested = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
@@ -662,7 +734,8 @@ describe("import", () => {
         pending.resolve(destination)
         await flushMicrotasks()
 
-        expect(hasCycleCut(imported, "pending")).to.be(true)
+        buildRefIndex(destination)
+        expectCounts(destination, 0, 0, 1)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
 
@@ -693,7 +766,8 @@ describe("import", () => {
         pending.resolve(destination)
         await flushMicrotasks()
 
-        expect(hasCycleCut(wrapper, "imported")).to.be(true)
+        buildRefIndex(destination)
+        expectCounts(destination, 0, 0, 1)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
 
@@ -746,6 +820,7 @@ describe("import", () => {
         pending.resolve(destination)
         await flushMicrotasks()
 
+        buildRefIndex(destination)
         expect(hasCycleCut(incoming, "pending")).to.be(true)
         expect(metaOf(destination).cycleCuts).to.be(undefined)
         expect(hasError(chain, [])).to.be(false)
@@ -758,7 +833,7 @@ describe("import", () => {
         verifyRefCounts(chain._state.value, destination, incoming)
     })
 
-    it("preserves a pinned attachment path across ancestor replacement", async () => {
+    it("preserves a pinned COW root across ancestor replacement", async () => {
         const pending = deferred()
         const incoming = importValue(
             { pending: pending.promise },
@@ -785,7 +860,7 @@ describe("import", () => {
         expect(hasError(chain, [])).to.be(false)
     })
 
-    it("pins attachment paths reached through promised ancestors", async () => {
+    it("pins COW roots reached through promised ancestors", async () => {
         const ancestor = deferred()
         const pending = deferred()
         const incoming = importValue(
@@ -828,6 +903,7 @@ describe("import", () => {
         pending.resolve(cyclic)
         await flushMicrotasks()
 
+        buildRefIndex(cyclic)
         expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
         expect(getErrors(new Chain(incoming), [])).to.eql([])
     })
@@ -890,7 +966,7 @@ describe("import", () => {
         expect(getRefCounter(child).cycleCutCount).to.be(1)
     })
 
-    it("checks an existing imported identity against new ancestry", async () => {
+    it("reuses an existing imported identity without another resolver", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const child = importValue(
@@ -1299,7 +1375,6 @@ describe("import", () => {
         const next = chain._state.value
 
         expect(extracted).to.be(branch)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
         expect(metaOf(branch).importBoundary.errorContext).to.be("extract import")
         expect(next).not.to.be(branch)
         expect(branch.x).to.be(1)
@@ -1322,11 +1397,11 @@ describe("import", () => {
         expect(metaOf(next)?.importBoundary).to.be(undefined)
         expect(metaOf(next.branch)?.importBoundary).to.be(undefined)
         expect(metaOf(next.branch.leaf)?.importBoundary).to.be(undefined)
-        expect(metaOf(branch).importBoundary.root).to.be(branch)
-        expect(metaOf(leaf).importBoundary.root).to.be(leaf)
-        expect(metaOf(rootSibling).importBoundary.root).to.be(rootSibling)
-        expect(metaOf(branchSibling).importBoundary.root).to.be(branchSibling)
-        expect(metaOf(leafSibling).importBoundary.root).to.be(leafSibling)
+        const importBoundary = metaOf(branch).importBoundary
+        expect(metaOf(leaf).importBoundary).to.be(importBoundary)
+        expect(metaOf(rootSibling).importBoundary).to.be(importBoundary)
+        expect(metaOf(branchSibling).importBoundary).to.be(importBoundary)
+        expect(metaOf(leafSibling).importBoundary).to.be(importBoundary)
     })
 
     it("keeps Promise forks outside the import boundary during COW", async () => {
@@ -1344,8 +1419,6 @@ describe("import", () => {
         const mirrors = metaOf(next).mirrors
 
         expect(metaOf(next).importBoundary).to.be(undefined)
-        expect(mirrors.path.importBoundary).to.be(undefined)
-        expect(mirrors.retained.importBoundary).to.be(undefined)
 
         pathValue.resolve({ kept: true })
         retainedValue.resolve({ sibling: true })
@@ -1365,6 +1438,24 @@ describe("import", () => {
         expect(Object.hasOwn(mirrors.retained, "resolvedValue")).to.be(false)
     })
 
+    it("cuts a runtime-owned Promise result that reaches its copied path", async () => {
+        const pending = deferred()
+        const chain = new Chain({ pending: pending.promise, other: 1 })
+        lookupPath(chain, [])
+        assignPath(chain, ["other"], 2)
+        const copy = chain._state.value
+
+        pending.resolve(copy)
+        await flushMicrotasks()
+
+        expect(copy.pending).to.be(copy)
+        buildRefIndex(copy)
+        expect(hasCycleCut(copy, "pending")).to.be(true)
+        const exported = exportValue(chain, [])
+        expect(exported.pending).to.be(exported)
+        verifyRefCounts(copy)
+    })
+
     it("keeps repeated pending COW forks runtime-owned", async () => {
         const pending = deferred()
         const resolved = { value: true }
@@ -1377,22 +1468,15 @@ describe("import", () => {
         importValue(root, "repeated Promise COW")
         const chain = new Chain(root)
         assignPath(chain, ["left"], 1)
-        const first = chain._state.value
         lookupPath(chain, [])
         assignPath(chain, ["right"], 2)
         const second = chain._state.value
-        const firstMirror = metaOf(first).mirrors.pending
-        const secondMirror = metaOf(second).mirrors.pending
-
-        expect(firstMirror.importBoundary).to.be(undefined)
-        expect(secondMirror.importBoundary).to.be(undefined)
 
         pending.resolve(resolved)
         await flushMicrotasks()
 
         expect(second.pending).to.be(resolved)
         expect(lookupPath(chain, ["pending"], false)).to.be(resolved)
-        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
         expect(metaOf(resolved).importBoundary.errorContext).to.be(
             "repeated Promise COW",
         )
@@ -1413,14 +1497,11 @@ describe("import", () => {
         lookupPath(chain, [])
         assignPath(chain, ["sibling"], 2)
         const copy = chain._state.value
-        const mirror = metaOf(copy).mirrors.pending
         const observed = lookupPath(chain, ["pending"], false)
 
-        expect(mirror.importBoundary).to.be(undefined)
         pending.resolve({ original: true })
         const owned = await observed
 
-        expect(mirror.importBoundary).to.be(undefined)
         expect(metaOf(owned)?.importBoundary).to.be(undefined)
         expect(owned).to.eql({ original: true, first: 1 })
         expect(copy.pending).to.be(owned)
@@ -1443,8 +1524,7 @@ describe("import", () => {
         pending.resolve(resolved)
         await flushMicrotasks()
 
-        expect(metaOf(first).mirrors.pending.importBoundary).to.be(undefined)
-        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
+        expect(metaOf(resolved).importBoundary).not.to.be(undefined)
 
         lookupPath(chain, [])
         assignPath(chain, ["right"], 2)
@@ -1452,7 +1532,6 @@ describe("import", () => {
 
         expect(metaOf(second)?.mirrors?.pending).to.be(undefined)
         expect(second.pending).to.be(resolved)
-        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
         expect(metaOf(resolved).importBoundary.errorContext).to.be(
             "resolved Promise COW",
         )
@@ -1465,17 +1544,13 @@ describe("import", () => {
         importValue(root, "promoted Promise path")
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
-        const copy = chain._state.value
-        const mirror = metaOf(copy).mirrors.pending
 
-        expect(mirror.importBoundary).to.be(undefined)
         assignPath(chain, ["pending", "first"], 1)
 
         pending.resolve({ original: true })
         await flushMicrotasks()
 
         const owned = lookupPath(chain, ["pending"], false)
-        expect(mirror.importBoundary).to.be(undefined)
         expect(metaOf(owned)?.importBoundary).to.be(undefined)
         expect(owned).to.eql({ original: true, first: 1 })
 
@@ -1493,18 +1568,15 @@ describe("import", () => {
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
         const parentCopy = chain._state.value
-        const mirror = metaOf(parentCopy).mirrors.pending
 
         pending.resolve({ retained, value: 0 })
         await flushMicrotasks()
 
-        expect(mirror.importBoundary).to.be(undefined)
         assignPath(chain, ["pending", "value"], 1)
         const owned = lookupPath(chain, ["pending"], false)
 
         expect(metaOf(parentCopy).mirrors?.pending).to.be(undefined)
         expect(metaOf(owned)?.importBoundary).to.be(undefined)
-        expect(metaOf(retained).importBoundary.root).to.be(retained)
         expect(metaOf(retained).importBoundary.errorContext).to.be(
             "resolved Promise path",
         )
@@ -1653,8 +1725,50 @@ describe("import", () => {
         expect(metaOf(resolved).cycleCuts).to.be(undefined)
         expect(hasCycleCut(root.nested, "value")).to.be(true)
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved).importBoundary.root).to.be(resolved)
+        expect(metaOf(resolved).importBoundary).not.to.be(undefined)
         expectCounts(root, 0, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("reuses an existing runtime mirror reached through import", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const child = { pending: pending.promise }
+        const earlierRead = lookupPath(
+            new Chain(child),
+            ["pending"],
+            false,
+        )
+        expect(registrations()).to.be(2)
+        const root = { child }
+
+        importValue(root, "runtime mirror back-edge")
+        expect(registrations()).to.be(2)
+        pending.resolve(root)
+        expect(await earlierRead).to.be(root)
+        await flushMicrotasks()
+
+        expect(child.pending).to.be(root)
+        buildRefIndex(root)
+        expect(hasCycleCut(child, "pending")).to.be(true)
+        expectCounts(root, 0, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("settles an indexed runtime mirror reached through import", async () => {
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        const hiddenError = new Error("indexed sibling")
+        buildRefIndex(child)
+        const root = { child, hiddenError }
+
+        importValue(root, "indexed runtime mirror back-edge")
+        pending.resolve(root)
+        await flushMicrotasks()
+
+        expect(child.pending).to.be(root)
+        expect(hasCycleCut(child, "pending")).to.be(true)
+        expectCounts(root, 0, 1, 1)
         verifyRefCounts(root)
     })
 
@@ -1695,8 +1809,9 @@ describe("import", () => {
         deferredValue.resolve(next)
         await flushMicrotasks()
 
+        buildRefIndex(next)
         expect(hasCycleCut(next, "self")).to.be(true)
-        expect(next.self).to.be(next)
+        expect(next.self).to.be(importedPromise)
         expect(lookupPath(chain, ["self"], false)).to.be(next)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
@@ -1705,6 +1820,7 @@ describe("import", () => {
 
     it("cuts a retained Promise fork that resolves to its COW owner", async () => {
         const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
         const root = {
             pending: pending.promise,
             sibling: 0,
@@ -1714,9 +1830,12 @@ describe("import", () => {
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
         const copy = chain._state.value
+        expect(registrations()).to.be(2)
         pending.resolve(copy)
         await flushMicrotasks()
 
+        expect(registrations()).to.be(2)
+        buildRefIndex(copy)
         expect(hasCycleCut(root, "pending")).to.be(false)
         expect(hasCycleCut(copy, "pending")).to.be(true)
         expect(root.pending).to.be(pending.promise)
@@ -1765,6 +1884,8 @@ describe("import", () => {
         pending.resolve(root)
         await flushMicrotasks()
 
+        buildRefIndex(root)
+        buildRefIndex(copy)
         expect(hasCycleCut(root, "pending")).to.be(true)
         expect(hasCycleCut(copy, "pending")).to.be(false)
         expect(root.pending).to.be(pending.promise)
@@ -1774,7 +1895,7 @@ describe("import", () => {
         verifyRefCounts(root, copy)
     })
 
-    it("checks a nested fork against every copied ancestor", async () => {
+    it("indexes a nested fork cycle after copy-on-write", async () => {
         const pending = deferred()
         const root = {
             branch: {
@@ -1790,6 +1911,7 @@ describe("import", () => {
         pending.resolve(copy)
         await flushMicrotasks()
 
+        buildRefIndex(copy)
         expect(hasCycleCut(copy.branch, "pending")).to.be(true)
         expect(copy.branch.pending).to.be(copy)
         expect(lookupPath(new Chain(copy), ["branch", "pending"], false)).to.be(
@@ -1841,7 +1963,7 @@ describe("import", () => {
         expect(chain._state.value.pending).to.be(null)
     })
 
-    it("prepares non-indexed Promise back-edges before counting", async () => {
+    it("defers non-indexed Promise back-edge cuts until counting", async () => {
         const deferredValue = deferred()
         const root = { nested: { value: deferredValue.promise } }
 
@@ -1850,17 +1972,18 @@ describe("import", () => {
         deferredValue.resolve(root.nested)
         await flushMicrotasks()
 
-        expect(hasCycleCut(root.nested, "value")).to.be(true)
+        expect(hasCycleCut(root.nested, "value")).to.be(false)
         expect(getRefCounter(root)).to.be(undefined)
         const indexed = buildRefIndex(root)
 
+        expect(hasCycleCut(root.nested, "value")).to.be(true)
         expect(root.nested.value).to.be(deferredValue.promise)
         expect(lookupPath(new Chain(root), ["nested", "value"], false)).to.be(root.nested)
         expect(indexed).to.be(root)
         expect(hasError(new Chain(root), [])).to.be(false)
     })
 
-    it("prepares cyclic imported promise roots before returning them", async () => {
+    it("leaves cyclic imported Promise roots unindexed until counting", async () => {
         const deferredValue = deferred()
         const imported = importValue(deferredValue.promise, "promise root")
         const cyclic = {}
@@ -1868,10 +1991,11 @@ describe("import", () => {
 
         deferredValue.resolve(cyclic)
         const value = await imported
-        expect(metaOf(value).cycleCuts.has("self")).to.be(true)
+        expect(metaOf(value).cycleCuts).to.be(undefined)
         expect(getRefCounter(value)).to.be(undefined)
         const indexed = buildRefIndex(value)
 
+        expect(metaOf(value).cycleCuts.has("self")).to.be(true)
         expect(value).to.be(cyclic)
         expect(indexed).to.be(cyclic)
         expect(hasError(new Chain(value), [])).to.be(false)
@@ -1888,7 +2012,6 @@ describe("import", () => {
 
         expect(value).to.be(sealed)
         expect(indexed).to.be(sealed)
-        expect(metaOf(sealed).importBoundary.root).to.be(sealed)
         expect(metaOf(sealed).importBoundary.errorContext).to.be("sealed promise root")
         expectCounts(sealed, 0, 0)
 

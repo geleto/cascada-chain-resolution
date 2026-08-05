@@ -1,5 +1,4 @@
 import * as arrayViews from "./array-view.js"
-import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -191,7 +190,7 @@ function placeOrigin(
     languageProperties.assertCanSetLanguageProperty(
         destination,
         stringKey,
-        origin.importBoundary?.errorContext,
+        metadata.importBoundaryOf(destination)?.errorContext,
     )
 
     const value = origin.value
@@ -201,10 +200,8 @@ function placeOrigin(
             destination,
             origin.key,
             value,
-            retained,
-            origin.importBoundary,
-            undefined,
             {
+                retained,
                 sourceMirror: origin.mirror,
                 destinationKey: stringKey,
                 install: false,
@@ -219,19 +216,12 @@ function placeOrigin(
         return
     }
 
-    if (retained) {
-        if (origin.importBoundary && languageValues.isTracked(value)) {
-            imports.import(value, origin.importBoundary.errorContext)
-        } else {
-            metadata.markShared(value)
-        }
-    }
+    if (retained) metadata.markShared(value)
     propertyTransitions.replaceProperty(
         destination,
         stringKey,
         undefined,
         value,
-        origin.cycleCut,
     )
 }
 

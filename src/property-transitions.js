@@ -1,5 +1,5 @@
-import * as imports from "./import.js"
 import * as errorUtils from "./error.js"
+import * as imports from "./import.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -9,18 +9,16 @@ import * as refcounts from "./refcounts.js"
 // Coordinate logical property state while refcounts transparently account for
 // the same update when the owner already belongs to an index.
 
-function replaceProperty(
-    owner, key, propertyMirror, newValue, cycleCut = false,
-) {
-    refcounts.indexValueIfSourceIndexed(owner, newValue)
+function replaceProperty(owner, key, propertyMirror, newValue) {
+    const cycleCut = refcounts.prepareRefEdge(owner, newValue)
     refcounts.commitLiveEdge(
         owner,
         key,
         () => {
             promiseMirrors.detachPromiseMirror(owner, key)
             languageProperties.writeLanguageProperty(owner, key, newValue)
-            imports.clearCycleCut(owner, key)
-            if (cycleCut) imports.setCycleCut(owner, key)
+            refcounts.clearCycleCut(owner, key)
+            if (cycleCut) refcounts.setCycleCut(owner, key)
             if (propertyMirror) {
                 promiseMirrors.installPromiseMirror(owner, key, propertyMirror)
             }
@@ -33,25 +31,34 @@ function setMirrorValue(
     key,
     mirror,
     newValue,
-    cycleCut = false,
-    sharedBacking = false,
+    {
+        importBoundary = undefined,
+        sharedBacking = false,
+    } = {},
 ) {
     if (languageValues.isPromise(newValue)) {
         errorUtils.reportFatalError(
             new Error("A Promise requires a fresh property version"),
         )
     }
+    if (importBoundary) {
+        imports.prepareImportedValue(newValue, importBoundary)
+    }
     const isLive = mirror.isLive(owner, key)
-    const resolvesPrivately = mirror.importBoundary !== undefined
+    // Each resolver supplies the import token captured at its program position.
+    const resolvesPrivately = isLive && importBoundary !== undefined
     if (isLive && !resolvesPrivately) {
-        const importBoundary = metadata.nodeImportBoundary(newValue)
+        const newValueBoundary = metadata.importBoundaryOf(newValue)
         languageProperties.assertCanUpdatePromiseProperty(
             owner,
             key,
-            importBoundary?.errorContext,
+            newValueBoundary?.errorContext,
         )
     }
-    refcounts.indexValueIfSourceIndexed(owner, newValue)
+    const cycleCut = isLive
+        ? refcounts.prepareRefEdge(owner, newValue)
+        : false
+    if (!isLive) refcounts.indexValueIfSourceIndexed(owner, newValue)
 
     if (isLive) {
         const commit = sharedBacking
@@ -60,8 +67,8 @@ function setMirrorValue(
         commit(owner, key, () => {
             if (resolvesPrivately) mirror.resolvedValue = newValue
             else languageProperties.writeLanguageProperty(owner, key, newValue)
-            if (cycleCut) imports.setCycleCut(owner, key)
-            else imports.clearCycleCut(owner, key)
+            if (cycleCut) refcounts.setCycleCut(owner, key)
+            else refcounts.clearCycleCut(owner, key)
         })
     } else {
         mirror.detachedValue = newValue
@@ -73,7 +80,7 @@ function removeProperty(owner, key, remove) {
         promiseMirrors.detachPromiseMirror(owner, key)
         if (remove) remove()
         else languageProperties.deleteLanguageProperty(owner, key)
-        imports.clearCycleCut(owner, key)
+        refcounts.clearCycleCut(owner, key)
     })
 }
 

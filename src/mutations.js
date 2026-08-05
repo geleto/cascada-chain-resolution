@@ -6,7 +6,6 @@ import * as refcounts from "./refcounts.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as imports from "./import.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as propertyTransitions from "./property-transitions.js"
 import * as propertyOrigins from "./property-capture.js"
@@ -18,8 +17,7 @@ function setProperty(
     parent,
     key,
     value,
-    importBoundary = undefined,
-    attachmentPath = undefined,
+    attachmentRoot = undefined,
 ) {
     if (
         arrayViews.isLogicalArray(parent) &&
@@ -27,6 +25,7 @@ function setProperty(
     ) {
         return setArrayLength(parent, value)
     }
+    const importBoundary = metadata.importBoundaryOf(parent)
     languageProperties.assertCanSetLanguageProperty(
         parent,
         key,
@@ -34,26 +33,31 @@ function setProperty(
     )
     // BIRTH 1 - ASSIGN: assigning a promise to a key always creates a fresh
     // mirror. Two assignments of the same promise are divergent worlds.
+    if (attachmentRoot && containsPromise(value)) {
+        metadata.markShared(attachmentRoot)
+    }
     let mirror
     if (languageValues.isPromise(value)) {
-        let prepareImportedValue
-        if (attachmentPath) {
-            metadata.markShared(attachmentPath.root)
-            prepareImportedValue = imports.createImportedValuePreparer(
-                attachmentPath.ancestors,
-            )
-        }
         mirror = promiseMirrors.createAssignedPromiseMirror(
             parent,
             key,
             value,
-            prepareImportedValue,
         )
     }
     propertyTransitions.replaceProperty(parent, key, mirror, value)
-    if (attachmentPath) {
-        imports.attachImportedDataToImportedData(parent, key, attachmentPath)
+}
+
+function containsPromise(value, visited = new WeakSet()) {
+    if (languageValues.isPromise(value)) return true
+    if (!languageValues.isTracked(value) || visited.has(value)) return false
+    visited.add(value)
+    for (const key of languageProperties.enumerableLanguageKeys(value)) {
+        if (containsPromise(
+            languageProperties.readLanguageProperty(value, key),
+            visited,
+        )) return true
     }
+    return false
 }
 
 function setArrayLength(array, value) {
@@ -67,7 +71,8 @@ function setArrayLength(array, value) {
     return commitArrayLength(array, length)
 }
 
-function deleteProperty(parent, key, importBoundary = undefined) {
+function deleteProperty(parent, key) {
+    const importBoundary = metadata.importBoundaryOf(parent)
     languageProperties.assertCanDeleteLanguageProperty(
         parent,
         key,
@@ -76,7 +81,7 @@ function deleteProperty(parent, key, importBoundary = undefined) {
     propertyTransitions.removeProperty(parent, key)
 }
 
-function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
+function copyForWrite(source, pathKey, attachmentRoot) {
     const prototype = Object.getPrototypeOf(source)
     let destination
     if (arrayViews.isLogicalArray(source)) {
@@ -88,13 +93,8 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
             ? {}
             : Object.create(prototype)
     }
-    attachmentPath ??= {
-        root: undefined,
-        ancestors: new Set(),
-    }
+    attachmentRoot ??= destination
     const pathKeyString = String(pathKey)
-    attachmentPath.root ??= destination
-    attachmentPath.ancestors.add(destination)
 
     // Copy only language-visible own enumerable string keys; META lives outside
     // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
@@ -103,9 +103,7 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
     // them. The path child is replaced or copied by the current walk.
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
         const retainedOffPath = key !== pathKeyString
-        const sourceMirror = promiseMirrors.getPromiseMirror(source, key)
         const value = languageProperties.readLanguageProperty(source, key)
-        const propertyImportBoundary = sourceMirror?.importBoundary ?? importBoundary
         // Sanctioned write bypass: the copy is unobservable until it is installed
         // through setProperty, or indexValueIfSourceIndexed reconstructs its index.
         languageProperties.writeLanguageProperty(destination, key, value)
@@ -118,18 +116,11 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
             //
             // Why mark non-path captured values: they are reused by two worlds,
             // so the first advance on either side must COW. The path key itself
-            // is protected by the walk's inherited state if we enter it, and
+            // is protected by the walk's attachment state if we enter it, and
             // may simply be replaced/deleted at the target.
-            const prepareImportedValue = retainedOffPath
-                ? imports.createImportedValuePreparer(
-                    attachmentPath.ancestors,
-                )
-                : undefined
             promiseMirrors.forkPromiseMirror(
                 source, destination, key, value,
-                retainedOffPath,
-                propertyImportBoundary,
-                prepareImportedValue,
+                { retained: retainedOffPath },
             )
         } else if (retainedOffPath && languageValues.isTracked(value)) {
             metadata.markShared(value)
@@ -138,26 +129,24 @@ function copyForWrite(source, pathKey, importBoundary, attachmentPath) {
     refcounts.indexValueIfSourceIndexed(source, destination)
     return {
         value: destination,
-        attachmentPath,
+        attachmentRoot,
     }
 }
 
 function transformProperty(
     parent,
     key,
-    importBoundary,
-    attachmentPath,
+    attachmentRoot,
     prepareInput,
     transform,
     returnResultPromise = true,
 ) {
     const origin = propertyOrigins.getOrigin(parent, key)
-    propertyOrigins.captureOrigin(origin, importBoundary)
+    propertyOrigins.captureOrigin(origin)
     const context = {
         present: origin !== undefined,
         rawValue: origin?.value,
-        importBoundary,
-        attachmentPath,
+        attachmentRoot,
     }
     let originalValue
     const operation = resolution.resolveOperationResultsOrFatal(
@@ -189,8 +178,7 @@ function transformProperty(
                 parent,
                 key,
                 operation.mutatedValue,
-                importBoundary,
-                attachmentPath,
+                attachmentRoot,
             )
         }
         if (operation.result === operation.mutatedValue) {
@@ -213,8 +201,7 @@ function transformProperty(
         parent,
         key,
         mutatedValueGate,
-        importBoundary,
-        attachmentPath,
+        attachmentRoot,
     )
     resolution.resolveOperationResultOrFatal(
         operation,
@@ -242,10 +229,9 @@ function assignPath(chain, path, value) {
         const result = walkMutationPath(chain, path, (
             parent,
             key,
-            importBoundary,
-            attachmentPath,
+            attachmentRoot,
         ) => {
-            setProperty(parent, key, value, importBoundary, attachmentPath)
+            setProperty(parent, key, value, attachmentRoot)
         }, undefined, tryArrayViewAssignment)
         return result
     })
@@ -253,17 +239,13 @@ function assignPath(chain, path, value) {
     function tryArrayViewAssignment(
         array,
         key,
-        importBoundary,
-        attachmentPath,
+        attachmentRoot,
     ) {
         const projection = arrayViews.projectionOf(array)
         if (!arrayViews.isArrayView(projection)) return undefined
         const end = Number(key) + 1
         const growth = end - projection.length
-        if (
-            growth <= 0 ||
-            metadata.nodeImportBoundary(array, importBoundary)
-        ) return undefined
+        if (growth <= 0 || metadata.importBoundaryOf(array)) return undefined
 
         const extended = arrayViews.ArrayView.tryExtendEnd(
             projection,
@@ -274,7 +256,7 @@ function assignPath(chain, path, value) {
             ),
         )
         if (!extended) return undefined
-        setProperty(extended, key, value, importBoundary, attachmentPath)
+        setProperty(extended, key, value, attachmentRoot)
         return extended
     }
 }
@@ -285,12 +267,11 @@ function assignLengthPath(chain, receiverPath, value) {
         return walkMutationPath(
             chain,
             receiverPath,
-            (parent, key, importBoundary, attachmentPath) => {
+            (parent, key, attachmentRoot) => {
                 result = transformProperty(
                     parent,
                     key,
-                    importBoundary,
-                    attachmentPath,
+                    attachmentRoot,
                     () => undefined,
                     transformLength,
                     false,
@@ -303,7 +284,7 @@ function assignLengthPath(chain, receiverPath, value) {
     function transformLength(
         targetValue,
         _input,
-        { present, importBoundary, attachmentPath },
+        { present, attachmentRoot },
     ) {
         if (!present) {
             return {
@@ -330,25 +311,23 @@ function assignLengthPath(chain, receiverPath, value) {
         }
         if (!arrayViews.isLogicalArray(targetValue)) {
             const mustCopy =
-                attachmentPath !== undefined ||
+                attachmentRoot !== undefined ||
                 metadata.requiresCopyOnWrite(targetValue)
             let mutatedValue = targetValue
-            let nextAttachment = attachmentPath
+            let nextAttachment = attachmentRoot
             if (mustCopy) {
                 const copied = copyForWrite(
                     targetValue,
                     "length",
-                    importBoundary,
                     nextAttachment,
                 )
                 mutatedValue = copied.value
-                nextAttachment = copied.attachmentPath
+                nextAttachment = copied.attachmentRoot
             }
             setProperty(
                 mutatedValue,
                 "length",
                 value,
-                importBoundary,
                 nextAttachment,
             )
             return { mutatedValue, result: undefined }
@@ -361,7 +340,7 @@ function assignLengthPath(chain, receiverPath, value) {
                 const projection = arrayViews.projectionOf(targetValue)
                 const currentLength = projection.length
                 const preserve =
-                    attachmentPath !== undefined ||
+                    attachmentRoot !== undefined ||
                     metadata.requiresCopyOnWrite(targetValue)
                 if (
                     preserve ||
@@ -467,8 +446,8 @@ function walkMutationPath(
         )
     }
     const targetPath = ["value", ...path]
-    let attachmentPath
-    return walk(state, 0, undefined, () => {})
+    let attachmentRoot
+    return walk(state, 0, () => {})
 
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
@@ -483,7 +462,6 @@ function walkMutationPath(
     function walk(
         value,
         index,
-        inheritedImportBoundary,
         writeBack,
     ) {
         if (languageValues.isError(value)) {
@@ -501,8 +479,7 @@ function walkMutationPath(
             onTarget(
                 value,
                 key,
-                inheritedImportBoundary,
-                attachmentPath,
+                attachmentRoot,
                 true,
             )
             return complete(writeBack, value)
@@ -522,19 +499,11 @@ function walkMutationPath(
             return onComplete ? onComplete(error) : error
         }
 
-        // Root-only import attribution is inherited until a nested boundary
-        // overrides it. Once COW starts, attachmentPath keeps every remaining
-        // path node in the shared branch.
-        let valueImportBoundary = metadata.nodeImportBoundary(
-            value,
-            inheritedImportBoundary,
-        )
         const mutatedValue = index === targetPath.length - 1
             ? tryTargetMutation?.(
                 value,
                 key,
-                valueImportBoundary,
-                attachmentPath,
+                attachmentRoot,
             )
             : undefined
         if (mutatedValue !== undefined) {
@@ -542,7 +511,7 @@ function walkMutationPath(
         }
         let parent = value
         const parentInsideSharedBranch =
-            attachmentPath !== undefined ||
+            attachmentRoot !== undefined ||
             metadata.requiresCopyOnWrite(value) ||
             arrayViews.requiresArrayMaterialization(value)
 
@@ -550,19 +519,16 @@ function walkMutationPath(
             const copied = copyForWrite(
                 parent,
                 key,
-                valueImportBoundary,
-                attachmentPath,
+                attachmentRoot,
             )
             parent = copied.value
-            attachmentPath = copied.attachmentPath
-            valueImportBoundary = undefined
+            attachmentRoot = copied.attachmentRoot
         }
         if (index === targetPath.length - 1) {
             const targetResult = onTarget(
                 parent,
                 key,
-                valueImportBoundary,
-                attachmentPath,
+                attachmentRoot,
             )
             return complete(
                 writeBack,
@@ -573,11 +539,7 @@ function walkMutationPath(
         // Asserted after the COW: copies carry only own enumerable keys, so
         // this fires only on genuinely un-shadowable intermediate shapes.
         if (!(key === "length" && arrayViews.isLogicalArray(parent))) {
-            languageProperties.assertCanMutateLanguageProperty(
-                parent,
-                key,
-                valueImportBoundary?.errorContext,
-            )
+            languageProperties.assertCanMutateLanguageProperty(parent, key)
         }
 
         const child = languageProperties.readLanguageProperty(parent, key)
@@ -586,16 +548,16 @@ function walkMutationPath(
                 parent,
                 key,
                 child,
-                valueImportBoundary,
             )
             const pending = resolution.onLaterPromiseReady(child, () => {
                 const propertyValue = mirror.getValue(parent, key)
                 return walk(
                     propertyValue,
                     index + 1,
-                    mirror.importBoundary ?? valueImportBoundary,
                     next => {
                         if (next !== propertyValue) {
+                            // An imported parent was copied before descent, so
+                            // this property version is runtime-owned.
                             propertyTransitions.setMirrorValue(
                                 parent,
                                 key,
@@ -613,10 +575,9 @@ function walkMutationPath(
         return walk(
             child,
             index + 1,
-            valueImportBoundary,
             next => {
                 if (next !== child) {
-                    setProperty(parent, key, next, valueImportBoundary)
+                    setProperty(parent, key, next)
                 }
                 writeBack(parent)
             },
@@ -632,19 +593,18 @@ function deletePath(chain, path) {
         const result = walkMutationPath(chain, path, (
             parent,
             key,
-            importBoundary,
-            attachmentPath,
+            attachmentRoot,
             virtualLength,
         ) => {
             if (deletesRoot) {
-                setProperty(parent, key, null, importBoundary)
+                setProperty(parent, key, null)
             } else if (virtualLength) {
                 operationError = errorUtils.validationError(
                     "Cannot delete length",
                 )
                 return KEEP_TARGET
             } else {
-                deleteProperty(parent, key, importBoundary)
+                deleteProperty(parent, key)
             }
         })
         return result ?? operationError

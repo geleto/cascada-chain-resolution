@@ -17,7 +17,7 @@ import {
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
-import { hasCycleCut } from "../src/import.js"
+import { hasCycleCut } from "../src/refcounts.js"
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)
@@ -81,7 +81,7 @@ describe("getErrors", () => {
         cyclic.self = cyclic
         const root = { cyclic, clean }
         importValue(root, "cut-fenced query")
-        buildRefIndex(root, metaOf(root).importBoundary)
+        buildRefIndex(root)
         cleanReads = 0
 
         expect(getErrors(new Chain(root), [])).to.eql([])
@@ -105,7 +105,7 @@ describe("getErrors", () => {
         const second = { back: first }
         first.next = second
         importValue(first, "indexed cut target")
-        buildRefIndex(first, metaOf(first).importBoundary)
+        buildRefIndex(first)
         cleanReads = 0
 
         expect(getErrors(new Chain(second), [])).to.eql([])
@@ -475,7 +475,7 @@ describe("getErrors", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("indexes imported promise values between preparation consumers", async () => {
+    it("keeps imported alias frontiers indexed across settlement", async () => {
         for (const query of [hasError, getErrors]) {
             const late = deferred()
             const bridge = deferred()
@@ -483,12 +483,12 @@ describe("getErrors", () => {
             const shared = { late: late.promise }
             const root = importValue(
                 { shared, bridge: bridge.promise },
-                "interleaved import preparation",
+                "interleaved imported aliases",
             )
             const result = query(new Chain(root), [])
 
-            // Revisiting shared through bridge registers another preparation
-            // consumer after the query has already registered on late.
+            // The bridge exposes an identity already visited by the query.
+            // Its existing Promise placement remains the only one to settle.
             bridge.resolve(shared)
             await flushMicrotasks()
             late.resolve({ bad: error })

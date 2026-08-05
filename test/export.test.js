@@ -20,6 +20,7 @@ import {
 } from "./support.js"
 import * as packageRuntime from "cascada-chain-resolution"
 import { export as packageExport } from "cascada-chain-resolution"
+import { hasCycleCut } from "../src/refcounts.js"
 import {
     createRawWalkState,
     walkRawBranch,
@@ -73,7 +74,7 @@ describe("export", () => {
         const root = { error, later }
         const state = createRawWalkState()
 
-        const readiness = walkRawBranch(root, undefined, state)
+        const readiness = walkRawBranch(root, state)
 
         expect(readiness).to.be(undefined)
         expect(state.copying).to.be(false)
@@ -94,7 +95,7 @@ describe("export", () => {
         const state = createRawWalkState(() => {
             output = undefined
         })
-        const readiness = walkRawBranch(root, undefined, state)
+        const readiness = walkRawBranch(root, state)
         output = state.copies.get(root)
         const abandonedCopy = output
         const error = new Error("stop async copying")
@@ -129,7 +130,7 @@ describe("export", () => {
         const state = createRawWalkState(() => {
             output = undefined
         })
-        const readiness = walkRawBranch(root, undefined, state)
+        const readiness = walkRawBranch(root, state)
 
         expect(state.copying).to.be(false)
         expect(state.copies).to.be(undefined)
@@ -272,8 +273,8 @@ describe("export", () => {
         expect(mirror.isLive(root, "value")).to.be(true)
         expect(root.value).to.be(pending.promise)
         expect(lookupPath(new Chain(root), ["value"], false)).to.be(resolved)
-        expect(metaOf(root).cycleCuts.has("value")).to.be(true)
-        expect(metaOf(resolved).cycleCuts).to.be(undefined)
+        buildRefIndex(root)
+        expect(hasCycleCut(resolved, "back")).to.be(true)
         verifyRefCounts(root)
     })
 
@@ -487,7 +488,6 @@ describe("export", () => {
         expect(value).to.eql(branch)
         expect(value).not.to.be(branch)
         expect(metaOf(value)).to.be(undefined)
-        expect(metaOf(root).importBoundary.root).to.be(root)
         expect(metaOf(root).importBoundary.errorContext).to.be("valid export import")
     })
 
@@ -1040,14 +1040,14 @@ describe("export", () => {
         importValue(root, "export import")
         const branchMeta = metaOf(branch)
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary.root).to.be(branch)
+        expect(branchMeta.importBoundary).not.to.be(undefined)
         const value = exportValue(new Chain(root), ["branch"])
 
         expect(value).not.to.be(branch)
         expect(value.cyclic.self).to.be(value.cyclic)
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
         expect(metaOf(branch)).to.be(branchMeta)
-        expect(branchMeta.importBoundary.root).to.be(branch)
+        expect(branchMeta.importBoundary).not.to.be(undefined)
         expect(getRefCounter(branch).errorCount).to.be(0)
         expect(getRefCounter(branch).cycleCutCount).to.be(1)
     })
@@ -1066,7 +1066,7 @@ describe("export", () => {
         expectExportErrors(result, [error])
         expect(metaOf(branch)).to.be(branchMeta)
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary.root).to.be(branch)
+        expect(branchMeta.importBoundary).not.to.be(undefined)
     })
 
     it("waits on imported branches without pinning or re-rooting them", async () => {
@@ -1079,13 +1079,13 @@ describe("export", () => {
         const result = exportValue(new Chain(root), ["branch"])
 
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary.root).to.be(branch)
+        expect(branchMeta.importBoundary).not.to.be(undefined)
         expect(getRefCounter(branch)).to.be(undefined)
 
         pending.resolve("done")
         expect(await result).to.eql({ pending: "done" })
         expect(metaOf(branch)).to.be(branchMeta)
-        expect(branchMeta.importBoundary.root).to.be(branch)
+        expect(branchMeta.importBoundary).not.to.be(undefined)
     })
 
     it("exports promises inside sealed branches through mirrors", async () => {

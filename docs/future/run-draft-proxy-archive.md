@@ -552,7 +552,7 @@ two-pass graph transformation:
 4. Populate each shell from the final draft view.
 5. Point an edge to the allocated shell when its final child is in the copy
    set; otherwise reuse the final original child.
-6. Rebuild runtime mirrors, cuts, counters, parents, and provenance.
+6. Rebuild runtime mirrors, cuts, counters, parents, and import status.
 
 Preallocating shells supports self-cycles, cycles back to the class root, and
 multi-node cycles without recursive looping.

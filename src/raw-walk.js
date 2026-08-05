@@ -1,5 +1,4 @@
 import * as arrayViews from "./array-view.js"
-import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as promiseMirrors from "./promise-mirrors.js"
@@ -32,7 +31,7 @@ function createRawWalkState(
 }
 
 // Returns only optional readiness; copied values live in state.copies.
-function walkRawBranch(value, inheritedImportBoundary, state) {
+function walkRawBranch(value, state) {
     if (languageValues.isError(value)) {
         state.foundError(value)
         return undefined
@@ -51,7 +50,6 @@ function walkRawBranch(value, inheritedImportBoundary, state) {
         : undefined
     if (state.copying) state.copies.set(value, output)
 
-    const importBoundary = metadata.nodeImportBoundary(value, inheritedImportBoundary)
     const waits = []
     // Sanctioned write bypass: export output stays outside the runtime graph.
     for (const key of languageProperties.enumerableLanguageKeys(value)) {
@@ -62,17 +60,11 @@ function walkRawBranch(value, inheritedImportBoundary, state) {
             if (state.copying) {
                 languageProperties.writeLanguageProperty(output, key, undefined)
             }
-            waits.push(walkRawPromise(
-                value,
-                key,
-                child,
-                importBoundary,
-                state,
-            ))
+            waits.push(walkRawPromise(value, key, child, state))
             continue
         }
 
-        const readiness = walkRawBranch(child, importBoundary, state)
+        const readiness = walkRawBranch(child, state)
         if (state.copying) {
             languageProperties.writeLanguageProperty(
                 output,
@@ -88,26 +80,15 @@ function walkRawBranch(value, inheritedImportBoundary, state) {
 
 // Keep pending continuations independent from the caller's output local. The
 // first Error can then drop the copy map without a pending closure retaining it.
-function walkRawPromise(
-    parent,
-    key,
-    promise,
-    importBoundary,
-    state,
-) {
+function walkRawPromise(parent, key, promise, state) {
     const mirror = promiseMirrors.getOrCreatePromiseMirror(
         parent,
         key,
         promise,
-        importBoundary,
     )
     return resolution.onLaterPromiseReady(promise, () => {
         const value = mirror.getValue(parent, key)
-        const readiness = walkRawBranch(
-            value,
-            mirror.importBoundary ?? importBoundary,
-            state,
-        )
+        const readiness = walkRawBranch(value, state)
         if (state.copying) {
             languageProperties.writeLanguageProperty(
                 state.copies.get(parent),

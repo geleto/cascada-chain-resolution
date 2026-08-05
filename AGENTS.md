@@ -7,7 +7,7 @@ Cascada's core contract is that operations on an asynchronously available graph 
 It achieves this with ordered local continuations, mirrors, and copy-on-write:
 
 1. An operation synchronously processes everything currently available.
-2. On reaching a Promise it registers at that position and moves on, continuing any other work already available.
+2. An operation whose result depends on a pending property registers at that position and moves on, continuing any other work already available.
 3. When a Promise settles, its existing registrations run as one FIFO batch, and each completes its transition synchronously.
 4. Mirrors preserve the exact property version an operation captured.
 5. Copy-on-write preserves owner isolation.
@@ -17,7 +17,7 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 ## Ordering
 
 - Do all available work synchronously, in program order.
-- On reaching a Promise, register at that exact position through the runtime's promise helpers. Raw `.then` belongs only inside those helpers.
+- When an operation depends on a pending property, register at that exact position through the runtime's promise helpers. Structural discovery alone adds no consumer. Raw `.then` belongs only inside those helpers.
 - The helpers canonicalize each callable thenable once; every continuation for that source registers on the same native Promise.
 - Invoke each continuation in one reaction on that canonical Promise; a per-consumer proxy would fragment its FIFO batch.
 - Never defer part of a transition with `await`, another `.then`, `queueMicrotask`, or lazy registration.
@@ -34,14 +34,14 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 ## Ownership
 
-- Classify a property container and its stored value independently: the container determines whether Cascada may write the property; the value's identity and provenance determine whether that value is imported or shared.
+- Classify a property container and its stored value independently: the container determines whether Cascada may write the property; the value's identity determines whether that value is imported or shared.
 - Every value originating outside Cascada enters through import, regardless of how it was obtained.
-- A Chain preserves its value's existing ownership and provenance; it creates neither.
+- A Chain preserves its value's existing ownership and import status; it creates neither.
 - Imported data is borrowed and never changed. All runtime state, including metadata and logical Promise settlement, lives outside it.
 - A non-shared language value has one owner and may be mutated in place.
 - Giving the same tracked identity another owner makes it shared; observing it does not.
 - Non-sharing extraction is valid only for a pure read or a transfer that ends the prior ownership.
-- Storing an externally sourced value in a runtime-owned container does not make that container imported.
+- Import status belongs to identities, not paths; containment never transfers it in either direction.
 - Shared or imported data is protected by copy-on-write; mutation must not affect another owner or external data.
 - Cascada never creates non-extensible language data. Such data is imported and has no special runtime semantics.
 
@@ -58,6 +58,12 @@ Issuing a command never blocks. A result may stay pending for the Promise fronti
 
 - Language data is own enumerable string keys only; symbols, non-enumerables, and prototypes are outside the graph.
 - Define a missing key as an own data property so inherited setters, notably `__proto__`, never participate in a write.
+
+## Cycles
+
+- The language graph may be cyclic; only the refcount projection must be acyclic.
+- Initial indexing cuts DFS back edges. Publishing an edge into an indexed container cuts it exactly when the maintained reverse-parent graph shows that it would close a cycle.
+- A cut is placement metadata only. Ordinary graph operations still see the original property value.
 
 ## Errors
 

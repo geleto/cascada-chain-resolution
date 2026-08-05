@@ -5,284 +5,102 @@ import * as metadata from "./meta.js"
 import * as promiseMirrors from "./promise-mirrors.js"
 import * as resolution from "./resolution.js"
 
-let commitLiveEdge
-
-function initImport(commitLiveEdgeFn) {
-    commitLiveEdge = commitLiveEdgeFn
-}
-
 function importValue(value, errorContext) {
     return errorUtils.runFatal(() => {
         if (!errorContext) {
             throw new Error("import requires an error context")
         }
-        return resolution.resolveInitialValueOrPoison(
-            value,
-            importResolvedValue,
-        )
+        return resolution.resolveInitialValueOrPoison(value, resolvedValue => {
+            if (!languageValues.isTracked(resolvedValue)) return resolvedValue
+            if (metadata.importBoundaryOf(resolvedValue)) return resolvedValue
 
-        function importResolvedValue(resolvedValue) {
-            const createdBoundary = metadata.markImported(
+            prepareImportedData(
                 resolvedValue,
-                errorContext,
+                { errorContext },
+                true,
             )
-            const importBoundary = metadata.nodeImportBoundary(resolvedValue)
-            if (createdBoundary) prepareImportedData(importBoundary)
             return resolvedValue
-        }
+        })
     })
 }
 
-function hasCycleCut(parent, key) {
-    return metadata.metaOf(parent)?.cycleCuts?.has(key) === true
+// A resolved imported Promise extends its owner's import, unless the value
+// already belongs to an imported or runtime-owned world.
+function prepareImportedValue(value, importBoundary) {
+    prepareImportedData(value, importBoundary, false)
 }
 
-// These are non-transactional storage operations used inside live-edge
-// commits. Import's synchronous discovery wraps setCycleCut below.
-function clearCycleCut(parent, key) {
-    const meta = metadata.metaOf(parent)
-    if (!meta?.cycleCuts) return
-    meta.cycleCuts.delete(key)
-    if (meta.cycleCuts.size === 0) delete meta.cycleCuts
-}
-
-function setCycleCut(parent, key) {
-    const meta = metadata.ensureMeta(parent)
-    meta.cycleCuts ??= new Set()
-    meta.cycleCuts.add(key)
-}
-
-function publishCycleCut(parent, key) {
-    if (hasCycleCut(parent, key)) return
-    commitLiveEdge(parent, key, () => setCycleCut(parent, key))
-}
-
-function registerImportedPromisePreparation(
-    parent,
-    key,
-    promise,
-    inheritedBoundary,
-    resume,
-) {
-    promiseMirrors.getOrCreatePromiseMirror(
-        parent,
-        key,
-        promise,
-        inheritedBoundary,
-        (resolvedValue, inheritedResolvedBoundary) => {
-            const resolvedBoundary = metadata.nodeImportBoundary(
-                resolvedValue,
-                inheritedResolvedBoundary,
-            )
-            const cycleAncestor = resume(resolvedValue, resolvedBoundary)
-            if (resolvedBoundary) {
-                metadata.markImported(
-                    resolvedValue,
-                    resolvedBoundary.errorContext,
-                )
-            }
-            return cycleAncestor
-        },
-    )
-}
-
-// Imported cycles are the graph fact trusted data cannot contain. The raw edge
-// remains ordinary data; its cut only keeps the ref-index projection acyclic.
-function prepareImportedData(importBoundary) {
-    walkValue(
-        importBoundary.root,
-        importBoundary,
-        {
-            currentPath: new Set(),
-            visited: new WeakSet(),
-        },
-    )
-
-    function walkProperty(parent, key, inheritedBoundary, state) {
-        if (hasCycleCut(parent, key)) return
-        const value = languageProperties.readLanguageProperty(parent, key)
-        if (languageValues.isPromise(value)) {
-            if (promiseMirrors.getPromiseMirror(parent, key)) return
-            const resumedState = {
-                currentPath: new Set(state.currentPath),
-                visited: new WeakSet(),
-            }
-            registerImportedPromisePreparation(
-                parent,
-                key,
-                value,
-                inheritedBoundary,
-                (resolvedValue, resolvedBoundary) => {
-                    return walkValue(
-                        resolvedValue,
-                        resolvedBoundary,
-                        resumedState,
-                    )
-                },
-            )
-            return
-        }
-
-        const cycleAncestor = walkValue(
-            value,
-            inheritedBoundary,
-            state,
-        )
-        if (!cycleAncestor) return undefined
-        // Copied ancestors predate this Promise and are absent from the fresh
-        // visited set, so their cycle must bubble to the Promise placement.
-        if (!state.visited.has(cycleAncestor)) return cycleAncestor
-        publishCycleCut(parent, key)
-        return undefined
-    }
-
-    // Returns the repeated ancestor to the incoming property. That property
-    // cuts locally unless the ancestor predates this Promise segment, in which
-    // case the identity bubbles up to the Promise placement.
-    function walkValue(value, inheritedBoundary, state) {
-        if (!languageValues.isTracked(value)) return undefined
-        if (state.currentPath.has(value)) {
-            metadata.markShared(value)
-            return value
-        }
-        if (state.visited.has(value)) {
-            metadata.markShared(value)
-            return undefined
-        }
-        state.visited.add(value)
-
-        // META persists completed preparation. A later hit is a globally
-        // repeated imported identity and needs only a fixed-path cycle scan.
-        if (value !== importBoundary.root && metadata.metaOf(value)) {
-            metadata.markShared(value)
-            return scanFixedPathForCycles(
-                value,
-                inheritedBoundary,
-                new Set(state.currentPath),
-            )
-        }
-        // Imported identities keep their provenance when used independently.
-        metadata.markImported(value, inheritedBoundary.errorContext)
-
-        const valueImportBoundary = metadata.nodeImportBoundary(
-            value,
-            inheritedBoundary,
-        )
-        state.currentPath.add(value)
-        let cycleAncestor
-        for (const key of languageProperties.enumerableLanguageKeys(value)) {
-            const foundAncestor = walkProperty(
-                value,
-                key,
-                valueImportBoundary,
-                state,
-            )
-            if (foundAncestor) cycleAncestor = foundAncestor
-        }
-        state.currentPath.delete(value)
-        return cycleAncestor
-    }
-}
-
-// Search an already prepared graph only for references into one fixed path.
-// A synchronous match propagates to the placement that entered the graph.
-function scanFixedPathForCycles(
-    value,
-    inheritedBoundary,
-    fixedPath,
-    pathRootToPin = undefined,
-) {
-    // A permanently pending Promise may retain this scanner indefinitely.
+// Import classifies existing identities and installs each Promise property's
+// first resolver. Cycles remain ordinary graph data until ref-indexing projects
+// them onto an acyclic parent graph.
+function prepareImportedData(root, importBoundary, promoteRoot) {
+    if (!languageValues.isTracked(root)) return
     const visited = new WeakSet()
-    return walkValue(value, inheritedBoundary)
+    walkValue(root, promoteRoot)
 
-    function walkProperty(parent, key, inheritedBoundary) {
-        if (hasCycleCut(parent, key)) return undefined
-        const value = languageProperties.readLanguageProperty(parent, key)
-        if (languageValues.isPromise(value)) {
-            if (pathRootToPin) metadata.markShared(pathRootToPin)
-            if (promiseMirrors.getPromiseMirror(parent, key)) return undefined
-            registerImportedPromisePreparation(
-                parent,
-                key,
-                value,
-                inheritedBoundary,
-                walkValue,
-            )
-            return undefined
-        }
-        return walkValue(value, inheritedBoundary)
-    }
-
-    function walkValue(value, inheritedBoundary) {
-        if (!languageValues.isTracked(value)) return undefined
-        if (fixedPath.has(value)) {
-            metadata.markShared(value)
-            return value
-        }
+    function walkValue(value, promote = false) {
+        if (!languageValues.isTracked(value)) return
         if (visited.has(value)) {
             metadata.markShared(value)
-            return undefined
+            return
         }
         visited.add(value)
 
-        const importBoundary = metadata.nodeImportBoundary(
-            value,
-            inheritedBoundary,
-        )
+        if (!promote && metadata.metaOf(value)) {
+            metadata.markShared(value)
+            discoverPromiseMirrors(value)
+            return
+        }
+
+        metadata.markImported(value, importBoundary)
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
-            const matchedAncestor = walkProperty(
-                value,
-                key,
-                importBoundary,
-            )
-            if (matchedAncestor) return matchedAncestor
+            const child = languageProperties.readLanguageProperty(value, key)
+            if (!languageValues.isPromise(child)) {
+                walkValue(child)
+                continue
+            }
+
+            const existing = promiseMirrors.getPromiseMirror(value, key)
+            if (existing) {
+                // Promotion changes this property's publication policy at the
+                // import position, so earlier operations retain the old mirror.
+                // Install directly: its earlier resolver fills detachedValue
+                // before this fork samples it on the same FIFO Promise.
+                promiseMirrors.forkPromiseMirror(
+                    value,
+                    value,
+                    key,
+                    child,
+                    { sourceMirror: existing },
+                )
+            } else {
+                promiseMirrors.getOrCreatePromiseMirror(value, key, child)
+            }
         }
-        return undefined
     }
 }
 
-// A fresh assigned or forked Promise captures its destination ancestry at
-// birth. Its initial resolver classifies imported data before publishing it.
-function createImportedValuePreparer(ancestors) {
-    const fixedPath = new Set(ancestors)
-    return (value, inheritedImportBoundary) => {
-        const importBoundary = metadata.nodeImportBoundary(
-            value,
-            inheritedImportBoundary,
-        )
-        const cycleCut = importBoundary &&
-            scanFixedPathForCycles(value, importBoundary, fixedPath)
-        if (importBoundary) {
-            metadata.markImported(value, importBoundary.errorContext)
+// A runtime-owned island keeps its ownership, but import has reached its
+// currently available Promise frontier and must make those placements live.
+function discoverPromiseMirrors(root) {
+    const visited = new WeakSet()
+    walkValue(root)
+
+    function walkValue(value) {
+        if (!languageValues.isTracked(value) || visited.has(value)) return
+        visited.add(value)
+        for (const key of languageProperties.enumerableLanguageKeys(value)) {
+            const child = languageProperties.readLanguageProperty(value, key)
+            if (languageValues.isPromise(child)) {
+                promiseMirrors.getOrCreatePromiseMirror(value, key, child)
+            } else {
+                walkValue(child)
+            }
         }
-        return cycleCut
-    }
-}
-
-// Synchronous attachment of already resolved imported data.
-function attachImportedDataToImportedData(parent, key, attachmentPath) {
-    const value = languageProperties.readLanguageProperty(parent, key)
-    if (languageValues.isPromise(value)) return
-
-    const importBoundary = metadata.nodeImportBoundary(value)
-    if (!importBoundary) return
-    if (scanFixedPathForCycles(
-        value,
-        importBoundary,
-        new Set(attachmentPath.ancestors),
-        attachmentPath.root,
-    )) {
-        publishCycleCut(parent, key)
     }
 }
 
 export {
-    attachImportedDataToImportedData,
-    clearCycleCut,
-    createImportedValuePreparer,
-    hasCycleCut,
-    initImport,
     importValue as import,
-    setCycleCut,
+    prepareImportedValue,
 }

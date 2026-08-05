@@ -131,16 +131,16 @@ mirror order while unrelated paths continue. A direct replacement of
 arranges publication of the private value. Publishing an Error uses an ordinary private-root assignment
 before returning. If owning-path COW leaves the target reachable from the source
 graph, a direct target is marked shared before the callback; a Promise target's
-transfer sampler marks its prepared value before target-dependent private work. A
+transfer sampler marks its logical value before target-dependent private work. A
 Promise-valued target first replaces the public placement with its gate, which
 synchronously detaches the source mirror. It then installs the private-root
 transfer before invoking the callback. The source version's earlier resolver
-prepares `detachedValue`, which the transfer samples without retaining the source
+writes `detachedValue`, which the transfer samples without retaining the source
 parent or key. The callback starts immediately with
 the source Promise while
 target-independent work overlaps its resolution. Target-dependent commands
 register behind the transfer on the source's canonical FIFO queue and receive
-the prepared logical value. If callback work leaves the
+the logical value. If callback work leaves the
 private Chain's `state.value` holding a Promise, publication registers once
 through `onLaterPromiseReady`. After the root mirror and earlier FIFO operations
 have updated the authoritative slot, that callback opens the gate with the
@@ -155,8 +155,8 @@ A read-only `enter(..., false, onEntered)` installs no gate and invokes its
 callback only after capturing a protected root. Every tracked root
 increments `META.readEnterCount`, including values already protected by
 sharing or import; primitives require no metadata.
-If the target was reached through an inherited import boundary, entry first
-makes it an independently attributed imported root.
+An imported target already carries its own import status; a runtime-owned
+target does not inherit it from its containing path.
 Overlapping readers increment independently. Live mutation then uses
 copy-on-write without permanently marking an otherwise singly-owned value
 shared. Earlier effects and Promise settlement remain part of the captured
@@ -202,7 +202,7 @@ operation-local recursive proxy:
 - [`docs/runtime-spec.md`](docs/runtime-spec.md) defines the current observable
   behavior and compiler/host contracts.
 - [`docs/import-preparation.md`](docs/import-preparation.md) explains imported
-  graph preparation, aliases, cycles, and Promise continuations.
+  identity classification and Promise continuations.
 - [`docs/counters-implementation.md`](docs/counters-implementation.md) explains
   lazy subtree counters, Promise mirrors, and verification.
 - [`docs/cycles-as-data.md`](docs/cycles-as-data.md) defines cycle cuts and
@@ -237,7 +237,7 @@ completed, deferred, and pending work.
 ## Source layout
 
 - `src/index.js` owns the public API and re-exports `Chain` from `src/chain.js`.
-- `src/init.js` owns the cycle-breaking runtime wiring shared by the
+- `src/init.js` owns the circular runtime wiring shared by the
   package facade and internal entry points.
 - `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
 - `src/language-values.js` owns value classification and the data-class
@@ -249,8 +249,8 @@ completed, deferred, and pending work.
 - `src/run.js` owns restricted method routing and common observation handling.
 - `src/array-view.js`, `src/array-invocation.js`, `src/array-methods.js`, and
   `src/array-remap.js` own logical Array representation and method execution.
-- `src/import.js` prepares imported graphs, aliases, cycles, and Promise
-  continuations.
+- `src/import.js` classifies imported identities and discovers their Promise
+  frontier.
 - `src/property-transitions.js` coordinates property replacement, deletion,
   Promise-mirror publication, and cycle-cut changes.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
@@ -291,7 +291,7 @@ external value enters through `import(value, errorContext)`, which:
 
 - marks each imported tracked identity shared;
 - retains the attribution context;
-- prepares aliases and cycle-closing properties;
+- marks repeated identities shared;
 - registers imported Promise continuations in issue order;
 - stores newly needed metadata outside the host values; and
 - leaves subtree counters lazy until a branch query needs them.
@@ -302,9 +302,10 @@ stores the logical result while the external Promise remains physically in
 place. Imported Promise properties must be own enumerable data properties, but
 need not be writable. Frozen data uses the same path.
 
-Cycle cuts live in metadata. A cut is structural bookkeeping, not an Error:
-finite paths cross it normally, Error queries ignore it as data, and export
-reconstructs the original cyclic topology.
+Cycles are handled when a branch is ref-indexed, regardless of where its data
+came from. A cut is structural bookkeeping, not an Error: finite paths cross it
+normally, Error queries ignore it as data, and export reconstructs the original
+cyclic topology.
 
 Host code receives tracked Cascada data only through `export`, which returns a
 metadata-free deep copy with captured Promise-property values materialized.
@@ -347,10 +348,11 @@ an earlier lookup, export, or Error query observes.
 Each Promise-backed property has a mirror identifying that exact property
 version. A live mirror normally writes each resolved value back to the property.
 An imported property instead preserves its external Promise and keeps the
-logical value in `resolvedValue` on the mirror. The first resolver consumes
-fulfillment or converts rejection to Error and publishes that logical value.
-Later resolvers use the Promise only as a readiness signal and read the latest
-value left by earlier resolvers.
+logical value in `resolvedValue` on the mirror. Its first resolver captures the
+property's import boundary without storing it on the mirror, consumes fulfillment
+or converts rejection to Error, and publishes that logical value. Later resolvers
+use the Promise only as a readiness signal and read the latest value left by
+earlier resolvers.
 
 Overwriting or deleting the property detaches its mirror. At that moment the
 logical value is moved to `detachedValue`; already-issued operations continue
@@ -404,10 +406,12 @@ Every committed property transition computes the old and new contribution,
 updates the reverse edge, and propagates one delta through indexed parents.
 Unqueried branches pay no counter maintenance cost.
 
-Imported cycles cannot participate directly in recursive parent propagation.
-A cycle cut contributes only to `cycleCutCount` and installs no reverse parent
-edge. Ref-indexing resumes at the target as an independent component, while
-export alone walks the raw graph without counters.
+Cycles cannot participate directly in recursive parent propagation. Initial
+indexing cuts DFS back edges; a later indexed publication cuts its edge when
+the reverse-parent graph shows that it would close a cycle. A cut contributes
+only to `cycleCutCount` and installs no reverse parent edge. Ref-indexing resumes
+at the target as an independent component, while export walks the raw graph
+without counters.
 
 ## Branch observations
 

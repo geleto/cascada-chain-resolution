@@ -269,6 +269,27 @@ describe("run", () => {
         expect(run(new Chain(source), [], "fail", false)).to.be(failure)
     })
 
+    it("imports an ordinary method result that aliases its receiver", async () => {
+        const pending = deferred()
+        const root = { pending: pending.promise }
+        const languageKeys = Reflect.ownKeys(root)
+        const earlierRead = lookupPath(new Chain(root), ["pending"], false)
+
+        const result = run(new Chain(root), [], "valueOf", false)
+
+        expect(result).to.be(root)
+        expect(Reflect.ownKeys(root)).to.eql(languageKeys)
+        expect(metaOf(root).importBoundary).not.to.be(undefined)
+
+        const resolved = { done: true }
+        pending.resolve(resolved)
+        expect(await earlierRead).to.be(resolved)
+        await flushMicrotasks()
+
+        expect(root.pending).to.be(pending.promise)
+        expect(lookupPath(new Chain(root), ["pending"], false)).to.be(resolved)
+    })
+
     it("preserves holes and identities in Array observers", () => {
         const child = {}
         const source = [child, , 3]
@@ -502,8 +523,7 @@ describe("run", () => {
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
         expect(Array.isArray(middleConcat)).to.be(true)
-        expect(metaOf(nestedSource.values).importBoundary.root)
-            .to.be(nestedSource.values)
+        expect(metaOf(nestedSource.values).importBoundary).not.to.be(undefined)
         expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])

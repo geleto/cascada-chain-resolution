@@ -600,7 +600,7 @@ describe("enter", () => {
         const chain = new Chain(importValue(external, "read target"))
         let extracted
 
-        expect(metaOf(target).importBoundary.root).to.be(target)
+        expect(metaOf(target).importBoundary).not.to.be(undefined)
         const result = enter(chain, ["target"], false, entered => {
             extracted = lookupPath(entered, ["child"])
             return "read"

@@ -61,7 +61,6 @@ function invokeArrayObservationMethod(
     thisValue,
     method,
     args,
-    importBoundary,
 ) {
     const definition = methods.ARRAY_METHODS[method]
     const preparedArguments = prepareArrayMethodArguments(method, args)
@@ -73,7 +72,6 @@ function invokeArrayObservationMethod(
                     thisValue,
                     method,
                     preparedArgs,
-                    importBoundary,
                 )
                 if (arrayView !== undefined) return arrayView
             }
@@ -103,7 +101,6 @@ function invokeArrayMutationMethod(
     thisValue,
     method,
     preparedArguments,
-    importBoundary,
     replaceReceiver,
 ) {
     const definition = methods.ARRAY_METHODS[method]
@@ -113,7 +110,6 @@ function invokeArrayMutationMethod(
             thisValue,
             method,
             preparedArguments,
-            importBoundary,
         )
         if (arrayView !== undefined) {
             let result = arrayView.length
@@ -174,10 +170,9 @@ function tryArrayViewMethod(
     thisValue,
     method,
     args,
-    importBoundary,
 ) {
     // Imported Arrays materialize; ArrayView backing is always runtime-owned.
-    if (metadata.nodeImportBoundary(thisValue, importBoundary)) {
+    if (metadata.importBoundaryOf(thisValue)) {
         return undefined
     }
     if (method === "slice") return trySliceArrayView(thisValue, args)

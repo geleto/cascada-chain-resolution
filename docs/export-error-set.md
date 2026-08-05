@@ -103,7 +103,7 @@ on the runtime ownership contract:
 
 - compiler-created mutable data has one owner;
 - extracting or otherwise sharing a tracked value marks it shared;
-- repeated imported identities are prepared as shared; and
+- repeated imported identities are classified as shared; and
 - mutation through a shared route COWs before writing.
 
 Thus a later operation cannot mutate an unreached node in place through another

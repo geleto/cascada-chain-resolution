@@ -19,7 +19,7 @@ import {
     expectCounts,
     thrownBy,
 } from "./support.js"
-import { hasCycleCut } from "../src/import.js"
+import { hasCycleCut } from "../src/refcounts.js"
 
 describe("subtree counters", () => {
     it("keeps inline metadata visible after a node becomes non-extensible", () => {
@@ -50,6 +50,118 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(root.nested)).to.be(undefined)
         verifyRefCounts(root)
+    })
+
+    it("indexes cycles created by ordinary synchronous assignment", () => {
+        const root = {}
+
+        assignPath(new Chain(root), ["self"], root)
+
+        expect(hasCycleCut(root, "self")).to.be(false)
+        expect(getRefCounter(root)).to.be(undefined)
+
+        buildRefIndex(root)
+
+        expect(hasCycleCut(root, "self")).to.be(true)
+        expectCounts(root, 0, 0, 1)
+        expect(getRefCounter(root).parents.size).to.be(0)
+        verifyRefCounts(root)
+    })
+
+    it("indexes cycles exposed by discovered and assigned Promises", async () => {
+        const discovered = deferred()
+        const discoveredRoot = { value: discovered.promise }
+        const observed = lookupPath(
+            new Chain(discoveredRoot),
+            ["value"],
+            false,
+        )
+        const assigned = deferred()
+        const assignedRoot = {}
+        assignPath(new Chain(assignedRoot), ["value"], assigned.promise)
+
+        discovered.resolve(discoveredRoot)
+        assigned.resolve(assignedRoot)
+        expect(await observed).to.be(discoveredRoot)
+        await flushMicrotasks()
+
+        for (const root of [discoveredRoot, assignedRoot]) {
+            expect(hasCycleCut(root, "value")).to.be(false)
+            buildRefIndex(root)
+            expect(hasCycleCut(root, "value")).to.be(true)
+            expectCounts(root, 0, 0, 1)
+            verifyRefCounts(root)
+        }
+    })
+
+    it("cuts a cycle when an indexed assignment publishes its edge", () => {
+        const root = {}
+        buildRefIndex(root)
+
+        assignPath(new Chain(root), ["self"], root)
+
+        expect(hasCycleCut(root, "self")).to.be(true)
+        expectCounts(root, 0, 0, 1)
+        expect(getRefCounter(root).parents.size).to.be(0)
+        verifyRefCounts(root)
+    })
+
+    it("cuts a cycle when an indexed Promise publishes its value", async () => {
+        const pending = deferred()
+        const root = { value: pending.promise }
+        buildRefIndex(root)
+
+        pending.resolve(root)
+        await flushMicrotasks()
+
+        expect(root.value).to.be(root)
+        expect(hasCycleCut(root, "value")).to.be(true)
+        expectCounts(root, 0, 0, 1)
+        expect(getRefCounter(root).parents.size).to.be(0)
+        verifyRefCounts(root)
+    })
+
+    it("keeps history-dependent cycle projections valid", async () => {
+        const pending = deferred()
+        const publishedError = new Error("published")
+        const publishedRoot = { value: pending.promise }
+        buildRefIndex(publishedRoot)
+        const publishedValue = {
+            nested: { bad: publishedError },
+            back: publishedRoot,
+        }
+
+        pending.resolve(publishedValue)
+        await flushMicrotasks()
+
+        const indexedError = new Error("indexed")
+        const indexedRoot = {}
+        const indexedValue = {
+            nested: { bad: indexedError },
+            back: indexedRoot,
+        }
+        indexedRoot.value = indexedValue
+        buildRefIndex(indexedRoot)
+
+        expect(hasCycleCut(publishedRoot, "value")).to.be(true)
+        expectCounts(publishedRoot, 0, 0, 1)
+        expect(hasCycleCut(indexedValue, "back")).to.be(true)
+        expectCounts(indexedRoot, 0, 1, 1)
+        expect(getErrors(new Chain(publishedRoot), [])).to.eql([
+            publishedError,
+        ])
+        expect(getErrors(new Chain(indexedRoot), [])).to.eql([
+            indexedError,
+        ])
+
+        deletePath(new Chain(publishedRoot), ["value", "back"])
+
+        expect(hasCycleCut(publishedRoot, "value")).to.be(true)
+        expectCounts(publishedRoot, 0, 0, 1)
+        expect(getErrors(new Chain(publishedRoot), [])).to.eql([
+            publishedError,
+        ])
+        verifyRefCounts(publishedRoot, indexedRoot)
     })
 
     it("preserves indexed state when its property cannot be assigned", () => {
@@ -302,10 +414,10 @@ describe("subtree counters", () => {
 
         buildRefIndex(second)
 
-        expectCounts(second, 0, 0, 1)
+        expectCounts(second, 1, 0, 1)
         expectCounts(first, 1, 0, 1)
-        expect(getRefCounter(first).parents.size).to.be(0)
-        expect(getRefCounter(second).parents.get(first)).to.be(1)
+        expect(getRefCounter(first).parents.get(second)).to.be(1)
+        expect(getRefCounter(second).parents.size).to.be(0)
         verifyRefCounts(first, second)
     })
 
@@ -321,11 +433,12 @@ describe("subtree counters", () => {
 
         buildRefIndex(first)
 
-        expectCounts(first, 0, 0, 1)
+        expectCounts(first, 0, 0, 2)
         expectCounts(second, 0, 0, 2)
-        expectCounts(third, 0, 0, 2)
-        expect(getRefCounter(first).parents.get(second)).to.be(1)
-        expect(getRefCounter(second).parents.get(third)).to.be(1)
+        expectCounts(third, 0, 0, 1)
+        expect(getRefCounter(first).parents.size).to.be(0)
+        expect(getRefCounter(second).parents.get(first)).to.be(1)
+        expect(getRefCounter(third).parents.get(second)).to.be(1)
         verifyRefCounts(first, second, third)
     })
 
@@ -367,7 +480,7 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("cuts an imported child back-reference during rooted preparation", async () => {
+    it("cuts an imported child back-reference during indexing", async () => {
         const pending = deferred()
         const wrapper = { pending: pending.promise }
         const child = { back: wrapper }
@@ -448,6 +561,7 @@ describe("subtree counters", () => {
         const missing = {}
         missing.self = missing
         importValue(missing, "missing cut property")
+        buildRefIndex(missing)
         delete missing.self
         expect(thrownBy(() => verifyRefCounts(missing)).message).to.be(
             "Cycle cut names a missing or non-enumerable property",
@@ -456,6 +570,7 @@ describe("subtree counters", () => {
         const primitive = {}
         primitive.self = primitive
         importValue(primitive, "primitive cut value")
+        buildRefIndex(primitive)
         primitive.self = 1
         expect(thrownBy(() => verifyRefCounts(primitive)).message).to.be(
             "Cycle cut must contain a tracked value",
@@ -479,6 +594,25 @@ describe("subtree counters", () => {
         delete metaOf(mirrored).cycleCuts
         delete mirrored.pending
         expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
+            "Live Promise mirror has no valid language property",
+        )
+
+        const nonWritable = { pending: deferred().promise }
+        buildRefIndex(nonWritable)
+        Object.defineProperty(nonWritable, "pending", {
+            value: nonWritable.pending,
+            enumerable: true,
+            writable: false,
+            configurable: true,
+        })
+        expect(thrownBy(() => verifyRefCounts(nonWritable)).message).to.be(
+            "Live Promise mirror has no valid language property",
+        )
+
+        const overlaid = { pending: deferred().promise }
+        buildRefIndex(overlaid)
+        metaOf(overlaid).mirrors.pending.resolvedValue = {}
+        expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
             "Live Promise mirror has no valid language property",
         )
     })

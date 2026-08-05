@@ -1,5 +1,6 @@
 import * as arrayViews from "../src/array-view.js"
 import * as promiseMirrors from "../src/promise-mirrors.js"
+import { hasCycleCut } from "../src/refcounts.js"
 import {
     Chain,
     assignPath,
@@ -134,6 +135,25 @@ describe("ArrayView", () => {
         expect(exportValue(new Chain(shifted), [])).to.eql([1, 2, 3])
         expect(exportValue(new Chain(popped), [])).to.eql([1, 2])
         verifyRefCounts(...arrays)
+    })
+
+    it("cuts a retained Promise that resolves to its indexed view", async () => {
+        const pending = deferred()
+        const view = run(
+            new Chain([pending.promise]),
+            [],
+            "push",
+            false,
+            2,
+        )
+        buildRefIndex(view)
+
+        pending.resolve(view)
+        await flushMicrotasks()
+
+        expect(hasCycleCut(view, "0")).to.be(true)
+        expect(view.get("0")).to.be(view)
+        verifyRefCounts(view)
     })
 
     it("forks mirrors when endpoint extension adds no values", async () => {

@@ -81,17 +81,10 @@ and a Promise only when resolution or settlement is required.
 
 ## Ownership
 
-Compiler-created tracked data is tree-shaped and singly owned.
-
-- A new tracked value is assigned to one owner.
-- Reusing or exposing an existing tracked value goes through an ownership
-  boundary that marks it shared.
-- Mutation through a shared branch performs copy-on-write before the first
-  language write.
-- The compiler evaluates the right-hand side of `a.property = a` first through
-  shared lookup. The assignment therefore receives the value of `a` before the
-  new property exists; raw self-assignment through the kernel is not valid
-  compiler output.
+Compiler-created tracked data is initially singly owned but may be cyclic.
+Reusing or exposing an existing tracked identity gives it another owner and
+marks it shared. Mutation through a shared branch performs copy-on-write before
+the first language write.
 
 `lookupPath` marks a returned tracked value shared by default. Passing
 `sharedOwnership = false` is valid only for pure internal inspection or a
@@ -153,37 +146,42 @@ runtime.import(value, errorContext)
 integration error.
 
 For a non-Promise root, import returns the same value after synchronously
-establishing its boundary and preparing every currently reachable synchronous
-part of the graph. For a Promise root, import returns a derived Promise that
-performs the same boundary work on its settled value before exposing it.
+classifying every currently reachable external identity and discovering its
+Promise frontier. For a Promise root, import returns a derived Promise that
+performs the same work on its settled value before exposing it.
 
-Import preparation:
+Import admission:
 
-- gives each newly imported tracked identity a direct boundary and shared ownership;
-- stores the root and attribution context;
-- discovers repeated identities and cycle-closing properties;
+- gives each newly imported tracked identity direct access to one import
+  token and shared ownership;
+- stores the attribution context once in that token;
+- marks repeated identities shared;
 - registers continuations for nested Promises without awaiting them; and
 - does not build subtree counters.
 
 Newly reached host objects receive externally stored metadata recording their
-provenance and completed preparation.
-Existing runtime metadata identifies a previously prepared or runtime-owned
-identity. Every imported identity remains externally owned, so language mutation
-copy-on-writes before changing its data even when that identity is used as a
-root. A Promise property discovered inside its boundary is
-not replaced: its mirror keeps the prepared logical value while the external
-property retains its Promise. Frozen imported data therefore follows the same
-path as writable imported data.
+import status. Existing metadata identifies a previously imported or
+runtime-owned identity. Directly importing a runtime identity moves any inline metadata to the
+WeakMap and advances its pending properties to imported mirror versions at that
+FIFO position. Containment does not transfer import status: an imported
+identity remains external under a runtime-owned container, and a runtime-owned
+identity remains runtime-owned under an imported container. Language mutation
+copy-on-writes before changing imported data even when that identity is used as
+a root. A Promise property discovered on an imported identity is not replaced:
+its mirror keeps the logical value while the external property retains
+its Promise. Frozen imported data therefore follows the same path as writable
+imported data.
 
 External code must not mutate an imported graph after import. Native code must
-receive tracked Cascada data through `export`, not through a direct
-metadata-bearing identity.
+receive tracked Cascada data through `export`, not through a direct runtime
+identity.
 
-## Imported cycles
+## Cycles
 
-The runtime retains each raw cyclic property and publishes a boolean marker on
-selected owner/key placements that cut every imported cycle from the projected
-refcount graph.
+Runtime-owned and imported graphs may both be cyclic. Ref-index construction
+cuts DFS back edges from its projection. A later edge entering an indexed
+container is cut exactly when the maintained reverse-parent graph shows that it
+would close a cycle.
 
 - Finite lookup and mutation paths follow the raw value.
 - Ref-indexing contributes one `cycleCutCount` and installs no reverse parent
@@ -192,9 +190,9 @@ refcount graph.
   reached beyond a cut through that component's counters.
 - `export` reconstructs aliases and cycles in metadata-free output.
 
-Replacing or deleting the selected property removes that placement's cycle
-cut. Copy-on-write reconstructs placement state instead of copying cuts
-blindly. See [`cycles-as-data.md`](cycles-as-data.md).
+Replacing or deleting a selected property removes that placement's cut.
+Copy-on-write reconstructs placement state instead of copying cuts blindly.
+See [`cycles-as-data.md`](cycles-as-data.md).
 
 ## Path rules
 
@@ -252,13 +250,14 @@ Promise again, copying the property, or retaining it in a distinct ArrayView
 creates a new mirror at that operation's FIFO position. ArrayViews may still
 share the property's physical backing slot.
 
-While a mirror is live, its property is normally authoritative. If the mirror
-carries an import boundary, resolution preserves the external property and
-stores the logical result in `resolvedValue`; the boundary remains with that
-imported placement. An assigned or discovered mirror consumes fulfillment or
-converts rejection to Error and prepares the value. A fork instead uses the
-canonical Promise only as a FIFO readiness signal, samples its source mirror at
-the fork position, and writes the result into its runtime-owned destination.
+While a mirror is live, its property is normally authoritative. Its first
+resolver captures the property's import boundary at creation. If present,
+resolution preserves the external property and stores the logical result in
+`resolvedValue`. Every state-changing resolver uses the property import status it
+captured at registration. The boundary remains on the imported owner and
+imported tracked values, not the mirror. A fork instead uses the canonical
+Promise only as a FIFO readiness signal, samples its source mirror at the fork
+position, and writes the result into its runtime-owned destination.
 
 A retained ArrayView mirror may run after the source mirror has already changed
 their shared backing slot. Its settlement therefore replaces that logical
@@ -269,9 +268,9 @@ A later overwrite or deletion detaches the mirror and moves its current logical
 value to `detachedValue`. Resolvers already registered for that property version
 continue against its private value and cannot affect a replacement property.
 
-The mirror stores no source Promise, parent, or key. It retains an import
-boundary only for an imported property, optional `resolvedValue` for that
-preserved live property, or `detachedValue` after detachment.
+The mirror stores no source Promise, parent, key, or import boundary. Its only
+optional value fields are `resolvedValue` for a preserved live property and
+`detachedValue` after detachment.
 
 ## Errors and fatal failures
 
@@ -380,7 +379,9 @@ Subtree counters are created lazily at the path value reached by `hasError` or
 `getErrors`. A successful build indexes every raw-reachable tracked value.
 Ordinary properties connect components through reverse child edges; pending
 Promise placements and cycle cuts are propagation frontiers and install no
-such edge. Export does not use subtree counters.
+such edge. Initial DFS back edges and later cycle-closing publications become
+cuts, so the reverse-parent projection remains acyclic. Export does not use
+subtree counters.
 
 Each indexed node stores exact `promiseCount`, `errorCount`, and
 `cycleCutCount` totals. All later transitions below an indexed parent maintain

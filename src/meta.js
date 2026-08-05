@@ -22,10 +22,20 @@ function ensureMeta(value, imported = false) {
         )
     }
 
-    let meta = metaOf(value)
+    const hasInlineMeta = !STORE_META_IN_WEAKMAP && hasOwn.call(value, META)
+    let meta = hasInlineMeta ? value[META] : META_MAP.get(value)
+    if (
+        meta &&
+        imported &&
+        hasInlineMeta
+    ) {
+        // Move runtime metadata out before this identity becomes borrowed.
+        delete value[META]
+        META_MAP.set(value, meta)
+    }
     if (!meta) {
-        // Import eagerly creates empty external records as preparation markers.
-        // Other fields are added by the subsystems that own them.
+        // Import creates external records before other metadata is needed.
+        // Each subsystem adds only the fields it owns.
         meta = {}
         // Import must not add even hidden properties to borrowed host data.
         if (STORE_META_IN_WEAKMAP || imported) {
@@ -60,7 +70,7 @@ function updateReadLease(value, change) {
 }
 
 // Bare promises crossing an ownership boundary resolve to shared values.
-// Mirrored promise properties mark their prepared logical value instead.
+// Promise-backed properties classify their logical value in their resolver.
 function markShared(value) {
     return resolution.resolveInitialValueOrPoison(value, resolved => {
         if (!languageValues.isTracked(resolved)) return resolved
@@ -69,23 +79,15 @@ function markShared(value) {
     })
 }
 
-// A direct mark records imported provenance on the value itself and returns
-// whether that boundary was created. Existing metadata stays where allocated.
-function markImported(value, errorContext) {
-    if (!languageValues.isTracked(value)) return false
-
+// Every identity reached by one import shares its attribution token.
+function markImported(value, importBoundary) {
     const meta = ensureMeta(value, true)
-    const createdBoundary = !meta.importBoundary
-    if (createdBoundary) {
-        meta.importBoundary = { root: value, errorContext }
-    }
+    meta.importBoundary ??= importBoundary
     meta.shared = true
-    return createdBoundary
 }
 
-function nodeImportBoundary(node, inherited) {
-    const own = metaOf(node)?.importBoundary
-    return own === undefined ? inherited : own
+function importBoundaryOf(value) {
+    return metaOf(value)?.importBoundary
 }
 
 export {
@@ -93,7 +95,7 @@ export {
     markImported,
     markShared,
     metaOf,
-    nodeImportBoundary,
+    importBoundaryOf,
     requiresCopyOnWrite,
     STORE_META_IN_WEAKMAP,
     updateReadLease,
