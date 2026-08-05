@@ -1,72 +1,78 @@
 # Core Runtime Contracts
 
-## Goal
+## Contract
 
-Cascada's core contract is that operations on an asynchronously available graph produce the same results as if every value were already available and the operations ran sequentially.
+Cascada operations on an asynchronously available graph produce the same results as if every value were already available and the operations ran sequentially. Every transition includes all earlier effects and no later ones. Mutation through one owner never changes what another owner sees, and imported data is never modified.
 
-It achieves this with ordered local continuations, mirrors, and copy-on-write:
+Issuing a command never blocks. Its result may wait only for pending dependencies captured at that command's program position, never for the whole graph.
 
-1. An operation synchronously processes everything currently available.
-2. An operation whose result depends on a pending property registers at that position and moves on, continuing any other work already available.
-3. When a Promise settles, its existing registrations run as one FIFO batch, and each completes its transition synchronously.
-4. Mirrors preserve the exact property version an operation captured.
-5. Copy-on-write preserves owner isolation.
+## Method
 
-Issuing a command never blocks. A result may stay pending for the Promise frontier that command captured, never for the whole graph, and every transition includes all earlier effects and no later ones.
+Keep the runtime built from four core mechanisms: synchronous progress, FIFO Promise continuations, versioned mirror state, and copy-on-write ownership. Derive new behavior from these before adding state or a code path.
+
+The observable contracts are fixed; mechanisms are not. Public results and effect order, ownership and import isolation, and the boundary between language Errors and fatal failures are observable contracts.
+
+Metadata layout, helper boundaries, physical writeback, and the choice among valid refcount projections and their resulting counter totals are implementation choices. Replace a mechanism only when every guarantee it enforces remains true.
+
+- Prefer one general transition over parallel paths, flags, adapters, or deferred cleanup. When a general mechanism supersedes a specific one, delete the specific one in the same change.
+- Use separate paths only when one general transition cannot preserve an observable contract or runtime invariant.
+- Keep each fact at the scope it describes: identity facts on identities, property-version facts on mirrors, placement facts on placements, and per-operation facts within the operation.
+- Derive a fact where it is needed. Persist it only when it cannot be recovered correctly, or repeated derivation has a demonstrated material cost; store it at the narrowest scope that can keep it correct.
 
 ## Ordering
 
 - Do all available work synchronously, in program order.
-- When an operation depends on a pending property, register at that exact position through the runtime's promise helpers. Structural discovery alone adds no consumer. Raw `.then` belongs only inside those helpers.
-- The helpers canonicalize each callable thenable once; every continuation for that source registers on the same native Promise.
-- Invoke each continuation in one reaction on that canonical Promise; a per-consumer proxy would fragment its FIFO batch.
-- Never defer part of a transition with `await`, another `.then`, `queueMicrotask`, or lazy registration.
+- Register an operation on a pending property only when, and exactly where, it depends on it. Structural discovery alone does not make the operation a consumer.
+- Route every registration through the runtime's Promise helpers. Raw `.then` belongs only inside them.
+- The helpers canonicalize each callable thenable once; every continuation for one source registers on the same native Promise.
+- Invoke every continuation registered before settlement in one reaction on that canonical Promise, forming one FIFO batch.
+- Each continuation completes its transition synchronously. Never split one with `await`, another `.then`, `queueMicrotask`, or lazy registration.
 
-## Promise Mirrors
+If three operations reach one pending property, the first resolver publishes `V`, the second observes `V` and may leave `V'`, and the third observes `V'`. Each sees every earlier effect and no later one.
 
-- A mirror represents one logical property version. Every assignment creates a new version, even when it assigns the same Promise.
-- Each logical property version has its own mirror, even when several properties share physical storage.
-- Mirror state is authoritative. Physical writeback is only an optimization and graph operations must not depend on it.
-- An imported Promise property retains its external Promise; settlement changes only its logical mirror state.
-- Replacing or deleting a property detaches its old mirror. Operations that captured that version continue against its private state.
-- Each operation that reaches a pending property registers a resolver at its own program position. A settling Promise changes nothing on its own; state changes only when the first resolver completes its transition.
-- Later resolvers ignore the settled payload and work from the latest state earlier resolvers left.
+## Promise Versions
+
+- A Promise mirror represents one logical property version. Every Promise placement creates a new version, even for the same Promise.
+- Distinct property versions and distinct logical properties never share a mirror, even when they share physical storage.
+- Mirror state is authoritative. Physical writeback is an optimization; no graph operation may depend on it.
+- An imported Promise property retains its external Promise; its resolved logical value lives in the mirror, not the property.
+- Replacing or deleting a property detaches its mirror, which then stores that version's latest value as private state. Operations that already captured the version continue from it.
+- Settlement alone changes no language state. The first resolver advances the version as part of its transition; later resolvers ignore the payload and continue from the state earlier resolvers left.
 
 ## Ownership
 
-- Classify a property container and its stored value independently: the container determines whether Cascada may write the property; the value's identity determines whether that value is imported or shared.
-- Every value originating outside Cascada enters through import, regardless of how it was obtained.
-- A Chain preserves its value's existing ownership and import status; it creates neither.
-- Imported data is borrowed and never changed. All runtime state, including metadata and logical Promise settlement, lives outside it.
-- A non-shared language value has one owner and may be mutated in place.
-- Giving the same tracked identity another owner makes it shared; observing it does not.
-- Non-sharing extraction is valid only for a pure read or a transfer that ends the prior ownership.
-- Import status belongs to identities, not paths; containment never transfers it in either direction.
-- Shared or imported data is protected by copy-on-write; mutation must not affect another owner or external data.
-- Cascada never creates non-extensible language data. Such data is imported and has no special runtime semantics.
+- Classify a property container and its stored value independently. The container determines whether Cascada may write the property; the value's identity determines whether it is imported or shared.
+- External values must enter through import; creating a Chain only preserves existing ownership and import status.
+- Imported data is borrowed and never modified. All runtime state, including metadata and logical Promise settlement, lives outside it.
+- A non-shared tracked identity has one owner and may be mutated in place.
+- Extracting an existing tracked identity adds another owner and makes it shared. A temporary read does not; an ownership transfer ends the prior ownership instead.
+- Import status belongs to identities, not paths. Containment transfers it in neither direction.
 
 ## Copy-on-Write
 
-- Language mutation never changes a shared or imported node in place. It shallow-copies each level along the path down to the changed spot, puts the new value there, and reuses everything else untouched.
-- Copying starts at the first level that must be preserved, not always the root. Once copied, the old level still points at its children, so copying continues down to the target.
-- A shallow copy is a new runtime-owned container outside the import boundary and carries no metadata from its source.
-- Reused imported children remain imported; other reused tracked children are marked shared. Whichever side writes first copies again.
-- It copies a path, not a graph. If `root.self === root`, changing `root.a` gives a new root whose `self` still points at the original.
-- A copied Promise key gets a fresh mirror at the copier's program position, so the two worlds diverge exactly there. Creating it later would seed from the raw settled value and drop writes issued before the copy.
+- Mutation never changes a shared or imported node in place. Copying starts at the first node that must be preserved and continues to the target because the old path still references every reused child.
+- A copy-on-write copy reads each property's logical value, never its physical slot.
+- A shallow copy is runtime-owned and carries no metadata from its source.
+- Reused imported children remain imported; other reused tracked children become shared.
+- Copy-on-write copies a path, not a graph. If `root.self === root`, changing `root.a` creates a root whose `self` still points at the original.
+- A copied Promise property gets a fresh mirror at the copier's program position, so both property versions diverge there.
 
-## Language Data
+## Language Graph
 
-- Language data is own enumerable string keys only; symbols, non-enumerables, and prototypes are outside the graph.
+- Only own enumerable string keys belong to language data. Symbols, non-enumerables, and prototypes are outside the graph.
 - Define a missing key as an own data property so inherited setters, notably `__proto__`, never participate in a write.
-
-## Cycles
-
-- The language graph may be cyclic; only the refcount projection must be acyclic.
-- Initial indexing cuts DFS back edges. Publishing an edge into an indexed container cuts it exactly when the maintained reverse-parent graph shows that it would close a cycle.
-- A cut is placement metadata only. Ordinary graph operations still see the original property value.
+- Cascada never creates non-extensible language data. Such data is imported and has no special runtime semantics.
+- The language graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
+- Refcounting maintains an acyclic projection by cutting property placements. A cut affects bookkeeping only: it neither modifies the graph nor changes what operations observe.
+- The projection need not be canonical; valid cut placement and resulting counter totals may depend on construction history.
 
 ## Errors
 
-- Language Errors are data. A rejected data Promise becomes an Error value in the graph; each observation then exposes it by its own contract, while mutations return nothing.
+- Language Errors are data. A rejected data Promise becomes an Error value in the graph; each observation exposes it by its own contract, while mutations return nothing.
 - Kernel failures are not data. Invariant violations, contract violations, and unexpected throws go through `reportFatalError`, which reports and rethrows.
 - Never convert a kernel failure into a language Error, or a rejected data Promise into a fatal.
+
+## Verification
+
+- Prefer integration tests through public operations, covering observable sequential behavior and owner isolation across meaningful synchronous and Promise interleavings.
+- Use focused unit tests only when integration tests cannot precisely verify a load-bearing invariant. Never use them to pin an interchangeable representation; doing so turns accidental structure into a contract and obstructs simplification.
