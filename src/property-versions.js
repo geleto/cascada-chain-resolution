@@ -117,6 +117,7 @@ function getOrCreatePromiseMirror(owner, key, promise) {
 }
 
 function assignProperty(owner, key, value, retained = false) {
+    languageProperties.assertCanSetLanguageProperty(owner, key)
     const isPromise = languageValues.isPromise(value)
     if (retained && !isPromise) metadata.markShared(value)
     const mirror = isPromise
@@ -154,6 +155,7 @@ function placePromiseVersion(
     key,
     retained = false,
 ) {
+    languageProperties.assertCanSetLanguageProperty(owner, key)
     // Ordinary placements are runtime-owned; imported properties instead use
     // same-parent promotion, which does not replace their physical edge.
     const mirror = { value: promise }

@@ -64,7 +64,8 @@ function assertCanCreateLanguageProperty(parent, key, errorContext) {
 
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
 // descriptor before new-value preparation can publish any imported state.
-function assertCanSetLanguageProperty(parent, key, errorContext = undefined) {
+function assertCanSetLanguageProperty(parent, key) {
+    const errorContext = metadata.importBoundaryOf(parent)?.errorContext
     const descriptor = assertCanMutateLanguageProperty(
         parent,
         key,

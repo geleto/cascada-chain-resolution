@@ -1,11 +1,9 @@
 import * as arrayViews from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import * as metadata from "./meta.js"
 import {
     deleteProperty,
     setProperty,
-    setRetainedProperty,
 } from "./mutations.js"
 import * as propertyVersions from "./property-versions.js"
 
@@ -172,8 +170,7 @@ function placeEntry(destination, key, entry, retained) {
         placeOrigin(destination, key, entry, retained)
         return
     }
-    const place = retained ? setRetainedProperty : setProperty
-    place(destination, key, entry)
+    propertyVersions.assignProperty(destination, key, entry, retained)
 }
 
 function placeOrigin(
@@ -184,11 +181,6 @@ function placeOrigin(
 ) {
     propertyVersions.capturePropertyVersion(origin)
     const stringKey = String(key)
-    languageProperties.assertCanSetLanguageProperty(
-        destination,
-        stringKey,
-        metadata.importBoundaryOf(destination)?.errorContext,
-    )
 
     const value = origin.value
     if (languageValues.isPromise(value)) {

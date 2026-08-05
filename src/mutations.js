@@ -22,26 +22,10 @@ function setProperty(
     ) {
         return setArrayLength(parent, value)
     }
-    const importBoundary = metadata.importBoundaryOf(parent)
-    languageProperties.assertCanSetLanguageProperty(
-        parent,
-        key,
-        importBoundary?.errorContext,
-    )
     if (attachmentRoot && containsPromise(value)) {
         metadata.markShared(attachmentRoot)
     }
     propertyVersions.assignProperty(parent, key, value)
-}
-
-function setRetainedProperty(parent, key, value) {
-    const importBoundary = metadata.importBoundaryOf(parent)
-    languageProperties.assertCanSetLanguageProperty(
-        parent,
-        key,
-        importBoundary?.errorContext,
-    )
-    propertyVersions.assignProperty(parent, key, value, true)
 }
 
 function containsPromise(value, visited = new WeakSet()) {
@@ -607,7 +591,6 @@ export {
     deleteProperty,
     deletePath,
     setProperty,
-    setRetainedProperty,
     transformProperty,
     walkMutationPath,
 }

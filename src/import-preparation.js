@@ -56,10 +56,6 @@ function prepareImportedData(
         // from the imported graph.
         if (metadata.metaOf(value)) metadataBeforeRuntimeScan.add(value)
         runtimeScanned.add(value)
-        walkRuntimeProperties(value)
-    }
-
-    function walkRuntimeProperties(value) {
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const child = languageProperties.readLanguageProperty(value, key)
             if (languageValues.isPromise(child)) {
