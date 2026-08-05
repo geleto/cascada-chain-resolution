@@ -119,7 +119,7 @@ function transformProperty(
     transform,
     returnResultPromise = true,
 ) {
-    const origin = propertyVersions.getPropertyReference(parent, key)
+    const origin = propertyVersions.getPropertyOrigin(parent, key)
     propertyVersions.capturePropertyVersion(origin)
     const context = {
         present: origin !== undefined,

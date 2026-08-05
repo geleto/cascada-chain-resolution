@@ -6,7 +6,7 @@ import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
 import * as resolution from "./resolution.js"
 
-const PROPERTY_REFERENCE = Symbol("Property reference")
+const PROPERTY_ORIGIN = Symbol("Property origin")
 
 function getPromiseMirror(owner, key) {
     return metadata.metaOf(owner)?.mirrors?.[key]
@@ -44,45 +44,45 @@ function continuePropertyValue(owner, key, promise, onValue) {
 }
 
 // Fix presence and key order when structure is observed; capture the value and
-// its exact version only when the operation reaches this reference.
-function getPropertyReference(owner, key) {
+// its exact version only when the operation reaches this origin.
+function getPropertyOrigin(owner, key) {
     key = String(key)
     if (!languageProperties.hasLanguageProperty(owner, key)) return undefined
-    return { [PROPERTY_REFERENCE]: true, owner, key }
+    return { [PROPERTY_ORIGIN]: true, owner, key }
 }
 
-function isPropertyReference(value) {
-    return value?.[PROPERTY_REFERENCE] === true
+function isPropertyOrigin(value) {
+    return value?.[PROPERTY_ORIGIN] === true
 }
 
-function capturePropertyVersion(reference) {
-    if (!reference || Object.hasOwn(reference, "value")) return
-    const { owner, key } = reference
+function capturePropertyVersion(origin) {
+    if (!origin || Object.hasOwn(origin, "value")) return
+    const { owner, key } = origin
     const value = languageProperties.readLanguageProperty(owner, key)
-    reference.value = value
+    origin.value = value
     if (languageValues.isPromise(value)) {
-        reference.mirror = getOrCreatePromiseMirror(owner, key, value)
+        origin.mirror = getOrCreatePromiseMirror(owner, key, value)
     }
 }
 
-function resolvePropertyValue(reference) {
-    capturePropertyVersion(reference)
-    if (!reference || !languageValues.isPromise(reference.value)) {
-        return reference?.value
+function resolvePropertyValue(origin) {
+    capturePropertyVersion(origin)
+    if (!origin || !languageValues.isPromise(origin.value)) {
+        return origin?.value
     }
     return continuePromiseVersion(
-        reference.value,
-        reference.mirror,
+        origin.value,
+        origin.mirror,
         value => {
-            reference.value = value
-            delete reference.mirror
+            origin.value = value
+            delete origin.mirror
             return value
         },
     )
 }
 
 function resolvePropertyValueAtKey(owner, key) {
-    return resolvePropertyValue(getPropertyReference(owner, key))
+    return resolvePropertyValue(getPropertyOrigin(owner, key))
 }
 
 function getOrCreatePromiseMirror(owner, key, promise) {
@@ -318,10 +318,10 @@ export {
     continuePropertyValue,
     continuePromiseVersion,
     getOrCreatePromiseMirror,
-    getPropertyReference,
+    getPropertyOrigin,
     getPromiseMirror,
     indexValueIfSourceIndexed,
-    isPropertyReference,
+    isPropertyOrigin,
     placePromiseVersion,
     prepareImportedRoot,
     prepareRetainedArrayProperties,

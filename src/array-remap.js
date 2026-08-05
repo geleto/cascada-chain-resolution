@@ -19,7 +19,7 @@ function createInitialRemap(array) {
         languageProperties.writeLanguageProperty(
             remap,
             key,
-            propertyVersions.getPropertyReference(array, key),
+            propertyVersions.getPropertyOrigin(array, key),
         )
     }
     return remap
@@ -52,7 +52,7 @@ function traceMutation(array) {
             if (Object.hasOwn(target, key)) return target[key]
             if (deleted.has(key) || Number(key) >= sourceLength) return undefined
             // Assignment could invoke an inherited numeric setter.
-            const origin = propertyVersions.getPropertyReference(array, key)
+            const origin = propertyVersions.getPropertyOrigin(array, key)
             if (origin) languageProperties.writeLanguageProperty(
                 target, key, origin,
             )
@@ -90,7 +90,7 @@ function traceMutation(array) {
 }
 
 function createPlacementOperation(entry, newIndex) {
-    return propertyVersions.isPropertyReference(entry)
+    return propertyVersions.isPropertyOrigin(entry)
         ? {
             kind: KIND_MOVE,
             origin: entry,
@@ -107,7 +107,7 @@ function applyRemapToArray(array, remap, operations) {
     })
     const placementCount = new Map()
     remap.forEach(origin => {
-        if (!propertyVersions.isPropertyReference(origin)) return
+        if (!propertyVersions.isPropertyOrigin(origin)) return
         placementCount.set(
             origin,
             (placementCount.get(origin) ?? 0) + 1,
@@ -166,7 +166,7 @@ function placeRemap(destination, remap, offset = 0, retained = true) {
 }
 
 function placeEntry(destination, key, entry, retained) {
-    if (propertyVersions.isPropertyReference(entry)) {
+    if (propertyVersions.isPropertyOrigin(entry)) {
         placeOrigin(destination, key, entry, retained)
         return
     }

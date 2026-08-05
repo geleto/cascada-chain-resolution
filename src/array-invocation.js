@@ -115,7 +115,7 @@ function invokeArrayMutationMethod(
             if (definition.transformResult) {
                 const length = arrayViews.logicalArrayLength(thisValue)
                 const origin = length > 0
-                    ? propertyVersions.getPropertyReference(
+                    ? propertyVersions.getPropertyOrigin(
                         thisValue,
                         String(method === "shift" ? 0 : length - 1),
                     )

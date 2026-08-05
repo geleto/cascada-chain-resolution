@@ -62,7 +62,7 @@ function getElementAt(thisValue, args) {
             get(target, key) {
                 return key === "length"
                     ? target.length
-                    : propertyVersions.getPropertyReference(thisValue, key)
+                    : propertyVersions.getPropertyOrigin(thisValue, key)
             },
         },
     )
@@ -476,7 +476,7 @@ function normalizeBackwardStart(fromIndex, length) {
 }
 
 function materializeElement(element, retained = true) {
-    const result = propertyVersions.isPropertyReference(element)
+    const result = propertyVersions.isPropertyOrigin(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
     return retained

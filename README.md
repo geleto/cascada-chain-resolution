@@ -249,7 +249,7 @@ completed, deferred, and pending work.
   `src/array-remap.js` own logical Array representation and method execution.
 - `src/import.js` owns the public import boundary; `src/import-preparation.js`
   classifies imported identities and discovers their Promise frontier.
-- `src/property-versions.js` owns exact property references, Promise mirrors,
+- `src/property-versions.js` owns property origins, exact-version capture, Promise mirrors,
   retained and exclusive placement, and property publication.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
   accounting around indexed property transitions.
