@@ -10,9 +10,9 @@ Issuing a command never blocks. Its result may wait only for pending dependencie
 
 Keep the runtime built from four core mechanisms: synchronous progress, FIFO Promise continuations, versioned mirror state, and copy-on-write ownership. Derive new behavior from these before adding state or a code path.
 
-The observable contracts are fixed; mechanisms are not. Public results and effect order, ownership and import isolation, and the boundary between language Errors and fatal failures are observable contracts.
+The observable contracts are fixed; mechanisms are not. Public results and effect order, ownership and import isolation, exact receivers exposed to opaque host calls, and the boundary between language Errors and fatal failures are observable contracts.
 
-Metadata layout, helper boundaries, physical writeback, and the choice among valid refcount projections and their resulting counter totals are implementation choices. Replace a mechanism only when every guarantee it enforces remains true.
+Metadata layout, helper boundaries, and the choice among valid refcount projections and their resulting counter totals are implementation choices. Replace a mechanism only when every guarantee it enforces remains true.
 
 - Prefer one general transition over parallel paths, flags, adapters, or deferred cleanup. When a general mechanism supersedes a specific one, delete the specific one in the same change.
 - Use separate paths only when one general transition cannot preserve an observable contract or runtime invariant.
@@ -34,7 +34,8 @@ If three operations reach one pending property, the first resolver publishes `V`
 
 - A Promise mirror represents one logical property version. Every Promise placement creates a new version, even for the same Promise.
 - Distinct property versions and distinct logical properties never share a mirror, even when they share physical storage.
-- Mirror state is authoritative. Physical writeback is an optimization; no graph operation may depend on it.
+- Mirror state is authoritative for graph operations; they never depend on physical writeback.
+- Advancing a live runtime-owned version also writes the value physically because an opaque host method can observe that property. Imported and detached versions remain mirror-only.
 - An imported Promise property retains its external Promise; its resolved logical value lives in the mirror, not the property.
 - Replacing or deleting a property detaches its mirror, which then stores that version's latest value as private state. Operations that already captured the version continue from it.
 - Settlement alone changes no language state. The first resolver advances the version as part of its transition; later resolvers ignore the payload and continue from the state earlier resolvers left.
@@ -65,6 +66,12 @@ If three operations reach one pending property, the first resolver publishes `V`
 - The language graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
 - Refcounting maintains an acyclic projection by cutting property placements. A cut affects bookkeeping only: it neither modifies the graph nor changes what operations observe.
 - The projection need not be canonical; valid cut placement and resulting counter totals may depend on construction history.
+
+## Opaque Host Methods
+
+- Controlled intrinsics read logical graph properties. A trusted ordinary method is opaque host code: Cascada resolves its receiver path and exported arguments, then invokes it with the resolved receiver directly as `this`. An internal ArrayView first materializes, and the resulting native Array is `this`.
+- Property reads inside the method are synchronous JavaScript reads, not Cascada observations. They do not discover, register on, or wait for nested Promises. Runtime-owned writeback may therefore be visible, while an imported receiver retains its original physical properties.
+- The method must be read-only, non-retaining, and side-effect-free. If invocation is pending, later Cascada mutation must preserve the captured receiver.
 
 ## Errors
 
