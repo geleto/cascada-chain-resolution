@@ -28,7 +28,7 @@ These constrain implementation cost, not observable semantics. Exceeding them is
 - Build an index when a component first needs one, then maintain it incrementally as the graph changes. Never rescan indexed data to rediscover a maintained fact.
 - Rescan previously admitted data to detect untracked changes only when it may have changed outside maintained runtime transitions, and only where the operation reaches it. Import may therefore rescan each previously known identity it reaches at most once per import to discover newly exposed Promise placements.
 
-Cycle cuts are a bounded exception. Because they stop counter propagation, an operation may traverse a counter-selected cut region when maintained counters cannot answer it. It must visit each identity at most once per operation.
+Cycle cuts are a bounded exception. Because they stop counter propagation, an operation may traverse a counter-selected cut region when maintained counters cannot answer it. An operation's cycle-cut walks share one visited set and visit each identity at most once. A pass that builds a missing index is separately permitted.
 
 ## Ordering
 
