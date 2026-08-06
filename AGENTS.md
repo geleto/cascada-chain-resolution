@@ -20,6 +20,16 @@ Metadata layout, helper boundaries, and the choice among valid refcount projecti
 - Derive a fact where it is needed. Persist it only when it cannot be recovered correctly, or repeated derivation has a demonstrated material cost; store it at the narrowest scope that can keep it correct.
 - Cascada does not expect unusually large or deep graphs. Keep recursive walks and Number arithmetic; do not introduce explicit stacks or BigInt.
 
+## Work Bounds
+
+These constrain implementation cost, not observable semantics. Exceeding them is an implementation defect; a mechanism that inherently exceeds them should be replaced.
+
+- Bound graph-dependent work and allocation to data selected by an operation's explicit input or path, its produced output, its captured Promise frontier, and affected dependencies that must be maintained. Do not otherwise process unrelated graph data.
+- Build an index when a component first needs one, then maintain it incrementally as the graph changes. Never rescan indexed data to rediscover a maintained fact.
+- Rescan previously admitted data to detect untracked changes only when it may have changed outside maintained runtime transitions, and only where the operation reaches it. Import may therefore rescan each previously known identity it reaches at most once per import to discover newly exposed Promise placements.
+
+Cycle cuts are a bounded exception. Because they stop counter propagation, an operation may traverse a counter-selected cut region when maintained counters cannot answer it. It must visit each identity at most once per operation.
+
 ## Ordering
 
 - Do all available work synchronously, in program order.
