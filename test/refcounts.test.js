@@ -22,6 +22,28 @@ import {
 } from "./support.js"
 import { hasCycleCut } from "../src/refcounts.js"
 
+function keyScanProbe(target) {
+    let count = 0
+    return {
+        value: new Proxy(target, {
+            ownKeys(target) {
+                count++
+                return Reflect.ownKeys(target)
+            },
+        }),
+        count: () => count,
+        reset: () => {
+            count = 0
+        },
+    }
+}
+
+function assignThroughCopiedRoot(value) {
+    const chain = new Chain(importValue({ value: null }))
+    assignPath(chain, ["value"], value)
+    return chain
+}
+
 describe("subtree counters", () => {
     it("keeps inline metadata visible after a node becomes non-extensible", () => {
         const root = { bad: new Error("bad") }
@@ -51,6 +73,64 @@ describe("subtree counters", () => {
         expect(getRefCounter(root)).to.be(undefined)
         expect(getRefCounter(root.nested)).to.be(undefined)
         verifyRefCounts(root)
+    })
+
+    it("uses definitive indexed Promise counts without enumeration", () => {
+        const pending = deferred()
+        const clean = keyScanProbe({ nested: { value: 1 } })
+        const delayed = keyScanProbe({ value: pending.promise })
+        buildRefIndex(clean.value)
+        buildRefIndex(delayed.value)
+        clean.reset()
+        delayed.reset()
+
+        const cleanChain = assignThroughCopiedRoot(clean.value)
+        const ownedCleanRoot = cleanChain._state.value
+        assignPath(cleanChain, ["other"], true)
+
+        const delayedChain = assignThroughCopiedRoot(delayed.value)
+        const sharedDelayedRoot = delayedChain._state.value
+        assignPath(delayedChain, ["other"], true)
+
+        expect(clean.count()).to.be(0)
+        expect(delayed.count()).to.be(0)
+        expect(cleanChain._state.value).to.be(ownedCleanRoot)
+        expect(delayedChain._state.value).not.to.be(sharedDelayedRoot)
+    })
+
+    it("bounds cycle-cut Promise checks to reached identities", () => {
+        const rootTarget = {}
+        const root = keyScanProbe(rootTarget)
+        const child = keyScanProbe({
+            back: root.value,
+            alias: root.value,
+        })
+        rootTarget.child = child.value
+        buildRefIndex(root.value)
+        root.reset()
+        child.reset()
+
+        const cleanChain = assignThroughCopiedRoot(child.value)
+        const ownedCleanRoot = cleanChain._state.value
+        assignPath(cleanChain, ["other"], true)
+
+        expect(root.count()).to.be(1)
+        expect(child.count()).to.be(1)
+        expect(cleanChain._state.value).to.be(ownedCleanRoot)
+
+        const pending = deferred()
+        const pendingRootTarget = { pending: pending.promise }
+        const pendingRoot = keyScanProbe(pendingRootTarget)
+        const pendingChild = keyScanProbe({ back: pendingRoot.value })
+        pendingRootTarget.child = pendingChild.value
+        buildRefIndex(pendingRoot.value)
+        pendingRoot.reset()
+        pendingChild.reset()
+
+        assignThroughCopiedRoot(pendingChild.value)
+
+        expect(pendingRoot.count()).to.be(0)
+        expect(pendingChild.count()).to.be(1)
     })
 
     it("indexes cycles created by ordinary synchronous assignment", () => {

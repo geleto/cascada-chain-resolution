@@ -6,6 +6,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
+import * as refcounts from "./refcounts.js"
 import * as resolution from "./resolution.js"
 
 function setProperty(
@@ -24,6 +25,11 @@ function containsPromise(value, visited = new WeakSet()) {
     if (languageValues.isPromise(value)) return true
     if (!languageValues.isTracked(value) || visited.has(value)) return false
     visited.add(value)
+
+    const counter = refcounts.getRefCounter(value)
+    if (counter?.promiseCount > 0) return true
+    if (counter && counter.cycleCutCount === 0) return false
+
     for (const key of languageProperties.enumerableLanguageKeys(value)) {
         if (containsPromise(
             languageProperties.readLanguageProperty(value, key),

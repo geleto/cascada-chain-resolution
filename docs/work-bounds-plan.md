@@ -36,9 +36,9 @@ This keeps recursive Promise continuations in the same operation-wide walk witho
 
 ## Phase 2: Use maintained counters during Promise-presence checks
 
-Status: pending.
+Status: complete.
 
-`containsPromise` guards attachment-root sharing but enumerates the complete assigned value even when counters already hold the answer. Replace its body with one general counter-pruned walk; do not add a counter path beside the exact one:
+`containsPromise` guards attachment-root sharing with one counter-pruned walk rather than a counter path beside an exact path:
 
 - a Promise is true; an untracked or already-visited value is false;
 - an indexed node with `promiseCount > 0` is true without enumeration;
@@ -47,16 +47,17 @@ Status: pending.
 
 The fallback is the walk itself; counters only prune it. The inconclusive indexed case is the sanctioned counter-selected cut region, and the unindexed case is the operation's own input value, so both enumerations are in bounds. One visited set spans the call. Indexed clean children terminate through their counters, which is what prunes clean subtrees beyond a cut. The walk must not build an index solely to answer this question: index construction installs mirrors and first resolvers, and structural discovery alone must not create consumers.
 
-Complexity gate: rewrite the existing walk locally. Add no persistent state, parallel counter path, index construction, or general traversal abstraction.
+Complexity result: the existing recursive walk gained only a refcount lookup and two terminal conditions. It adds no persistent state, parallel path, index construction, or traversal abstraction.
 
 Always marking the attachment root shared would make the immediate decision constant-time and remain correct, but would permanently force unnecessary copy-on-write after assignments containing no delayed work. Retain exact classification to avoid moving the cost into every later mutation.
 
-Acceptance:
+Verification:
 
 - counter-proven positive and negative answers do not enumerate graph data;
 - unindexed values, clean cycles, and Promises beyond cuts retain their behavior;
 - aliases and cut regions are visited at most once per call; and
-- the focused bound check uses assignment through a copied attachment via public operations.
+- focused Proxy checks exercise assignment through a copied attachment via public operations; and
+- the complete suite passes with inline and WeakMap metadata.
 
 ## Phase 3: Keep Array range work inside the logical range
 
