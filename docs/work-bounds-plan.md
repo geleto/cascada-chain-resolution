@@ -108,33 +108,24 @@ Verification:
 
 ## Phase 5: Evaluate bounded ref-index maintenance for bulk Array changes
 
-Status: pending design validation.
+Status: complete; existing mechanism retained.
 
-In-place Array replay commits every changed property through `commitLiveEdge`, so each property walks the owner's ancestor cone twice: once for the cycle check and once for counter propagation. A bulk transition is therefore proportional to `changes * ancestors`. Caching the ancestor closure or deferring propagation is unsound as a blanket policy: indexing a prospective child can link new parents above existing cone members, changing the closure, and can read counters that earlier properties in the same transition changed.
+In-place Array replay commits each changed property through `commitLiveEdge`. Each commit maintains the physical property, Promise version, cycle cut, reverse edges, and counters before replay proceeds. Cycle detection and counter propagation may each walk the affected ancestor cone, so a bulk transition can cost `changes * affected ancestors`.
 
-Synchronous reentrancy is an additional hazard. Promise classification reads public `then` properties, and tracking and key enumeration can invoke Proxy traps. Host code reached there can issue another Cascada command while replay has committed physical properties but not deferred counter changes. That command can observe partial graph state and stale counters, build an index from them, or mutate data that replay still expects to own.
+Retain this mechanism. Its work is confined to explicitly changed properties and affected dependencies, so it satisfies the Work Bounds. Cascada does not expect unusually large graphs, and no compact general batching transition emerged whose complexity is justified by the repeated work.
 
-Resolve that contract before choosing a batching design. The preferred rule is that a Cascada transition runs to completion before another command may enter through host code it invokes implicitly, including thenable access and reflection traps; such reentry is fatal. Explicit callbacks may issue commands only where their operation defines an issuance scope. Add the final rule to `AGENTS.md` when adopted, and enforce it independently of this optimization rather than only while a refcount batch happens to be active.
+The repeated walks are load-bearing under the current graph model. Indexing a prospective child can add parents above an existing cone member, and it can read counters changed by earlier properties in the same replay. Reusing an ancestor closure or deferring deltas would therefore require invalidation, flushing, or a transactional overlay coordinated across layers. Those mechanisms add more state and ordering rules than they remove.
 
-After resolving reentrancy, evaluate one general synchronous transition for remap replay and bulk length shrink. A candidate keeps physical properties, mirror registrations, cycle cuts, and reverse parent edges current per property, while accumulating one counter delta for the batch owner and memoizing its ancestor set. Indexing a previously unindexed value would flush the delta and invalidate that set before proceeding. This candidate is acceptable only if the reentrancy rule makes every observation point explicit and the result reduces total complexity.
+Implicit host reentrancy remains a separate contract question. Promise classification and graph reflection can invoke host code during a transition; any rule or guard for command reentry must be designed and enforced independently, not introduced only to enable refcount batching.
 
-Do not add a transactional read-through overlay or a fast path selected by prospective-child shape. If no simple universal mechanism emerges, retain per-edge maintenance and record the repeated ancestor work as load-bearing under the current graph model. Replays that build a fresh unindexed result remain outside this work because their final index build already costs one walk; single-property commits retain their simple path.
+Result:
 
-Complexity gate: proceed only with a compact general transition. If correctness requires a transactional overlay, batching-specific reentrancy rules, or lifecycle state coordinated across layers, keep per-edge maintenance. Reentrancy remains an independent runtime contract and must not be resolved only to enable this optimization.
-
-Acceptance:
-
-- public results, native partial failures, cycle cuts, and exact Promise versions remain unchanged;
-- each changed property is processed in native order;
-- no index construction observes stale topology or counters;
-- implicit host reentry follows the adopted runtime contract;
-- repeated work is reduced without production test hooks or representation-pinning tests; and
-- single-property commits retain their simple path.
-
-A single tracked-edge change may still walk its affected ancestor cone once for cycle detection and once for propagation. Both passes remain proportional to that cone; only multiplicative repetition across a bulk transition is under evaluation.
+- public behavior and source remain unchanged;
+- every property still completes its maintenance synchronously in native order; and
+- no batching state, fast path, overlay, adapter, or representation-pinning test is added.
 
 ## Phase interaction
 
-Phase 3's ranged enumeration is the substrate the other phases' walks inherit: the presence walk in Phase 2, consumer-driven indexing in Phase 4, and replay index builds in Phase 5 all enumerate through it.
+Phase 3's ranged enumeration is the substrate the other phases' walks inherit: the presence walk in Phase 2, consumer-driven indexing in Phase 4, and ref-index builds reached during Array replay all enumerate through it.
 
-Phase 4 may reduce the number of values that already have counters, so remeasure the Phase 2 fast path and the Phase 5 batching opportunity after Phase 4. This does not change their order: Phase 2 is a small independent correction, while Phase 4 has an observable ordering surface and must be evaluated separately.
+Phase 4 leaves more detached results unindexed. When later operations reach them, Phase 2's bounded fallback and ordinary consumer-driven indexing handle only that reached data; this does not require bulk refcount batching.
