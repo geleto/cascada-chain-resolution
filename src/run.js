@@ -202,17 +202,20 @@ function runMutation(chain, path, method, args) {
     return walkMutationPath(
         chain,
         path,
-        (parent, key, attachmentRoot, virtualLength) => {
-            if (virtualLength) {
-                result = errorUtils.validationError(
+        target => {
+            if (
+                target.propertyKind !==
+                languageProperties.ORDINARY_PROPERTY
+            ) {
+                return languageProperties.propertyValidationError(
+                    target.receiver,
                     "Array mutation receiver is not an Array",
                 )
-                return
             }
             result = transformProperty(
-                parent,
-                key,
-                attachmentRoot,
+                target.parent,
+                target.key,
+                target.attachmentRoot,
                 prepareMutationArguments,
                 invokeMutation,
             )
@@ -234,7 +237,7 @@ function runMutation(chain, path, method, args) {
         preparedArguments,
         {
             present,
-            attachmentRoot,
+            mustPreserveValue,
         },
     ) {
         if (!present) {
@@ -252,9 +255,7 @@ function runMutation(chain, path, method, args) {
             )
             return { mutatedValue: error, result: error }
         }
-        const sourceSurvives =
-            attachmentRoot !== undefined ||
-            metadata.requiresCopyOnWrite(thisValue) ||
+        const sourceSurvives = mustPreserveValue ||
             arrayViews.requiresArrayMaterialization(thisValue)
 
         return arrayInvocation.invokeArrayMutationMethod(

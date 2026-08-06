@@ -775,6 +775,46 @@ describe("enter", () => {
         expect(calls).to.be(0)
     })
 
+    it("rejects mutating entry into intrinsic length", () => {
+        for (const receiver of [[1, 2], "ab"]) {
+            const chain = new Chain(receiver)
+            let calls = 0
+
+            const result = enter(chain, ["length"], true, () => {
+                calls++
+            })
+
+            expect(result).to.be.an(Error)
+            expect(result.message).to.be("Cannot enter length for mutation")
+            expect(chain._state.value).to.be(receiver)
+            expect(calls).to.be(0)
+        }
+    })
+
+    it("rejects delayed mutating entry into intrinsic length", async () => {
+        for (const value of [[1, 2], "ab"]) {
+            const receiver = deferred()
+            const root = { target: receiver.promise }
+            let calls = 0
+            const result = enter(
+                new Chain(root),
+                ["target", "length"],
+                true,
+                () => {
+                    calls++
+                },
+            )
+
+            receiver.resolve(value)
+            const error = await result
+
+            expect(error).to.be.an(Error)
+            expect(error.message).to.be("Cannot enter length for mutation")
+            expect(root.target).to.be(value)
+            expect(calls).to.be(0)
+        }
+    })
+
     it("returns a delayed entry-setup Error without invoking the callback", async () => {
         const outer = deferred()
         const root = { outer: outer.promise }

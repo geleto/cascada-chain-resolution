@@ -4,7 +4,7 @@ import { setFatalErrorReporter } from "../../src/error.js"
 const reported = []
 const unhandled = []
 
-function pendingProperty(changeDescriptor) {
+function pendingProperty(changeDescriptor, settledValue = "settled") {
     let resolve
     const promise = new Promise(settle => {
         resolve = settle
@@ -12,7 +12,7 @@ function pendingProperty(changeDescriptor) {
     const root = {}
     runtime.assignPath(new runtime.Chain(root), ["value"], promise)
     changeDescriptor(root)
-    resolve("settled")
+    resolve(settledValue)
     return root
 }
 
@@ -54,6 +54,10 @@ const descriptorChanges = [
 for (const changeDescriptor of descriptorChanges) {
     pendingProperty(changeDescriptor)
 }
+pendingProperty(
+    descriptorChanges[3],
+    runtime.import({}, "published value"),
+)
 
 setImmediate(() => {
     process.stdout.write(JSON.stringify({

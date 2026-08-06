@@ -293,14 +293,16 @@ describe("promise helpers", () => {
 
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
-            reportCount: 4,
-            unhandledCount: 4,
+            reportCount: 5,
+            unhandledCount: 5,
             sameErrors: true,
             messages: [
                 "Cannot resolve missing Promise property",
                 "Cannot mutate non-enumerable property",
                 "Cannot assign to accessor property",
                 "Cannot assign to non-writable property",
+                "Cannot assign to non-writable property " +
+                    "(imported at: published value)",
             ],
         })
     })

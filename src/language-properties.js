@@ -4,16 +4,40 @@ import * as metadata from "./meta.js"
 
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 const propertyShapeErrors = new WeakSet()
+const ORDINARY_PROPERTY = 0
+const ARRAY_LENGTH = 1
+const STRING_LENGTH = 2
+const INVALID_ARRAY_KEY = 3
 
 // This module owns the descriptor policy and logical access for
 // language-visible properties.
 
-// Arrays expose canonical indexes only; other tracked values expose their own
-// enumerable string keys.
-function isArrayLanguageKey(parent, key) {
-    if (!arrayViews.isLogicalArray(parent)) return true
-    key = String(key)
-    return key === "length" || arrayViews.isArrayIndex(key)
+function classifyLanguageProperty(parent, key) {
+    return classifyProjectedProperty(
+        arrayViews.projectionOf(parent),
+        String(key),
+    )
+}
+
+function classifyProjectedProperty(parent, key) {
+    if (typeof parent === "string" && key === "length") {
+        return STRING_LENGTH
+    }
+    if (arrayViews.isLogicalArray(parent)) {
+        if (key === "length") return ARRAY_LENGTH
+        return arrayViews.isArrayIndex(key)
+            ? ORDINARY_PROPERTY
+            : INVALID_ARRAY_KEY
+    }
+    return ORDINARY_PROPERTY
+}
+
+function errorContextOf(value) {
+    return metadata.importBoundaryOf(value)?.errorContext
+}
+
+function propertyValidationError(parent, message) {
+    return errorUtils.validationError(message, errorContextOf(parent))
 }
 
 function propertyShapeError(message, errorContext) {
@@ -26,7 +50,7 @@ function isPropertyShapeError(error) {
     return propertyShapeErrors.has(error)
 }
 
-function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) {
+function assertCanMutateProperty(parent, key, errorContext) {
     const descriptor = getLanguagePropertyDescriptor(parent, key)
     if (descriptor && !descriptor.enumerable) {
         throw propertyShapeError(
@@ -37,10 +61,16 @@ function assertCanMutateLanguageProperty(parent, key, errorContext = undefined) 
     return descriptor
 }
 
+function assertCanMutateLanguageProperty(parent, key) {
+    return assertCanMutateProperty(parent, key, errorContextOf(parent))
+}
+
 function getLanguagePropertyDescriptor(parent, key) {
     parent = arrayViews.projectionOf(parent)
     key = String(key)
-    if (!isArrayLanguageKey(parent, key)) return undefined
+    if (classifyProjectedProperty(parent, key) === INVALID_ARRAY_KEY) {
+        return undefined
+    }
     if (arrayViews.isArrayView(parent)) return parent.descriptor(key)
     return Object.getOwnPropertyDescriptor(parent, key)
 }
@@ -65,12 +95,8 @@ function assertCanCreateLanguageProperty(parent, key, errorContext) {
 // Attached-edge commit assumes the physical mutation cannot fail. Check the
 // descriptor before new-value preparation can publish any imported state.
 function assertCanSetLanguageProperty(parent, key) {
-    const errorContext = metadata.importBoundaryOf(parent)?.errorContext
-    const descriptor = assertCanMutateLanguageProperty(
-        parent,
-        key,
-        errorContext,
-    )
+    const errorContext = errorContextOf(parent)
+    const descriptor = assertCanMutateProperty(parent, key, errorContext)
     if (!descriptor) {
         assertCanCreateLanguageProperty(parent, String(key), errorContext)
         return descriptor
@@ -91,8 +117,9 @@ function assertCanSetLanguageProperty(parent, key) {
     return descriptor
 }
 
-function assertCanUpdatePromiseProperty(parent, key, errorContext = undefined) {
-    const descriptor = assertPromisePropertyShape(
+function assertCanPublishPromiseProperty(parent, key, value) {
+    const errorContext = errorContextOf(value)
+    const descriptor = assertPromisePropertyShapeWithContext(
         parent,
         key,
         errorContext,
@@ -107,8 +134,8 @@ function assertCanUpdatePromiseProperty(parent, key, errorContext = undefined) {
 
 // Promise discovery requires a stable data property; imported properties need
 // not be writable because their logical results are stored in the mirror.
-function assertPromisePropertyShape(parent, key, errorContext = undefined) {
-    const descriptor = assertCanMutateLanguageProperty(
+function assertPromisePropertyShapeWithContext(parent, key, errorContext) {
+    const descriptor = assertCanMutateProperty(
         parent,
         key,
         errorContext,
@@ -128,8 +155,17 @@ function assertPromisePropertyShape(parent, key, errorContext = undefined) {
     return descriptor
 }
 
-function assertCanDeleteLanguageProperty(parent, key, errorContext = undefined) {
-    const descriptor = assertCanMutateLanguageProperty(
+function assertPromisePropertyShape(parent, key) {
+    return assertPromisePropertyShapeWithContext(
+        parent,
+        key,
+        errorContextOf(parent),
+    )
+}
+
+function assertCanDeleteLanguageProperty(parent, key) {
+    const errorContext = errorContextOf(parent)
+    const descriptor = assertCanMutateProperty(
         parent,
         key,
         errorContext,
@@ -166,30 +202,24 @@ function readLanguageProperty(parent, key) {
     key = String(key)
     const logicalParent = parent
     parent = arrayViews.projectionOf(parent)
-    if (!isArrayLanguageKey(parent, key)) return undefined
+    const propertyKind = classifyProjectedProperty(parent, key)
+    if (propertyKind === INVALID_ARRAY_KEY) return undefined
+    if (propertyKind !== ORDINARY_PROPERTY) return parent.length
 
     const mirror = metadata.metaOf(logicalParent)?.mirrors?.[key]
     if (mirror) return mirror.value
 
     if (arrayViews.isArrayView(parent)) return parent.get(key)
-    if (
-        (Array.isArray(parent) || typeof parent === "string") &&
-        key === "length"
-    ) {
-        return parent.length
-    }
     return propertyIsEnumerable.call(parent, key) ? parent[key] : undefined
 }
 
 function hasLanguageProperty(parent, key) {
     parent = arrayViews.projectionOf(parent)
     key = String(key)
-    if (!isArrayLanguageKey(parent, key)) return false
+    const propertyKind = classifyProjectedProperty(parent, key)
+    if (propertyKind === INVALID_ARRAY_KEY) return false
+    if (propertyKind !== ORDINARY_PROPERTY) return true
     if (arrayViews.isArrayView(parent)) return parent.has(key)
-    if (
-        (Array.isArray(parent) || typeof parent === "string") &&
-        key === "length"
-    ) return true
     return propertyIsEnumerable.call(parent, key)
 }
 
@@ -209,17 +239,22 @@ function enumerableLanguageKeys(value) {
 }
 
 export {
+    ARRAY_LENGTH,
+    INVALID_ARRAY_KEY,
+    ORDINARY_PROPERTY,
+    STRING_LENGTH,
     assertCanDeleteLanguageProperty,
     assertCanMutateLanguageProperty,
+    assertCanPublishPromiseProperty,
     assertPromisePropertyShape,
     assertCanSetLanguageProperty,
-    assertCanUpdatePromiseProperty,
+    classifyLanguageProperty,
     deleteLanguageProperty,
     enumerableLanguageKeys,
     getLanguagePropertyDescriptor,
     hasLanguageProperty,
-    isArrayLanguageKey,
     isPropertyShapeError,
+    propertyValidationError,
     readLanguageProperty,
     writeLanguageProperty,
 }

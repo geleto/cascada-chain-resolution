@@ -1534,7 +1534,7 @@ describe("run", () => {
         ) instanceof Error).to.be(true)
     })
 
-    it("returns a validation Error for virtual length receivers", () => {
+    it("returns a validation Error for intrinsic length receivers", () => {
         for (const receiver of ["abc", [1, 2]]) {
             const root = { target: receiver }
             const chain = new Chain(root)

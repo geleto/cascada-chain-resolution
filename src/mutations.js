@@ -8,20 +8,12 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
-const KEEP_TARGET = Symbol("KEEP_TARGET")
-
 function setProperty(
     parent,
     key,
     value,
     attachmentRoot = undefined,
 ) {
-    if (
-        arrayViews.isLogicalArray(parent) &&
-        String(key) === "length"
-    ) {
-        return setArrayLength(parent, value)
-    }
     if (attachmentRoot && containsPromise(value)) {
         metadata.markShared(attachmentRoot)
     }
@@ -41,25 +33,9 @@ function containsPromise(value, visited = new WeakSet()) {
     return false
 }
 
-function setArrayLength(array, value) {
-    const length = toArrayLength(value)
-    if (languageValues.isPromise(length)) {
-        errorUtils.reportFatalError(
-            new Error("Deferred Array length requires an owning-path gate"),
-        )
-    }
-    if (languageValues.isError(length)) return length
-    return commitArrayLength(array, length)
-}
-
-function deleteProperty(parent, key) {
-    const importBoundary = metadata.importBoundaryOf(parent)
-    languageProperties.assertCanDeleteLanguageProperty(
-        parent,
-        key,
-        importBoundary?.errorContext,
-    )
-    propertyVersions.removeProperty(parent, key)
+function mustPreserveValue(value, attachmentRoot) {
+    return attachmentRoot !== undefined ||
+        metadata.requiresCopyOnWrite(value)
 }
 
 function copyForWrite(source, pathKey, attachmentRoot) {
@@ -124,16 +100,36 @@ function transformProperty(
     const context = {
         present: origin !== undefined,
         rawValue: origin?.value,
-        attachmentRoot,
     }
+    return transformValue(
+        propertyVersions.resolvePropertyValue(origin),
+        attachmentRoot,
+        prepareInput(context),
+        transform,
+        value => setProperty(parent, key, value, attachmentRoot),
+        context,
+        returnResultPromise,
+    )
+}
+
+function transformValue(
+    value,
+    attachmentRoot,
+    preparedInput,
+    transform,
+    publishValue,
+    context,
+    returnResultPromise,
+) {
     let originalValue
     const operation = resolution.resolveOperationResultsOrFatal(
-        [
-            propertyVersions.resolvePropertyValue(origin),
-            prepareInput(context),
-        ],
+        [value, preparedInput],
         ([resolvedTargetValue, preparedArguments]) => {
             originalValue = resolvedTargetValue
+            context.mustPreserveValue = mustPreserveValue(
+                resolvedTargetValue,
+                attachmentRoot,
+            )
             return resolution.resolveOperationResultOrFatal(
                 transform(
                     resolvedTargetValue,
@@ -151,16 +147,11 @@ function transformProperty(
     )
 
     if (!languageValues.isPromise(operation)) {
-        if (operation.mutatedValue !== originalValue) {
-            setProperty(
-                parent,
-                key,
-                operation.mutatedValue,
-                attachmentRoot,
-            )
-        }
         if (operation.result === operation.mutatedValue) {
             metadata.markShared(operation.mutatedValue)
+        }
+        if (operation.mutatedValue !== originalValue) {
+            publishValue(operation.mutatedValue)
         }
         return operation.result
     }
@@ -175,12 +166,7 @@ function transformProperty(
             resolveResult = resolve
         })
         : undefined
-    setProperty(
-        parent,
-        key,
-        mutatedValueGate,
-        attachmentRoot,
-    )
+    publishValue(mutatedValueGate)
     resolution.resolveOperationResultOrFatal(
         operation,
         outcome => {
@@ -200,18 +186,45 @@ function transformProperty(
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(chain, path, value) {
-    if (path.length > 0 && String(path[path.length - 1]) === "length") {
-        return assignLengthPath(chain, path.slice(0, -1), value)
-    }
     return errorUtils.runFatal(() => {
-        const result = walkMutationPath(chain, path, (
-            parent,
-            key,
-            attachmentRoot,
-        ) => {
-            setProperty(parent, key, value, attachmentRoot)
-        }, undefined, tryArrayViewAssignment)
-        return result
+        return walkMutationPath(
+            chain,
+            path,
+            target => {
+                if (
+                    target.propertyKind ===
+                    languageProperties.ORDINARY_PROPERTY
+                ) {
+                    setProperty(
+                        target.parent,
+                        target.key,
+                        value,
+                        target.attachmentRoot,
+                    )
+                    return undefined
+                }
+                if (
+                    target.propertyKind ===
+                    languageProperties.STRING_LENGTH
+                ) {
+                    return languageProperties.propertyValidationError(
+                        target.receiver,
+                        "String length is read-only",
+                    )
+                }
+                return transformValue(
+                    target.receiver,
+                    target.attachmentRoot,
+                    undefined,
+                    transformArrayLength,
+                    target.replaceReceiver,
+                    {},
+                    false,
+                )
+            },
+            undefined,
+            tryArrayViewAssignment,
+        )
     })
 
     function tryArrayViewAssignment(
@@ -237,107 +250,38 @@ function assignPath(chain, path, value) {
         setProperty(extended, key, value, attachmentRoot)
         return extended
     }
-}
 
-function assignLengthPath(chain, receiverPath, value) {
-    return errorUtils.runFatal(() => {
-        let result
-        return walkMutationPath(
-            chain,
-            receiverPath,
-            (parent, key, attachmentRoot) => {
-                result = transformProperty(
-                    parent,
-                    key,
-                    attachmentRoot,
-                    () => undefined,
-                    transformLength,
-                    false,
-                )
-            },
-            pathError => pathError ?? result,
-        )
-    })
-
-    function transformLength(
-        targetValue,
+    function transformArrayLength(
+        array,
         _input,
-        { present, attachmentRoot },
+        { mustPreserveValue },
     ) {
-        if (!present) {
-            return {
-                mutatedValue: errorUtils.pathAccessError(),
-                result: undefined,
-            }
-        }
-        if (languageValues.isError(targetValue)) {
-            return { mutatedValue: targetValue, result: undefined }
-        }
-        if (typeof targetValue === "string") {
-            return {
-                mutatedValue: targetValue,
-                result: errorUtils.validationError(
-                    "String length is read-only",
-                ),
-            }
-        }
-        if (!languageValues.isTracked(targetValue)) {
-            return {
-                mutatedValue: errorUtils.pathAccessError(),
-                result: undefined,
-            }
-        }
-        if (!arrayViews.isLogicalArray(targetValue)) {
-            const mustCopy =
-                attachmentRoot !== undefined ||
-                metadata.requiresCopyOnWrite(targetValue)
-            let mutatedValue = targetValue
-            let nextAttachment = attachmentRoot
-            if (mustCopy) {
-                const copied = copyForWrite(
-                    targetValue,
-                    "length",
-                    nextAttachment,
-                )
-                mutatedValue = copied.value
-                nextAttachment = copied.attachmentRoot
-            }
-            setProperty(
-                mutatedValue,
-                "length",
-                value,
-                nextAttachment,
-            )
-            return { mutatedValue, result: undefined }
-        }
-
         return resolution.continueOperationUnlessPoison(
             toArrayLength(value),
             length => {
-                let mutatedValue = targetValue
-                const projection = arrayViews.projectionOf(targetValue)
-                const currentLength = projection.length
-                const preserve =
-                    attachmentRoot !== undefined ||
-                    metadata.requiresCopyOnWrite(targetValue)
+                let mutatedValue = array
+                const projection = arrayViews.projectionOf(array)
+                const growth = length - projection.length
                 if (
-                    preserve ||
+                    mustPreserveValue ||
                     (
                         arrayViews.isArrayView(projection) &&
-                        length > currentLength &&
-                        !arrayViews.ArrayView.canGrowEnd(
-                            projection,
-                            length - currentLength,
-                        )
+                        growth > 0 &&
+                        !arrayViews.ArrayView.canGrowEnd(projection, growth)
                     )
                 ) {
                     mutatedValue = arrayRemaps.createArrayFromRemap(
-                        arrayRemaps.createInitialRemap(targetValue),
-                        targetValue,
+                        arrayRemaps.createInitialRemap(array),
+                        array,
                     )
                 }
-                const error = commitArrayLength(mutatedValue, length)
-                return { mutatedValue, result: error }
+                return {
+                    mutatedValue,
+                    result: propertyVersions.commitArrayLength(
+                        mutatedValue,
+                        length,
+                    ),
+                }
             },
         )
     }
@@ -353,57 +297,6 @@ function toArrayLength(value) {
                 : errorUtils.validationError("Invalid array length")
         },
     )
-}
-
-function commitArrayLength(array, length) {
-    const projection = arrayViews.projectionOf(array)
-    const current = projection.length
-    const view = arrayViews.isArrayView(projection) ? projection : undefined
-    if (view) {
-        if (length >= current) {
-            if (!view.setLength(length)) {
-                return errorUtils.validationError(
-                    "Cannot grow this ArrayView in place",
-                )
-            }
-            return undefined
-        }
-    } else if (
-        Object.getOwnPropertyDescriptor(array, "length")?.writable !== true
-    ) {
-        return errorUtils.validationError("Array length is read-only")
-    }
-    if (length === current) return undefined
-
-    for (let index = current - 1; index >= length; index--) {
-        const key = String(index)
-        const property = languageProperties.getLanguagePropertyDescriptor(
-            array,
-            key,
-        )
-        if (property && !property.configurable) {
-            setLength(index + 1)
-            return errorUtils.validationError(
-                "Cannot delete an Array element while setting length",
-            )
-        }
-        if (property?.enumerable) {
-            propertyVersions.removeProperty(
-                array,
-                key,
-                view ? () => view.setLength(index) : undefined,
-            )
-        } else if (view) {
-            view.setLength(index)
-        }
-    }
-    setLength(length)
-    return undefined
-
-    function setLength(nextLength) {
-        if (view) view.setLength(nextLength)
-        else array.length = nextLength
-    }
 }
 
 // path identifies the complete mutation target. The walk starts at the private
@@ -430,54 +323,71 @@ function walkMutationPath(
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
-    function complete(writeBack, next) {
+    function complete(writeBack, next, operationError = undefined) {
         writeBack(next)
-        return onComplete?.(
-            languageValues.isError(next) ? next : undefined,
-        )
+        if (onComplete) {
+            return onComplete(
+                operationError ?? (
+                    languageValues.isError(next) ? next : undefined
+                ),
+            )
+        }
+        return operationError
     }
 
     function walk(
         value,
         index,
         writeBack,
+        placement = undefined,
     ) {
         if (languageValues.isError(value)) {
             return complete(writeBack, value)
         }
-        const key = targetPath[index]
-        if (
-            index === targetPath.length - 1 &&
-            key === "length" &&
-            (
-                typeof value === "string" ||
-                arrayViews.isLogicalArray(value)
-            )
-        ) {
-            onTarget(
+        const key = String(targetPath[index])
+        const atTarget = index === targetPath.length - 1
+        const propertyKind = languageProperties.classifyLanguageProperty(
+            value,
+            key,
+        )
+        if (propertyKind === languageProperties.INVALID_ARRAY_KEY) {
+            return complete(
+                writeBack,
                 value,
-                key,
-                attachmentRoot,
-                true,
+                languageProperties.propertyValidationError(
+                    value,
+                    "Arrays support only indexes and length",
+                ),
             )
-            return complete(writeBack, value)
+        }
+        if (propertyKind !== languageProperties.ORDINARY_PROPERTY) {
+            if (atTarget) {
+                let nextReceiver = value
+                // Publish intrinsic replacement through the captured edge;
+                // its original Promise mirror may since have detached.
+                const targetResult = onTarget({
+                    ...placement,
+                    attachmentRoot,
+                    propertyKind,
+                    replaceReceiver(next) {
+                        nextReceiver = next
+                    },
+                    receiver: value,
+                })
+                return complete(writeBack, nextReceiver, targetResult)
+            }
+            return walk(
+                languageProperties.readLanguageProperty(value, key),
+                index + 1,
+                () => writeBack(value),
+                { parent: value, key },
+            )
         }
         if (!languageValues.isTracked(value)) {
-            const error = errorUtils.pathAccessError()
-            return complete(writeBack, error)
-        }
-        if (
-            index === targetPath.length - 1 &&
-            !languageProperties.isArrayLanguageKey(value, key)
-        ) {
-            writeBack(value)
-            const error = errorUtils.validationError(
-                "Arrays support only indexes and length",
-            )
-            return onComplete ? onComplete(error) : error
+            return complete(writeBack, errorUtils.pathAccessError())
         }
 
-        const mutatedValue = index === targetPath.length - 1
+        const mutatedValue = atTarget
             ? tryTargetMutation?.(
                 value,
                 key,
@@ -488,12 +398,13 @@ function walkMutationPath(
             return complete(writeBack, mutatedValue)
         }
         let parent = value
-        const parentInsideSharedBranch =
-            attachmentRoot !== undefined ||
-            metadata.requiresCopyOnWrite(value) ||
+        const mustCopyParent = mustPreserveValue(
+            value,
+            attachmentRoot,
+        ) ||
             arrayViews.requiresArrayMaterialization(value)
 
-        if (parentInsideSharedBranch) {
+        if (mustCopyParent) {
             const copied = copyForWrite(
                 parent,
                 key,
@@ -502,23 +413,20 @@ function walkMutationPath(
             parent = copied.value
             attachmentRoot = copied.attachmentRoot
         }
-        if (index === targetPath.length - 1) {
-            const targetResult = onTarget(
+        if (atTarget) {
+            const targetResult = onTarget({
                 parent,
                 key,
                 attachmentRoot,
-            )
-            return complete(
-                writeBack,
-                targetResult === KEEP_TARGET ? value : parent,
-            )
+                propertyKind,
+                receiver: parent,
+            })
+            return complete(writeBack, parent, targetResult)
         }
 
         // Asserted after the COW: copies carry only own enumerable keys, so
         // this fires only on genuinely un-shadowable intermediate shapes.
-        if (!(key === "length" && arrayViews.isLogicalArray(parent))) {
-            languageProperties.assertCanMutateLanguageProperty(parent, key)
-        }
+        languageProperties.assertCanMutateLanguageProperty(parent, key)
 
         const child = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(child)) {
@@ -541,6 +449,7 @@ function walkMutationPath(
                             )
                         }
                     },
+                    { parent, key },
                 ),
             )
             writeBack(parent)
@@ -551,11 +460,14 @@ function walkMutationPath(
             child,
             index + 1,
             next => {
-                if (next !== child) {
-                    setProperty(parent, key, next)
+                if (next === child) {
+                    writeBack(value)
+                    return
                 }
+                setProperty(parent, key, next)
                 writeBack(parent)
             },
+            { parent, key },
         )
     }
 }
@@ -564,31 +476,29 @@ function walkMutationPath(
 function deletePath(chain, path) {
     return errorUtils.runFatal(() => {
         const deletesRoot = path.length === 0
-        let operationError
-        const result = walkMutationPath(chain, path, (
-            parent,
-            key,
-            attachmentRoot,
-            virtualLength,
-        ) => {
+        return walkMutationPath(chain, path, target => {
             if (deletesRoot) {
-                setProperty(parent, key, null)
-            } else if (virtualLength) {
-                operationError = errorUtils.validationError(
+                setProperty(target.parent, target.key, null)
+                return undefined
+            }
+            if (
+                target.propertyKind !==
+                languageProperties.ORDINARY_PROPERTY
+            ) {
+                return languageProperties.propertyValidationError(
+                    target.receiver,
                     "Cannot delete length",
                 )
-                return KEEP_TARGET
-            } else {
-                deleteProperty(parent, key)
             }
+
+            propertyVersions.deleteProperty(target.parent, target.key)
+            return undefined
         })
-        return result ?? operationError
     })
 }
 
 export {
     assignPath,
-    deleteProperty,
     deletePath,
     setProperty,
     transformProperty,

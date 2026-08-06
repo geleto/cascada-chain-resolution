@@ -1,3 +1,4 @@
+import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as importPreparation from "./import-preparation.js"
 import * as languageProperties from "./language-properties.js"
@@ -97,11 +98,7 @@ function getOrCreatePromiseMirror(owner, key, promise) {
 
     const importBoundary = meta?.importBoundary
     if (importBoundary) {
-        languageProperties.assertPromisePropertyShape(
-            owner,
-            key,
-            importBoundary.errorContext,
-        )
+        languageProperties.assertPromisePropertyShape(owner, key)
     } else {
         languageProperties.assertCanSetLanguageProperty(owner, key)
     }
@@ -212,11 +209,10 @@ function publishValue(
     }
 
     if (!importBoundary) {
-        const valueBoundary = metadata.importBoundaryOf(value)
-        languageProperties.assertCanUpdatePromiseProperty(
+        languageProperties.assertCanPublishPromiseProperty(
             owner,
             key,
-            valueBoundary?.errorContext,
+            value,
         )
     }
 
@@ -236,12 +232,69 @@ function replaceProperty(owner, key, mirror, value) {
     })
 }
 
+// Callers validate deletion semantics before this atomic edge removal.
 function removeProperty(owner, key, remove) {
     commitProperty(owner, key, undefined, () => {
         detachPromiseMirror(owner, key)
         if (remove) remove()
         else languageProperties.deleteLanguageProperty(owner, key)
     })
+}
+
+function deleteProperty(owner, key) {
+    languageProperties.assertCanDeleteLanguageProperty(owner, key)
+    removeProperty(owner, key)
+}
+
+function commitArrayLength(array, length) {
+    const projection = arrayViews.projectionOf(array)
+    const current = projection.length
+    const view = arrayViews.isArrayView(projection) ? projection : undefined
+    if (view) {
+        if (length >= current) {
+            if (!view.setLength(length)) {
+                return errorUtils.validationError(
+                    "Cannot grow this ArrayView in place",
+                )
+            }
+            return undefined
+        }
+    } else if (
+        Object.getOwnPropertyDescriptor(array, "length")?.writable !== true
+    ) {
+        return errorUtils.validationError("Array length is read-only")
+    }
+    if (length === current) return undefined
+
+    for (let index = current - 1; index >= length; index--) {
+        const key = String(index)
+        const property = languageProperties.getLanguagePropertyDescriptor(
+            array,
+            key,
+        )
+        if (property && !property.configurable) {
+            setLength(index + 1)
+            return errorUtils.validationError(
+                "Cannot delete an Array element while setting length",
+            )
+        }
+        if (property?.enumerable) {
+            removeProperty(
+                array,
+                key,
+                view ? () => view.setLength(index) : undefined,
+            )
+        } else if (view) {
+            view.setLength(index)
+        }
+    }
+    setLength(length)
+    return undefined
+
+    function setLength(nextLength) {
+        if (view) view.setLength(nextLength)
+        else array.length = nextLength
+    }
 }
 
 function commitProperty(owner, key, value, updateProperty) {
@@ -315,8 +368,10 @@ export {
     assignProperty,
     buildRefIndex,
     capturePropertyVersion,
+    commitArrayLength,
     continuePropertyValue,
     continuePromiseVersion,
+    deleteProperty,
     getOrCreatePromiseMirror,
     getPropertyOrigin,
     getPromiseMirror,
@@ -325,7 +380,6 @@ export {
     placePromiseVersion,
     prepareImportedRoot,
     prepareRetainedArrayProperties,
-    removeProperty,
     resolvePropertyValue,
     resolvePropertyValueAtKey,
 }

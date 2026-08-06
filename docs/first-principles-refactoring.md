@@ -4,68 +4,7 @@
 
 This document applies the first principles in `AGENTS.md` to source-wide refactoring. It starts from Cascada's fixed observable contracts and seeks the simplest general mechanisms that make special state, paths, and coupling unnecessary. `AGENTS.md` is authoritative; these proposals should be removed as they are completed.
 
-The remaining phases are ranked by architectural value. Implementation order also considers dependencies and risk. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
-
-## 4. Move property behavior into one policy and lower its primitives
-
-### Problem
-
-Array and String `length` behavior is distributed across several layers:
-
-- `setProperty` dispatches Array length specially;
-- `assignPath` redirects every terminal `length` to `assignLengthPath`;
-- `assignLengthPath` performs receiver transformation and Promise gating;
-- `walkMutationPath` emits `virtualLength`;
-- mutation invocation and deletion interpret that flag separately; and
-- `language-properties.js` already owns logical length reads and descriptors.
-
-The redirect exists because intrinsic length mutation targets and may replace the receiver rather than an enumerable child. Stopping the walk one level early makes `transformLength` repeat the walk's final copy-on-write step. The walk and method invocation also compute the same receiver-preservation predicate separately; length transformation repeats its ownership-based part under other names. ArrayView materialization and growth are distinct concerns, but the common path-copy decision is duplicated.
-
-Ordinary property assertions also receive a container's import `errorContext` from callers that already pass the container. One exceptional settlement path instead attributes failure to the newly published value's import boundary, but the generic parameter does not communicate that distinction.
-
-Finally, `array-remap.js` depends on high-level mutation helpers because low-level property assignment still owns length dispatch, Promise placement, and attachment behavior.
-
-### Simplest target
-
-The language-property layer classifies terminal properties: ordinary properties, Array length, ArrayView length, String length, and invalid Array keys. It owns logical access, descriptors, validation, and physical property primitives.
-
-The mutation walk classifies the terminal `(receiver, key)` before treating the key as a graph edge. An ordinary property targets that property; an intrinsic property targets the receiver. The target transition may return a replacement receiver, and the walk reconstructs it through the same writeback path used for every other replacement.
-
-The mutation layer continues to own copy-on-write, Promise gates, receiver replacement, and path reconstruction. The walk computes the base path-copy decision once per level and supplies the target context. ArrayView materialization remains an explicit walk-level addition, while growth remains operation-specific. When a pending value cannot occupy the physical property, the existing `transformProperty` transition gates the enclosing receiver version.
-
-Assignment, deletion, and mutation invocation share the classification but retain responsibility for their own language results.
-
-Normal property assertions derive error attribution from their container. Property publication uses a purpose-specific path when failure must instead be attributed to the newly published value. Do not retain a generic override at every normal call site for one exceptional meaning.
-
-Once `setProperty` no longer owns intrinsic length policy, move low-level property assignment and deletion below both path mutation and Array remapping. This removes the `mutations.js`/`array-remap.js` dependency cycle without carrying the special path into another module.
-
-### Must preserve
-
-- Array and String length are intrinsic state, not enumerable language-graph edges. They do not acquire ordinary property mirrors or refcount edges.
-- An ordinary object's enumerable key named `length` remains an ordinary property and may hold any value, including a Promise.
-- A deferred Array length installs its receiver gate synchronously at issuance, so later receiver operations remain ordered behind it.
-- Shared and imported receivers are copied before any physical mutation.
-- An intrinsic length operation that cannot mutate fails before unnecessary copy-on-write or receiver replacement.
-- Per-operation rejection remains distinct: deleting intrinsic length reports that length cannot be deleted, while Array mutation through length reports that the receiver is not an Array.
-- Native Array contraction may delete part of the requested range before a non-configurable element stops it. Those deletions, their mirrors, refcounts, and cycle cuts remain committed, and the operation returns the Error with the partially contracted receiver.
-- ArrayView contraction, tail growth, and materialization retain their current eligibility and sparse behavior.
-- Validation errors retain the correct import attribution and timing.
-- Missing properties are defined as own data properties, so inherited setters never participate.
-
-### Expected removals
-
-- `assignLengthPath` as a parallel path;
-- `virtualLength`;
-- the early terminal-`length` redirect;
-- `transformLength`'s duplicate final-level copy-on-write;
-- repeated base receiver-preservation predicates in the walk and its callers;
-- repeated Array/String length checks in the path walker and its callers;
-- routine `errorContext` derivation and threading at assertion call sites; and
-- the `mutations.js`/`array-remap.js` dependency cycle.
-
-### Verification
-
-Cover synchronous and Promise-converted lengths, ordinary object `length`, read-only Array and String length, ArrayView growth and contraction, partial contraction failure, deletion, copy-on-write isolation, import attribution, and refcount correctness through public operations.
+The remaining opportunities are independent. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
 
 ## Fixed contract: opaque method receivers
 
@@ -119,19 +58,15 @@ Most remap complexity follows sparse native behavior, partial failures, result o
 
 The presence of the exact `mutates` Boolean is the Chain's issuance capability. Removing it closes that capability while already-captured state remains available to continuations. Moving that fact off the language surface is useful; adding a second flag would persist a duplicate fact that can disagree with the first.
 
-## Recommended sequence
-
-- **Property policy:** Unify intrinsic property behavior, then lower assignment and deletion to remove the mutation/remap cycle.
-
 Error-query and ancestry cleanups should land only when they simplify touched code without introducing a new framework. Stack-depth changes should accompany their owning area; moving Chain capability off the language surface can land independently.
 
-The opaque receiver contract is fixed: no phase virtualizes an ordinary method receiver, and the property-version protocol preserves host-visible runtime-owned writeback.
+The opaque receiver contract is fixed: no refactoring virtualizes an ordinary method receiver, and the property-version protocol preserves host-visible runtime-owned writeback.
 
-Each phase should remove the mechanisms it supersedes in the same change and pass the complete suite with both inline and WeakMap metadata. Prefer integration tests through public operations; use focused unit tests only for load-bearing invariants that public behavior cannot verify precisely. Behavioral tests must not pin mirror fields, helper boundaries, cycle-cut placement, or exact counter totals; a focused invariant test may inspect representation only when public behavior cannot verify that invariant precisely.
+Each refactoring should remove the mechanisms it supersedes in the same change and pass the complete suite with both inline and WeakMap metadata. Prefer integration tests through public operations; use focused unit tests only for load-bearing invariants that public behavior cannot verify precisely. Behavioral tests must not pin mirror fields, helper boundaries, cycle-cut placement, or exact counter totals; a focused invariant test may inspect representation only when public behavior cannot verify that invariant precisely.
 
 ## Baseline
 
-Verified after the method-dispatch refactoring on 2026-08-06. The complete suite passed in both metadata modes:
+Verified after the property-policy refactoring on 2026-08-06. The complete suite passed in both metadata modes:
 
-- 636 tests with inline metadata; and
-- 636 tests with WeakMap metadata.
+- 642 tests with inline metadata; and
+- 642 tests with WeakMap metadata.

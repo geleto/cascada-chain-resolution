@@ -249,13 +249,14 @@ completed, deferred, and pending work.
   `src/array-remap.js` own logical Array representation and method execution.
 - `src/import.js` owns the public import boundary; `src/import-preparation.js`
   classifies imported identities and discovers their Promise frontier.
-- `src/property-versions.js` owns property origins, exact-version capture, Promise mirrors,
-  retained and exclusive placement, and property publication.
+- `src/property-versions.js` owns property origins, exact-version capture,
+  Promise mirrors, placement, publication, validated deletion, and Array-length
+  commits.
 - `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
   accounting around indexed property transitions.
 - `src/raw-walk.js` owns metadata-free export copying and Error collection.
-- `src/language-properties.js` owns descriptor validation and logical reads and
-  writes for language-visible properties.
+- `src/language-properties.js` owns terminal-property classification,
+  descriptor validation, and logical and physical language-property access.
 - The remaining small source modules own metadata and fatal errors.
   Refcount verification is test-only in `test/verify-refcounts.js`.
 

@@ -1,10 +1,6 @@
 import * as arrayViews from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import {
-    deleteProperty,
-    setProperty,
-} from "./mutations.js"
 import * as propertyVersions from "./property-versions.js"
 
 const KIND_ADD = 0
@@ -122,12 +118,18 @@ function applyRemapToArray(array, remap, operations) {
     try {
         for (const operation of operations) {
             if (operation.kind === KIND_LENGTH) {
-                const error = setProperty(array, "length", operation.value)
+                const error = propertyVersions.commitArrayLength(
+                    array,
+                    operation.value,
+                )
                 if (languageValues.isError(error)) return error
                 continue
             }
             if (operation.kind === KIND_DELETE) {
-                deleteProperty(array, String(operation.index))
+                propertyVersions.deleteProperty(
+                    array,
+                    String(operation.index),
+                )
                 continue
             }
             const key = String(operation.newIndex)

@@ -369,6 +369,54 @@ describe("path assignment", () => {
         expect(root).to.eql([1])
     })
 
+    it("attributes intrinsic errors to an imported receiver", () => {
+        const source = importValue([1], "intrinsic receiver")
+
+        const deletion = deletePath(new Chain(source), ["length"])
+        const mutation = run(
+            new Chain(source),
+            ["length"],
+            "push",
+            true,
+            2,
+        )
+
+        expect(deletion.message).to.be(
+            "Cannot delete length (imported at: intrinsic receiver)",
+        )
+        expect(mutation.message).to.be(
+            "Array mutation receiver is not an Array " +
+            "(imported at: intrinsic receiver)",
+        )
+        expect(source).to.eql([1])
+    })
+
+    it("does not copy imported ancestors for rejected intrinsic targets", () => {
+        const source = importValue({
+            values: [1, 2],
+            text: "abc",
+        }, "nested intrinsic")
+        const operations = [
+            chain => deletePath(chain, ["values", "length"]),
+            chain => run(
+                chain,
+                ["values", "length"],
+                "push",
+                true,
+                3,
+            ),
+            chain => assignPath(chain, ["text", "length"], 1),
+            chain => assignPath(chain, ["values", "name"], 1),
+        ]
+
+        for (const operation of operations) {
+            const chain = new Chain(source)
+
+            expect(operation(chain)).to.be.an(Error)
+            expect(readPath(chain, [])).to.be(source)
+        }
+    })
+
     it("treats intermediate Array length as a primitive path", () => {
         const root = { values: [1, 2] }
         const chain = new Chain(root)
@@ -443,6 +491,45 @@ describe("path assignment", () => {
 
         expect(await exportValue(chain, [])).to.eql([9])
         verifyRefCounts(chain._state.value)
+    })
+
+    it("keeps deferred Array length on its captured receiver version", async () => {
+        const receiver = deferred()
+        const root = { values: receiver.promise }
+        const chain = new Chain(root)
+
+        assignPath(chain, ["values", "length"], 1)
+        const replacement = [9, 8, 7]
+        assignPath(chain, ["values"], replacement)
+
+        receiver.resolve([1, 2, 3])
+        await flushMicrotasks()
+
+        expect(root.values).to.be(replacement)
+        expect(replacement).to.eql([9, 8, 7])
+        verifyRefCounts(root)
+    })
+
+    it("copy-on-writes a Promise-converted imported Array length", async () => {
+        const length = deferred()
+        const source = importValue({ values: [1, 2, 3] }, "imported length")
+        const chain = new Chain(source)
+
+        expect(assignPath(
+            chain,
+            ["values", "length"],
+            length.promise,
+        )).to.be(undefined)
+        expect(chain._state.value).not.to.be(source)
+        expect(chain._state.value.values instanceof Promise).to.be(true)
+        expect(source).to.eql({ values: [1, 2, 3] })
+
+        length.resolve(1)
+        await flushMicrotasks()
+
+        expect(source).to.eql({ values: [1, 2, 3] })
+        expect(exportValue(chain, [])).to.eql({ values: [1] })
+        verifyRefCounts(source, chain._state.value)
     })
 
     it("retains a Promise assigned to an ordinary length property", async () => {
@@ -758,6 +845,10 @@ describe("path assignment", () => {
 
         const imported = importValue([], "indexed growth")
         const importedChain = new Chain(imported)
+        expect(assignPath(importedChain, ["name"], "value").message).to.be(
+            "Arrays support only indexes and length " +
+            "(imported at: indexed growth)",
+        )
         expect(assignPath(importedChain, ["2"], "value")).to.be(undefined)
         expect(importedChain._state.value).not.to.be(imported)
         expect(imported.length).to.be(0)

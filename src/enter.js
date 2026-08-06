@@ -55,7 +55,17 @@ function enterMutating(chain, path, onEntered) {
     return walkMutationPath(
         chain,
         path,
-        (parent, key, attachmentRoot) => {
+        target => {
+            if (
+                target.propertyKind !==
+                languageProperties.ORDINARY_PROPERTY
+            ) {
+                return languageProperties.propertyValidationError(
+                    target.receiver,
+                    "Cannot enter length for mutation",
+                )
+            }
+            const { parent, key, attachmentRoot } = target
             const value = languageProperties.readLanguageProperty(parent, key)
             const privateChain = new Chain(value, true)
             const sourceMirror = languageValues.isPromise(value)
