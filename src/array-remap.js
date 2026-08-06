@@ -8,13 +8,16 @@ const KIND_DELETE = 1
 const KIND_LENGTH = 2
 const KIND_MOVE = 3
 
-function createInitialRemap(array) {
-    const length = arrayViews.logicalArrayLength(array)
-    const remap = new Array(length)
-    for (const key of languageProperties.enumerableLanguageKeys(array)) {
+function createRemap(
+    array,
+    start = 0,
+    end = arrayViews.logicalArrayLength(array),
+) {
+    const remap = new Array(end - start)
+    for (const key of arrayViews.enumerableArrayKeys(array, start, end)) {
         languageProperties.writeLanguageProperty(
             remap,
-            key,
+            String(Number(key) - start),
             propertyVersions.getPropertyOrigin(array, key),
         )
     }
@@ -23,7 +26,7 @@ function createInitialRemap(array) {
 
 function createMutationRemap(array, inPlace) {
     if (inPlace) return traceMutation(array)
-    const remap = createInitialRemap(array)
+    const remap = createRemap(array)
     return { remap, working: remap }
 }
 
@@ -202,7 +205,7 @@ function placeOrigin(
 export {
     applyRemapToArray,
     createArrayFromRemap,
-    createInitialRemap,
+    createRemap,
     createMutationRemap,
     placeRemap,
 }

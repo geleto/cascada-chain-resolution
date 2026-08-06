@@ -166,7 +166,7 @@ function runObservation(chain, path, method, args) {
     function invokeOrdinaryMethod(targetValue, callable) {
         const receiver = arrayViews.requiresArrayMaterialization(targetValue)
             ? arrayRemaps.createArrayFromRemap(
-                arrayRemaps.createInitialRemap(targetValue),
+                arrayRemaps.createRemap(targetValue),
                 undefined,
                 false,
             )

@@ -61,26 +61,27 @@ Verification:
 
 ## Phase 3: Keep Array range work inside the logical range
 
-Status: pending.
+Status: complete.
 
-`ArrayView.keys()` scans the complete physical backing, so ref-index construction, copy-on-write, raw export, import scans, remap creation, and retained-property preparation all inherit that cost through `enumerableLanguageKeys`. Fallback `slice` separately remaps the complete receiver for a small result. Three mechanisms remove this; every other key walk then inherits the bound because all of them flow through key enumeration:
+Array range work uses three shared mechanisms, so every consumer inherits the bound rather than implementing its own scan:
 
-1. One ranged key-enumeration primitive owns the range policy: when the selected range spans the physical backing, enumerate present keys; for a strict subrange, scan exactly that numeric range and no properties outside it. `ArrayView.keys` applies the policy to the view's own extent; a caller-supplied range narrows it further. No strategy dominates both cases, so the split is by selection: the strict-range cost may include holes because those holes belong to the explicitly selected range, while full-range sparse operations must remain proportional to present properties.
+1. One ranged key-enumeration primitive owns the range policy: when the selected range spans the physical backing, enumerate present keys; for a strict subrange, scan exactly that numeric range and no properties outside it. `ArrayView.keys` enumerates the complete view through that primitive. No strategy dominates both cases, so the split is by selection: the strict-range cost may include holes because those holes belong to the explicitly selected range, while full-range sparse operations must remain proportional to present properties.
 
-2. Retained-property preparation takes one contiguous source range and destination offset in place of the destination-key callback, and drives its enumeration with that range. Every existing mapping — slice, pop, and shift views, append identity, prepend shift — is contiguous, and a callback hides the range from the enumerator, so it cannot satisfy the bound. Reintroduce a callback only if a genuinely non-contiguous retained mapping ever appears.
+2. Retained-property preparation takes one contiguous source range and destination offset in place of the former destination-key callback. Every mapping — slice, pop, and shift views, append identity, prepend shift — is contiguous.
 
-3. Fallback `slice` follows the lazy receiver `observeAt` already models: expose `length` and per-index property origins through `has`/`get`, let the native method perform its own argument coercion and access order against it, and treat the selected origins as an ordinary remap for `createArrayFromRemap`. This adds a `remap` entry to the existing method table rather than a second conversion path, and duplicates no native normalization.
+3. One range-remap primitive owns both full remapping and selected `slice` results. Fallback `slice` converts each argument once with JavaScript numeric coercion and the same relative-index normalization used by view derivation, then remaps only the resulting range. This is simpler than a second lazy-Proxy mechanism and keeps graph reflection outside native conversion error handling.
 
 Promise versions flow through the same origin and placement helpers in all three mechanisms, so ownership, holes, and version semantics need no new handling.
 
-Complexity gate: reuse key enumeration, property origins, remaps, and method-table dispatch. Keep one range representation and one remap model; do not duplicate native coercion or conversion semantics.
+Complexity result: full remapping is the full-range case of the new primitive, the retained callback is gone, and fallback `slice` adds no Proxy, adapter, state, or alternate remap representation. The inherited-setter-safe key set is load-bearing because even temporary Arrays must not invoke inherited numeric setters.
 
-Acceptance:
+Verification:
 
 - a small slice or view does not inspect backing properties outside its range;
 - full-range sparse operations do not materialize or inspect every hole;
 - Promise versions, ownership, holes, imported materialization, and native slice argument conversion remain correct; and
-- indexing, copy-on-write, raw export, retained views, and ordinary method materialization obey the same range bound through the shared enumeration.
+- indexing, copy-on-write, raw export, retained views, and ordinary method materialization obey the same range bound through shared enumeration; and
+- focused Proxy checks and the complete suite pass with inline and WeakMap metadata.
 
 ## Phase 4: Make detached-result indexing consumer-driven
 

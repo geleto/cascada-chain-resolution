@@ -340,14 +340,16 @@ function prepareImportedData(value, importBoundary, promoteRoot) {
 function prepareRetainedArrayProperties(
     source,
     destination,
-    destinationKeyFor,
+    sourceStart = 0,
+    sourceEnd = arrayViews.logicalArrayLength(source),
+    destinationOffset = 0,
 ) {
-    for (const sourceKey of languageProperties.enumerableLanguageKeys(source)) {
-        const destinationKey = destinationKeyFor
-            ? destinationKeyFor(sourceKey)
-            : sourceKey
-        if (destinationKey === undefined) continue
-
+    for (const sourceKey of arrayViews.enumerableArrayKeys(
+        source,
+        sourceStart,
+        sourceEnd,
+    )) {
+        const destinationKey = String(Number(sourceKey) + destinationOffset)
         const value = languageProperties.readLanguageProperty(source, sourceKey)
         if (!languageValues.isPromise(value)) {
             metadata.markShared(value)

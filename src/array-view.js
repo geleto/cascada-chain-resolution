@@ -187,18 +187,7 @@ class ArrayView {
     }
 
     keys() {
-        const backing = this._storage.array
-        const physicalStart = this._start + this._storage.baseIndex
-        const physicalEnd = this._end + this._storage.baseIndex
-        const keys = []
-        for (const key of Object.keys(backing)) {
-            if (!isArrayIndex(key)) continue
-            const physical = Number(key)
-            if (physical >= physicalStart && physical < physicalEnd) {
-                keys.push(String(physical - physicalStart))
-            }
-        }
-        return keys
+        return enumerableArrayKeys(this)
     }
 
     #prepend(values, beforeWrite) {
@@ -288,9 +277,39 @@ function isArrayIndex(key) {
         String(index) === key
 }
 
+// Logical keys of a logical Array range. A range spanning the complete
+// backing pays only for present keys; a strict subrange inspects exactly its
+// selected indexes, so its cost may include the selected holes.
+function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
+    const projection = projectionOf(arrayOrView)
+    const view = isArrayView(projection) ? projection : undefined
+    const backing = view ? view._storage.array : projection
+    const backingLength = backing.length
+    const origin = view ? view._start + view._storage.baseIndex : 0
+    const extent = view ? view.length : backingLength
+    start = origin + Math.max(0, start)
+    end = origin + Math.min(extent, end ?? extent)
+
+    // Avoid inherited numeric setters while preserving numeric key order.
+    const keys = Object.create(null)
+    if (start === 0 && end === backingLength) {
+        for (const key of Object.keys(backing)) {
+            if (isArrayIndex(key) && Number(key) < end) keys[key] = true
+        }
+    } else {
+        for (let index = start; index < end; index++) {
+            if (propertyIsEnumerable.call(backing, index)) {
+                keys[index - origin] = true
+            }
+        }
+    }
+    return Object.keys(keys)
+}
+
 export {
     ArrayView,
     backingOf,
+    enumerableArrayKeys,
     hasArrayAncestor,
     isArrayIndex,
     isArrayView,

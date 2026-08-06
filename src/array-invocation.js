@@ -70,7 +70,7 @@ function invokeArrayObservationMethod(thisValue, method, args) {
             if (definition.remap) {
                 remap = definition.remap(thisValue, preparedArgs)
             } else {
-                remap = arrayRemaps.createInitialRemap(thisValue)
+                remap = arrayRemaps.createRemap(thisValue)
                 const result = invocation.invokeDataFunctionOrPoison(
                     Array.prototype[method],
                     remap,

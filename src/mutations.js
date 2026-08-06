@@ -277,7 +277,7 @@ function assignPath(chain, path, value) {
                     )
                 ) {
                     mutatedValue = arrayRemaps.createArrayFromRemap(
-                        arrayRemaps.createInitialRemap(array),
+                        arrayRemaps.createRemap(array),
                         array,
                     )
                 }

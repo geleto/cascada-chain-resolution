@@ -55,7 +55,7 @@ const ARRAY_METHODS = {
         view: tryShiftArrayView,
         viewOperationResult: getFirstElementOrigin,
     },
-    slice: { exportArgs: [true, true], view: trySliceArrayView },
+    slice: { exportArgs: [true, true], observe: slice },
     sort: {
         prepare: prepareSortArguments,
         remap: prepareAndSortAndRemap,
@@ -101,6 +101,26 @@ function observeAt(thisValue, args) {
     return languageValues.isError(element)
         ? element
         : retainElement(element)
+}
+
+function slice(thisValue, args) {
+    const canDeriveView = args.every(value => {
+        return value === undefined || typeof value === "number"
+    })
+    const length = arrayViews.logicalArrayLength(thisValue)
+    const start = toRelativeIndex(args[0], length, 0)
+    if (languageValues.isError(start)) return start
+    let end = toRelativeIndex(args[1], length, length)
+    if (languageValues.isError(end)) return end
+    end = Math.max(start, end)
+
+    if (canDeriveView) {
+        const view = deriveArrayView(thisValue, start, end)
+        if (view !== undefined) return view
+    }
+    return arrayRemaps.createArrayFromRemap(
+        arrayRemaps.createRemap(thisValue, start, end),
+    )
 }
 
 function publishValue(value) {
@@ -186,7 +206,7 @@ function prepareConcatArguments(args) {
 
 function createConcatResultRemap(thisValue, items) {
     return createConcatRemap(
-        arrayRemaps.createInitialRemap(thisValue),
+        arrayRemaps.createRemap(thisValue),
         items,
     )
 }
@@ -194,7 +214,7 @@ function createConcatResultRemap(thisValue, items) {
 function createConcatRemap(receiver, items) {
     const prepared = items.map(item => {
         return arrayViews.isLogicalArray(item)
-            ? arrayRemaps.createInitialRemap(item)
+            ? arrayRemaps.createRemap(item)
             : item
     })
     return invocation.invokeDataFunctionOrPoison(
@@ -236,7 +256,7 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
             "Cannot flat an Array cycle to unlimited depth",
         )
     }
-    const source = arrayRemaps.createInitialRemap(array)
+    const source = arrayRemaps.createRemap(array)
     const output = new Array(source.length)
     const pending = []
     const nestedAncestry = depth === Infinity
@@ -332,7 +352,7 @@ function prepareAndSortAndRemap(
 ) {
     const records = []
     let holeCount = 0
-    const source = arrayRemaps.createInitialRemap(thisValue)
+    const source = arrayRemaps.createRemap(thisValue)
     for (let index = 0; index < source.length; index++) {
         const origin = source[index]
         if (!origin) {
@@ -531,23 +551,17 @@ function normalizeBackwardStart(fromIndex, length) {
         : fromIndex >= 0 ? Math.min(fromIndex, length - 1) : length + fromIndex
 }
 
-function relativeIndex(value, length, defaultValue) {
+function toRelativeIndex(value, length, defaultValue) {
     if (value === undefined) return defaultValue
+    try {
+        value = +value
+    } catch (error) {
+        return errorUtils.toPoison(error)
+    }
     value = Number.isNaN(value) ? 0 : Math.trunc(value)
     return value < 0
         ? Math.max(length + value, 0)
         : Math.min(value, length)
-}
-
-function trySliceArrayView(thisValue, args) {
-    if (args.some(value => {
-        return value !== undefined && typeof value !== "number"
-    })) return undefined
-
-    const length = arrayViews.logicalArrayLength(thisValue)
-    const start = relativeIndex(args[0], length, 0)
-    const end = Math.max(start, relativeIndex(args[1], length, length))
-    return deriveArrayView(thisValue, start, end)
 }
 
 function tryShiftArrayView(thisValue) {
@@ -569,12 +583,9 @@ function deriveArrayView(thisValue, start, end) {
     propertyVersions.prepareRetainedArrayProperties(
         thisValue,
         view,
-        key => {
-            const index = Number(key)
-            return index >= start && index < end
-                ? String(index - start)
-                : undefined
-        },
+        start,
+        end,
+        -start,
     )
     return view
 }
@@ -608,7 +619,9 @@ function tryPrependArrayView(thisValue, values) {
         derived => propertyVersions.prepareRetainedArrayProperties(
             thisValue,
             derived,
-            key => String(Number(key) + offset),
+            0,
+            arrayViews.logicalArrayLength(thisValue),
+            offset,
         ),
     )
     if (!view) return undefined

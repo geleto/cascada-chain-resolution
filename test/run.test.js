@@ -947,6 +947,153 @@ describe("run", () => {
         expect(getRefCounter(result)).to.be(undefined)
     })
 
+    it("keeps slice reflection inside the selected range", () => {
+        const runtime = createProbe()
+        const view = run(
+            new Chain(runtime.value),
+            [],
+            "slice",
+            false,
+            500,
+            502,
+        )
+
+        expect([...view]).to.eql(["inside", undefined])
+        expect(runtime.ownKeyScans()).to.be(0)
+        expect(runtime.inspected.every(inRange)).to.be(true)
+        expect(runtime.inspected.includes(500)).to.be(true)
+
+        runtime.reset()
+        const exported = exportValue(new Chain(view), [])
+        expect(exported.length).to.be(2)
+        expect(Object.keys(exported)).to.eql(["0"])
+        expect(runtime.ownKeyScans()).to.be(0)
+        expect(runtime.inspected.every(inRange)).to.be(true)
+
+        const external = createProbe()
+        importValue(external.value, "bounded slice")
+        external.reset()
+        let conversions = 0
+        function start() {}
+        start.valueOf = () => {
+            conversions++
+            return 500
+        }
+        const sliced = run(
+            new Chain(external.value),
+            [],
+            "slice",
+            false,
+            start,
+            502,
+        )
+
+        expect(Array.isArray(sliced)).to.be(true)
+        expect(sliced.length).to.be(2)
+        expect(Object.keys(sliced)).to.eql(["0"])
+        expect(conversions).to.be(1)
+        expect(external.ownKeyScans()).to.be(0)
+        expect(external.inspected.every(inRange)).to.be(true)
+
+        external.reset()
+        const full = run(new Chain(external.value), [], "slice", false)
+        expect(full.length).to.be(1000)
+        expect(Object.keys(full)).to.eql(["0", "500", "999"])
+        expect(external.ownKeyScans()).to.be(1)
+
+        function inRange(index) {
+            return index >= 500 && index < 502
+        }
+
+        function createProbe() {
+            const target = new Array(1000)
+            target[0] = "before"
+            target[500] = "inside"
+            target[999] = "after"
+            const inspected = []
+            let ownKeyScans = 0
+            const value = new Proxy(target, {
+                ownKeys(target) {
+                    ownKeyScans++
+                    return [...Reflect.ownKeys(target), "1001"]
+                },
+                getOwnPropertyDescriptor(target, key) {
+                    if (arrayViews.isArrayIndex(String(key))) {
+                        inspected.push(Number(key))
+                    }
+                    if (key === "1001") {
+                        return {
+                            value: "outside",
+                            enumerable: true,
+                            writable: true,
+                            configurable: true,
+                        }
+                    }
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+                get(target, key, receiver) {
+                    return key === "1001"
+                        ? "outside"
+                        : Reflect.get(target, key, receiver)
+                },
+            })
+            return {
+                inspected,
+                value,
+                ownKeyScans: () => ownKeyScans,
+                reset() {
+                    inspected.length = 0
+                    ownKeyScans = 0
+                },
+            }
+        }
+    })
+
+    it("preserves failing slice bound conversion order", () => {
+        const slice = (...bounds) => run(
+            new Chain([1, 2]),
+            [],
+            "slice",
+            false,
+            ...bounds,
+        )
+        for (const bound of [Symbol(), 1n]) {
+            expect(slice(bound) instanceof Error).to.be(true)
+        }
+
+        const failure = new Error("slice start conversion failed")
+        let endConversions = 0
+        function start() {}
+        function end() {}
+        start.valueOf = () => {
+            throw failure
+        }
+        end.valueOf = () => {
+            endConversions++
+            return 2
+        }
+
+        expect(slice(start, end)).to.be(failure)
+        expect(endConversions).to.be(0)
+    })
+
+    it("reports slice source reflection as fatal", () => {
+        const failure = new Error("slice reflection failed")
+        const source = new Proxy([1], {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "0") throw failure
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        function start() {}
+
+        const thrown = thrownBy(() => {
+            run(new Chain(source), [], "slice", false, start)
+        })
+
+        expect(thrown).to.be(failure)
+    })
+
     it("preserves imported cycles through structural mutations", () => {
         const cases = [
             ["reverse", []],
@@ -970,9 +1117,10 @@ describe("run", () => {
         }
     })
 
-    it("does not scan unused sparse indexes while remapping", () => {
+    it("does not inspect sparse holes in full-range Array operations", () => {
         const length = 10000
         const cases = [
+            ["slice", false, []],
             ["push", true, [3]],
             ["pop", true, []],
             ["fill", true, [3, length - 2, length - 1]],

@@ -230,12 +230,9 @@ function deleteLanguageProperty(parent, key) {
 }
 
 function enumerableLanguageKeys(value) {
-    value = arrayViews.projectionOf(value)
-    if (arrayViews.isArrayView(value)) return value.keys()
-    const keys = Object.keys(value)
-    return Array.isArray(value)
-        ? keys.filter(arrayViews.isArrayIndex)
-        : keys
+    return arrayViews.isLogicalArray(value)
+        ? arrayViews.enumerableArrayKeys(value)
+        : Object.keys(value)
 }
 
 export {
