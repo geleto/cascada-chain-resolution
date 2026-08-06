@@ -132,7 +132,6 @@ function getErrors(chain, path) {
         if (languageValues.isError(value)) {
             strategy.foundError(value)
         } else if (languageValues.isTracked(value)) {
-            propertyVersions.buildRefIndex(value)
             readiness = collectFencedErrorWaits(value, strategy)
         }
         return readiness
@@ -152,6 +151,7 @@ function collectFencedErrorWaits(
     strategy,
     visited = new WeakSet(),
 ) {
+    propertyVersions.buildRefIndex(value)
     const waits = []
     walk(value)
     return waits.length === 0 ? undefined : Promise.all(waits)

@@ -204,7 +204,6 @@ function publishValue(
     // Check liveness before applying this version's captured writeback policy.
     if (!isLivePromiseMirror(owner, key, mirror)) {
         mirror.value = value
-        indexValueIfSourceIndexed(owner, value)
         return
     }
 

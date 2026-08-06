@@ -85,29 +85,26 @@ Verification:
 
 ## Phase 4: Make detached-result indexing consumer-driven
 
-Status: pending.
+Status: complete.
 
-When a detached or displaced version settles, publication stores `mirror.value` and then eagerly ref-indexes it because the former owner was indexed. That walk discovers nested Promise placements, installs their mirrors, and registers their first resolvers through structural discovery alone. Deferring only counter allocation retains the traversal and is not worthwhile; remove the walk instead.
+Detached or displaced settlement stores `mirror.value` without ref-index preparation. Eager preparation would inspect unrelated result data, discover nested Promise placements, and register their first resolvers through structural discovery alone; deferring only counter allocation would retain that traversal.
 
 The runtime already publishes unindexed values wherever the owner is unindexed — entered roots and plain state holders — so consumers already read detached values logically and discover their nested Promises through the ordinary first-discovery path. The audit of detached-mirror consumers finds exactly one that reads maintained counters: the fenced error walk shared by `hasError` and `getErrors`. The design is therefore:
 
 - detached and displaced settlement stores `mirror.value` without ref-index preparation; imported settlement keeps its admission and Promise-placement discovery, which run before the liveness check and are independent of ref indexing;
-- the fenced error walk indexes each resolved value at its own FIFO position in its Promise continuation — idempotent when the value is already indexed, and exactly how `hasError` and `getErrors` already index their entry value; and
+- the fenced error walk indexes each value at entry; for a resolved Promise value this happens at the consumer's own FIFO position and is idempotent when already indexed; and
 - no other consumer changes: mutation descent, observation continuations, raw export, and remap origins read logical values and need no counters.
 
 Index construction at the consumer creates mirrors for the Promise properties it discovers, preserving the invariant that an indexed owner mirrors every Promise property. A Promise first reached after settlement follows the ordinary first-discovery asynchronous path; eager counter timing is not independently contractual, and publication after detachment does not write physically.
 
-Implementation must still confirm the audit through the suite: already-settled nested Promises, recursive Error search, export, path operations, cycles, rejection conversion, and same-source FIFO ordering. The tests named `ref-indexes a detached mirror's private resolved branch` and `indexes private non-extensible values from detached mirrors` must verify public behavior — Error collection through the captured version — rather than require eager counters.
+Complexity result: publication no longer inspects a detached result. The fenced error walk establishes its own indexing prerequisite, so root and Promise-resumed searches use one mechanism. Production source loses one line and gains no state, mode, flag, adapter, or alternate discovery path.
 
-Acceptance:
+Verification:
 
-- settlement does not create a ref index or nested mirrors solely because the detached value's former owner was indexed;
-- every consumer preserves its observable result and ordering; and
-- the implementation removes the eager walk without adding consumer flags, adapter state, or a second discovery mechanism.
-
-If these conditions cannot be met this simply, retain eager preparation and record why it is load-bearing.
-
-Complexity gate: this phase should remove eager work with a local change at publication and the counter-dependent consumer. Add no mirror mode, consumer flag, persisted state, or alternate discovery mechanism.
+- settling an unconsumed runtime-owned detached version neither enumerates its result nor creates its ref index or nested Promise mirrors; imported settlement still performs its independent admission walk;
+- Error collection through a captured detached version still finds direct Errors, follows nested Promises, and supports imported non-extensible values;
+- already-settled nested Promises, recursive Error search, export, path operations, cycles, rejection conversion, and same-source FIFO ordering retain their behavior; and
+- the complete suite passes with inline and WeakMap metadata.
 
 ## Phase 5: Evaluate bounded ref-index maintenance for bulk Array changes
 

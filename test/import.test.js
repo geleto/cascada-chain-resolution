@@ -1722,7 +1722,7 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("indexes private non-extensible values from detached mirrors", async () => {
+    it("collects private non-extensible values from detached mirrors", async () => {
         const pending = deferred()
         const errorValue = Object.freeze({ bad: new Error("bad") })
         const root = { value: pending.promise }
@@ -1730,18 +1730,15 @@ describe("import", () => {
 
         importValue(errorValue, "detached resolution")
         buildRefIndex(root)
-        const mirror = metaOf(root).mirrors.value
+        const errors = getErrors(chain, ["value"])
         assignPath(chain, ["value"], "fixed")
 
         pending.resolve(errorValue)
-        await flushMicrotasks()
 
+        expect((await errors)[0]).to.be(errorValue.bad)
         expect(root.value).to.be("fixed")
-        expect(mirror.value).to.be(errorValue)
-        expectCounts(errorValue, 0, 1)
-        expect(getErrors(new Chain(errorValue), [])[0]).to.be(errorValue.bad)
         expectCounts(root, 0, 0)
-        verifyRefCounts(root)
+        verifyRefCounts(root, errorValue)
     })
 
     it("marks imported Promise values that reach their target", async () => {

@@ -871,13 +871,15 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("ref-indexes a detached mirror's private resolved branch", async () => {
+    it("does not inspect a detached resolved branch without a consumer", async () => {
         const outer = deferred()
-        const inner = deferred()
-        const resolved = {
-            bad: new Error("bad"),
-            nested: { pending: inner.promise },
-        }
+        let reflections = 0
+        const resolved = new Proxy({}, {
+            ownKeys(target) {
+                reflections++
+                return Reflect.ownKeys(target)
+            },
+        })
         const root = { value: outer.promise }
         const chain = new Chain(root)
 
@@ -888,20 +890,10 @@ describe("subtree counters", () => {
         outer.resolve(resolved)
         await flushMicrotasks()
 
-        const counter = getRefCounter(resolved)
         expect(root.value).to.be("fixed")
         expect(mirror.value).to.be(resolved)
-        expect(counter).not.to.be(undefined)
-        expect(counter.promiseCount).to.be(1)
-        expect(counter.errorCount).to.be(1)
-        expect(counter.parents.size).to.be(0)
-        verifyRefCounts(root, resolved)
-
-        inner.resolve("done")
-        await flushMicrotasks()
-
-        expect(getRefCounter(resolved).promiseCount).to.be(0)
-        verifyRefCounts(root, resolved)
+        expect(reflections).to.be(0)
+        verifyRefCounts(root)
     })
 
     it("keeps one count when the same promise is assigned again", async () => {
