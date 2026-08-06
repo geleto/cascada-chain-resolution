@@ -9,31 +9,30 @@ class Chain {
                 new TypeError("Chain requires an exact mutates Boolean"),
             )
         }
-        this._state = {
-            value: initialValue,
-            mutates,
-        }
+        this._state = { value: initialValue }
+        this._mutates = mutates
     }
 
-    // Check issuance once, at the public operation boundary. Continuations
-    // registered before closure keep their captured mirror positions.
+    // Validate and return the issuance mode at the public operation boundary.
+    // Continuations registered before closure keep their captured positions.
     assertState() {
         const state = this._state
-        const mutates = state?.mutates
+        const mutates = this._mutates
         if (
             !state ||
-            !hasOwn.call(state, "mutates") ||
+            !hasOwn.call(this, "_mutates") ||
             (mutates !== true && mutates !== false)
         ) {
             errorUtils.reportFatalError(
                 new Error("Cannot use a closed Chain"),
             )
         }
+        return mutates
     }
 
     close() {
         this.assertState()
-        delete this._state.mutates
+        delete this._mutates
     }
 }
 

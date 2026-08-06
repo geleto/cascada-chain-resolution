@@ -54,13 +54,13 @@ class ArrayView {
     static tryExtendEnd(source, count, beforeWrite) {
         if (!ArrayView.canGrowEnd(source, count)) return
         const view = ArrayView.tryAttachTo(source)
-        return view?.#extendEnd(count, beforeWrite)
+        if (view) return view.#extendEnd(count, beforeWrite)
     }
 
     static tryPrepend(source, values, beforeWrite) {
         if (!ArrayView.#canPrepend(source, values.length)) return
         const view = ArrayView.tryAttachTo(source)
-        return view?.#prepend(values, beforeWrite)
+        if (view) return view.#prepend(values, beforeWrite)
     }
 
     static #canPrepend(source, count) {
@@ -246,6 +246,13 @@ function isLogicalArray(value) {
     return Array.isArray(value) || isArrayView(value)
 }
 
+function hasArrayAncestor(ancestry, array) {
+    for (let current = ancestry; current; current = current.parent) {
+        if (current.array === array) return true
+    }
+    return false
+}
+
 function attachedViewOf(value) {
     return Array.isArray(value)
         ? metadata.metaOf(value)?.arrayView
@@ -284,6 +291,7 @@ function isArrayIndex(key) {
 export {
     ArrayView,
     backingOf,
+    hasArrayAncestor,
     isArrayIndex,
     isArrayView,
     isLogicalArray,

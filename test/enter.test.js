@@ -25,6 +25,10 @@ import {
     verifyRefCounts,
 } from "./support.js"
 
+function expectClosed(chain) {
+    expect(thrownBy(() => readPath(chain, []))).to.be.an(Error)
+}
+
 describe("enter", () => {
     it("validates its compiler facts", () => {
         const chain = new Chain({})
@@ -92,7 +96,6 @@ describe("enter", () => {
 
         expect(result).to.be("updated")
         expect(root.position instanceof Promise).to.be(true)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
         expect(thrownBy(() => assignPath(entered, ["x"], 3)))
             .to.be.an(Error)
 
@@ -126,7 +129,7 @@ describe("enter", () => {
         completion.resolve("observed")
         expect(await result).to.be("observed")
         expect(metaOf(branch).readEnterCount).to.be(undefined)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
     })
 
     it("counts overlapping read entries independently", async () => {
@@ -355,7 +358,7 @@ describe("enter", () => {
         assignPath(entered, ["value"], 2)
         completion.resolve("done")
         expect(await result).to.be("done")
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
         await flushMicrotasks()
         expect(root.target.value).to.be(2)
     })
@@ -367,10 +370,10 @@ describe("enter", () => {
         let readChain
         let issued
 
-        expect(chain._state.mutates).to.be(true)
         const result = enter(chain, ["target"], false, entered => {
             readChain = entered
-            expect(entered._state.mutates).to.be(false)
+            expect(thrownBy(() => assignPath(entered, ["blocked"], true)))
+                .to.be.an(Error)
             issued = lookupPath(
                 entered,
                 ["pending", "value"],
@@ -386,11 +389,13 @@ describe("enter", () => {
         pending.resolve({ value: 3 })
         expect(await issued).to.be(3)
 
-        let mutatingCapability
+        let mutationFailure
         enter(chain, ["target"], true, entered => {
-            mutatingCapability = entered._state.mutates
+            mutationFailure = thrownBy(() => {
+                assignPath(entered, ["allowed"], true)
+            })
         })
-        expect(mutatingCapability).to.be(true)
+        expect(mutationFailure).to.be(undefined)
     })
 
     it("starts a successor mutation before its predecessor publishes", async () => {
@@ -1006,7 +1011,7 @@ describe("enter", () => {
         expect(caught).to.be(failure)
         expect(reported).to.be(failure)
         expect(metaOf(branch).readEnterCount).to.be(undefined)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
     })
 
     it("closes a delayed mutating callback throw without publication", async () => {
@@ -1042,7 +1047,7 @@ describe("enter", () => {
 
         expect(caught).to.be(failure)
         expect(reported).to.be(failure)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
         let gateSettled = false
         gate.then(() => {
             gateSettled = true
@@ -1079,7 +1084,7 @@ describe("enter", () => {
         expect(caught).to.be(failure)
         expect(reported).to.be(failure)
         expect(metaOf(branch).readEnterCount).to.be(undefined)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
     })
 
     it("closes a failed mutating entry without publishing it", async () => {
@@ -1101,7 +1106,7 @@ describe("enter", () => {
 
         const gate = root.target
         expect(gate instanceof Promise).to.be(true)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
         await flushMicrotasks()
         expect(root.target).to.be(gate)
     })
@@ -1128,7 +1133,7 @@ describe("enter", () => {
         }
 
         expect(caught).to.be(failure)
-        expect(Object.hasOwn(entered._state, "mutates")).to.be(false)
+        expectClosed(entered)
         await flushMicrotasks()
         expect(root.target).to.be(gate)
     })

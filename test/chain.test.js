@@ -46,6 +46,12 @@ describe("Chain root state", () => {
         expect(await issued).to.be(2)
     })
 
+    it("keeps its capability outside the language graph", () => {
+        const chain = new Chain({})
+
+        expect(Object.keys(chain._state)).to.eql(["value"])
+    })
+
     it("keeps host fields outside the language graph", () => {
         const chain = new Chain({ clean: true })
         chain._hostError = new Error("host error")

@@ -37,8 +37,8 @@ function toPrimitiveValue(value, ancestry) {
         value,
         resolved => {
             if (arrayViews.isLogicalArray(resolved)) {
-                for (let current = ancestry; current; current = current.parent) {
-                    if (current.array === resolved) return ""
+                if (arrayViews.hasArrayAncestor(ancestry, resolved)) {
+                    return ""
                 }
                 return joinLogicalArray(
                     resolved,

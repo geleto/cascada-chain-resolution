@@ -309,9 +309,9 @@ function walkMutationPath(
     onComplete = undefined,
     tryTargetMutation = undefined,
 ) {
-    chain.assertState()
+    const mutates = chain.assertState()
     const state = chain._state
-    if (!state.mutates) {
+    if (!mutates) {
         errorUtils.reportFatalError(
             new Error("Cannot mutate through a read-only Chain"),
         )

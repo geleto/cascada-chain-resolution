@@ -1,12 +1,14 @@
 import { Chain } from "../../src/chain.js"
 import { enter } from "../../src/enter.js"
 import { setFatalErrorReporter } from "../../src/error.js"
+import { readPath } from "../../src/observations.js"
 
 const reported = []
 const unhandled = []
-setFatalErrorReporter(error => {
+const reportFatal = error => {
     reported.push(error)
-})
+}
+setFatalErrorReporter(reportFatal)
 process.on("unhandledRejection", error => {
     unhandled.push(error)
 })
@@ -20,11 +22,20 @@ enter(new Chain(root), ["target"], true, privateChain => {
 })
 const gate = root.target
 
+let closed = false
+setFatalErrorReporter()
+try {
+    readPath(entered, [])
+} catch {
+    closed = true
+}
+setFatalErrorReporter(reportFatal)
+
 await new Promise(resolve => setImmediate(resolve))
 await new Promise(resolve => setImmediate(resolve))
 
 console.log(JSON.stringify({
-    closed: !Object.hasOwn(entered._state, "mutates"),
+    closed,
     gateRemainsPending: root.target === gate,
     message: reported[0]?.message,
     reportCount: reported.length,

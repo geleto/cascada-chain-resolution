@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This document applies the first principles in `AGENTS.md` to source-wide refactoring. It starts from Cascada's fixed observable contracts and seeks the simplest general mechanisms that make special state, paths, and coupling unnecessary. `AGENTS.md` is authoritative; these proposals should be removed as they are completed.
+This document applies the first principles in `AGENTS.md` to source-wide refactoring. It starts from Cascada's fixed observable contracts and seeks the simplest general mechanisms that make special state, paths, and coupling unnecessary. `AGENTS.md` is authoritative; this document retains each proposal and its evaluated outcome.
 
-The remaining opportunities are independent. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
+The opportunities are independent. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
 
 ## Fixed contract: opaque method receivers
 
@@ -22,13 +22,19 @@ Use one named counter-fence predicate throughout Error search. Select first-erro
 
 Do not force both through a generic race abstraction. `includes` has a fixed pending set, whereas Error search can discover nested pending work after settlement.
 
+Outcome: kept. Explicit strategies removed the mixed-mode state object and reduced the implementation.
+
 ### Name path ancestry
 
 Unlimited Array flattening and recursive Array-to-string conversion use the same linked ancestry check. If a natural low-level home exists while those areas are edited, give this per-path cycle discipline one named helper. It must remain distinct from a global visited set, which would suppress legitimate revisits through separate paths.
 
+Outcome: kept. Logical Array handling now owns the shared exact-identity ancestry predicate.
+
 ### Keep Chain capability off the language surface
 
-The Chain state holder participates in language-property and refcount machinery, so its own enumerable string keys are language-graph edges. `mutates` is an issuance capability, not language data. Keep the same exact Boolean and close-by-removal contract, but store it under a private Symbol or another non-language key. Verify mutable, read-only, closed, and entered Chains through public behavior, with a focused invariant test for ref-indexed state.
+The Chain state holder participates in language-property and refcount machinery, so its own enumerable string keys are language-graph edges. `_mutates` is an issuance capability, not language data. Keep the same exact Boolean and close-by-removal contract, but store it on the host Chain instead of its language state. Verify mutable, read-only, closed, and entered Chains through public behavior, with a focused invariant test for the state graph.
+
+Outcome: kept. The exact capability is now outside the language surface, while closure still removes it.
 
 ## Deliberate non-candidates
 
@@ -56,7 +62,7 @@ Most remap complexity follows sparse native behavior, partial failures, result o
 
 ### A separate Chain `closed` flag
 
-The presence of the exact `mutates` Boolean is the Chain's issuance capability. Removing it closes that capability while already-captured state remains available to continuations. Moving that fact off the language surface is useful; adding a second flag would persist a duplicate fact that can disagree with the first.
+The presence of the exact `_mutates` Boolean is the Chain's issuance capability. Removing it closes that capability while already-captured state remains available to continuations. Moving that fact off the language surface is useful; adding a second flag would persist a duplicate fact that can disagree with the first.
 
 Error-query and ancestry cleanups should land only when they simplify touched code without introducing a new framework. Stack-depth changes should accompany their owning area; moving Chain capability off the language surface can land independently.
 
@@ -66,7 +72,7 @@ Each refactoring should remove the mechanisms it supersedes in the same change a
 
 ## Baseline
 
-Verified after the property-policy refactoring on 2026-08-06. The complete suite passed in both metadata modes:
+Verified after the evaluated independent refactorings on 2026-08-06. The complete suite passed in both metadata modes:
 
-- 642 tests with inline metadata; and
-- 642 tests with WeakMap metadata.
+- 643 tests with inline metadata; and
+- 643 tests with WeakMap metadata.

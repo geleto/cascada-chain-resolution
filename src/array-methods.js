@@ -228,14 +228,13 @@ function flatRemap(thisValue, depth) {
 }
 
 function prepareFlatArray(array, depth, ancestry = undefined) {
-    if (depth === Infinity) {
-        for (let current = ancestry; current; current = current.parent) {
-            if (current.array === array) {
-                return new RangeError(
-                    "Cannot flat an Array cycle to unlimited depth",
-                )
-            }
-        }
+    if (
+        depth === Infinity &&
+        arrayViews.hasArrayAncestor(ancestry, array)
+    ) {
+        return new RangeError(
+            "Cannot flat an Array cycle to unlimited depth",
+        )
     }
     const source = arrayRemaps.createInitialRemap(array)
     const output = new Array(source.length)

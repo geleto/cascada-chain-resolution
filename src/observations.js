@@ -85,7 +85,7 @@ function hasErrorAtPathValue(value) {
     propertyVersions.buildRefIndex(value)
     const counter = refcounts.getRequiredRefCounter(value)
     if (counter.errorCount > 0) return true
-    if (counter.cycleCutCount === 0 && counter.promiseCount === 0) return false
+    if (!counterHasErrorSearchWork(counter)) return false
     return searchForFirstError(value)
 }
 
@@ -94,11 +94,15 @@ function hasErrorAtPathValue(value) {
 function searchForFirstError(value) {
     let found = false
     let resolveError
-    const state = createErrorSearchState(() => {
-        found = true
-        if (resolveError) resolveError(true)
-    })
-    const readiness = collectFencedErrorWaits(value, state)
+    const strategy = {
+        stopsAtCountedError: true,
+        shouldStop: () => found,
+        foundError() {
+            found = true
+            if (resolveError) resolveError(true)
+        },
+    }
+    const readiness = collectFencedErrorWaits(value, strategy)
     if (found) return true
     if (!readiness) return false
 
@@ -118,80 +122,65 @@ function getErrors(chain, path) {
     })
 
     function finish(value) {
-        const state = createErrorSearchState()
+        const errors = new Set()
+        const strategy = {
+            stopsAtCountedError: false,
+            shouldStop: () => false,
+            foundError: error => errors.add(error),
+        }
         let readiness
         if (languageValues.isError(value)) {
-            state.foundError(value)
+            strategy.foundError(value)
         } else if (languageValues.isTracked(value)) {
             propertyVersions.buildRefIndex(value)
-            readiness = collectFencedErrorWaits(value, state)
+            readiness = collectFencedErrorWaits(value, strategy)
         }
         return readiness
             ? resolution.resolveOperationResultOrFatal(
                 readiness,
-                () => [...state.errors],
+                () => [...errors],
             )
-            : [...state.errors]
+            : [...errors]
     }
-}
-
-function createErrorSearchState(onError) {
-    const firstErrorOnly = onError !== undefined
-    const state = {
-        errors: firstErrorOnly ? undefined : new Set(),
-        firstErrorOnly,
-        stopped: false,
-        visited: new WeakSet(),
-        foundAnyError() {
-            if (state.stopped) return
-            state.stopped = true
-            onError()
-        },
-        foundError(error) {
-            if (state.firstErrorOnly) {
-                state.foundAnyError()
-                return
-            }
-            state.errors.add(error)
-        },
-    }
-    return state
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
-function collectFencedErrorWaits(value, state) {
+function collectFencedErrorWaits(
+    value,
+    strategy,
+    visited = new WeakSet(),
+) {
     const waits = []
     walk(value)
     return waits.length === 0 ? undefined : Promise.all(waits)
 
     function walk(node) {
-        if (state.stopped) return
-        if (state.visited.has(node)) return
-        state.visited.add(node)
+        if (strategy.shouldStop() || visited.has(node)) return
+        visited.add(node)
 
         const counter = refcounts.getRequiredRefCounter(node)
-        if (state.firstErrorOnly && counter.errorCount > 0) {
-            state.foundAnyError()
+        if (strategy.stopsAtCountedError && counter.errorCount > 0) {
+            strategy.foundError()
             return
         }
-        if (!hasErrorQueryWork(counter)) return
+        if (!counterHasErrorSearchWork(counter)) return
 
         const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of languageProperties.enumerableLanguageKeys(node)) {
-            if (state.stopped) break
+            if (strategy.shouldStop()) break
             const child = languageProperties.readLanguageProperty(node, key)
 
             if (hasCycleCuts && refcounts.hasCycleCut(node, key)) {
                 walk(child)
             } else if (languageValues.isError(child)) {
-                state.foundError(child)
+                strategy.foundError(child)
             } else if (languageValues.isPromise(child)) {
                 waits.push(collectPromiseErrors(node, key, child))
             } else if (languageValues.isTracked(child)) {
                 const childCounter = refcounts.getRequiredRefCounter(child)
-                if (hasErrorQueryWork(childCounter)) {
+                if (counterHasErrorSearchWork(childCounter)) {
                     walk(child)
                 }
             }
@@ -204,20 +193,20 @@ function collectFencedErrorWaits(value, state) {
             key,
             promise,
             value => {
-                if (state.stopped) return undefined
+                if (strategy.shouldStop()) return undefined
                 if (languageValues.isError(value)) {
-                    state.foundError(value)
+                    strategy.foundError(value)
                     return undefined
                 }
                 if (!languageValues.isTracked(value)) return undefined
 
-                return collectFencedErrorWaits(value, state)
+                return collectFencedErrorWaits(value, strategy, visited)
             },
         )
     }
 }
 
-function hasErrorQueryWork(counter) {
+function counterHasErrorSearchWork(counter) {
     return counter.promiseCount > 0 ||
         counter.errorCount > 0 ||
         counter.cycleCutCount > 0
