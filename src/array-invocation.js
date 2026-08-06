@@ -1,29 +1,26 @@
 import * as arrayRemaps from "./array-remap.js"
-import * as arrayViews from "./array-view.js"
 import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
-import * as metadata from "./meta.js"
-import * as methods from "./array-methods.js"
+import { ARRAY_METHODS, RECEIVER_RESULT } from "./array-methods.js"
 import { exportArgument } from "./observations.js"
-import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 function isArrayMutator(method) {
-    return methods.ARRAY_METHODS[method]?.mutate === true
+    return ARRAY_METHODS[method]?.mutationResult !== undefined
 }
 
 function isArrayMethod(method) {
-    return methods.ARRAY_METHODS[method] !== undefined
+    return ARRAY_METHODS[method] !== undefined
 }
 
 function prepareArrayMethodArguments(method, args) {
-    const definition = methods.ARRAY_METHODS[method]
+    const definition = ARRAY_METHODS[method]
     return args.find(languageValues.isError) ??
         (definition.prepare
             ? definition.prepare(args)
-            : getExportedArrayArguments())
+            : prepareDeclaredArguments())
 
-    function getExportedArrayArguments() {
+    function prepareDeclaredArguments() {
         const mask = definition.exportArgs ?? []
         const fixedCount = Math.min(mask.length, args.length)
         const prepared = new Array(
@@ -56,42 +53,37 @@ function prepareArrayMethodArguments(method, args) {
     }
 }
 
-function invokeArrayObservationMethod(
-    thisValue,
-    method,
-    args,
-) {
-    const definition = methods.ARRAY_METHODS[method]
-    const preparedArguments = prepareArrayMethodArguments(method, args)
+function invokeArrayObservationMethod(thisValue, method, args) {
+    const definition = ARRAY_METHODS[method]
     return resolution.continueOperationUnlessPoison(
-        preparedArguments,
+        prepareArrayMethodArguments(method, args),
         preparedArgs => {
             if (definition.view) {
-                const arrayView = tryArrayViewMethod(
-                    thisValue,
-                    method,
-                    preparedArgs,
-                )
-                if (arrayView !== undefined) return arrayView
+                const view = definition.view(thisValue, preparedArgs)
+                if (view !== undefined) return view
+            }
+            if (definition.observe) {
+                return definition.observe(thisValue, preparedArgs)
             }
 
-            const implementation = definition.implementation ?? methods[method]
-            if (implementation) {
-                return implementation(thisValue, preparedArgs)
+            let remap
+            if (definition.remap) {
+                remap = definition.remap(thisValue, preparedArgs)
+            } else {
+                remap = arrayRemaps.createInitialRemap(thisValue)
+                const result = invocation.invokeDataFunctionOrPoison(
+                    Array.prototype[method],
+                    remap,
+                    preparedArgs,
+                )
+                if (languageValues.isError(result)) return result
+                // Mutators change the receiver remap; other methods return one.
+                if (!definition.mutationResult) remap = result
             }
-            const remap = arrayRemaps.createInitialRemap(thisValue)
-            const nativeResult = invocation.invokeDataFunctionOrPoison(
-                Array.prototype[method],
+            return resolution.continueOperationUnlessPoison(
                 remap,
-                preparedArgs,
+                arrayRemaps.createArrayFromRemap,
             )
-            if (languageValues.isError(nativeResult)) return nativeResult
-            if (definition.mutate) {
-                return arrayRemaps.createArrayFromRemap(remap)
-            }
-            return definition.transformResult
-                ? definition.transformResult(nativeResult)
-                : nativeResult
         },
     )
 }
@@ -100,162 +92,65 @@ function invokeArrayMutationMethod(
     thisValue,
     method,
     preparedArguments,
-    replaceReceiver,
+    sourceSurvives,
 ) {
-    const definition = methods.ARRAY_METHODS[method]
     if (languageValues.isError(preparedArguments)) return preparedArguments
-    if (definition.view && replaceReceiver) {
-        const arrayView = tryArrayViewMethod(
-            thisValue,
-            method,
-            preparedArguments,
-        )
-        if (arrayView !== undefined) {
-            let result = arrayView.length
-            if (definition.transformResult) {
-                const length = arrayViews.logicalArrayLength(thisValue)
-                const origin = length > 0
-                    ? propertyVersions.getPropertyOrigin(
-                        thisValue,
-                        String(method === "shift" ? 0 : length - 1),
-                    )
-                    : undefined
-                result = definition.transformResult(origin)
+    const definition = ARRAY_METHODS[method]
+    if (sourceSurvives && definition.view) {
+        const view = definition.view(thisValue, preparedArguments)
+        if (view !== undefined) {
+            if (languageValues.isError(view)) return view
+            return {
+                mutatedValue: view,
+                result: definition.mutationResult(
+                    definition.viewOperationResult(thisValue, view),
+                    sourceSurvives,
+                ),
             }
-            return { mutatedValue: arrayView, result }
         }
     }
 
-    if (definition.mutationRemap) {
+    if (definition.remap) {
         return resolution.continueOperationUnlessPoison(
-            definition.mutationRemap(thisValue, preparedArguments),
-            remap => commitArrayMutation(remap),
+            definition.remap(thisValue, preparedArguments),
+            remap => finishMutation(remap, undefined, remap),
         )
     }
+
     const { remap, working, operations } =
-        arrayRemaps.createMutationRemap(thisValue, !replaceReceiver)
+        arrayRemaps.createMutationRemap(thisValue, !sourceSurvives)
     const nativeResult = invocation.invokeDataFunctionOrPoison(
         Array.prototype[method],
         working,
         preparedArguments,
     )
-    if (languageValues.isError(nativeResult)) return nativeResult
+    return languageValues.isError(nativeResult)
+        ? nativeResult
+        : finishMutation(remap, operations, nativeResult)
 
-    let result = nativeResult
-    if (nativeResult !== working && definition.transformResult) {
-        result = definition.transformResult(nativeResult, replaceReceiver)
-    }
-    const outcome = commitArrayMutation(remap, operations)
-    if (languageValues.isError(outcome.result) || nativeResult === working) {
-        return outcome
-    }
-    return { mutatedValue: outcome.mutatedValue, result }
+    function finishMutation(remap, operations, operationResult) {
+        const returnsReceiver =
+            definition.mutationResult === RECEIVER_RESULT
+        // Capture removed property versions before committing the receiver.
+        const result = returnsReceiver
+            ? undefined
+            : definition.mutationResult(operationResult, sourceSurvives)
 
-    function commitArrayMutation(remap, operations) {
-        if (replaceReceiver) {
-            const mutatedValue = arrayRemaps.createArrayFromRemap(remap)
-            return { mutatedValue, result: mutatedValue }
+        const mutatedValue = sourceSurvives
+            ? arrayRemaps.createArrayFromRemap(remap)
+            : thisValue
+        const error = sourceSurvives
+            ? undefined
+            : arrayRemaps.applyRemapToArray(
+                thisValue,
+                remap,
+                operations,
+            )
+        return {
+            mutatedValue,
+            result: error ?? (returnsReceiver ? mutatedValue : result),
         }
-
-        const error = arrayRemaps.applyRemapToArray(
-            thisValue, remap, operations,
-        )
-        return { mutatedValue: thisValue, result: error ?? thisValue }
     }
-}
-
-// thisValue can be an Array, ArrayView, or Array with an attached ArrayView.
-function tryArrayViewMethod(
-    thisValue,
-    method,
-    args,
-) {
-    // Imported Arrays materialize; ArrayView backing is always runtime-owned.
-    if (metadata.importBoundaryOf(thisValue)) {
-        return undefined
-    }
-    if (method === "slice") return trySliceArrayView(thisValue, args)
-    if (method === "concat") return tryConcatArrayView(thisValue, args)
-    if (method === "push") return tryAppendArrayView(thisValue, args)
-    if (method === "unshift") return tryPrependArrayView(thisValue, args)
-
-    // The remaining endpoint methods are shift and pop.
-    const length = arrayViews.logicalArrayLength(thisValue)
-    return method === "shift"
-        ? deriveArrayView(thisValue, Math.min(1, length), length)
-        : deriveArrayView(thisValue, 0, Math.max(0, length - 1))
-}
-
-function relativeIndex(value, length, defaultValue) {
-    if (value === undefined) return defaultValue
-    value = Number.isNaN(value) ? 0 : Math.trunc(value)
-    return value < 0
-        ? Math.max(length + value, 0)
-        : Math.min(value, length)
-}
-
-function trySliceArrayView(thisValue, args) {
-    if (args.some(value => {
-        return value !== undefined && typeof value !== "number"
-    })) return undefined
-
-    const length = arrayViews.logicalArrayLength(thisValue)
-    const start = relativeIndex(args[0], length, 0)
-    const end = Math.max(start, relativeIndex(args[1], length, length))
-    return deriveArrayView(thisValue, start, end)
-}
-
-function deriveArrayView(thisValue, start, end) {
-    if (start === end) return []
-    const projection = arrayViews.ArrayView.attachTo(thisValue)
-    const view = new arrayViews.ArrayView(projection, start, end)
-    propertyVersions.prepareRetainedArrayProperties(
-        thisValue,
-        view,
-        key => {
-            const index = Number(key)
-            return index >= start && index < end
-                ? String(index - start)
-                : undefined
-        },
-    )
-    return view
-}
-
-function tryConcatArrayView(thisValue, items) {
-    const suffix = methods.createConcatRemap([], items)
-    if (languageValues.isError(suffix)) return suffix
-    return tryAppendArrayView(thisValue, suffix)
-}
-
-function tryAppendArrayView(thisValue, suffix) {
-    const view = arrayViews.ArrayView.tryExtendEnd(
-        thisValue,
-        suffix.length,
-        derived => propertyVersions.prepareRetainedArrayProperties(
-            thisValue, derived,
-        ),
-    )
-    if (!view) return undefined
-    const start = view.length - suffix.length
-    arrayRemaps.placeRemap(view, suffix, start)
-    return view
-}
-
-function tryPrependArrayView(thisValue, values) {
-    const offset = values.length
-    const view = arrayViews.ArrayView.tryPrepend(
-        thisValue,
-        values,
-        derived => propertyVersions.prepareRetainedArrayProperties(
-            thisValue,
-            derived,
-            key => String(Number(key) + offset),
-        ),
-    )
-    if (!view) return undefined
-    arrayRemaps.placeRemap(view, values)
-    return view
 }
 
 export {

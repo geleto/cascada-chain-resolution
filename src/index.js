@@ -26,6 +26,7 @@ export {
     getErrors,
     hasError,
     lookupPath,
+    readPath,
 } from "./observations.js"
 
 export { import } from "./import.js"

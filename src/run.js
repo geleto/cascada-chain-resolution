@@ -55,57 +55,18 @@ function runObservation(chain, path, method, args) {
             }
             if (languageValues.isError(targetValue)) return targetValue
 
-            const callable = getOrdinaryMethod(targetValue)
-            if (languageValues.isError(callable)) return callable
-
-            const thisValue =
-                callable !== undefined &&
-                arrayViews.requiresArrayMaterialization(targetValue)
-                    ? arrayRemaps.createArrayFromRemap(
-                        arrayRemaps.createInitialRemap(targetValue),
-                        undefined,
-                        false,
-                    )
-                    : targetValue
-            const operationResult = callable === undefined
-                ? arrayInvocation.invokeArrayObservationMethod(
-                    targetValue,
-                    method,
-                    args,
-                )
-                : invocation.invokeObservationMethodWithExportedArgs(
-                    callable,
-                    thisValue,
-                    args,
-                )
-
-            return finishObservation(
-                thisValue === targetValue ? targetValue : undefined,
-                operationResult,
-                callable !== undefined,
-            )
+            return invokeSelectedMethod(targetValue)
         },
     )
 
-    function finishObservation(
-        leaseValue,
-        operationResult,
-        importResult,
-    ) {
-        const admit = value => {
-            if (!languageValues.isTracked(value)) return value
-            if (importResult) {
-                imports.import(value, "run method result")
-            }
-            return value
-        }
+    function finishObservation(leaseValue, operationResult, admitResult) {
         if (!languageValues.isPromise(operationResult)) {
-            return admit(operationResult)
+            return admitResult(operationResult)
         }
         if (!languageValues.isTracked(leaseValue)) {
             return resolution.resolveOperationResultOrFatal(
                 operationResult,
-                admit,
+                admitResult,
             )
         }
 
@@ -114,16 +75,17 @@ function runObservation(chain, path, method, args) {
             operationResult,
             value => {
                 metadata.updateReadLease(leaseValue, -1)
-                return admit(value)
+                return admitResult(value)
             },
             () => metadata.updateReadLease(leaseValue, -1),
         )
     }
 
-    function getOrdinaryMethod(targetValue) {
+    function invokeSelectedMethod(targetValue) {
         const isArray = arrayViews.isLogicalArray(targetValue)
-        // Undefined selects controlled intrinsic Array dispatch.
-        if (isArray && arrayInvocation.isArrayMutator(method)) return
+        if (isArray && arrayInvocation.isArrayMutator(method)) {
+            return invokeIntrinsicArray(targetValue)
+        }
 
         const tracked = languageValues.isTracked(targetValue)
         if (
@@ -171,7 +133,7 @@ function runObservation(chain, path, method, args) {
                         `Unsupported Array method: ${method}`,
                     )
                 }
-                return
+                return invokeIntrinsicArray(targetValue)
             }
         }
 
@@ -186,7 +148,52 @@ function runObservation(chain, path, method, args) {
                 `Method is not callable: ${method}`,
             )
         }
-        return callable
+        return invokeOrdinaryMethod(targetValue, callable)
+    }
+
+    function invokeIntrinsicArray(targetValue) {
+        return finishObservation(
+            targetValue,
+            arrayInvocation.invokeArrayObservationMethod(
+                targetValue,
+                method,
+                args,
+            ),
+            keepResult,
+        )
+    }
+
+    function invokeOrdinaryMethod(targetValue, callable) {
+        const receiver = arrayViews.requiresArrayMaterialization(targetValue)
+            ? arrayRemaps.createArrayFromRemap(
+                arrayRemaps.createInitialRemap(targetValue),
+                undefined,
+                false,
+            )
+            : targetValue
+        const leaseValue = receiver === targetValue
+            ? targetValue
+            : undefined
+        return finishObservation(
+            leaseValue,
+            invocation.invokeObservationMethodWithExportedArgs(
+                callable,
+                receiver,
+                args,
+            ),
+            importOrdinaryResult,
+        )
+    }
+
+    function keepResult(value) {
+        return value
+    }
+
+    function importOrdinaryResult(value) {
+        if (languageValues.isTracked(value)) {
+            imports.import(value, "run method result")
+        }
+        return value
     }
 }
 
@@ -245,7 +252,7 @@ function runMutation(chain, path, method, args) {
             )
             return { mutatedValue: error, result: error }
         }
-        const replaceReceiver =
+        const sourceSurvives =
             attachmentRoot !== undefined ||
             metadata.requiresCopyOnWrite(thisValue) ||
             arrayViews.requiresArrayMaterialization(thisValue)
@@ -254,7 +261,7 @@ function runMutation(chain, path, method, args) {
             thisValue,
             method,
             preparedArguments,
-            replaceReceiver,
+            sourceSurvives,
         )
     }
 }

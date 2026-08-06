@@ -12,6 +12,7 @@ import {
     hasError,
     importValue,
     lookupPath,
+    readPath,
     metaOf,
     exportValue,
     thrownBy,
@@ -216,7 +217,7 @@ describe("getErrors", () => {
             [directError, promisedError],
         )
         expect(sealed.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.eql({
+        expect(readPath(new Chain(sealed), ["pending"])).to.eql({
             promisedError,
         })
         verifyRefCounts(second)
@@ -643,7 +644,7 @@ describe("getErrors", () => {
         expect(errors).to.eql([])
         expect(chain._state.value.pending).to.be("replacement")
         expect(branch.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(branch), ["pending"], false)).to.be(branch)
+        expect(readPath(new Chain(branch), ["pending"])).to.be(branch)
     })
 
     it("does not report a detached terminal cycle after a COW overwrite", async () => {
@@ -733,7 +734,7 @@ describe("getErrors", () => {
         expect(errors.length).to.be(1)
         expect(errors[0].message).to.be("sealed terminal")
         expect(sealed.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.be(
+        expect(readPath(new Chain(sealed), ["pending"])).to.be(
             errors[0],
         )
         expect(metaOf(sealed).mirrors.pending).not.to.be(undefined)

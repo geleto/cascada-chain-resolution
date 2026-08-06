@@ -6,72 +6,6 @@ This document applies the first principles in `AGENTS.md` to source-wide refacto
 
 The remaining phases are ranked by architectural value. Implementation order also considers dependencies and risk. Every change must preserve synchronous progress, FIFO Promise ordering, exact property versions, ownership and import isolation, graph semantics, and the language Error/fatal boundary.
 
-## 3. Make method dispatch and result ownership declarative
-
-### Problem
-
-`ARRAY_METHODS` under-declares several independent decisions:
-
-- `view: true` leaves `tryArrayViewMethod` to infer the strategy from the method name;
-- `definition.implementation ?? methods[method]` binds implementations through namespace-name coincidence; and
-- `transformResult` is used with incompatible inputs: a native result, a property origin, or a result plus an ownership boolean.
-
-Ownership is then re-derived under unrelated names. `replaceReceiver` is passed as `retained` because receiver replacement happens to imply that a removed result still exists in the preserved source. Remap placement, mirror forks, and lookup use other booleans for related retain, transfer, and read outcomes.
-
-Ordinary method selection also returns `undefined`, an Error, or a function. Its caller repeatedly re-derives intrinsic dispatch, receiver materialization, result import, and read leasing from that union.
-
-### Simplest target
-
-Give every supported Array method an explicit declaration or handler for:
-
-- argument preparation;
-- intrinsic implementation or native remapping;
-- ArrayView strategy;
-- result strategy and input shape; and
-- result ownership when the source may survive.
-
-Dispatch rejects an absent or unknown strategy instead of defaulting by method name or module export. Prefer purpose-specific handlers over a table of interacting Boolean flags.
-
-Decide result ownership once at the boundary where the value leaves the operation:
-
-- **retain/extract:** another owner survives, so an aliased result becomes shared;
-- **borrow/read:** ownership does not change; and
-- **transfer:** the prior ownership ends, so no second owner is created.
-
-These are boundary contracts, not necessarily one enum threaded through unrelated layers. Retain/extract uses retained publication, transfer uses exclusive publication, and borrow/read performs no placement. Pass only the distinction a lower layer must act on; never reuse `replaceReceiver` or `sharedOwnership` as that distinction.
-
-Return ordinary-versus-intrinsic method selection as an explicit dispatch decision. It may carry the callable, effective receiver, read-lease value, and result-admission policy that the caller would otherwise infer repeatedly.
-
-Use one fallible attachment boundary, such as `ArrayView.tryAttachTo`, that rejects imported backing before adding view metadata or changing storage. Derivation and growth APIs use that boundary, while callers provide only the before-write transition that forks retained Promise versions.
-
-### Must preserve
-
-- ArrayView backing is runtime-owned, and eligibility is checked before metadata attachment or backing mutation.
-- Retained Promise properties fork at the operation's FIFO position before physical storage changes.
-- Distinct logical properties retain distinct mirrors even when they share backing storage.
-- Sparse holes, canonical indexes, length limits, inherited indexed properties, descriptor failures, and partial native mutations retain their current behavior.
-- Removed-element results capture the correct source property version.
-- Result sharing depends on whether another owner retains the value, not on which mechanical dispatch path produced it.
-- Observation views and receiver-replacing mutation views produce the same public results as their materialized equivalents.
-- Controlled intrinsic results retain their method-specific ownership: newly created data is runtime-owned, while extracted existing identities become shared unless ownership transfers. Opaque ordinary-method results retain their current import behavior.
-- Pending opaque observations retain the correct receiver through the existing read lease.
-- Ordinary method lookup, exact `this` identity, accessors, physical property reads, and Error conversion retain their current contracts. Internal reads do not discover or wait for nested Promise properties.
-
-### Expected removals
-
-- implicit method-name defaults in `tryArrayViewMethod`;
-- namespace-name implementation lookup;
-- the overloaded `transformResult` contract;
-- the separate shift/pop result-origin branch;
-- `replaceReceiver` used as an ownership argument;
-- `sharedOwnership` as an ownership-policy Boolean;
-- repeated inference from function/Error/`undefined` method selection; and
-- duplicated imported-backing guards and the unguarded attachment entry point.
-
-### Verification
-
-Compare every supported method with its native equivalent across dense and sparse inputs, accessors, inherited properties, partial failures, and synchronous/Promise interleavings. Cover retained extraction, transfer, pure borrow/read, ordinary-method result import, exact receiver identity, receiver read leasing, runtime-owned writeback visibility, imported physical preservation, nested Promises left undiscovered by host reads, and every ArrayView derivation, fallback, and imported-backing guard.
-
 ## 4. Move property behavior into one policy and lower its primitives
 
 ### Problem
@@ -187,7 +121,6 @@ The presence of the exact `mutates` Boolean is the Chain's issuance capability. 
 
 ## Recommended sequence
 
-- **Method dispatch:** Make Array and ordinary dispatch, result strategy, result ownership, and ArrayView attachment explicit together.
 - **Property policy:** Unify intrinsic property behavior, then lower assignment and deletion to remove the mutation/remap cycle.
 
 Error-query and ancestry cleanups should land only when they simplify touched code without introducing a new framework. Stack-depth changes should accompany their owning area; moving Chain capability off the language surface can land independently.
@@ -198,7 +131,7 @@ Each phase should remove the mechanisms it supersedes in the same change and pas
 
 ## Baseline
 
-Verified after the refcount propagation refactoring on 2026-08-05. The complete suite passed in both metadata modes:
+Verified after the method-dispatch refactoring on 2026-08-06. The complete suite passed in both metadata modes:
 
-- 633 tests with inline metadata; and
-- 633 tests with WeakMap metadata.
+- 636 tests with inline metadata; and
+- 636 tests with WeakMap metadata.

@@ -223,7 +223,7 @@ function assignPath(chain, path, value) {
         if (!arrayViews.isArrayView(projection)) return undefined
         const end = Number(key) + 1
         const growth = end - projection.length
-        if (growth <= 0 || metadata.importBoundaryOf(array)) return undefined
+        if (growth <= 0) return undefined
 
         const extended = arrayViews.ArrayView.tryExtendEnd(
             projection,

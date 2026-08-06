@@ -15,6 +15,7 @@ import {
     hasError,
     importValue,
     lookupPath,
+    readPath,
     metaOf,
     registerDataClass,
     run,
@@ -269,6 +270,24 @@ describe("run", () => {
         expect(run(new Chain(source), [], "fail", false)).to.be(failure)
     })
 
+    it("does not discover nested Promises read by ordinary methods", () => {
+        const pending = deferred()
+        const registrationCount = countPromiseRegistrations(pending.promise)
+        const source = { nested: { pending: pending.promise } }
+        Object.defineProperty(source, "seesPending", {
+            value() {
+                return this.nested.pending === pending.promise
+            },
+        })
+        const initialCount = registrationCount()
+
+        const result = run(new Chain(source), [], "seesPending", false)
+
+        expect(result).to.be(true)
+        expect(registrationCount()).to.be(initialCount)
+        pending.resolve(1)
+    })
+
     it("exposes physical Promise writeback to ordinary methods", async () => {
         const runtimePending = deferred()
         const runtimeOwned = { pending: runtimePending.promise }
@@ -277,7 +296,7 @@ describe("run", () => {
                 return this.pending === runtimePending.promise
             },
         })
-        lookupPath(new Chain(runtimeOwned), ["pending"], false)
+        readPath(new Chain(runtimeOwned), ["pending"])
 
         const importedPending = deferred()
         const imported = { pending: importedPending.promise }
@@ -302,7 +321,7 @@ describe("run", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const languageKeys = Reflect.ownKeys(root)
-        const earlierRead = lookupPath(new Chain(root), ["pending"], false)
+        const earlierRead = readPath(new Chain(root), ["pending"])
 
         const result = run(new Chain(root), [], "valueOf", false)
 
@@ -316,7 +335,7 @@ describe("run", () => {
         await flushMicrotasks()
 
         expect(root.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(root), ["pending"], false)).to.be(resolved)
+        expect(readPath(new Chain(root), ["pending"])).to.be(resolved)
     })
 
     it("preserves holes and identities in Array observers", () => {
@@ -429,7 +448,7 @@ describe("run", () => {
         const values = chain._state.value.values
         const sliced = run(new Chain(values), [], "slice", false, 0, 2)
         expect(values[0]).to.be(imported)
-        expect(lookupPath(new Chain(sliced), ["0"], false)).to.be(imported)
+        expect(readPath(new Chain(sliced), ["0"])).to.be(imported)
     })
 
     it("appends concat items to the receiver backing", () => {
@@ -822,6 +841,34 @@ describe("run", () => {
         expect(removedValue.value).to.be(1)
         expect(removed[0]).to.eql({ value: 3 })
         expect(chain._state.value).to.eql([2])
+    })
+
+    it("publishes removed ArrayView endpoints as retained values", () => {
+        for (const [method, removedIndex] of [
+            ["shift", 0],
+            ["pop", 1],
+        ]) {
+            const source = [{ value: 1 }, { value: 2 }]
+            const view = run(new Chain(source), [], "slice", false)
+            const chain = new Chain(view)
+            lookupPath(chain, [])
+
+            const removed = run(chain, [], method, true)
+            const removedChain = new Chain(removed)
+            assignPath(removedChain, ["value"], 3)
+
+            expect(arrayViews.isArrayView(chain._state.value)).to.be(true)
+            expect(removed).to.be(source[removedIndex])
+            expect(source[removedIndex].value).to.be(removedIndex + 1)
+            expect(removedChain._state.value).to.eql({ value: 3 })
+            expect(removedChain._state.value).not.to.be(removed)
+            verifyRefCounts(
+                source,
+                view,
+                chain._state.value,
+                removedChain._state.value,
+            )
+        }
     })
 
     it("returns transformed Arrays from mutators in observation mode", () => {

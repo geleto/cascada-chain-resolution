@@ -5,6 +5,7 @@ import {
     deletePath,
     exportValue,
     lookupPath,
+    readPath,
     registerDataClass,
     importValue,
     deferred,
@@ -52,7 +53,7 @@ describe("path assignment", () => {
         expect(descriptor.enumerable).to.be(true)
         expect(descriptor.writable).to.be(true)
         expect(descriptor.configurable).to.be(true)
-        expect(lookupPath(chain, ["__proto__"], false)).to.be(value)
+        expect(readPath(chain, ["__proto__"])).to.be(value)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
 
         expect(deletePath(chain, ["__proto__"])).to.be(undefined)
@@ -67,7 +68,7 @@ describe("path assignment", () => {
 
         assignPath(chain, ["safe", "__proto__", "polluted"], true)
 
-        const failure = lookupPath(chain, ["safe", "__proto__"], false)
+        const failure = readPath(chain, ["safe", "__proto__"])
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be(
             "Cannot access property through missing or primitive value",
@@ -92,7 +93,7 @@ describe("path assignment", () => {
 
         const settledDescriptor = Object.getOwnPropertyDescriptor(root, "__proto__")
         expect(settledDescriptor.value).to.be(resolved)
-        expect(lookupPath(chain, ["__proto__"], false)).to.be(resolved)
+        expect(readPath(chain, ["__proto__"])).to.be(resolved)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
     })
 
@@ -236,7 +237,7 @@ describe("path assignment", () => {
 
         assignPath(chain, ["__proto__", "x"], 2)
         const copy = chain._state.value
-        const copiedProtoValue = lookupPath(chain, ["__proto__"], false)
+        const copiedProtoValue = readPath(chain, ["__proto__"])
 
         expect(copy).not.to.be(root)
         expect(copiedProtoValue).not.to.be(protoValue)
@@ -476,7 +477,7 @@ describe("path assignment", () => {
         receiver.resolve(target)
         await flushMicrotasks()
 
-        expect(await lookupPath(chain, ["target"], false)).to.be(target)
+        expect(await readPath(chain, ["target"])).to.be(target)
         expect(target.length).to.be(length.promise)
 
         length.resolve(4)
@@ -569,7 +570,7 @@ describe("path assignment", () => {
 
     it("can read a branch without sharing ownership", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
-        const observed = lookupPath(new Chain(root), ["pos"], false)
+        const observed = readPath(new Chain(root), ["pos"])
         const delta = root.delta
 
         assignPath(new Chain(root), ["pos", "x"], 2)
@@ -581,7 +582,7 @@ describe("path assignment", () => {
 
     it("can read the root without sharing ownership", () => {
         const root = { pos: { x: 1 } }
-        const observed = lookupPath(new Chain(root), [], false)
+        const observed = readPath(new Chain(root), [])
         const pos = root.pos
 
         assignPath(new Chain(root), ["pos", "x"], 2)

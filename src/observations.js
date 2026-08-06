@@ -8,14 +8,19 @@ import * as rawWalk from "./raw-walk.js"
 import * as resolution from "./resolution.js"
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
-// sharedOwnership is false for a pure read or when ownership is ceded to
-// the caller, e.g. the final `return x` from an otherwise unused variable.
-function lookupPath(chain, path, sharedOwnership = true) {
+function lookupPath(chain, path) {
     return errorUtils.runFatal(() => {
         return walkObservationPath(chain, path, value => {
-            if (sharedOwnership) metadata.markShared(value)
+            metadata.markShared(value)
             return value
         })
+    })
+}
+
+// A temporary read or ownership transfer does not create another owner.
+function readPath(chain, path) {
+    return errorUtils.runFatal(() => {
+        return walkObservationPath(chain, path, value => value)
     })
 }
 
@@ -266,5 +271,6 @@ export {
     getErrors,
     hasError,
     lookupPath,
+    readPath,
     walkObservationPath,
 }

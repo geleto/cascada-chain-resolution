@@ -13,6 +13,7 @@ import {
     deletePath,
     hasError,
     lookupPath,
+    readPath,
     importValue,
     deferred,
     flushMicrotasks,
@@ -361,14 +362,14 @@ describe("subtree counters", () => {
         expectCounts(root, 1, 0)
         expectCounts(earlier, 1, 0)
         expectCounts(protoValue, 0, 0)
-        expect(lookupPath(new Chain(root), ["__proto__", "safe"], false)).to.be(true)
+        expect(readPath(new Chain(root), ["__proto__", "safe"])).to.be(true)
         verifyRefCounts(root, earlier, protoValue)
 
         pending.resolve("done")
         await flushMicrotasks()
 
         expect(earlier.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(root), ["earlier", "pending"], false)).to.be("done")
+        expect(readPath(new Chain(root), ["earlier", "pending"])).to.be("done")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, earlier, protoValue)
     })

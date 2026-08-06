@@ -82,7 +82,7 @@ describe("ArrayView", () => {
 
     it("interprets constructor bounds relative to the logical source", () => {
         const source = [1, 2, 3]
-        const original = arrayViews.ArrayView.attachTo(source)
+        const original = arrayViews.ArrayView.tryAttachTo(source)
         const tail = new arrayViews.ArrayView(original, 1, 3)
         const last = new arrayViews.ArrayView(tail, 1, 2)
         const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
@@ -310,6 +310,22 @@ describe("ArrayView", () => {
         expect(result).to.eql([1, 2, 3])
         expect(arrayViews.projectionOf(source)).to.be(source)
         expect(source).to.eql([1, 2])
+    })
+
+    it("does not attach a view to imported backing", () => {
+        const source = importValue([1, 2], "view backing")
+        const ownKeys = Reflect.ownKeys(source)
+
+        expect(arrayViews.ArrayView.tryAttachTo(source)).to.be(undefined)
+        expect(arrayViews.projectionOf(source)).to.be(source)
+        expect(Reflect.ownKeys(source)).to.eql(ownKeys)
+
+        const attached = [3]
+        arrayViews.ArrayView.tryAttachTo(attached)
+        importValue(attached, "attached view backing")
+        expect(arrayViews.ArrayView.tryAttachTo(attached)).to.be(undefined)
+        expect(run(new Chain(attached), [], "push", false, 4)).to.eql([3, 4])
+        expect(attached).to.eql([3])
     })
 
     it("materializes prepend when the backing has hidden indexes", () => {

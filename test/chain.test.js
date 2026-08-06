@@ -7,6 +7,7 @@ import {
     getErrors,
     hasError,
     lookupPath,
+    readPath,
     exportValue,
     importValue,
     setFatalErrorReporter,
@@ -28,16 +29,16 @@ describe("Chain root state", () => {
         expect(thrownBy(() => new Chain({}, "yes"))).to.be.a(TypeError)
 
         const readOnly = new Chain({ value: 1 }, false)
-        expect(lookupPath(readOnly, ["value"], false)).to.be(1)
+        expect(readPath(readOnly, ["value"])).to.be(1)
         expect(thrownBy(() => assignPath(readOnly, ["value"], 2)))
             .to.be.an(Error)
 
         const pending = deferred()
         const chain = new Chain(pending.promise)
-        const issued = lookupPath(chain, ["value"], false)
+        const issued = readPath(chain, ["value"])
 
         chain.close()
-        expect(thrownBy(() => lookupPath(chain, [], false)))
+        expect(thrownBy(() => readPath(chain, [])))
             .to.be.an(Error)
         expect(thrownBy(() => chain.close())).to.be.an(Error)
 
@@ -133,8 +134,8 @@ describe("Chain root state", () => {
         const root = [child]
         const chain = new Chain(root)
 
-        expect(lookupPath(chain, [], false)).to.be(root)
-        expect(lookupPath(chain, [0, "value"], false)).to.be(1)
+        expect(readPath(chain, [])).to.be(root)
+        expect(readPath(chain, [0, "value"])).to.be(1)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
 

@@ -13,6 +13,7 @@ import {
     getErrors,
     hasError,
     lookupPath,
+    readPath,
     exportValue,
     importValue,
     deferred,
@@ -46,6 +47,7 @@ describe("export", () => {
             "hasError",
             "import",
             "lookupPath",
+            "readPath",
             "registerDataClass",
             "run",
         ])
@@ -272,7 +274,7 @@ describe("export", () => {
         expect(copy.back.value).to.be(copy)
         expect(metaOf(root).mirrors.value).to.be(mirror)
         expect(root.value).to.be(pending.promise)
-        expect(lookupPath(new Chain(root), ["value"], false)).to.be(resolved)
+        expect(readPath(new Chain(root), ["value"])).to.be(resolved)
         buildRefIndex(root)
         expect(hasCycleCut(resolved, "back")).to.be(true)
         verifyRefCounts(root)
@@ -321,10 +323,10 @@ describe("export", () => {
         expect(copy.right.left).to.be(copy)
         expect(copy.right.pending).to.eql({ done: true })
         expect(right.pending).to.be(pending.promise)
-        expect(lookupPath(chain, ["right", "pending"], false)).to.eql({
+        expect(readPath(chain, ["right", "pending"])).to.eql({
             done: true,
         })
-        expect(lookupPath(chain, ["right", "pending", "done"], false)).to.be(true)
+        expect(readPath(chain, ["right", "pending", "done"])).to.be(true)
         verifyRefCounts(left, right)
     })
 
@@ -462,7 +464,7 @@ describe("export", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
-        const observed = lookupPath(chain, ["pending"], false)
+        const observed = readPath(chain, ["pending"])
 
         pending.resolve({ value: 1 })
         await observed
@@ -1100,7 +1102,7 @@ describe("export", () => {
         expect(copied).not.to.be(valid)
         expect(await exported).to.eql({ pending: 1 })
         expect(pending.pending).to.be(promise)
-        expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
+        expect(readPath(new Chain(pending), ["pending"])).to.be(1)
         expect(getRefCounter(valid)).to.be(undefined)
         expect(getRefCounter(pending)).to.be(undefined)
     })
@@ -1119,7 +1121,7 @@ describe("export", () => {
 
         expect(await exported).to.eql({ pending: { done: true } })
         expect(sealed.pending).to.be(promise)
-        expect(lookupPath(new Chain(sealed), ["pending"], false)).to.eql({
+        expect(readPath(new Chain(sealed), ["pending"])).to.eql({
             done: true,
         })
         expect(getRefCounter(sealed).promiseCount).to.be(0)
@@ -1156,7 +1158,7 @@ describe("export", () => {
         // Existing META makes child a trusted runtime island rather than a
         // newly imported host holder.
         expect(child.pending).to.be("done")
-        expect(lookupPath(new Chain(frozen), ["child", "pending"], false)).to.be("done")
+        expect(readPath(new Chain(frozen), ["child", "pending"])).to.be("done")
         verifyRefCounts(child)
     })
 

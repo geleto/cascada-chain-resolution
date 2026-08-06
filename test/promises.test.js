@@ -27,6 +27,7 @@ import {
     deletePath,
     hasError,
     lookupPath,
+    readPath,
     exportValue,
     importValue,
     countPromiseRegistrations,
@@ -441,7 +442,7 @@ describe("promise mirrors and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be(pending.promise)
-        expect(lookupPath(new Chain(root), ["value"], false)).to.be(root)
+        expect(readPath(new Chain(root), ["value"])).to.be(root)
         expect(publishedCycleCut).to.be(true)
         expect(countsAfterPublication).to.eql({
             promiseCount: 0,
@@ -520,7 +521,7 @@ describe("promise mirrors and lookupPath", () => {
         const root = {}
 
         assignPath(new Chain(root), ["value"], deferredValue.promise)
-        const read = lookupPath(new Chain(root), ["value"], false)
+        const read = readPath(new Chain(root), ["value"])
 
         deferredValue.resolve({ x: 1 })
         const value = await read
@@ -730,7 +731,7 @@ describe("promise mirrors and lookupPath", () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
-        const read = lookupPath(new Chain(root), ["branch", "value"], false)
+        const read = readPath(new Chain(root), ["branch", "value"])
 
         deferredBranch.resolve({ value: { x: 1 } })
         const value = await read
@@ -813,7 +814,7 @@ describe("promise mirrors and lookupPath", () => {
         // Import promotes root's current property version. Earlier operations
         // retain the old version, while the borrowed property stays untouched.
         expect(root.branch).to.be(deferredBranch.promise)
-        const rootError = lookupPath(new Chain(root), ["branch"], false)
+        const rootError = readPath(new Chain(root), ["branch"])
         expect(rootError instanceof Error).to.be(true)
         expect(rootError.message).to.be("fork boom")
         expect(left.branch instanceof Error).to.be(true)
@@ -834,7 +835,7 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.resolve({ x: 1 })
         await flushMicrotasks()
 
-        const oldBranch = await lookupPath(new Chain(root), ["branch"], false)
+        const oldBranch = await readPath(new Chain(root), ["branch"])
         const oldBranchChain = new Chain(oldBranch)
         assignPath(oldBranchChain, ["x"], 2)
 
@@ -855,7 +856,7 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.resolve({ y: 2 })
         await flushMicrotasks()
 
-        const oldBranch = await lookupPath(new Chain(root), ["branch"], false)
+        const oldBranch = await readPath(new Chain(root), ["branch"])
 
         expect(oldBranch).to.eql({ y: 2 })
         expect(next.branch).to.eql({ y: 2, x: 1 })
@@ -1247,7 +1248,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue.value.again).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
         expect(resolved.again).to.be(pending.promise)
-        expect(lookupPath(new Chain(resolved), ["again"], false)).to.be(resolved)
+        expect(readPath(new Chain(resolved), ["again"])).to.be(resolved)
         expect(hasCycleCut(resolved, "again")).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
@@ -1273,7 +1274,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(exportedValue.value.next.back).to.be(exportedValue.value)
         expect(await foundError).to.be(false)
         expect(firstValue.next).to.be(second.promise)
-        expect(lookupPath(new Chain(firstValue), ["next"], false)).to.be(
+        expect(readPath(new Chain(firstValue), ["next"])).to.be(
             secondValue,
         )
         expect(
@@ -1324,7 +1325,7 @@ describe("root promises", () => {
         const root = { branch: { x: 1 } }
         const oldBranch = root.branch
 
-        const read = lookupPath(chain, ["branch"], false)
+        const read = readPath(chain, ["branch"])
         deferredRoot.resolve(root)
         const value = await read
         assignPath(new Chain(root), ["branch", "x"], 2)

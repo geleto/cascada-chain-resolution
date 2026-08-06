@@ -86,10 +86,10 @@ Reusing or exposing an existing tracked identity gives it another owner and
 marks it shared. Mutation through a shared branch performs copy-on-write before
 the first language write.
 
-`lookupPath` marks a returned tracked value shared by default. Passing
-`sharedOwnership = false` is valid only for pure internal inspection or a
-proven final ownership transfer. An extracted imported value remains imported
-and shared even when this argument is false.
+`lookupPath` extracts its result and marks a returned tracked value shared.
+`readPath` adds no owner; use it only for a temporary read or when prior
+ownership is ceded. Imported values retain their existing import and sharing
+state in either case.
 
 Non-extensible tracked nodes are external and must enter through import. Their
 imported ownership, rather than their physical shape, causes copy-on-write.
@@ -301,11 +301,15 @@ returns `undefined`.
 Deletes the target or replaces the root with `null` for an empty path. Missing
 targets are no-ops. It updates existing refcounts and returns `undefined`.
 
-### `lookupPath(chain, path, sharedOwnership = true)`
+### `lookupPath(chain, path)`
 
-Returns the value captured at the path. The default marks a returned tracked
-value shared. The result is synchronous unless path resolution crosses a
-Promise.
+Extracts the value captured at the path and marks a returned tracked value
+shared. The result is synchronous unless path resolution crosses a Promise.
+
+### `readPath(chain, path)`
+
+Returns the value captured at the path without adding an owner. The caller must
+either use it temporarily or cede the prior ownership.
 
 ### `run(chain, path, method, mutateArray, ...arguments)`
 

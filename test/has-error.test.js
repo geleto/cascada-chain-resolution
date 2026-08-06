@@ -11,6 +11,7 @@ import {
     metaOf,
     exportValue,
     lookupPath,
+    readPath,
     countPromiseRegistrations,
     deferred,
     flushMicrotasks,
@@ -122,7 +123,7 @@ describe("hasError", () => {
         expect(await pendingResult).to.be(false)
         expect(getRefCounter(pending).promiseCount).to.be(0)
         expect(pending.pending instanceof Promise).to.be(true)
-        expect(lookupPath(new Chain(pending), ["pending"], false)).to.be(1)
+        expect(readPath(new Chain(pending), ["pending"])).to.be(1)
         verifyRefCounts(clean, pending, bad)
     })
 
@@ -183,7 +184,7 @@ describe("hasError", () => {
         expect(await result).to.be(false)
         expect(getRefCounter(wrapper).promiseCount).to.be(0)
         expect(child.pending).to.be("done")
-        expect(lookupPath(new Chain(child), ["pending"], false)).to.be("done")
+        expect(readPath(new Chain(child), ["pending"])).to.be("done")
         verifyRefCounts(wrapper)
     })
 
@@ -695,7 +696,7 @@ describe("hasError", () => {
         expect(await result).to.be(false)
         expect(chain._state.value.branch.pending).to.be("fixed")
         expect(branch.pending).to.be(pending.promise)
-        expect(lookupPath(new Chain(branch), ["pending"], false)).to.be(branch)
+        expect(readPath(new Chain(branch), ["pending"])).to.be(branch)
         verifyRefCounts(root, chain._state.value)
     })
 

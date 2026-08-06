@@ -58,6 +58,7 @@ export {
     getErrors,
     hasError,
     lookupPath,
+    readPath,
     registerDataClass,
     run,
 } from "../src/index.js"

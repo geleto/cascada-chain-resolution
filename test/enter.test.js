@@ -18,6 +18,7 @@ import {
     hasError,
     importValue,
     lookupPath,
+    readPath,
     metaOf,
     setFatalErrorReporter,
     thrownBy,
@@ -113,7 +114,7 @@ describe("enter", () => {
         })
 
         expect(metaOf(branch).readEnterCount).to.be(1)
-        expect(lookupPath(entered, ["value"], false)).to.be(1)
+        expect(readPath(entered, ["value"])).to.be(1)
         expect(thrownBy(() => assignPath(entered, ["value"], 3)))
             .to.be.an(Error)
 
@@ -332,7 +333,7 @@ describe("enter", () => {
             false,
         )
 
-        expect(lookupPath(chain, ["sibling"], false)).to.be("available")
+        expect(readPath(chain, ["sibling"])).to.be("available")
         outer.resolve({ target: { value: 1 } })
 
         expect(await before).to.be(1)
@@ -379,7 +380,7 @@ describe("enter", () => {
         })
 
         expect(result).to.be("closed")
-        expect(thrownBy(() => lookupPath(readChain, [], false)))
+        expect(thrownBy(() => readPath(readChain, [])))
             .to.be.an(Error)
 
         pending.resolve({ value: 3 })
@@ -563,7 +564,7 @@ describe("enter", () => {
         await flushMicrotasks()
 
         expect(external.target).to.be(pending.promise)
-        expect(lookupPath(new Chain(external), ["target"], false)).to.be(resolved)
+        expect(readPath(new Chain(external), ["target"])).to.be(resolved)
         expect(resolved.value).to.be(1)
         expect(chain._state.value).not.to.be(external)
         expect(chain._state.value.target).not.to.be(resolved)
@@ -583,7 +584,7 @@ describe("enter", () => {
             entered = privateChain
             return "done"
         })).to.be("done")
-        const published = lookupPath(chain, ["target"], false)
+        const published = readPath(chain, ["target"])
         const resolved = { value: 1 }
         pending.resolve(resolved)
 
@@ -631,7 +632,7 @@ describe("enter", () => {
 
         const published = chain._state.value.target
         expect(external.target).to.be(pending.promise)
-        expect(lookupPath(new Chain(external), ["target"], false)).to.be(cycle)
+        expect(readPath(new Chain(external), ["target"])).to.be(cycle)
         expect(cycle.changed).to.be(undefined)
         expect(published).not.to.be(cycle)
         expect(published.changed).to.be(true)
@@ -798,7 +799,7 @@ describe("enter", () => {
     it("handles root, primitive, missing, and Error targets uniformly", async () => {
         const primitive = new Chain(1)
         expect(enter(primitive, [], true, entered => {
-            expect(lookupPath(entered, [], false)).to.be(1)
+            expect(readPath(entered, [])).to.be(1)
             assignPath(entered, [], 2)
             return "root"
         })).to.be("root")
@@ -809,14 +810,14 @@ describe("enter", () => {
         let missingReadCalls = 0
         expect(enter(chain, ["missing"], false, entered => {
             missingReadCalls++
-            return lookupPath(entered, [], false)
+            return readPath(entered, [])
         })).to.be(undefined)
         expect(missingReadCalls).to.be(1)
 
         let errorMutationCalls = 0
         expect(enter(chain, ["error"], true, entered => {
             errorMutationCalls++
-            expect(lookupPath(entered, [], false)).to.be(error)
+            expect(readPath(entered, [])).to.be(error)
             return "error"
         })).to.be("error")
 

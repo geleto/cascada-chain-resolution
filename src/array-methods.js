@@ -9,53 +9,80 @@ import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
 import * as propertyVersions from "./property-versions.js"
 
+const RECEIVER_RESULT = Symbol()
+// By default, the same-named native method runs on a property remap.
+// mutationResult is absent for observations, RECEIVER_RESULT for mutators
+// returning their receiver, or a publisher for an independent result.
+// viewOperationResult reconstructs that result for an ArrayView mutation.
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { exportArgs: [true], implementation: getElementAt },
-    concat: { prepare: prepareConcatArguments, view: true },
-    copyWithin: { mutate: true, exportArgs: [true, true, true] },
-    fill: { mutate: true, exportArgs: [false, true, true] },
-    flat: { prepare: prepareFlatArguments },
-    includes: { prepare: prepareSearchArguments },
-    indexOf: { prepare: prepareSearchArguments },
-    join: { exportArgs: [true] },
-    lastIndexOf: { prepare: prepareSearchArguments },
-    pop: { mutate: true, view: true, transformResult: materializeElement },
-    push: { mutate: true, view: true, restValues: true },
-    reverse: { mutate: true },
-    shift: { mutate: true, view: true, transformResult: materializeElement },
-    slice: {
-        exportArgs: [true, true],
-        view: true,
-        transformResult: materializeArrayResult,
+    at: { exportArgs: [true], observe: observeAt },
+    concat: {
+        prepare: prepareConcatArguments,
+        remap: createConcatResultRemap,
+        view: tryConcatArrayView,
     },
+    copyWithin: {
+        exportArgs: [true, true, true],
+        mutationResult: RECEIVER_RESULT,
+    },
+    fill: {
+        exportArgs: [false, true, true],
+        mutationResult: RECEIVER_RESULT,
+    },
+    flat: { prepare: prepareFlatArguments, remap: flatRemap },
+    includes: { prepare: prepareSearchArguments, observe: includes },
+    indexOf: { prepare: prepareSearchArguments, observe: indexOf },
+    join: { exportArgs: [true], observe: join },
+    lastIndexOf: {
+        prepare: prepareSearchArguments,
+        observe: lastIndexOf,
+    },
+    pop: {
+        mutationResult: publishElement,
+        view: tryPopArrayView,
+        viewOperationResult: getLastElementOrigin,
+    },
+    push: {
+        restValues: true,
+        mutationResult: publishValue,
+        view: tryAppendArrayView,
+        viewOperationResult: getViewLength,
+    },
+    reverse: { mutationResult: RECEIVER_RESULT },
+    shift: {
+        mutationResult: publishElement,
+        view: tryShiftArrayView,
+        viewOperationResult: getFirstElementOrigin,
+    },
+    slice: { exportArgs: [true, true], view: trySliceArrayView },
     sort: {
-        mutate: true,
         prepare: prepareSortArguments,
-        mutationRemap: prepareAndSortAndRemap,
+        remap: prepareAndSortAndRemap,
+        mutationResult: RECEIVER_RESULT,
     },
     splice: {
-        mutate: true,
         exportArgs: [true, true],
         restValues: true,
-        transformResult: materializeArrayResult,
+        mutationResult: publishArray,
     },
-    toReversed: { transformResult: materializeArrayResult },
-    toSorted: { prepare: prepareSortArguments },
-    toSpliced: {
-        exportArgs: [true, true],
+    toReversed: {},
+    toSorted: {
+        prepare: prepareSortArguments,
+        remap: prepareToSortedRemap,
+    },
+    toSpliced: { exportArgs: [true, true], restValues: true },
+    toString: { observe: toString },
+    unshift: {
         restValues: true,
-        transformResult: materializeArrayResult,
+        mutationResult: publishValue,
+        view: tryPrependArrayView,
+        viewOperationResult: getViewLength,
     },
-    toString: {},
-    unshift: { mutate: true, view: true, restValues: true },
-    with: {
-        exportArgs: [true, false],
-        transformResult: materializeArrayResult,
-    },
+    with: { exportArgs: [true, false] },
 }
 
-function getElementAt(thisValue, args) {
+function observeAt(thisValue, args) {
     const receiver = new Proxy(
         { length: arrayViews.logicalArrayLength(thisValue) },
         {
@@ -66,14 +93,59 @@ function getElementAt(thisValue, args) {
             },
         },
     )
-    const origin = invocation.invokeDataFunctionOrPoison(
+    const element = invocation.invokeDataFunctionOrPoison(
         Array.prototype.at,
         receiver,
         args,
     )
-    return languageValues.isError(origin)
-        ? origin
-        : materializeElement(origin)
+    return languageValues.isError(element)
+        ? element
+        : retainElement(element)
+}
+
+function publishValue(value) {
+    return value
+}
+
+function publishElement(element, sourceSurvives) {
+    return sourceSurvives
+        ? retainElement(element)
+        : transferElement(element)
+}
+
+function publishArray(remap, sourceSurvives) {
+    return arrayRemaps.createArrayFromRemap(remap, undefined, sourceSurvives)
+}
+
+function transferElement(element) {
+    return propertyVersions.isPropertyOrigin(element)
+        ? propertyVersions.resolvePropertyValue(element)
+        : element
+}
+
+function retainElement(element) {
+    return resolution.resolveOperationResultOrFatal(
+        transferElement(element),
+        value => {
+            metadata.markShared(value)
+            return value
+        },
+    )
+}
+
+function getFirstElementOrigin(thisValue) {
+    return propertyVersions.getPropertyOrigin(thisValue, "0")
+}
+
+function getLastElementOrigin(thisValue) {
+    const length = arrayViews.logicalArrayLength(thisValue)
+    return length === 0
+        ? undefined
+        : propertyVersions.getPropertyOrigin(thisValue, String(length - 1))
+}
+
+function getViewLength(_thisValue, view) {
+    return view.length
 }
 
 function prepareConcatArguments(args) {
@@ -112,14 +184,11 @@ function prepareConcatArguments(args) {
     )
 }
 
-function concat(thisValue, items) {
-    const result = createConcatRemap(
+function createConcatResultRemap(thisValue, items) {
+    return createConcatRemap(
         arrayRemaps.createInitialRemap(thisValue),
         items,
     )
-    return languageValues.isError(result)
-        ? result
-        : arrayRemaps.createArrayFromRemap(result)
 }
 
 function createConcatRemap(receiver, items) {
@@ -146,20 +215,15 @@ function prepareFlatArguments(args) {
     )
 }
 
-function flat(thisValue, depth) {
+function flatRemap(thisValue, depth) {
     depth = Math.max(depth, 0)
     return resolution.continueOperationUnlessPoison(
         prepareFlatArray(thisValue, depth),
-        prepared => {
-            const result = invocation.invokeDataFunctionOrPoison(
-                Array.prototype.flat,
-                prepared,
-                [depth],
-            )
-            return languageValues.isError(result)
-                ? result
-                : arrayRemaps.createArrayFromRemap(result)
-        },
+        prepared => invocation.invokeDataFunctionOrPoison(
+            Array.prototype.flat,
+            prepared,
+            [depth],
+        ),
     )
 }
 
@@ -254,15 +318,8 @@ function prepareSortArguments(args) {
     )
 }
 
-function toSorted(thisValue, comparator) {
-    return sort(thisValue, comparator, true)
-}
-
-function sort(thisValue, comparator, denseHoles = false) {
-    return resolution.continueOperationUnlessPoison(
-        prepareAndSortAndRemap(thisValue, comparator, denseHoles),
-        arrayRemaps.createArrayFromRemap,
-    )
+function prepareToSortedRemap(thisValue, comparator) {
+    return prepareAndSortAndRemap(thisValue, comparator, true)
 }
 
 // Native sorting permutes property origins by their resolved values; placement
@@ -475,36 +532,92 @@ function normalizeBackwardStart(fromIndex, length) {
         : fromIndex >= 0 ? Math.min(fromIndex, length - 1) : length + fromIndex
 }
 
-function materializeElement(element, retained = true) {
-    const result = propertyVersions.isPropertyOrigin(element)
-        ? propertyVersions.resolvePropertyValue(element)
-        : element
-    return retained
-        ? resolution.resolveOperationResultOrFatal(result, value => {
-            metadata.markShared(value)
-            return value
-        })
-        : result
+function relativeIndex(value, length, defaultValue) {
+    if (value === undefined) return defaultValue
+    value = Number.isNaN(value) ? 0 : Math.trunc(value)
+    return value < 0
+        ? Math.max(length + value, 0)
+        : Math.min(value, length)
 }
 
-function materializeArrayResult(remap, retained = true) {
-    return arrayRemaps.createArrayFromRemap(
-        remap,
-        undefined,
-        retained,
+function trySliceArrayView(thisValue, args) {
+    if (args.some(value => {
+        return value !== undefined && typeof value !== "number"
+    })) return undefined
+
+    const length = arrayViews.logicalArrayLength(thisValue)
+    const start = relativeIndex(args[0], length, 0)
+    const end = Math.max(start, relativeIndex(args[1], length, length))
+    return deriveArrayView(thisValue, start, end)
+}
+
+function tryShiftArrayView(thisValue) {
+    const length = arrayViews.logicalArrayLength(thisValue)
+    return deriveArrayView(thisValue, Math.min(1, length), length)
+}
+
+function tryPopArrayView(thisValue) {
+    const length = arrayViews.logicalArrayLength(thisValue)
+    return deriveArrayView(thisValue, 0, Math.max(0, length - 1))
+}
+
+function deriveArrayView(thisValue, start, end) {
+    if (start === end) return []
+    const projection = arrayViews.ArrayView.tryAttachTo(thisValue)
+    if (!projection) return undefined
+
+    const view = new arrayViews.ArrayView(projection, start, end)
+    propertyVersions.prepareRetainedArrayProperties(
+        thisValue,
+        view,
+        key => {
+            const index = Number(key)
+            return index >= start && index < end
+                ? String(index - start)
+                : undefined
+        },
     )
+    return view
+}
+
+function tryConcatArrayView(thisValue, items) {
+    const suffix = createConcatRemap([], items)
+    if (languageValues.isError(suffix)) return suffix
+    return tryAppendArrayView(thisValue, suffix)
+}
+
+function tryAppendArrayView(thisValue, suffix) {
+    const view = arrayViews.ArrayView.tryExtendEnd(
+        thisValue,
+        suffix.length,
+        derived => propertyVersions.prepareRetainedArrayProperties(
+            thisValue,
+            derived,
+        ),
+    )
+    if (!view) return undefined
+    const start = view.length - suffix.length
+    arrayRemaps.placeRemap(view, suffix, start)
+    return view
+}
+
+function tryPrependArrayView(thisValue, values) {
+    const offset = values.length
+    const view = arrayViews.ArrayView.tryPrepend(
+        thisValue,
+        values,
+        derived => propertyVersions.prepareRetainedArrayProperties(
+            thisValue,
+            derived,
+            key => String(Number(key) + offset),
+        ),
+    )
+    if (!view) return undefined
+    arrayRemaps.placeRemap(view, values)
+    return view
 }
 
 export {
     ARRAY_METHODS,
-    concat,
-    createConcatRemap,
-    flat,
-    includes,
-    indexOf,
-    join,
-    lastIndexOf,
-    sort,
-    toString,
-    toSorted,
+    RECEIVER_RESULT,
 }

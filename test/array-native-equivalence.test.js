@@ -36,6 +36,8 @@ const STRING_COMPARATOR = (left, right) => {
     return left < right ? -1 : left > right ? 1 : 0
 }
 
+// Keep oracle facts independent of the declarations they verify, so a bad
+// declaration cannot silently remove the scenario that would expose it.
 const ELEMENT_WAIT_METHODS = new Set([
     "join",
     "sort",
@@ -57,6 +59,22 @@ const STRUCTURAL_PROMISE_METHODS = new Set([
     "toReversed",
     "toSpliced",
     "unshift",
+    "with",
+])
+const ARGUMENT_WAIT_METHODS = new Set([
+    "at",
+    "concat",
+    "copyWithin",
+    "flat",
+    "includes",
+    "indexOf",
+    "join",
+    "lastIndexOf",
+    "slice",
+    "sort",
+    "splice",
+    "toSorted",
+    "toSpliced",
     "with",
 ])
 
@@ -602,7 +620,7 @@ function createArrayCase(method, fact, index, mode) {
         source,
         args,
         layout: Array.isArray(shaped) ? undefined : shaped.layout,
-        mutates: ARRAY_METHODS[method].mutate === true,
+        mutates: fact.mutationArgs !== undefined,
         message: scenarioMessage(method, mode.name, seed, source, args),
     }
 }
@@ -717,11 +735,9 @@ function withDuplicatePromise(source) {
 }
 
 function argumentWillWait(scenario) {
-    const definition = ARRAY_METHODS[scenario.method]
-    if (definition.prepare) return scenario.args.length > 0
-    return (definition.exportArgs ?? []).some((exported, index) => {
-        return exported && index < scenario.args.length
-    })
+    if (scenario.method === "fill") return scenario.args.length > 1
+    return scenario.args.length > 0 &&
+        ARGUMENT_WAIT_METHODS.has(scenario.method)
 }
 
 async function assertLogicalValue(actual, expected, scenario) {

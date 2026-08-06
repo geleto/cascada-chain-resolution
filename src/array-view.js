@@ -25,8 +25,13 @@ class ArrayView {
         })
     }
 
-    static attachTo(arrayOrArrayView) {
+    static tryAttachTo(arrayOrArrayView) {
         const projection = projectionOf(arrayOrArrayView)
+        const backing = backingOf(projection)
+        if (
+            metadata.importBoundaryOf(arrayOrArrayView) ||
+            metadata.importBoundaryOf(backing)
+        ) return undefined
         if (isArrayView(projection)) return projection
 
         const view = new ArrayView(projection)
@@ -48,12 +53,14 @@ class ArrayView {
 
     static tryExtendEnd(source, count, beforeWrite) {
         if (!ArrayView.canGrowEnd(source, count)) return
-        return ArrayView.attachTo(source).#extendEnd(count, beforeWrite)
+        const view = ArrayView.tryAttachTo(source)
+        return view?.#extendEnd(count, beforeWrite)
     }
 
     static tryPrepend(source, values, beforeWrite) {
         if (!ArrayView.#canPrepend(source, values.length)) return
-        return ArrayView.attachTo(source).#prepend(values, beforeWrite)
+        const view = ArrayView.tryAttachTo(source)
+        return view?.#prepend(values, beforeWrite)
     }
 
     static #canPrepend(source, count) {

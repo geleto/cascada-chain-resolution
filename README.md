@@ -317,7 +317,8 @@ The public operations are:
 | --- | --- |
 | `assignPath(chain, path, value)` | Assign or replace a path value |
 | `deletePath(chain, path)` | Delete a path value |
-| `lookupPath(chain, path, sharedOwnership)` | Read a path value |
+| `lookupPath(chain, path)` | Extract a path value |
+| `readPath(chain, path)` | Read without adding an owner |
 | `run(chain, path, method, mutateArray, ...arguments)` | Invoke a supported method |
 | `registerDataClass(Class)` | Register an exact class prototype as tracked data |
 | `import(value, errorContext)` | Admit external data |
