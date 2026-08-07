@@ -13,7 +13,14 @@ Implement each checkpoint independently. After every checkpoint:
 - run the complete suite in every supported metadata mode;
 - reproduce the affected failures and confirm the new behavior;
 - run `test/verify-refcounts.js`; and
-- keep only changes whose conformance or simplification gain justifies their complexity.
+- review the resulting design for total complexity, keeping only changes whose conformance or simplification gain justifies them.
+
+The simplification review is architectural, not a style or micro-refactoring pass. Evaluate, in order:
+
+1. **Structural wins** — whether a different architecture, data model, or invariant would collapse several mechanisms, even if that means rewriting a module. Treat incremental structure as potentially historical rather than intentional.
+2. **Unifications** — mechanisms or parallel paths that perform the same job and can become one.
+3. **Dead weight** — adapters, compatibility layers, indirection, configuration, and error paths that no longer earn their keep.
+4. **Load-bearing complexity** — code that resembles cruft but protects a real contract or invariant and must remain.
 
 Prefer integration tests through public operations. Do not pin mirror fields, helper boundaries, cycle-cut placement, exact counter totals, or another interchangeable representation. Delete a superseded mechanism in the same change.
 
@@ -34,7 +41,7 @@ Keep these facts at their existing scopes:
 
 ## Phase 0: Delete in-place prepend
 
-Status: ready; implement before Phase 1.
+Implement before Phase 1.
 
 ### Reason
 
@@ -62,7 +69,7 @@ This does **not** remove ArrayView attachment. It still records that a raw Array
 
 ## Phase 1: Apply ownership to `ArrayView`
 
-Status: Parts A and B ready; Part A lands after Phase 5.
+Part A lands after Phase 5; Part B lands after Phase 2a.
 
 ### Problems
 
@@ -157,8 +164,6 @@ Update [`array-view.md`](array-view.md) to state:
 
 ## Phase 2: Keep ownership facts at identity scope
 
-Status: 2a ready; 2b requires a complete ownership-transition design.
-
 ### Phase 2a: Ref indexing must not create sharing
 
 [`indexComponent`](../src/refcounts.js#L155-L161) calls `markShared(child)` when placing a cycle cut. A cut is bookkeeping, while sharing is ownership; a lazy Error query can therefore make a later exclusive mutation copy.
@@ -171,40 +176,45 @@ Verify that a cyclic exclusive graph mutates identically with and without a prec
 
 [`walkImported`](../src/import-preparation.js#L29-L32) treats any identity with metadata as a runtime-owned island. Mirrors, refcounts, sharing, ArrayView attachment, and leases all create metadata, so subsystem order currently decides ownership. `runtimeScanned` and `metadataBeforeRuntimeScan` then try to reconstruct the lost distinction.
 
-Do not add an independent `runtimeOwned` Boolean beside `importBoundary`; that admits a meaningless fourth combination. Model one exclusive identity state:
+Replace `meta.importBoundary` with one exclusive `meta.ownership` state rather than adding an independent Boolean:
 
 ```text
-unclassified | runtime-owned | imported(importBoundary)
+absent | RUNTIME_OWNED | importBoundary
 ```
 
-`shared` and `readEnterCount` remain orthogonal. Entering `imported` must atomically mark the identity shared.
+Absence means import has no identity-level runtime world to preserve; ordinary one-owner semantics still apply. `shared` and `readEnterCount` remain orthogonal. `importBoundaryOf` exposes only an import token, and entering imported state atomically marks the identity shared.
 
-The imported walk must distinguish:
+`markRuntimeOwned` writes the sentinel only when ownership is absent and never replaces an import token. Keep `getOrCreatePromiseMirror` ownership-neutral; route actual operation captures through one helper that marks the container before obtaining its mirror, while ref indexing and import discovery continue to call the neutral helper.
+
+Establish `RUNTIME_OWNED` only at a transition that creates runtime identity state:
+
+- genuine sharing marks an unimported identity runtime-owned;
+- an operation that captures a runtime Promise property marks its container runtime-owned;
+- a copy-on-write copy is marked when created;
+- an ordinary runtime property commit marks its container and tracked value; and
+- a runtime method result is marked when published to its caller.
+
+These are admission points, not factory or discovery rules. `new Chain(value)` preserves the value's existing state. Ref indexing and import-frontier discovery may install a mirror but do not establish ownership; only an operation capturing that property does. Remap and materialization helpers remain classification-free because their products may be temporary; publication classifies a surviving result. A runtime-owned Promise result is classified by its property commit, while an imported Promise result goes through import preparation. Opaque method results remain imported. Host values assigned into the graph must already have been imported when external; an unmarked assigned value is therefore admitted as local runtime data.
+
+Import then follows one transition table:
 
 | Identity reached by import | Transition |
 | --- | --- |
-| explicitly runtime-owned | remain runtime-owned and become shared; import borrows the existing runtime world |
-| unclassified but scanned through a runtime-owned island | remain unclassified; scanning is not ownership, so a later direct imported path may still claim it |
+| absent | become imported and shared |
+| runtime-owned descendant | remain runtime-owned, become shared, and scan its current Promise frontier once |
+| runtime-owned explicit import root | become imported and shared; advance existing pending properties to imported versions |
+| already imported | keep the first boundary and remain shared |
+| absent identity encountered only while scanning a runtime island | remain absent, so a later direct imported path can still claim it |
 
-The unresolved contract is: **what event establishes that an unclassified identity is runtime-owned?** Resolve every source of identity before implementation:
+Delete `metadataBeforeRuntimeScan`; explicit state cannot be hidden by metadata created during a scan. Keep one `runtimeScanned` set so overlapping runtime islands are visited at most once per import. A direct alias is classified by its direct imported path regardless of whether a runtime-island path reaches it first.
 
-- `new Chain(unmarkedValue)`;
-- runtime Array method results;
-- remap and materialization results;
-- runtime-owned Promise settlement results;
-- containers created by mutation;
-- importing an identity already marked runtime-owned; and
-- an identity first scanned through a runtime island and later reached directly by import.
-
-Only then decide whether `metadataBeforeRuntimeScan` disappears. Preserve the import work bound: each previously known identity reached by one import may be rescanned at most once.
-
-Verification must cover each transition, import isolation, runtime-owned islands, direct aliases, rescan-once, and Promise-placement discovery. Update [`cycles-as-data.md`](cycles-as-data.md) to state that indexing writes no ownership, and [`import-preparation.md`](import-preparation.md) with the final classification model.
+Verify every table row, direct aliases in both traversal orders, overlapping runtime islands, operation-captured versus structurally discovered Promise mirrors, imported settlement, COW-created containers, runtime Array results, and assigned local versus already-imported values. Pure ref indexing, ArrayView attachment, leases, temporary remaps, and `new Chain` must not establish runtime ownership. Update [`cycles-as-data.md`](cycles-as-data.md) to state that indexing writes no ownership, and [`import-preparation.md`](import-preparation.md) with the explicit classification model.
 
 ---
 
 ## Phase 3: Make property-shape failures uniformly fatal
 
-Status: 3a ready; 3b depends on the Phase 4a decision.
+Phase 3b is the fallback only if Phase 4a is rejected.
 
 ### Phase 3a: Remove error reclassification
 
@@ -248,7 +258,7 @@ Phase 4a resolves it on the permissive side by deleting inline storage. If Phase
 
 ## Phase 4: Simplify metadata lookup and storage
 
-Status: attempt after Phases 1–3; benchmark before keeping.
+Attempt after Phases 1–3 and benchmark before keeping.
 
 ### Phase 4a: Use one WeakMap
 
@@ -285,7 +295,7 @@ If 4a is rejected, land Phase 3b before evaluating this fallback.
 
 ## Phase 5: Reject Array mutators dispatched as observations
 
-Status: ready; land before Phase 1 Part A.
+Land before Phase 1 Part A.
 
 JavaScript has no out-of-place `push`; today the same method returns a length with `mutateArray: true` and an Array with `false`. A logical-Array mutator dispatched with `mutateArray: false` must return a validation Error.
 
@@ -307,7 +317,7 @@ Land small, independently evaluable checkpoints:
 4. **Phase 2a** — stop ref indexing from creating sharing.
 5. **Phase 1 Part B** — select opaque receivers by attachment extent.
 6. **Phase 3a** — make property-shape failures uniformly fatal.
-7. **Phase 2b** — only after its ownership transitions are resolved and reviewed.
+7. **Phase 2b** — replace metadata inference with the explicit ownership transitions above.
 8. **Phase 4a** — implement completely and benchmark. Keep it, or revert it, land Phase 3b, and evaluate Phase 4b.
 
 Phase 0 is a simplification, not a dependency: if it is rejected, Phase 1 must apply both growth guards to prepend as well as append. Phase 1 closes imported-backing corruption independently of Phase 2b. Phase 3b and Phase 4a are mutually exclusive answers to the metadata-mode divergence.
