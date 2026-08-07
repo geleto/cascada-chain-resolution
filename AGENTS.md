@@ -53,34 +53,44 @@ If three operations reach one pending property, the first resolver publishes `V`
 
 ## Ownership
 
-- Classify a property container and its stored value independently. The container determines whether Cascada may write the property; the value's identity determines whether it is imported or shared.
+- Classify a property container and its stored value independently. The container determines whether Cascada may write the property; the value's identity determines whether it is imported and whether it is shared.
 - External values must enter through import; creating a Chain only preserves existing ownership and import status.
 - Imported data is borrowed and never modified. All runtime state, including metadata and logical Promise settlement, lives outside it.
-- A non-shared tracked identity has one owner and may be mutated in place.
+- Imported data is always shared.
+- A tracked identity that is neither shared nor leased has one owner and may be mutated in place.
 - Extracting an existing tracked identity adds another owner and makes it shared. A temporary read does not; an ownership transfer ends the prior ownership instead.
+- A pending observation and an open read-only entry lease the value they captured, until they complete. A lease is released; sharing is permanent.
 - Import status belongs to identities, not paths. Containment transfers it in neither direction.
 
 ## Copy-on-Write
 
-- Mutation never changes a shared or imported node in place. Copying starts at the first node that must be preserved and continues to the target because the old path still references every reused child.
+- Cascada copies a node only because it must not be modified:
+    - it is shared;
+    - it is leased; or
+    - the operation would otherwise change storage shared with another value. An internal ArrayView, for example, shares its elements with its backing Array and with every other view over it.
+- Graph shape — aliasing, multiplicity, and cycles — is never a reason to copy, and never makes a node shared or leased.
+- Copying starts at the first node that must be preserved and continues to the target, because the old path still references every reused child.
 - A copy-on-write copy reads each property's logical value, never its physical slot.
 - A shallow copy is runtime-owned and carries no metadata from its source.
 - Reused imported children remain imported; other reused tracked children become shared.
-- Copy-on-write copies a path, not a graph. If `root.self === root`, changing `root.a` creates a root whose `self` still points at the original.
+- Copy-on-write copies a path, not a graph: a copy reuses every off-path child as it is. Assigning `root.back = root` therefore leaves `back` holding the previous root in the fork, not a self-reference.
 - A copied Promise property gets a fresh mirror at the copier's program position, so both property versions diverge there.
 
 ## Language Graph
 
 - Only own enumerable string keys belong to language data. Symbols, non-enumerables, and prototypes are outside the graph.
 - Define a missing key as an own data property so inherited setters, notably `__proto__`, never participate in a write.
-- Cascada never creates non-extensible language data. Such data is imported and has no special runtime semantics.
+- Cascada never creates non-extensible language data. It can only enter through import, and then has no special runtime semantics.
 - The language graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
 - Refcounting maintains an acyclic projection by cutting property placements. A cut affects bookkeeping only: it neither modifies the graph nor changes what operations observe.
 - The projection need not be canonical; valid cut placement and resulting counter totals may depend on construction history.
 
-## Opaque Host Methods
+## Runtime and Opaque Methods
 
-- Controlled intrinsics read logical graph properties. A trusted ordinary method is opaque host code: Cascada resolves its receiver path and exported arguments, then invokes it with the resolved receiver directly as `this`. An internal ArrayView first materializes, and the resulting native Array is `this`.
+- Runtime methods reproduce the observable behaviour of the native Array methods they replace; a difference from JavaScript is a defect, not a design choice. String methods are not reimplemented — they are invoked natively as opaque host code.
+- Runtime methods are implemented by Cascada. They read logical graph properties, handle Promise versions, and receive and return Cascada values directly, without export or import; a result may be an internal representation such as an ArrayView. Where a runtime method delegates to a native operation, it converts only what that operation consumes: `sort` resolves the element values it compares, `concat` resolves none.
+- Runtime methods avoid copying and materialization wherever possible, for arguments and for results alike: a view over the original is preferred to a physical copy. This is not pursued into rare cases — a special path must show a material benefit, like any other mechanism.
+- Any other method is opaque host code: native to the host and unaware of Cascada. Its arguments are exported and its tracked result is imported, but its receiver is not exported — Cascada resolves the receiver path and invokes the method with that receiver directly as `this`. An internal ArrayView first materializes, and the resulting native Array is `this`.
 - Property reads inside the method are synchronous JavaScript reads, not Cascada observations. They do not discover, register on, or wait for nested Promises. Runtime-owned writeback may therefore be visible, while an imported receiver retains its original physical properties.
 - The method must be read-only, non-retaining, and side-effect-free. If invocation is pending, later Cascada mutation must preserve the captured receiver.
 

@@ -8,7 +8,7 @@ The opportunities are independent. Every change must preserve synchronous progre
 
 ## Fixed contract: opaque method receivers
 
-Controlled intrinsics read logical graph properties. An ordinary trusted method is an opaque host call: Cascada resolves its receiver path and exported arguments, then invokes the method with the resolved receiver directly as `this`. An internal ArrayView is first materialized, and the resulting native Array is `this`. Cascada does not mediate property reads inside the method, discover nested Promise dependencies, or replace the receiver with a logical snapshot or Proxy.
+Runtime methods, implemented by Cascada, read logical graph properties. Any other method is an opaque host call: Cascada resolves its receiver path and exported arguments, then invokes the method with the resolved receiver directly as `this`. An internal ArrayView is first materialized, and the resulting native Array is `this`. Cascada does not mediate property reads inside the method, discover nested Promise dependencies, or replace the receiver with a logical snapshot or Proxy.
 
 Exact host receiver behavior makes runtime-owned physical writeback observable. The property-version protocol therefore writes an advancing live runtime-owned version into its property. Imported and detached versions remain mirror-only, so an imported method receiver retains its external Promise. This difference follows directly from exact host identity and the rule that imported data is never modified.
 
