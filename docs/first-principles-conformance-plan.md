@@ -2,321 +2,281 @@
 
 ## Purpose
 
-This plan brings the remaining `src` behavior into conformance with the first principles in `AGENTS.md`. Phases group changes by cause; [Implementation order](#implementation-order) gives their landing order. Keep a phase after completion, but replace its proposal and status with the final design.
+This plan brings the remaining `src` behavior into conformance with the first principles in [`AGENTS.md`](../AGENTS.md). Phases group changes by cause; [Implementation order](#implementation-order) gives their landing order. Keep completed phases, but replace proposals with their final design.
 
-This document records only information needed to implement or verify these changes. `AGENTS.md` is authoritative for settled contracts; source and tests are authoritative for completed mechanisms.
+`AGENTS.md` is authoritative for settled contracts. Source and tests are authoritative for completed mechanisms.
 
 ## Method
 
 Implement each checkpoint independently. After every checkpoint:
 
+- reproduce the affected behavior and add integration coverage;
 - run the complete suite in every supported metadata mode;
-- reproduce the affected failures and confirm the new behavior;
 - run `test/verify-refcounts.js`; and
-- review the resulting design for total complexity, keeping only changes whose conformance or simplification gain justifies them.
+- review the result for structural simplifications, unifications, dead weight, and load-bearing complexity.
 
-The simplification review is architectural, not a style or micro-refactoring pass. Evaluate, in order:
-
-1. **Structural wins** — whether a different architecture, data model, or invariant would collapse several mechanisms, even if that means rewriting a module. Treat incremental structure as potentially historical rather than intentional.
-2. **Unifications** — mechanisms or parallel paths that perform the same job and can become one.
-3. **Dead weight** — adapters, compatibility layers, indirection, configuration, and error paths that no longer earn their keep.
-4. **Load-bearing complexity** — code that resembles cruft but protects a real contract or invariant and must remain.
-
-Prefer integration tests through public operations. Do not pin mirror fields, helper boundaries, cycle-cut placement, exact counter totals, or another interchangeable representation. Delete a superseded mechanism in the same change.
+Prefer one general transition over special cases. Do not pin helper boundaries, mirror fields, cycle-cut placement, exact counters, or another interchangeable representation. Delete superseded mechanisms in the same change.
 
 Baseline: commit `3d5a47a` (2026-08-06), with 648 tests passing in each metadata mode.
 
 ## Shared design constraints
 
-Copying has three grounds: an identity is shared, it is leased, or a write would change storage shared with another value. [`requiresCopyOnWrite`](../src/meta.js#L54-L58) covers the first two; [`requiresArrayMaterialization`](../src/array-view.js#L267-L269) covers the third.
-
-Keep these facts at their existing scopes:
-
-- sharing is permanent; a lease is released;
-- `attachmentRoot !== undefined` means the current path is already being copied and is part of [`mustPreserveValue`](../src/mutations.js#L42-L45);
-- `mustPreserveValue(value) || requiresArrayMaterialization(value)` means the logical source survives the operation, but its callers use that fact differently. Extract a shared helper only if doing so removes more complexity than it adds; and
-- ArrayView attachment remains a conservative presence test for mutation because the runtime cannot know whether a sibling view still exists.
+- Imported identities and their physical storage are never modified.
+- Observations and mutations may change runtime-owned representation when their logical results are correct and every value they must preserve remains unchanged.
+- Sharing and leasing protect logical values, not backing storage. Fixed ArrayView bounds may protect an old value while another value extends the runtime-owned backing.
+- COW or materialization is required only when representation reuse would change a protected logical value, or when an operation needs owned storage for imported data.
+- Host-call arguments are exported and every new direct or fulfilled result crosses import immediately. Receivers follow the category rules in `AGENTS.md`; returning the exact receiver preserves its existing origin.
+- Controlled runtime methods are the only methods that receive Cascada values directly. They resolve only the properties they consume and reuse backing whenever the rules above permit it.
 
 ---
 
 ## Phase 0: Remove the ArrayView prepend optimization
 
-Implemented before Phase 1.
-
-### Reason
-
-The former `baseIndex` existed only to prepend into shared backing. Every view operation carried its coordinate adjustment, while prepend scanned backing descriptors and the prototype chain to prove one allocation optimization safe. Native `unshift` is already O(n), so the mechanism did not earn its complexity.
+Complete.
 
 ### Final design
 
-- `ArrayView` stores a direct `_backing` reference and physical indexes are `_start + logicalIndex`.
-- `unshift` uses the existing in-place mutation path for a sole-owned native Array and the remap path whenever its receiver must be preserved.
+- `ArrayView` stores `_backing`, `_start`, and `_end`; physical indexes are `_start + logicalIndex`.
+- `unshift` mutates a sole-owned native Array directly and otherwise uses the remap path. It does not move storage shared by fixed views.
 - Array method dispatch has no prepend-specific view strategy.
-- Tests verify the language surface and behavior without pinning private field names.
-- [`array-view.md`](array-view.md) and [`run.md`](run.md) describe the resulting representation and dispatch.
-
-This does **not** remove ArrayView attachment. It still records that a raw Array backs a view, forcing later writes to preserve that view, and stores the raw identity's logical bounds when they differ from the physical backing. `meta.arrayView`, `projectionOf`, and Phase 1 Part B therefore remain.
+- ArrayView attachment still pins the raw Array's current logical bounds, allowing later values to reuse its backing without changing earlier values.
+- Tests verify behavior and the language surface without pinning private field names.
 
 ### Verification
 
-- `unshift` matches JavaScript for sole-owned and preserved receivers.
-- `slice` then `unshift`, and two views then `unshift`, leave every retained view unchanged.
-- Append at the physical endpoint still reuses storage where ownership permits; an existing view's fixed end remains unchanged.
+- `unshift` matches JavaScript for owned and preserved receivers.
+- Earlier values remain unchanged across `slice` and repeated `unshift` operations.
+- Append at the physical endpoint still reuses runtime-owned backing while earlier fixed views remain unchanged.
 - The complete suite passes 648 tests in both metadata modes, including the refcount oracle.
 
 ---
 
-## Phase 1: Apply ownership to `ArrayView`
+## Phase 1: Establish data-type and identity classification
 
-Part A lands after Phase 5; Part B lands after Phase 2a.
+### Problem
 
-### Problems
+`isTracked` currently answers several unrelated questions: whether a value is a language container, may receive metadata, and can be a method receiver. That cannot represent opaque class identities, record functions, or the type capabilities in `AGENTS.md`. Inline metadata also cannot record ownership on an imported or opaque identity without modifying it.
 
-`ArrayView` currently checks import status but not sharing or leases. Four observable failures follow:
+### Design
 
-| Defect | Failure |
-| --- | --- |
-| 1a | `push` or indexed growth can mutate a backing Array retained by an extracted owner or pending receiver. Cascada's logical result is correct, but the retained raw identity changes. |
-| 1b | After `slice` attaches a view, an opaque method receives a materialized copy even when the attachment still spans the complete backing. Non-enumerable and Symbol receiver state is lost. |
-| 1c | A view attached before import gives the Array metadata; import mistakes it for a runtime-owned island, and later growth can modify imported data. Part A must protect this independently of Phase 2b. |
-| 1d | Observation `concat` physically extends its receiver, while an Array mutator dispatched with `mutateArray: false` both mutates and returns the wrong kind of result. Phase 5 closes the dispatch half. |
+Use one external metadata `WeakMap` for every runtime-managed identity:
 
-The resulting rules are:
+- make `metaOf` a direct WeakMap lookup;
+- remove the metadata Symbol, inline/WeakMap mode switch, import migration, mode files, scripts, and test plumbing; and
+- keep all metadata outside both runtime and imported values.
 
-- A contiguous subrange may be a view only over a runtime-owned, attachable backing. Imported Arrays materialize because the host can still mutate them.
-- An observation never physically extends its receiver.
-- A mutating append may reuse storage only at the physical endpoint of a writable backing.
-- Any physical write additionally requires that neither the backing nor the operation must preserve the raw Array.
+Separate classification helpers by question. Graph traversal continues to admit only records, Arrays, and registered class instances. Method dispatch separately distinguishes records, logical Arrays, strings, registered classes, and unregistered or intrinsic instances. Functions remain opaque callable values rather than property containers. Registration must be queryable directly instead of being inferred from `isTracked`.
 
-### Part A: Make backing growth obey ownership
+An unregistered or intrinsic instance may carry import, sharing, and lease facts without becoming traversable. Import marks such an identity imported and shared, then stops without reflecting on its properties or hidden state. `new Chain(value)` remains classification-neutral.
 
-The following cases distinguish the required changes:
-
-| Case | Shape | Current breach | Required protection |
-| --- | --- | --- | --- |
-| 0 | shared or leased ancestor, unmarked child, observation `concat` | child and preserved ancestor grow | remove observation growth |
-| 1 | full-span `ArrayView`, shared backing, mutation `push` | escaped backing grows | backing guard |
-| 2 | shared ancestor, attached raw child, indexed growth | old ancestor's child grows | assignment guard |
-| 3 | shared ancestor, attached raw child, mutation `push` | old ancestor's child grows | method guard |
-
-After extracting the ancestor in cases 2 and 3, `requiresCopyOnWrite(child)` remains false; ownership does not propagate to child identities until the path is copied. A backing-only test therefore cannot protect those cases.
-
-#### 1. Remove observation growth
-
-Remove `concat`'s `view` entry and `tryConcatArrayView`. Its existing `createConcatResultRemap` already produces the correct independent result. Once Phase 5 rejects observation mutators, `definition.view` in `invokeArrayObservationMethod` becomes unreachable and should also be deleted.
-
-This is simpler than carrying ancestor preservation context through every observation solely to retain a `concat` allocation optimization.
-
-#### 2. Guard the backing
-
-[`canGrowEnd`](../src/array-view.js#L42-L52) must refuse growth when [`requiresCopyOnWrite(backing)`](../src/meta.js#L54-L58) is true. Put the guard there because it describes the backing itself and must cover a logical receiver that is already an `ArrayView`.
-
-Do not substitute `importBoundaryOf`: when a view is attached before import, `importBoundaryOf(backing)` is false but `requiresCopyOnWrite(backing)` is true because import still marks it shared. The general predicate also covers extraction and leases.
-
-#### 3. Guard the operation
-
-Both fast paths must refuse physical growth when a copy-on-write walk is preserving the raw Array:
-
-| Site | Refuse when |
-| --- | --- |
-| [`tryArrayViewAssignment`](../src/mutations.js#L236-L258) | `Array.isArray(array) && mustPreserveValue(array, attachmentRoot)` |
-| [`tryAppendArrayView`](../src/array-methods.js#L599-L612) | `Array.isArray(thisValue) && mustPreserveValue` |
-
-The assignment path then reaches its existing parent-copy logic. The method path reaches `createMutationRemap` and produces an independent receiver.
-
-For `run`, pass the already computed `mustPreserveValue` through `invokeArrayMutationMethod` to the selected view function. Only append inspects it after Phase 0; `pop` and `shift` change bounds without writing the backing. This is per-operation context, not persistent state or method metadata.
-
-The `Array.isArray` test is load-bearing. A retained raw Array must refuse growth, while a published `ArrayView` has fixed bounds and may derive a longer view when its backing itself is not shared or leased. Using `sourceSurvives` would incorrectly reject this safe case because it also includes `requiresArrayMaterialization`.
-
-Keep the dependency direction: the backing guard belongs in `array-view.js`; operation context stays in `mutations.js` and `run.js`. `array-view.js` must not import the mutation helper.
-
-### Part B: Select opaque receivers by extent
-
-Array attachment is not itself a reason to materialize an opaque receiver. For a raw Array with an attached projection, pass the exact raw Array when that projection spans its complete physical backing—after Phase 0, `_start === 0 && _end === backing.length`. Materialize when the extent differs or the value is itself a published `ArrayView`.
-
-State this as an extent test, not “the raw Array equals the logical value.” Imported Promise overlays deliberately differ from their physical slots while still requiring the raw receiver. Mutation keeps its conservative presence-based materialization test because an indexed write must preserve any sibling view.
-
-Verify both sides: a discarded `slice` must not change the exact receiver of a later opaque call, while a bounds-only shrink must materialize because the attachment no longer spans the backing. Also cover settled Promise properties, holes, and a backing grown past the attachment.
+Metadata follows identity across prototype changes. A later `registerDataClass` call changes graph classification without losing existing identity facts. Benchmark representative property walks, but do not retain two metadata systems merely for a small lookup difference.
 
 ### Verification
 
-- Cover cases 0–3 above as integration tests. For cases 2 and 3, assert both the raw child and the extracted ancestor remain unchanged.
-- For case 1, assert the escaped backing remains unchanged and `export` of the mutated Chain equals the pushed Array. `lookupPath` returns and shares the exact logical identity; it is not export. An internal `ArrayView` may serialize as `{}` because its representation fields are non-enumerable, while language operations and `export` still see its logical Array.
-- Keep a direct shared Array + `push` regression. `pop`, root `lookupPath`, then `push` is one construction; the lookup is the extraction that creates the second owner. Without it, `pop` then `push` correctly mutates a sole-owned native Array.
-- Keep the already-correct shared-ancestor + unmarked, unattached child case. It must continue through ordinary parent COW rather than the view fast path.
-- Prove the guards are not over-conservative: a retained published `ArrayView` may still extend at the endpoint when its backing is neither shared nor leased.
-- Test slice-before-import and import-before-slice; imported storage must never change.
-- `concat` preserves receiver storage and matches native identity, holes, and elements.
-- The opaque receiver is the original raw Array when its attachment spans the backing, including non-enumerable and Symbol state; otherwise materialization preserves logical length, elements, and holes.
-- `slice`, `pop`, `shift`, and `push` retain view reuse where ownership permits.
+- Each category in the `AGENTS.md` table is classified independently of its method name.
+- A custom class is unregistered before registration and a registered language container afterward.
+- Opaque and imported identities receive no own metadata property and are never traversed.
+- Import, extraction, and leases record identity facts on unregistered and intrinsic objects.
+- Creating a Chain preserves existing identity facts and does not mark its value imported or shared.
+- Primitives, Promises, and Errors remain outside metadata.
+- Metadata lookup and storage trigger no Proxy reflection, including for an imported frozen identity, and never modify that identity.
+- Prototype mutation and late class registration do not lose identity facts or cache stale classification.
+- The complete suite and refcount oracle pass in the single metadata mode; benchmark results are recorded.
 
-### Documents to update
-
-Update [`array-view.md`](array-view.md) to state:
-
-- attachment requires a runtime-owned, non-imported backing, but not sole ownership;
-- observations never physically extend their receiver, so `concat` uses its remap;
-- mutating growth requires both the backing guard and the operation guard; and
-- opaque methods receive the raw Array exactly when the attachment spans its backing. Export still always materializes the logical surface.
+Update [`runtime-spec.md`](runtime-spec.md), [`import-preparation.md`](import-preparation.md), and documentation that requires both metadata modes.
 
 ---
 
-## Phase 2: Keep ownership facts at identity scope
+## Phase 2: Make class property writes atomic
 
-### Phase 2a: Ref indexing must not create sharing
+### Problem
 
-[`indexComponent`](../src/refcounts.js#L155-L161) calls `markShared(child)` when placing a cycle cut. A cut is bookkeeping, while sharing is ownership; a lazy Error query can therefore make a later exclusive mutation copy.
+Class property assignment currently stores Cascada values directly. Native class code can therefore encounter an ArrayView, tracked graph identity, or pending language Promise. Waiting on the assigned field alone also leaves the instance visible in a partially updated state.
 
-Delete that call. `setCycleCut` alone keeps the reverse-parent projection acyclic, so counter behavior and cut placement do not change.
+### Design
 
-Verify that a cyclic exclusive graph mutates identically with and without a preceding `hasError`, and that a diamond remains exclusive; genuinely shared or imported graphs still copy. A completed, non-owning observation may leave bookkeeping but must not change later mutation behavior. `lookupPath` extraction and pending receiver leases are intentionally excluded from that statement.
+Treat a class-property write as one transition on the placement containing the instance:
 
-### Phase 2b: Replace metadata inference with an ownership model
+1. Capture that placement's property version.
+2. For a registered instance, apply normal copy-on-write; for an unregistered or intrinsic instance, require the exact identity to be runtime-owned, unshared, unleased, and unimported.
+3. Export and settle the assigned value, including nested language Promises.
+4. If preparation waits, publish the ordinary Promise gate at the instance placement and retain the instance privately.
+5. Write only the prepared host value, then republish the instance. Later operations resume from the same gate in FIFO order.
 
-[`walkImported`](../src/import-preparation.js#L29-L32) treats any identity with metadata as a runtime-owned island. Mirrors, refcounts, sharing, ArrayView attachment, and leases all create metadata, so subsystem order currently decides ownership. `runtimeScanned` and `metadataBeforeRuntimeScan` then try to reconstruct the lost distinction.
+Use the existing property-version transition; do not add a class lock, queue, or pending-field representation. A rejected data Promise becomes the assigned Error value and the mutation returns nothing, as for every language write. A fatal preparation failure restores the unchanged instance before reporting, so no partial state is published. A ready value completes synchronously without installing a gate.
 
-Replace `meta.importBoundary` with one exclusive `meta.ownership` state rather than adding an independent Boolean:
-
-```text
-absent | RUNTIME_OWNED | importBoundary
-```
-
-Absence means import has no identity-level runtime world to preserve; ordinary one-owner semantics still apply. `shared` and `readEnterCount` remain orthogonal. `importBoundaryOf` exposes only an import token, and entering imported state atomically marks the identity shared.
-
-`markRuntimeOwned` writes the sentinel only when ownership is absent and never replaces an import token. Keep `getOrCreatePromiseMirror` ownership-neutral; route actual operation captures through one helper that marks the container before obtaining its mirror, while ref indexing and import discovery continue to call the neutral helper.
-
-Establish `RUNTIME_OWNED` only at a transition that creates runtime identity state:
-
-- genuine sharing marks an unimported identity runtime-owned;
-- an operation that captures a runtime Promise property marks its container runtime-owned;
-- a copy-on-write copy is marked when created;
-- an ordinary runtime property commit marks its container and tracked value; and
-- a runtime method result is marked when published to its caller.
-
-These are admission points, not factory or discovery rules. `new Chain(value)` preserves the value's existing state. Ref indexing and import-frontier discovery may install a mirror but do not establish ownership; only an operation capturing that property does. Remap and materialization helpers remain classification-free because their products may be temporary; publication classifies a surviving result. A runtime-owned Promise result is classified by its property commit, while an imported Promise result goes through import preparation. Opaque method results remain imported. Host values assigned into the graph must already have been imported when external; an unmarked assigned value is therefore admitted as local runtime data.
-
-Import then follows one transition table:
-
-| Identity reached by import | Transition |
-| --- | --- |
-| absent | become imported and shared |
-| runtime-owned descendant | remain runtime-owned, become shared, and scan its current Promise frontier once |
-| runtime-owned explicit import root | become imported and shared; advance existing pending properties to imported versions |
-| already imported | keep the first boundary and remain shared |
-| absent identity encountered only while scanning a runtime island | remain absent, so a later direct imported path can still claim it |
-
-Delete `metadataBeforeRuntimeScan`; explicit state cannot be hidden by metadata created during a scan. Keep one `runtimeScanned` set so overlapping runtime islands are visited at most once per import. A direct alias is classified by its direct imported path regardless of whether a runtime-island path reaches it first.
-
-Verify every table row, direct aliases in both traversal orders, overlapping runtime islands, operation-captured versus structurally discovered Promise mirrors, imported settlement, COW-created containers, runtime Array results, and assigned local versus already-imported values. Pure ref indexing, ArrayView attachment, leases, temporary remaps, and `new Chain` must not establish runtime ownership. Update [`cycles-as-data.md`](cycles-as-data.md) to state that indexing writes no ownership, and [`import-preparation.md`](import-preparation.md) with the explicit classification model.
-
----
-
-## Phase 3: Make property-shape failures uniformly fatal
-
-Phase 3b is the fallback only if Phase 4a is rejected.
-
-### Phase 3a: Remove error reclassification
-
-[`propertyShapeError`](../src/language-properties.js#L43-L51) records thrown errors so [`applyRemapToArray`](../src/array-remap.js#L147-L150) can catch and return them as data. The same non-writable property is therefore fatal through `assignPath` and a language Error through Array replay.
-
-Delete `propertyShapeErrors`, `isPropertyShapeError`, and the `try`/`catch` in `applyRemapToArray`. Descriptor and representation failures are kernel failures; value failures remain data:
-
-| `commitArrayLength` condition | Class | Reason |
-| --- | --- | --- |
-| `Invalid array length` | data | a conformant runtime-owned Array can receive an invalid value |
-| `Array length is read-only` | fatal | requires external descriptor state that was not imported |
-| `Cannot delete an Array element while setting length` | fatal | same: a non-configurable external element |
-| `Cannot grow this ArrayView in place` | fatal | internal representation invariant; conformant paths materialize first |
-
-`ArrayView.set("length", …)` already reports the same failed growth invariant fatally. Phase 1 makes `canGrowEnd` stricter, but `transformArrayLength` consults that predicate before `commitArrayLength`, so newly refused views still materialize first.
-
-Also fix [`assertCanPublishPromiseProperty`](../src/language-properties.js#L120-L133) to derive error context from the parent whose property shape failed, not from the value.
-
-Keep hostile-descriptor tests on non-imported data: imported mutation copies into ordinary writable storage and cannot exercise the partial failure. Change these expectations from returned Error to fatal while preserving assertions about completed partial state:
-
-- [`run.test.js:774-797`](../test/run.test.js#L774-L797): partial `fill` and refcount accounting;
-- [`path-operations.test.js:452-479`](../test/path-operations.test.js#L452-L479): partial Array length semantics.
-
-Add separate imported frozen/locked cases that verify successful COW, unchanged originals, and refcount accounting. The existing imported Promise-accessor case ([`import.test.js:1142-1165`](../test/import.test.js#L1142-L1165)) and descriptor-swap fixture ([`promise-property-fatal.js`](../test/fixtures/promise-property-fatal.js)) remain fatal with unchanged messages.
-
-### Phase 3b: Strict metadata-mode agreement, only if Phase 4a is rejected
-
-Today `lookupPath` on a frozen, never-imported object fatals in inline mode when metadata cannot be defined, but succeeds in WeakMap mode. Metadata layout is an implementation choice, so this divergence must disappear.
-
-Phase 4a resolves it on the permissive side by deleting inline storage. If Phase 4a is rejected, make `ensureMeta` explicitly reject a non-extensible, non-imported identity in both modes with the diagnostic that the external data was never imported. Keep this as a separate commit from 3a.
+All semantic state of a registered class must remain in own enumerable string-keyed properties. An unregistered or intrinsic instance remains opaque even though Cascada may write one of its ordinary properties under the exclusive-ownership rule.
 
 ### Verification
 
-- All callers classify the same property-shape condition identically.
-- Partial replay state remains correctly accounted after a fatal.
-- Imported frozen and locked sources copy successfully and remain unchanged.
-- Existing unsupported Promise descriptor shapes remain fatal.
-- If 3b lands, the frozen non-imported case fails identically in both metadata modes with the import diagnostic.
+- Ready primitive and graph values are exported and written synchronously.
+- Assigning an ArrayView or tracked graph stores no internal representation and preserves aliases and cycles in the exported value.
+- Direct and nested Promises gate the containing instance, never the destination field.
+- Later writes and method calls queue at that property version and observe FIFO order.
+- A rejected assigned Promise stores its Error value, publishes atomically, and returns nothing.
+- A fatal preparation failure restores the unchanged instance before reporting and exposes no partial write.
+- Registered writes COW across imported, shared, and leased owners.
+- Imported, shared, or leased unregistered identities reject writes and remain physically unchanged.
+- Reassigning the same Promise creates a distinct property version.
+
+Update [`data-classes.md`](data-classes.md) and the path-operation documentation.
 
 ---
 
-## Phase 4: Simplify metadata lookup and storage
+## Phase 3: Dispatch methods by data type
 
-Attempt after Phases 1–3 and benchmark before keeping.
+### Problem
 
-### Phase 4a: Use one WeakMap
+Method dispatch still follows the tracked/untracked split: inherited record methods can execute, own record functions are rejected, unregistered instances are rejected, and Array overrides receive only shallow-materialized views. The Array-specific mutation flag is also validated before the receiver category is known.
 
-Implement the complete single-WeakMap design, benchmark representative property-walk paths against the current implementation, and keep it unless a material regression justifies inline metadata.
+### Design
 
-With one `META_MAP`:
+Implement the `AGENTS.md` capability table directly. Treat `run`'s Boolean as the requested operation mode, rename its internal `mutateArray` terminology without changing the positional API, and validate the mode only after classifying the resolved receiver and selected callable. A class or record function named `push` is not an Array mutator.
 
-- `metaOf` becomes `META_MAP.get(value)`; `WeakMap#get` already returns `undefined` for unsupported keys;
-- remove `CASCADA_META_STORAGE`, the metadata Symbol, storage branches, `STORE_META_IN_WEAKMAP`, and its plumbing in `test/support.js`, `import.test.js`, and `refcounts.test.js`;
-- remove `inline-mode.js`, `weakmap-mode.js`, their package scripts, and mode-specific assertions;
-- remove import-time metadata migration and the obsolete `imported` parameter of `ensureMeta`; and
-- remove storage-location semantics from [`import-preparation.md`](import-preparation.md) and [`runtime-spec.md`](runtime-spec.md), and remove the two-mode requirement from [`enter.md`](enter.md), [`run.md`](run.md), [`plan.md`](plan.md), and [`work-bounds-plan.md`](work-bounds-plan.md).
+Method selection is category-specific:
 
-This chooses these semantics explicitly:
+- a record captures and resolves only the selected own language-property version; it never searches the prototype or exposes the record as callable state;
+- a logical Array first selects a supported standard method or an observation-only override;
+- a registered class selects its declared method surface;
+- an unregistered or intrinsic instance selects an observational method on its exact identity; and
+- a string selects a native observation on the primitive.
 
-- metadata follows an identity across prototype changes;
-- metadata lookup and storage do not reflect on the value; metadata creation still validates through `isTracked` and may trigger Proxy reflection; and
-- the frozen non-imported case becomes readable, giving up its accidental eager import diagnostic. It may still fail on a later write.
+Outside the record-function case, an own enumerable language property shadows the method and is not executable. Capture descriptors before preparing arguments; invoke an accessor getter only later with the prepared receiver. Missing or non-callable selections produce the existing validation Error.
 
-Verify the complete suite in the single mode, `verify-refcounts`, a frozen non-imported read, and an identity whose prototype changes after receiving metadata.
+Constructors remain unsupported. A descriptor lookup that throws, an accessor without a getter, and a getter that throws or returns a non-callable value retain their existing language-Error or fatal classification; call preparation must not blur those boundaries.
 
-### Phase 4b: Fallback if one WeakMap is materially slower
+Prepare each host call through one operation-wide coordinator:
 
-If both storage modes remain, first evaluate replacing `metaOf`'s `isTracked` classification with an object guard before the inline and WeakMap lookups. Decide and test the observable consequences rather than inheriting them:
+- export every explicit argument and, for an Array override, the complete native Array receiver snapshot;
+- preserve aliases and cycles across all exported positions and register receiver dependencies before argument dependencies;
+- prepare every registered-class property before native code consumes it; use an owned copy rather than modifying imported state;
+- lease an exact observational receiver until the call completes, while a pending registered mutation reuses Phase 2's instance gate and remains private; and
+- import every new synchronous or fulfilled result immediately, while an already owned exact receiver retains its origin and gains another owner only when the result creates one.
 
-- Proxy lookup traps change from `getPrototypeOf` to the storage operations; and
-- metadata would continue to follow an identity after its prototype becomes untracked.
+Registered observations are side-effect-free. A registered mutation may change only its prepared receiver and may not retain it or mutate after its result settles. Unregistered and intrinsic observations may read intrinsic state but must not mutate or depend on ordinary properties. A record function uses only its explicit arguments.
 
-Confirm primitives, `null`, Promises, and Errors still return `undefined`. Use a prototype-classification memo only if the guarded lookup cannot preserve the chosen semantics and a benchmark demonstrates material benefit. Before such a memo, add a test for registering a data class after one of its instances was first classified so negative cache entries cannot go stale.
+Reject Array mutators in observation mode, mutations through Array overrides, and mutating unregistered or intrinsic calls. Delete unreachable observation-mutator handling, but keep observation view dispatch: `concat` may extend eligible runtime backing while its receiver retains fixed bounds.
 
-If 4a is rejected, land Phase 3b before evaluating this fallback.
+Do not add sharing or lease guards that forbid otherwise safe ArrayView backing reuse. Imported Arrays never attach or serve as mutable backing; they materialize or COW first.
+
+### Verification
+
+- Every data type accepts only the methods and modes in `AGENTS.md`.
+- A ready host call invokes and returns synchronously.
+- A record function waits for its captured property version, receives exported arguments, and cannot observe record state; inherited and non-callable selections fail.
+- Array mutators requested as observations and mutations through Array overrides fail, while a same-named record or class function still follows its own category.
+- Standard Arrays retain controlled behavior and resolve only the properties each method consumes.
+- Array overrides receive complete exported native Arrays containing no ArrayView, unresolved language property, or original tracked identity.
+- Receiver and argument export uses one snapshot, preserves aliases and cycles across positions, and cannot be changed by later Cascada mutation.
+- Registered observations and mutations see only settled host-ready state and preserve imported or prior owners.
+- A pending registered mutation keeps its instance gated until the method settles; later operations observe no partial state.
+- Unregistered and intrinsic observations receive exact identity; mutating calls fail.
+- `Date.prototype.getTime` succeeds on an exact Date receiver, while `Date.prototype.setTime` requested as a mutation fails without changing it.
+- Strings retain native observational behavior.
+- Own enumerable state shadows non-record methods. Constructor, missing-getter, non-callable, and throwing descriptor/accessor cases retain their specified classification.
+- Callable and accessor selection precedes asynchronous argument readiness without invoking host code early.
+- An Array override or isolated registered call returning `this` yields an imported prepared copy, never the original identity.
+- An exact class receiver returned directly or through a Promise retains its origin and accounts for any additional owner.
+- Other new direct and fulfilled results are imported immediately.
+- Promise interleavings preserve receiver-before-argument registration and FIFO transitions.
+- Valid `concat`, `push`, indexed growth, and length growth still reuse runtime-owned backing without changing earlier logical values.
+- Imported Arrays never acquire ArrayView attachment or act as mutable backing, and their physical storage remains unchanged.
+
+Update [`run.md`](run.md), [`array-view.md`](array-view.md), and [`data-classes.md`](data-classes.md).
 
 ---
 
-## Phase 5: Reject Array mutators dispatched as observations
+## Phase 4: Keep ownership facts at their source
 
-Land before Phase 1 Part A.
+### Phase 4a: Ref indexing must not create sharing
 
-JavaScript has no out-of-place `push`; today the same method returns a length with `mutateArray: true` and an Array with `false`. A logical-Array mutator dispatched with `mutateArray: false` must return a validation Error.
+[`indexComponent`](../src/refcounts.js) marks a child shared when placing a cycle cut. A cut is bookkeeping, while sharing is ownership; a lazy Error query can therefore change a later mutation strategy.
 
-Check only after the receiver resolves as a logical Array in [`invokeSelectedMethod`](../src/run.js#L84-L108). A name-based check at the `run` entry would incorrectly reject an opaque non-Array method named `push`.
+Delete that mark. `setCycleCut` alone keeps the reverse-parent projection acyclic.
 
-Then delete the unreachable mutator branch from [`invokeArrayObservationMethod`](../src/array-invocation.js#L56-L89). Mutation still uses mutator view functions; Phase 1 later deletes the remaining observation view branch with `concat`'s view.
+#### Verification
 
-Verify Array mutators are rejected in observation mode, non-mutating Array methods still work, and a registered non-Array data class with a `push` method still dispatches opaquely. Update [`run.md`](run.md) by removing the observation-mutator dispatch row and its no-op semantics.
+- An exclusive cyclic or diamond graph behaves identically with and without a preceding Error query.
+- Index creation and cycle-cut placement do not create sharing or change a later mutation strategy.
+- Real sharing, leases, and import still preserve their logical values, including through ArrayView reuse.
+
+Update [`cycles-as-data.md`](cycles-as-data.md) to state that ref indexing records no ownership.
+
+### Phase 4b: Import is the external-ownership fact
+
+[`walkImported`](../src/import-preparation.js) currently treats pre-existing metadata as evidence of a runtime-owned island. That inference is unnecessary and wrong: a value passed to import is external by definition. Snapshot receivers cross through export, while exact unregistered receivers are governed by their identity ownership and are never inferred from graph metadata.
+
+Use one import walk:
+
+1. Visit each newly reached supported object identity once per import pass.
+2. If it is already imported, retain its first boundary and stop; that identity was prepared at its first admission.
+3. Otherwise mark it imported and shared.
+4. If it is an opaque unregistered instance, stop without reflecting on or traversing hidden state.
+5. Otherwise enumerate its current language properties, prepare each Promise property as an imported property version, and recurse into every available supported child.
+6. Apply the same admission to Promise fulfillments before publishing them.
+
+Metadata, mirrors, ref indexes, leases, and ArrayView attachment never imply runtime origin. Delete:
+
+- runtime-island detection;
+- `promoteRoot`, the separate runtime walk, and the root/result preparation split;
+- `runtimeScanned` and `metadataBeforeRuntimeScan`;
+- `discoverRuntimePromise`; and
+- the proposed `RUNTIME_OWNED` state and all admission-point bookkeeping.
+
+`new Chain(value)` remains classification-neutral. External assignment values must already have crossed import; unmarked assigned values are local runtime data. A caller that explicitly invokes import declares the supplied graph external, regardless of metadata already present.
+
+#### Verification
+
+- Cycles, DAG aliases, repeated identities, nested and root Promises, rejection, frozen data, and opaque class leaves import without modifying the graph.
+- Pre-existing mirrors, ref indexes, sharing, leases, or ArrayView attachment never prevent explicit import or create a runtime island.
+- A direct alias is classified by its imported path in either traversal order.
+- Repeated import is idempotent and retains the first boundary attribution.
+- `new Chain` preserves an identity's existing status, while explicit import always classifies its supplied value as external.
+- Imported Promise settlement remains mirror-only.
+
+Update [`import-preparation.md`](import-preparation.md).
+
+---
+
+## Phase 5: Make property-shape failures uniformly fatal
+
+### Problem
+
+[`propertyShapeError`](../src/language-properties.js) records thrown errors so Array replay can catch and return them as data. The same descriptor failure is therefore fatal through ordinary assignment and a language Error through Array replay.
+
+### Design
+
+Delete `propertyShapeErrors`, `isPropertyShapeError`, and the replay `try`/`catch`. Descriptor and internal-representation failures are kernel failures; value failures remain language data:
+
+| `commitArrayLength` condition | Class |
+| --- | --- |
+| `Invalid array length` | language Error |
+| `Array length is read-only` | fatal invariant failure |
+| `Cannot delete an Array element while setting length` | fatal invariant failure |
+| `Cannot grow this ArrayView in place` | fatal invariant failure |
+
+Conformant external descriptor state is imported and copied before mutation. Reaching a hostile descriptor on runtime-owned storage therefore indicates invalid input or a broken invariant, not language data.
+
+Also derive Promise-publication error context from the parent whose property shape failed, not from the assigned value.
+
+### Verification
+
+- Every caller classifies the same property-shape condition identically.
+- Invalid length remains a language Error.
+- Partial `fill` writes completed before a hostile descriptor remain correctly indexed when the fatal is reported.
+- Array-length reduction retains and accounts for deletions completed before a non-configurable element causes a fatal.
+- Imported frozen and locked sources COW successfully and remain unchanged.
+- Unsupported Promise descriptor shapes remain fatal with their existing attribution.
+- Promise-publication failures derive their error context from the parent whose property shape failed, not from the assigned value.
 
 ---
 
 ## Implementation order
 
-Land small, independently evaluable checkpoints:
-
 1. **Phase 0 (complete)** — removed prepend-in-place and `baseIndex`.
-2. **Phase 5** — reject observation mutators and remove their observation-only dispatch.
-3. **Phase 1 Part A** — remove observation growth and protect mutation growth.
-4. **Phase 2a** — stop ref indexing from creating sharing.
-5. **Phase 1 Part B** — select opaque receivers by attachment extent.
-6. **Phase 3a** — make property-shape failures uniformly fatal.
-7. **Phase 2b** — replace metadata inference with the explicit ownership transitions above.
-8. **Phase 4a** — implement completely and benchmark. Keep it, or revert it, land Phase 3b, and evaluate Phase 4b.
-
-Phase 0 is a simplification, not a dependency: if it is rejected, Phase 1 must apply both growth guards to prepend as well as append. Phase 1 closes imported-backing corruption independently of Phase 2b. Phase 3b and Phase 4a are mutually exclusive answers to the metadata-mode divergence.
+2. **Phase 1** — establish one external identity map and independent data-type classifiers.
+3. **Phase 2** — make registered and unregistered class-property writes atomic and host-ready.
+4. **Phase 3** — dispatch each method category and apply one host-call boundary.
+5. **Phase 4a** — stop ref indexing from creating sharing.
+6. **Phase 4b** — replace runtime-island inference with one external import walk.
+7. **Phase 5** — make property-shape failures uniformly fatal.
