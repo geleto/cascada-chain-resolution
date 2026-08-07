@@ -34,7 +34,7 @@ describe("ArrayView", () => {
         }
     })
 
-    it("keeps representation fields outside the language surface", () => {
+    it("keeps its representation outside the language surface", () => {
         const source = [1, 2]
         Object.defineProperty(source, "hidden", {
             value: 3,
@@ -45,17 +45,7 @@ describe("ArrayView", () => {
         const view = run(new Chain(source), [], "push", false, 3)
 
         expect(arrayViews.isArrayView(view)).to.be(true)
-        expect(Object.getOwnPropertyNames(view)).to.eql([
-            "_storage",
-            "_start",
-            "_end",
-        ])
-        for (const key of Object.getOwnPropertyNames(view)) {
-            expect(Object.getOwnPropertyDescriptor(
-                view,
-                key,
-            ).enumerable).to.be(false)
-        }
+        expect(Object.keys(view)).to.eql([])
         expect(view.keys()).to.eql([
             "0",
             "1",
@@ -97,7 +87,7 @@ describe("ArrayView", () => {
         expect([...throughAttachment]).to.eql([2, 3])
     })
 
-    it("forks retained Promise mirrors for each endpoint view", async () => {
+    it("forks retained Promise mirrors for each derived value", async () => {
         const pending = deferred()
         const source = [pending.promise, 2]
         const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
@@ -328,7 +318,7 @@ describe("ArrayView", () => {
         expect(attached).to.eql([3])
     })
 
-    it("materializes prepend when the backing has hidden indexes", () => {
+    it("preserves hidden indexes when materializing prepend", () => {
         const source = []
         Object.defineProperty(source, "0", {
             value: 7,

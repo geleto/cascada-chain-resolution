@@ -547,7 +547,6 @@ function setupViewWorld(scenario, mode) {
             { actual: base._state.value, expected: scenario.layout.backing },
         ],
         viewInfo: {
-            startAvailable: scenario.layout.start === 0,
             endAvailable:
                 scenario.layout.end === scenario.layout.backing.length,
             restricted: mode.restriction !== undefined,
@@ -562,22 +561,17 @@ function setupViewWorld(scenario, mode) {
 function setupAttachedWorld(scenario) {
     const receiver = cloneData(scenario.layout.backing)
     const chain = new Chain(receiver)
-    const prepend = scenario.index % 2 === 1
     const marker = 0x61 + scenario.index
     const version = run(
         chain,
         [],
-        prepend ? "unshift" : "push",
+        "push",
         false,
         marker,
     )
     assert(arrayViews.isArrayView(version), scenario.message)
     const expectedVersion = cloneData(scenario.source)
-    if (prepend) {
-        Array.prototype.unshift.call(expectedVersion, marker)
-    } else {
-        Array.prototype.push.call(expectedVersion, marker)
-    }
+    Array.prototype.push.call(expectedVersion, marker)
     return {
         chain,
         retained: [
@@ -585,8 +579,7 @@ function setupAttachedWorld(scenario) {
             { actual: version, expected: expectedVersion },
         ],
         viewInfo: {
-            startAvailable: !prepend,
-            endAvailable: prepend,
+            endAvailable: false,
             restricted: false,
         },
     }
@@ -778,10 +771,8 @@ function verifyViewRepresentation(
     if (!world.viewInfo || native.error) return
     const method = scenario.method
     let expected
-    if (method === "push" || method === "unshift") {
-        const endpoint = method === "push"
-            ? world.viewInfo.endAvailable
-            : world.viewInfo.startAvailable
+    if (method === "push") {
+        const endpoint = world.viewInfo.endAvailable
         expected = scenario.args.length === 0 || (
             endpoint && !world.viewInfo.restricted
         )

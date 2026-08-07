@@ -911,7 +911,7 @@ describe("run", () => {
         ) instanceof Error).to.be(true)
     })
 
-    it("keeps every earlier endpoint view stable across prepends", () => {
+    it("keeps every earlier value stable across prepends", () => {
         const sourceChain = new Chain([2, 3])
         const first = run(sourceChain, [], "unshift", false, 1)
         const second = run(new Chain(first), [], "unshift", false, 0)

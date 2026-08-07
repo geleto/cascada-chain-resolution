@@ -10,11 +10,7 @@ class ArrayView {
         const sourceView = isArrayView(source) ? source : undefined
         const sourceStart = sourceView?._start ?? 0
         Object.defineProperties(this, {
-            _storage: {
-                value: sourceView
-                    ? sourceView._storage
-                    : { array: source, baseIndex: 0 },
-            },
+            _backing: { value: sourceView?._backing ?? source },
             _start: { value: sourceStart + start },
             _end: {
                 value: sourceStart + (
@@ -45,7 +41,7 @@ class ArrayView {
         const backing = backingOf(projection)
         if (
             isArrayView(projection) &&
-            projection._end + projection._storage.baseIndex !== backing.length
+            projection._end !== backing.length
         ) return false
         if (backing.length + count > 0xffffffff) return false
         return Object.getOwnPropertyDescriptor(backing, "length").writable
@@ -54,55 +50,11 @@ class ArrayView {
     static tryExtendEnd(source, count, beforeWrite) {
         if (!ArrayView.canGrowEnd(source, count)) return
         const view = ArrayView.tryAttachTo(source)
-        if (view) return view.#extendEnd(count, beforeWrite)
-    }
-
-    static tryPrepend(source, values, beforeWrite) {
-        if (!ArrayView.#canPrepend(source, values.length)) return
-        const view = ArrayView.tryAttachTo(source)
-        if (view) return view.#prepend(values, beforeWrite)
-    }
-
-    static #canPrepend(source, count) {
-        if (count === 0) return true
-        const projection = projectionOf(source)
-        const backing = backingOf(projection)
-        if (
-            isArrayView(projection) &&
-            projection._start + projection._storage.baseIndex !== 0
-        ) return false
-        if (
-            backing.length + count > 0xffffffff ||
-            !Object.getOwnPropertyDescriptor(backing, "length").writable
-        ) return false
-
-        for (const key of Object.getOwnPropertyNames(backing)) {
-            if (!isArrayIndex(key)) continue
-            const descriptor = Object.getOwnPropertyDescriptor(backing, key)
-            if (
-                !descriptor.enumerable ||
-                !("value" in descriptor) ||
-                !descriptor.writable ||
-                !descriptor.configurable
-            ) return false
-        }
-
-        // Native unshift must not observe inherited indexed properties.
-        const limit = backing.length + count
-        for (
-            let prototype = Object.getPrototypeOf(backing);
-            prototype !== null;
-            prototype = Object.getPrototypeOf(prototype)
-        ) {
-            for (const key of Object.getOwnPropertyNames(prototype)) {
-                if (
-                    isArrayIndex(key) &&
-                    Number(key) < limit &&
-                    !Object.hasOwn(backing, key)
-                ) return false
-            }
-        }
-        return true
+        if (!view) return
+        const next = new ArrayView(view, 0, view.length + count)
+        beforeWrite(next)
+        if (count > 0) view._backing.length += count
+        return next
     }
 
     get length() {
@@ -113,24 +65,22 @@ class ArrayView {
         if (!isArrayIndex(key)) return undefined
         const index = Number(key)
         if (index >= this.length) return undefined
-        return String(
-            this._start + index + this._storage.baseIndex,
-        )
+        return String(this._start + index)
     }
 
     has(key) {
         if (key === "length") return true
         const physical = this.#physicalKey(key)
         return physical !== undefined &&
-            propertyIsEnumerable.call(this._storage.array, physical)
+            propertyIsEnumerable.call(this._backing, physical)
     }
 
     get(key) {
         if (key === "length") return this.length
         const physical = this.#physicalKey(key)
         return physical !== undefined &&
-            propertyIsEnumerable.call(this._storage.array, physical)
-            ? this._storage.array[physical]
+            propertyIsEnumerable.call(this._backing, physical)
+            ? this._backing[physical]
             : undefined
     }
 
@@ -147,7 +97,7 @@ class ArrayView {
         return physical === undefined
             ? undefined
             : Object.getOwnPropertyDescriptor(
-                this._storage.array,
+                this._backing,
                 physical,
             )
     }
@@ -167,7 +117,7 @@ class ArrayView {
                 new Error("Cannot write outside an ArrayView range"),
             )
         }
-        const backing = this._storage.array
+        const backing = this._backing
         if (Object.hasOwn(backing, physical)) {
             backing[physical] = value
         } else {
@@ -183,36 +133,18 @@ class ArrayView {
     delete(key) {
         if (key === "length") return false
         const physical = this.#physicalKey(key)
-        return physical === undefined || delete this._storage.array[physical]
+        return physical === undefined || delete this._backing[physical]
     }
 
     keys() {
         return enumerableArrayKeys(this)
     }
 
-    #prepend(values, beforeWrite) {
-        const count = values.length
-        const next = new ArrayView(this, -count, this.length)
-        beforeWrite(next)
-        if (count === 0) return next
-        const storage = this._storage
-        Array.prototype.unshift.apply(storage.array, values)
-        storage.baseIndex += count
-        return next
-    }
-
-    #extendEnd(count, beforeWrite) {
-        const next = new ArrayView(this, 0, this.length + count)
-        beforeWrite(next)
-        if (count > 0) this._storage.array.length += count
-        return next
-    }
-
     setLength(length) {
         const growth = length - this.length
         if (growth > 0) {
             if (!ArrayView.canGrowEnd(this, growth)) return false
-            this._storage.array.length += growth
+            this._backing.length += growth
         }
         this._end = this._start + length
         return true
@@ -256,7 +188,7 @@ function projectionOf(value) {
 function backingOf(value) {
     const projection = projectionOf(value)
     return isArrayView(projection)
-        ? projection._storage.array
+        ? projection._backing
         : projection
 }
 
@@ -283,9 +215,9 @@ function isArrayIndex(key) {
 function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
     const projection = projectionOf(arrayOrView)
     const view = isArrayView(projection) ? projection : undefined
-    const backing = view ? view._storage.array : projection
+    const backing = view ? view._backing : projection
     const backingLength = backing.length
-    const origin = view ? view._start + view._storage.baseIndex : 0
+    const origin = view ? view._start : 0
     const extent = view ? view.length : backingLength
     start = origin + Math.max(0, start)
     end = origin + Math.min(extent, end ?? extent)

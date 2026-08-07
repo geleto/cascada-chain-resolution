@@ -1,20 +1,19 @@
 # `ArrayView`
 
-`ArrayView` is the internal shared-storage representation used by [`run`](run.md) for `slice`, `concat`, `push`, `pop`, `shift`, and `unshift`. Owned native Arrays are mutated directly; a view is created when an operation can preserve existing logical identities by changing only bounds or hidden backing storage.
+`ArrayView` is the internal shared-storage representation used by [`run`](run.md) for `slice`, `concat`, `push`, `pop`, and `shift`. Owned native Arrays are mutated directly; a view is created when an operation can preserve existing logical identities by changing only bounds or hidden backing storage.
 
 ## Representation
 
 A view is a half-open logical range over shared storage:
 
 ```js
-storage = { array, baseIndex }
-physicalIndex = _start + logicalIndex + storage.baseIndex
+physicalIndex = _start + logicalIndex
 length = _end - _start
 ```
 
 The constructor accepts an Array or `ArrayView`; `start` and `end` are relative to that logical source and default to its full range. If an Array has an attached view, that projection is the source. Internally the bounds are converted to storage coordinates.
 
-`_storage`, `_start`, and `_end` are non-enumerable runtime fields. Derived views share the storage record, so a physical prepend updates `baseIndex` once while every existing view keeps stable coordinates. The backing Array carries no ArrayView-specific property.
+`_backing`, `_start`, and `_end` are non-enumerable runtime fields. Derived views reference the same backing Array directly and keep independent bounds. The backing Array carries no ArrayView-specific property.
 
 When a native Array first becomes backing, its metadata stores an attached view covering the whole Array. That view is the native Array identity's projection; the native Array continues to own its metadata, parent edges, and Promise property versions. A separately published `ArrayView` is a distinct logical identity with its own metadata.
 
@@ -50,13 +49,13 @@ A derivation is allowed only when the receiver is not imported.
 
 The first derivation attaches the source projection. Every derivation prepares its retained properties because an earlier contraction or extension may have changed which properties the source identity owns. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own mirrors. The mirrors remain logically independent even though their properties use the same backing slot.
 
-`pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. Non-empty `unshift` requires the logical start to equal the physical start; after the native prepend, increasing the shared base offset absorbs the physical movement for all earlier views. Adding no values derives a new view without touching the backing.
+`pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. `unshift` uses the ordinary remap path whenever its receiver must be preserved; physically moving shared backing would require mutable coordinates shared by every existing view.
 
 `slice` with already-numeric bounds returns a subview over the selected range. Empty results use an empty native Array, and arguments requiring native coercion use the normal materializing path.
 
 `concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-origin remap, so holes, ownership, Promise versions, and indexed-edge accounting use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
 
-End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. `unshift` additionally rejects hidden or protected moved indexes and inherited indexes before changing storage. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
+End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
 
 ## Materialization and length
 

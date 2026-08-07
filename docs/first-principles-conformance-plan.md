@@ -39,22 +39,21 @@ Keep these facts at their existing scopes:
 
 ---
 
-## Phase 0: Delete in-place prepend
+## Phase 0: Remove the ArrayView prepend optimization
 
-Implement before Phase 1.
+Implemented before Phase 1.
 
 ### Reason
 
-[`baseIndex`](../src/array-view.js#L12-L25) exists only for in-place prepend. Every view operation carries its coordinate adjustment, while [`#canPrepend`](../src/array-view.js#L66-L106) scans backing descriptors and the prototype chain to prove that one optimization safe. Native `unshift` is already O(n), so this saves one allocation but no asymptotic work. The mechanism does not earn its complexity.
+The former `baseIndex` existed only to prepend into shared backing. Every view operation carried its coordinate adjustment, while prepend scanned backing descriptors and the prototype chain to prove one allocation optimization safe. Native `unshift` is already O(n), so the mechanism did not earn its complexity.
 
-### Changes
+### Final design
 
-- Delete `tryPrependArrayView`, `ArrayView.tryPrepend`, `#prepend`, `#canPrepend`, and `baseIndex`.
-- Replace the shared `_storage` record with a direct `_backing` reference.
-- Remove `baseIndex` arithmetic from the constructor, `#physicalKey`, `enumerableArrayKeys`, and `canGrowEnd`.
-- Let `unshift` mutate a sole-owned native Array directly; otherwise use the existing remap path.
-- Update the **Representation** section of [`array-view.md`](array-view.md).
-- Replace [`array-view.test.js:47-52`](../test/array-view.test.js#L47-L52), which pins private field names and constructs its subject through the observation-mutator behavior removed in Phase 5, with a behavioral test.
+- `ArrayView` stores a direct `_backing` reference and physical indexes are `_start + logicalIndex`.
+- `unshift` uses the existing in-place mutation path for a sole-owned native Array and the remap path whenever its receiver must be preserved.
+- Array method dispatch has no prepend-specific view strategy.
+- Tests verify the language surface and behavior without pinning private field names.
+- [`array-view.md`](array-view.md) and [`run.md`](run.md) describe the resulting representation and dispatch.
 
 This does **not** remove ArrayView attachment. It still records that a raw Array backs a view, forcing later writes to preserve that view, and stores the raw identity's logical bounds when they differ from the physical backing. `meta.arrayView`, `projectionOf`, and Phase 1 Part B therefore remain.
 
@@ -63,7 +62,7 @@ This does **not** remove ArrayView attachment. It still records that a raw Array
 - `unshift` matches JavaScript for sole-owned and preserved receivers.
 - `slice` then `unshift`, and two views then `unshift`, leave every retained view unchanged.
 - Append at the physical endpoint still reuses storage where ownership permits; an existing view's fixed end remains unchanged.
-- `verify-refcounts` passes.
+- The complete suite passes 648 tests in both metadata modes, including the refcount oracle.
 
 ---
 
@@ -311,7 +310,7 @@ Verify Array mutators are rejected in observation mode, non-mutating Array metho
 
 Land small, independently evaluable checkpoints:
 
-1. **Phase 0** — delete prepend-in-place and `baseIndex`.
+1. **Phase 0 (complete)** — removed prepend-in-place and `baseIndex`.
 2. **Phase 5** — reject observation mutators and remove their observation-only dispatch.
 3. **Phase 1 Part A** — remove observation growth and protect mutation growth.
 4. **Phase 2a** — stop ref indexing from creating sharing.

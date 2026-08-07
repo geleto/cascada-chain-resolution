@@ -73,12 +73,7 @@ const ARRAY_METHODS = {
     },
     toSpliced: { exportArgs: [true, true], restValues: true },
     toString: { observe: toString },
-    unshift: {
-        restValues: true,
-        mutationResult: publishValue,
-        view: tryPrependArrayView,
-        viewOperationResult: getViewLength,
-    },
+    unshift: { restValues: true, mutationResult: publishValue },
     with: { exportArgs: [true, false] },
 }
 
@@ -608,24 +603,6 @@ function tryAppendArrayView(thisValue, suffix) {
     if (!view) return undefined
     const start = view.length - suffix.length
     arrayRemaps.placeRemap(view, suffix, start)
-    return view
-}
-
-function tryPrependArrayView(thisValue, values) {
-    const offset = values.length
-    const view = arrayViews.ArrayView.tryPrepend(
-        thisValue,
-        values,
-        derived => propertyVersions.prepareRetainedArrayProperties(
-            thisValue,
-            derived,
-            0,
-            arrayViews.logicalArrayLength(thisValue),
-            offset,
-        ),
-    )
-    if (!view) return undefined
-    arrayRemaps.placeRemap(view, values)
     return view
 }
 
