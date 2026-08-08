@@ -153,7 +153,6 @@ function indexComponent(
         if (!languageValues.isTracked(child)) continue
 
         if (active.has(child)) {
-            metadata.markShared(child)
             setCycleCut(node, key)
             cycleCutCount++
             cutTargetQueue.push(child)

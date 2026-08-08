@@ -41,6 +41,9 @@ edges with their exact multiplicity.
 Consequently every raw-reachable tracked identity is indexed, while reverse
 parent edges form a DAG.
 
+Indexing records no ownership. Neither aliases nor cycle cuts make an identity
+shared; only an actual additional owner does.
+
 An unindexed write needs no cycle work. When that graph is indexed later, the
 same DFS rule handles every cycle regardless of whether it came from import,
 ordinary assignment, Promise settlement, or a method result.

@@ -54,17 +54,22 @@ Complete.
 
 ## Phase 1: Ref indexing must not create sharing
 
-[`indexComponent`](../src/refcounts.js) marks a child shared when placing a cycle cut. A cut is bookkeeping, while sharing is ownership; a lazy Error query can therefore change a later mutation strategy.
+Complete.
 
-Delete that mark. `setCycleCut` alone keeps the reverse-parent projection acyclic.
+### Final design
+
+- Ref indexing records counters, reverse parent edges, and cycle cuts; it records no ownership.
+- A DFS back edge becomes a cycle cut without making its target shared. `setCycleCut` alone keeps the reverse-parent projection acyclic.
+- Aliases and cycles inside one ownership unit do not change later mutation strategy. Real additional owners, leases, and import retain their existing protection.
 
 ### Verification
 
 - An exclusive cyclic or diamond graph behaves identically with and without a preceding Error query.
 - Index creation and cycle-cut placement do not create sharing or change a later mutation strategy.
 - Real sharing, leases, and import still preserve their logical values, including through ArrayView reuse.
+- The complete suite passes 649 tests in both metadata modes, including the refcount oracle.
 
-Update [`cycles-as-data.md`](cycles-as-data.md) to state that ref indexing records no ownership.
+[`cycles-as-data.md`](cycles-as-data.md) records the ownership-independent projection rule.
 
 ---
 

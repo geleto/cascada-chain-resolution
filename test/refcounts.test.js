@@ -75,6 +75,28 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
+    it("does not let ref indexing change exclusive graph ownership", () => {
+        const cyclic = { value: 1 }
+        cyclic.self = cyclic
+        const aliased = { value: 1 }
+        const diamond = { left: aliased, right: aliased }
+
+        for (const [root, path] of [
+            [cyclic, ["value"]],
+            [diamond, ["left", "value"]],
+        ]) {
+            const chain = new Chain(root)
+
+            expect(hasError(chain, [])).to.be(false)
+            assignPath(chain, path, 2)
+
+            expect(chain._state.value).to.be(root)
+            verifyRefCounts(root)
+        }
+        expect(cyclic.self).to.be(cyclic)
+        expect(diamond.left).to.be(diamond.right)
+    })
+
     it("uses definitive indexed Promise counts without enumeration", () => {
         const pending = deferred()
         const clean = keyScanProbe({ nested: { value: 1 } })
