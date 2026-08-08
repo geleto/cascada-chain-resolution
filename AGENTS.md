@@ -2,9 +2,9 @@
 
 ## Contract
 
-Cascada operations on an asynchronously available graph produce the same results as if every value were already available and the operations ran sequentially. Every transition includes all earlier effects and no later ones. Mutation through one owner never changes what another owner sees, and imported data is never modified.
+Cascada operations on an asynchronously available graph produce the same results as if every value were already available and the operations ran sequentially. Every transition includes all earlier effects and no later ones. Mutation through one owner never changes another Cascada owner's logical value, and imported data is never modified.
 
-Issuing a command never blocks. Its result may wait only for pending dependencies captured at that command's program position, never for the whole graph.
+Issuing a command never blocks. Its result may wait only for captured logical versions, the Promise frontier they expose, and a Promise produced by the operation itself, never for unrelated graph data.
 
 ## Method
 
@@ -26,7 +26,7 @@ These constrain implementation cost, not observable semantics. Exceeding them is
 
 - Bound graph-dependent work and allocation to data selected by an operation's explicit input or path, its produced output, its captured Promise frontier, and affected dependencies that must be maintained. Do not otherwise process unrelated graph data.
 - Build an index when a component first needs one, then maintain it incrementally as the graph changes. Never rescan indexed data to rediscover a maintained fact.
-- Rescan previously admitted data to detect untracked changes only when it may have changed outside maintained runtime transitions, and only where the operation reaches it. Import may therefore rescan each previously known identity it reaches at most once per import to discover newly exposed Promise placements.
+- Rescan previously admitted data only to reconcile changes made outside maintained runtime transitions, and only where the operation reaches it. Each import revisits every reached identity at most once, retains its first import boundary, and reconciles changed placements through the same dependency transitions as runtime writes.
 
 Cycle cuts are a bounded exception. Because they stop counter propagation, an operation may traverse a counter-selected cut region when maintained counters cannot answer it. An operation's cycle-cut walks share one visited set and visit each identity at most once. A pass that builds a missing index is separately permitted.
 
@@ -35,8 +35,7 @@ Cycle cuts are a bounded exception. Because they stop counter propagation, an op
 - Do all available work synchronously, in program order.
 - Register an operation on a pending property only when, and exactly where, it depends on it. Structural discovery alone does not make the operation a consumer.
 - Route every registration through the runtime's Promise helpers. Raw `.then` belongs only inside them.
-- The helpers canonicalize each callable thenable once; every continuation for one source registers on the same native Promise.
-- Invoke every continuation registered before settlement in one reaction on that canonical Promise, forming one FIFO batch.
+- The helpers canonicalize each callable thenable once. Register every continuation directly on that native Promise; registrations made before settlement form one FIFO batch.
 - Each continuation completes its transition synchronously. Never split one with `await`, another `.then`, `queueMicrotask`, or lazy registration.
 
 If three operations reach one pending property, the first resolver publishes `V`, the second observes `V` and may leave `V'`, and the third observes `V'`. Each sees every earlier effect and no later one.
@@ -53,26 +52,27 @@ If three operations reach one pending property, the first resolver publishes `V`
 
 ## Ownership
 
-- Classify a property container and its stored value independently. The container determines whether Cascada may write the property; the value's identity determines whether it is imported and whether it is shared.
+- Classify an ordinary property container and its stored value independently. The container determines whether Cascada may write the property; the value's identity determines whether it is imported and whether it is shared. A registered instance instead owns its complete state as one unit.
 - External values must enter through import; creating a Chain only preserves existing ownership and import status.
 - Imported data is borrowed and never modified. All runtime state, including metadata and logical Promise settlement, lives outside it.
 - Imported data is always shared.
 - A runtime-managed identity that is neither shared nor leased has one owner and may be mutated in place.
 - Extracting an existing runtime-managed identity adds another owner and makes it shared. A temporary read does not; an ownership transfer ends the prior ownership instead.
 - A pending observation and an open read-only entry lease the value they captured, until they complete. A lease is released; sharing is permanent.
-- Import status belongs to identities, not paths. Containment transfers it in neither direction.
+- Import assigns status to every identity it admits. After admission, containment alone transfers status in neither direction.
 
 ## Copy-on-Write
 
 - Observations and mutations may both change runtime-owned physical representation, including backing storage. The change is valid when the operation's logical result is correct and every value it must preserve remains logically unchanged.
-- Sharing and leasing protect logical values, not physical storage. An ArrayView may therefore retain fixed bounds while another value extends their backing beyond those bounds.
+- Sharing and leasing protect logical values, not runtime-owned physical storage. An ArrayView may retain fixed bounds while another value extends their backing; a raw reference can therefore observe the backing's physical length change while every protected Cascada value remains logically unchanged.
 - A mutation copies only when reusing its representation would change what a protected owner observes.
-- Imported storage is never modified or used as ArrayView backing. An operation that needs owned storage copies or materializes it first.
-- Graph shape — aliasing, multiplicity, and cycles — is never a reason to copy, and never makes a node shared or leased.
+- Imported storage is never modified or used as ArrayView backing. Before runtime-owned backing becomes imported, representations that depend on it detach onto runtime-owned storage. An operation that needs owned storage copies or materializes it first.
+- Within one ownership unit, graph shape — aliasing, multiplicity, and cycles — is never a reason to copy or to create separate ownership.
 - Copying starts at the first node that must be preserved and continues to the target, because the old path still references every reused child.
 - A copy-on-write copy reads each property's logical value, never its physical slot.
-- A shallow copy is runtime-owned and carries no metadata from its source.
-- Reused imported children remain imported; other reused tracked children become shared.
+- An ordinary shallow copy is runtime-owned and carries no metadata from its source.
+- Reused imported children remain imported; other reused runtime-managed identities become shared when the old and new owners both retain them.
+- A registered instance follows the whole-unit copy rule below instead of shallow path copying.
 - Copy-on-write copies a path, not a graph: a copy reuses every off-path child as it is. Assigning `root.back = root` therefore leaves `back` holding the previous root in the fork, not a self-reference.
 - A copied Promise property gets a fresh mirror at the copier's program position, so both property versions diverge there.
 
@@ -87,37 +87,46 @@ If three operations reach one pending property, the first resolver publishes `V`
 
 ## Data Types and Methods
 
+Resolve callable thenables before classifying their values. For available values, the first applicable category is Error, logical Array, Function, record, registered class, then unregistered or intrinsic instance. Primitive values use their primitive category. Array and Promise subclasses therefore retain their Array and Promise semantics even if registered.
+
 | Type | Methods | Call boundary | Property writes |
 | --- | --- | --- | --- |
 | Plain or null-prototype record | An own function-valued property may be invoked observationally under the Function rule; inherited methods are unsupported | The function uses its executable position's boundary; the record is not its receiver state | Ordinary language writes |
-| Logical Array | Standard observations and mutators in their matching mode; overrides are observation-only | Standard methods are controlled; overrides use an exported native Array receiver and the host boundary | Ordinary language writes |
+| Logical Array | Supported standard observations and mutators in their matching mode; overrides are observation-only | Standard methods are controlled; overrides use an exported native Array receiver and the host boundary | Ordinary language writes |
 | String | Native observations only | Host boundary on the primitive receiver | Unsupported |
-| Registered class instance | Observations and mutations; observations are side-effect-free, and a mutation may change only its receiver during the call and must not retain it | Host boundary with a host-ready, prototype-preserving receiver | Atomic class write; copy-on-write is available |
-| Unregistered class or intrinsic instance | Observations only, on the exact identity; they may read intrinsic state, as `Date.prototype.getTime` does, but must not mutate or depend on ordinary properties | Host boundary on the exact receiver | Atomic class write only while exclusively runtime-owned |
+| Registered class instance | Side-effect-free observations and synchronous mutations of its complete state unit | Host boundary with a host-ready, prototype-preserving receiver | Whole-instance atomic transition |
+| Unregistered class or intrinsic instance | Observations only, on the exact identity; they may read intrinsic state, as `Date.prototype.getTime` does, but must not mutate or depend on ordinary properties | Host boundary on the exact receiver | Host-ready property write only while exclusively runtime-owned |
 | Function | May be stored in a record and is executable only in an explicitly supported function, method, or callback position. A record function is observational and may depend only on explicit arguments, never on or mutate its containing record | Determined by that executable position | An opaque value, not a property container |
 | Number, Boolean, BigInt, Symbol, `null`, or `undefined` | None | Not applicable | Unsupported |
 | Promise | None; resolve its captured property version, then classify the result | Not applicable | Not a property container |
 | Error | None; see Errors | Not applicable | Not a property container |
 
-All semantic state of a registered class must be in own enumerable string-keyed properties. Private fields, internal slots, accessors, Symbols, non-enumerables, and external closure state may not affect its behavior.
+All semantic state of a registered class must be rooted in own enumerable string-keyed properties. Private fields, internal slots, accessors, Symbols, non-enumerables, and external closure state may not affect its behavior.
+
+Register a data class before any of its instances enters the runtime. Registration does not retroactively admit an identity that was previously treated as opaque.
 
 ## Method Boundaries
 
 - Runtime methods reproduce the observable behaviour of the native Array methods they replace. They consume Cascada values directly, resolve only what the method needs, and may return an internal representation such as an ArrayView.
 - Runtime methods avoid copying and materialization where possible. A special path must provide a material benefit and preserve every logical value.
-- Host-call arguments are exported. Every new direct or fulfilled result crosses import immediately; the exact receiver remains the identity already classified by the runtime. Import records opaque object identity without traversing its hidden state.
-- Native code receives no internal representation or unresolved language Promise property introduced by Cascada. Export captures logical values at the operation's program position, so later mutation cannot change a captured snapshot.
+- Host-call arguments are exported. Result admission imports every new host identity. An unsnapshotted receiver retains its existing status wherever the result contains it; registered-unit state follows the atomic rules below. Import records opaque object identity without traversing its hidden state.
+- Opaque host code receives no internal representation or unresolved language Promise property introduced by Cascada. Export captures logical values at the operation's program position, so later mutation cannot change a captured snapshot.
+- A registered mutation completes every effect on its prepared receiver unit during synchronous invocation. A returned Promise delays only its independent result; the published unit is leased until settlement because that result may return the receiver or its state, but it is not kept private.
+- A supported host call's synchronous throw or returned-Promise rejection becomes its language Error result. Runtime invariant and bookkeeping failures remain fatal.
 
-## Atomic Class Writes
+## Atomic Registered Instances
 
-- Export and settle the assigned value before the physical write.
-- If preparation waits, the ordinary Promise version temporarily occupies the placement containing the instance. The instance remains private until the write completes, so later operations register on the same gate and resume in FIFO order.
-- Preparing and publishing the instance is one transition. Failure leaves the prior property state unchanged; no partially prepared instance becomes observable.
+- A runtime-owned registered instance exclusively owns the complete graph rooted in its semantic properties. Internal aliases and cycles are allowed, but no runtime-managed identity in that state graph may have an owner outside the instance.
+- Sharing, leasing, importing, and copy-on-write apply to the whole instance. An additional owner shares the unit, not an individual state property.
+- Assigning state copies or transfers it into the unit. Giving a runtime-managed state descendant another owner copies it out unless the instance relinquishes it; returning the whole receiver shares the whole unit.
+- A property write or method mutation transitions the whole instance at its containing placement. If preparation waits, that placement holds the operation's ordinary Promise version, so every later access through the unit resumes in FIFO order.
+- Before opaque host code receives the instance, export and settle its complete state graph. Publish only a host-ready, exclusively owned receiver; failure restores the prior instance version.
+- A whole-unit copy preserves its prototype and internal graph shape but shares no mutable state identity with the preserved version.
 
 ## Errors
 
 - Language Errors are data. A rejected data Promise becomes an Error value in the graph; each observation exposes it by its own contract, while mutations return nothing.
-- Kernel failures are not data. Invariant violations, contract violations, and unexpected throws go through `reportFatalError`, which reports and rethrows.
+- Kernel failures are not data. Invariant violations, contract violations, and unexpected runtime throws go through `reportFatalError`, which reports and rethrows.
 - Never convert a kernel failure into a language Error, or a rejected data Promise into a fatal.
 
 ## Verification
