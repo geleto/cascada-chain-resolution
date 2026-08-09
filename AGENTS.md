@@ -121,7 +121,7 @@ A property version is the exact logical state captured at one placement. A mirro
 
 ## Execution Boundaries
 
-- Every call resolves its receiver and every explicit argument for Error propagation. A controlled method otherwise resolves only the nested data it consumes and may return an internal representation such as an ArrayView.
+- Every call prepares its receiver and every explicit argument for Error propagation. If any resolves to an Error, continue resolving the others to collect every distinct original Error, but do not invoke the selected function, getter, callback, method, override, or mutator, and leave a mutation receiver unchanged. One Error becomes the call's outcome unchanged; several become an Error whose `errors` array preserves receiver-then-argument order independently of settlement order. Errors within one composite input have no separate order. A controlled method otherwise resolves only the nested data it consumes and may return an internal representation such as an ArrayView.
 - A controlled callback receives only the logical values its method declares and must be synchronous, read-only, and non-retaining.
 - Invoke a record function without the record as its receiver. It may use explicit arguments and read-only host state, but must not read or mutate its containing record or other Cascada graph state.
 - Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit and preserve every logical value.
@@ -130,8 +130,7 @@ A property version is the exact logical state captured at one placement. A mirro
 - A host observation must not mutate an exact receiver or opaque argument. A host mutation may mutate only its designated receiver; ordinary arguments remain read-only.
 - Every host use of an opaque identity is ordered per identity. The ordering state belongs to the identity, not a Chain or placement, so every alias shares it. Observations, including use as an argument, wait for the preceding mutation but not for one another; a mutation waits for every preceding operation. A write resolves and exports its value before touching the object. A method Promise keeps its normal API result and rejection behavior.
 - Host code may retain an exact receiver, opaque argument, or Function only through its result or until its returned Promise settles. Mutation after that interval is a host contract violation. Independently retained external references to an imported opaque object remain outside Cascada's ordering guarantees.
-- Resolve all explicit arguments even after finding an Error. Collect each distinct original Error consumed during receiver and argument preparation; preserve receiver-then-argument order independently of settlement order. Errors within one composite input have no separate order.
-- If preparation finds an Error, do not invoke a getter, callback, method, override, or mutator, and leave a mutation receiver unchanged. An Error nested in composite data remains data until required preparation or behavior reaches it.
+- An Error nested in composite data remains data until required preparation or behavior reaches it.
 
 If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` and may then overlap; following mutation `M2` waits for both observations. The same order holds through every alias.
 
@@ -149,15 +148,18 @@ If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` 
 
 ## Errors
 
-- Classify a failure by the layer that failed and the valid outcome it can publish, not by whether it was thrown or returned. A failure of the requested language operation follows the language and API rules below; a failed runtime mechanism or declared internal or host contract is fatal.
-- When a language transition must publish a logical value but cannot produce it, publish an Error at that value. This includes invalid values or property conditions and synchronous failures from user-controlled accessors, coercions, callbacks, selected methods, and Proxy or reflection hooks.
-- Catch user-controlled execution only at its exact boundary. Entering it through `run` does not make adjacent Cascada transition code user-controlled. Never convert a runtime failure into data or a language failure into a fatal one.
-- A synchronous host throw after mutation becomes the call's Error result without erasing valid effects already completed.
-- A mutation without an independent result channel publishes its Error at the nearest replaceable logical value whose transition failed. An independent result failure does not poison a receiver whose mutation completed validly.
+Cascada distinguishes two kinds of failure:
+
+- **Error poisoning.** An Error is language data. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates the Error, while unrelated work continues.
+- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows. A representation limitation must first fall back or materialize; it is fatal only if the required handling fails.
+
+Apply that distinction at the boundary where the failure originates:
+
+- When the requested language operation cannot produce a valid value, make its logical outcome an Error. If the operation has an independent result, deliver the failure through that result channel according to the public API transport below; otherwise publish the Error at the nearest replaceable logical value whose transition failed. This includes invalid values or property conditions and synchronous failures from user-controlled accessors, coercions, callbacks, selected methods, and Proxy or reflection hooks.
+- Whether code threw or returned does not determine the category. Catch user-controlled execution only at its exact boundary; entering it through `run` does not make adjacent runtime code user-controlled. Never convert a runtime failure into data or a language failure into a fatal failure.
+- A synchronous host throw after mutation becomes the call's Error result without erasing valid effects already completed. An independent result failure does not poison a receiver whose mutation completed validly.
 - Public API transport is separate from graph poisoning. A ready language failure returns its Error instead of throwing. An operation that returned a Promise may reject it with its asynchronous failure, final Error, or aggregate; a directly returned host Promise preserves its rejection reason. Do not fulfill an API Promise with an Error merely to normalize synchronous and asynchronous results.
-- A rejected Promise stored in the graph still publishes an Error at its captured version, even when an API operation waiting on it rejects its own result Promise.
-- No consumed Error is lost. One propagates unchanged; several travel together in an Error's `errors` array. Unrelated work continues.
-- Fatal failures go through `reportFatalError`, which reports and rethrows. A representation limitation must first fall back or materialize; a lower-level assertion is fatal only if that required handling failed.
+- No consumed Error is lost; every operation that consumes several applies the same aggregation rule.
 
 ## Work Bounds
 
