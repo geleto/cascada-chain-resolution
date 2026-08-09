@@ -39,7 +39,9 @@ The Core Contracts and the data-type capabilities, execution boundaries, and Err
 
 ## Data Types and Capabilities
 
-Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admitting their values. A Promise therefore defers the value at its placement rather than becoming a data category itself; operations continue against its resolved value, whose category determines every capability below. Classification precedence is Error, logical Array, Function, record, instance of a registered class, then opaque instance; primitives use their primitive category. Array and Promise subclasses retain Array and Promise semantics even if registered.
+Any Cascada value—and therefore any graph root or property—may be a Promise. Pending and resolved values use the same logical value path: an operation uses an available value immediately or registers at the captured version and continues with the resolved value. A Promise represents asynchronous availability, not a separate data category or a mechanism limited to transition gates.
+
+Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admitting their values. Classification precedence is Error, logical Array, Function, record, instance of a registered class, then opaque instance; primitives use their primitive category. Array and Promise subclasses retain Array and Promise semantics even if registered.
 
 A controlled method is runtime code that consumes logical Cascada values. A host call invokes native or user JavaScript across the export/import boundary. An opaque instance is an instance of an unregistered class or another intrinsic identity kept exact and not traversed.
 
