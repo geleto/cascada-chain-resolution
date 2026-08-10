@@ -28,7 +28,7 @@ Baseline: commit `3d5a47a` (2026-08-06), with 648 tests passing in each metadata
 - Host-call arguments are exported. Result admission imports new host identities and applies each receiver category's ownership rule to identities deliberately supplied to host code.
 - Controlled runtime methods are the only methods that receive Cascada values directly. Every explicit argument resolves for Error propagation; the method otherwise resolves only nested data it consumes and reuses backing whenever the rules above permit it.
 - An instance of a registered class and its complete semantic state graph form one ownership, leasing, Promise-gating, and copy-on-write unit. State identities never acquire an owner outside that unit.
-- A language operation that cannot produce its requested logical value publishes an Error at that value. A no-result mutation poisons the nearest replaceable value whose transition failed; a call poisoned before invocation leaves its receiver unchanged. No consumed Error is lost.
+- Graph poisoning and API failure are independent outputs. An observation failure affects only its result. A mutation poisoned before invocation or by a synchronous throw replaces its targeted receiver placement or root with the Error and exposes the same Error through the API. A Promise returned by invoked code keeps its own fulfillment and rejection outcome. No consumed Error is lost.
 - A fatal failure belongs to the runtime mechanism or its declared kernel or host contract, not to the requested language operation. Broken invariants and bookkeeping belong here. Whether a failure was thrown does not determine its class.
 
 ---
@@ -75,77 +75,105 @@ Complete.
 
 ---
 
-## Phase 2: Enforce the language Error boundary
+## Phase 2A: Classify and publish language failures
 
 ### Problem
 
-[`propertyShapeError`](../src/language-properties.js) tags thrown errors so Array replay can catch and return them as data. The same descriptor failure is therefore fatal through ordinary assignment and poisoned data through Array replay. This caller-dependent third category violates the poison-or-fatal model.
+[`propertyShapeError`](../src/language-properties.js) tags a thrown Error so Array replay can return it as data. The same descriptor failure is therefore data through replay and fatal through ordinary mutation. Mutation handling also treats every bare Error as an independent result and preserves the receiver, leaving a failed logical value apparently valid.
 
-Mutation handling then treats a bare Error as an independent result and preserves the receiver. For commands such as assignment, which have no usable result channel, this can discard the only Error instead of poisoning the logical value whose transition failed.
-
-Promise publication also asserts that its physical property remains writable even though mirror state is authoritative and physical writeback is only an optimization.
-
-API and graph settlement are also conflated: host-returned and public-operation Promises pass through poisoning helpers, so an API Promise may fulfill with an Error even when the Promise it represents rejected. Graph property settlement must poison; API result transport need not normalize rejection into fulfillment.
-
-Multi-Error construction is also local to export even though Error preservation is a language-wide rule. Its current helper always wraps, so one Error and several Errors do not yet follow the common contract.
+Ordinary graph reads currently invoke enumerable accessors even though accessors are not graph placements. Promise publication also requires writable physical storage even though its mirror owns the logical version and physical writeback is optional.
 
 ### Design
 
-Use one outcome rule for every operation:
+Classify failure at the narrow boundary where it originates:
 
-- an Error consumed while preparing a call becomes its result and prevents invocation, leaving the receiver unchanged;
-- a failure of a mutation transition poisons the nearest replaceable logical value whose transition failed, and is also its result when the operation has a result channel; and
-- a failure of an independent result does not poison a receiver whose mutation completed validly.
+- `readLanguageProperty` inspects an own descriptor. An enumerable data property is a placement; an accessor or non-enumerable property occupying the key produces an Error without invoking or redefining it.
+- `getLanguagePropertyDescriptor` and `enumerableLanguageKeys` catch only the exact host reflection primitive that may invoke a Proxy trap. Operations propagate that Error according to their own observation, import, or mutation contract.
+- A coercion, controlled callback, selected method, override, mutator, or registered-class accessor is caught only around its direct invocation. An observation returns the Error; a mutating invocation also poisons its receiver placement or root.
+- `writeLanguageProperty` and `deleteLanguageProperty` remain commit primitives. Their caller validates the requested language transition first; a commit failure on a validated runtime-owned destination is fatal.
 
-Make that distinction explicit in the operation outcome. Do not infer it from whether a helper threw or returned an Error, and do not use the current blanket rule that every bare Error preserves the mutation receiver.
+Do not make every property helper generally fallible or wrap a whole graph walk. Imported reflection and other user-controlled inspection return language Errors; adjacent mirror, refcount, lease, closed-state, and impossible-commit failures remain fatal. An ordinary graph accessor is never invoked. A class-defined accessor selected through a registered-class boundary is supported host execution and may produce a language Error there.
 
-Keep API result transport separate from the logical outcome. If the operation completes synchronously, return its Error rather than throwing. If it has already returned a Promise, reject that Promise with the final Error or ordered aggregate instead of fulfilling it with an Error merely for uniformity. This does not change graph poisoning: a rejected Promise stored at a property still advances that captured version to an Error, even when an API operation waiting on it rejects its own result Promise.
+Delete `propertyShapeErrors`, `isPropertyShapeError`, and Array replay's catch. Validators return an Error or success. Replay executes each already-planned commit once, stops at the first Error, and poisons the logical Array; it does not duplicate the replay in a whole-operation preflight. Only a representation decision such as ArrayView growth is preflighted so it can materialize and retry.
 
-Keep rejection outside the graph transition. Internal property and mirror continuations publish Error values as before; only the public operation's completion gate rejects. A Promise returned directly by supported host execution preserves its rejection reason unless the operation must first combine several consumed language Errors.
-
-Delete `propertyShapeErrors`, `isPropertyShapeError`, and the replay `try`/`catch`. A value or descriptor that prevents a requested language transition is a language Error, including a read-only, unsupported graph accessor, non-enumerable, or non-configurable property. Preflight it at the operation-owned boundary and publish it through the outcome rule above. A commit helper may assert only a condition that its caller has already handled or that cannot occur on its runtime-created destination.
-
-| `commitArrayLength` condition | Class |
+| `commitArrayLength` condition | Outcome |
 | --- | --- |
 | `Invalid array length` | poison the logical Array |
 | `Array length is read-only` | poison the logical Array |
 | `Cannot delete an Array element while setting length` | poison the logical Array |
-| `Cannot grow this ArrayView in place` | materialize and retry; fatal only if a preflighted commit still reaches this impossible state |
+| `Cannot grow this ArrayView in place` | materialize and retry; fatal only if a validated commit still reaches it |
 
-The same rule applies outside length changes. An assignment or deletion that cannot change its physical target poisons the containing logical value that the mutation path can replace. A String length, invalid Array key, or failed property-path transition must not return an otherwise unobservable Error while leaving the failed value valid.
+Track graph state and operation outcome independently with the existing `{ mutatedValue, result }` pair:
 
-User-controlled execution reached by a supported language operation is a language boundary. Catch each accessor, coercion, callback, selected method, and Proxy or reflection hook at the exact call or reflection primitive. An observation returns its Error; import returns it for the admitted branch; a mutation publishes it through the mutation outcome above. Do not wrap the whole observation, import, or mutation transition. Internal mirror, refcount, lease, closed-state, and impossible-commit failures remain fatal.
+- an observation Error becomes its result without changing the receiver;
+- poisoned mutation preparation or a synchronous mutating-function throw replaces the receiver placement or root and returns the same Error;
+- another failed mutation transition poisons the nearest placement whose value can represent that failed transition; and
+- failure confined to an independent result does not poison a receiver whose mutation completed validly.
 
-A class-defined accessor selected on an instance of a registered class is supported host behavior, not a graph accessor descriptor. Phase 5 invokes it through the class observation or whole-unit mutation boundary; an accessor throw remains a language failure at that exact host boundary.
+If the failed key is not a graph placement and cannot hold the poison, replace its containing placement; repeat outward until the Error can be published, with the Chain root as the final replaceable value. This makes the failed container, including its otherwise valid siblings, unreachable through the mutating owner. COW preserves every other owner, and an opaque mutation cannot undo physical effects already made to its exact external identity.
 
-A Promise version always advances in its mirror, and a live mirror establishes logical property presence as well as value. Reads and presence checks therefore consult it before physical storage. Write the resolved value back physically only when the live runtime-owned property can still accept it; otherwise leave the version mirror-only. Delete Promise-publication writability and descriptor requirements that exist only to protect writeback. Any remaining placement validation derives its error context from the parent whose property failed, not from the assigned value.
+A missing final mutation target is created as an Error placement. A missing or invalid intermediate replaces the placement at which traversal failed. Request validation performed before `run` captures a receiver returns only an API Error and poisons no graph value.
 
-Keep the host boundary narrow. A synchronous throw from the getter, callback, method, override, or mutator selected by `run` becomes its ready Error result. A Promise returned by that executable remains the API's asynchronous result and may reject. A throw from Cascada's preparation, reconciliation, or bookkeeping remains fatal unless it came from an exact user-controlled boundary or that operation has another explicit language-failure outcome.
+Remove the blanket bare-Error normalization. The mutation transform boundary alone converts a bare preparation or transform Error to `{ mutatedValue: error, result: error }`; shared observation and resolution helpers continue returning a bare Error. Test `isError(result)` before using `result === mutatedValue` to mean that a successful method returned its receiver.
 
-Keep `resolveOperationResultOrFatal` and `runOperationCallbackOrFatal` for trusted runtime transitions only. Do not route a host-returned or public-operation Promise through a helper that makes rejection fatal or converts it into a fulfilled Error. Retain the existing fatal sites for kernel API and closed-state contract violations, mirror/refcount/lease corruption, and impossible low-level ArrayView writes; they are runtime failures rather than failed language results.
+A Promise resolver always advances its live mirror. Write its resolved value back only when the runtime-owned physical property still accepts it; otherwise retain the logical version in the mirror. Delete `assertCanPublishPromiseProperty`. Mirror creation retains one internal assertion that the captured key is an own enumerable data placement, but fallible reads and import reflection must classify an unsupported shape before reaching it; writability is not required. This mirror-only rule is specific to an existing Promise-backed version, not a virtual fallback for an arbitrary failed assignment or deletion. Phase 6 completes mirror-authoritative presence and enumeration together with external reconciliation.
 
-Generalize `exportErrorOutcome` into the one Error-combination utility. It accepts Errors already ordered by their operation, returns one original unchanged, and creates an Error with an `.errors` array only for several. An existing aggregate remains one terminal Error identity rather than being flattened; its own `.errors` payload is preserved. The caller supplies the contextual aggregate message, so export retains `export: branch contains errors`. Delete the export-local constructor and update export's documented single-Error behavior.
+Any remaining placement validation derives its error context from the parent whose property failed. Deleting `assertCanPublishPromiseProperty` also removes its incorrect `errorContextOf(value)` attribution.
+
+`enter` callbacks are trusted compiler/runtime control-flow transitions, not supported data or host calls. Their returned Promises describe transition completion; a callback throw or rejection remains fatal and follows the existing abort path. Phase 2A does not change `enter`.
 
 ### Verification
 
-- Every caller classifies the same property-shape condition identically.
-- Invalid, read-only, and non-deletable length changes poison the logical Array rather than leaving it valid or reporting a fatal.
-- ArrayView growth that cannot reuse its backing materializes and succeeds; reaching the refusal after preflight remains an invariant failure.
-- Assignment, deletion, String length, invalid Array keys, and path failures publish an observable Error at the failed logical value instead of discarding it.
-- Array replay and ordinary property mutation share the same failure path; no tagged Error set or caller-specific catch changes the classification.
-- A failed mutation cannot expose an unaccounted partial value. Any partial physical work becomes unreachable when the containing logical value is poisoned.
-- Imported sources COW successfully and remain unchanged.
-- Proxy traps and accessors reached by lookup, export, Error queries, import, mutation, classification, or controlled methods become language Errors without converting adjacent runtime failures into data.
-- Existing tests that classify user-controlled reflection as fatal are rewritten around returned or published Errors; tests that deliberately corrupt mirrors, refcounts, leases, or commit preconditions remain fatal.
-- A Promise version settles logically when physical writeback is unavailable; subsequent presence checks and reads use the mirror while the physical property remains unchanged.
-- Remaining placement failures derive their error context from the parent whose property shape failed, not from the assigned value.
-- A selected `run` executable that throws synchronously returns that Error. If it returns a rejected Promise, the `run` result rejects with the same reason; an injected runtime invariant failure on either path is still reported as fatal.
-- A rejected property Promise poisons its captured graph version, while an API observation waiting on that version may reject its returned Promise.
-- API rejection changes no mirror or stored value beyond the ordinary graph-poisoning transition that produced its Error.
-- One exported Error propagates unchanged; several retain every distinct original Error identity in the aggregate.
-- Export and later consumers use one Error-combination mechanism.
+- Ordinary lookup never invokes an own graph accessor. Its presence produces an Error, while a registered-class accessor runs only through its class boundary.
+- Throwing Proxy reflection becomes a language Error at lookup, export, Error query, import, mutation, or classification without converting adjacent runtime failures into data.
+- Invalid, read-only, and non-deletable length changes poison the logical Array. ArrayView growth materializes and succeeds; reaching its refusal after validation remains fatal.
+- Array replay and ordinary property mutation use the same classification without a tagged Error set or caller-specific catch.
+- Assignment, deletion, String length, invalid Array keys, missing targets, and failed intermediate paths publish the Error at the specified placement.
+- A non-placement failure at a nested container poisons that container placement; the root case poisons the Chain root and makes its siblings unreachable through that owner. Preserved owners remain unchanged.
+- Partial replay work becomes unreachable when the receiver is poisoned. Imported sources remain unchanged, and already-completed opaque effects remain visible through their external aliases.
+- Mutation poisoning updates `errorCount`; `hasError`, `getErrors`, and the refcount oracle observe the same graph state.
+- Promise settlement remains logical when writeback is unavailable, without creating a general mirror overlay for ordinary writes.
+- Remaining placement failures use the parent's error context.
+- `run` request validation does not poison an uncaptured receiver, and no Error outcome is mistaken for a successful method returning its receiver.
+- Existing `enter` tests continue to require abort followed by fatal reporting for synchronous callback throws and callback-Promise rejection.
 
-Update [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`import-preparation.md`](import-preparation.md), and [`export-error-set.md`](export-error-set.md).
+Update [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and [`import-preparation.md`](import-preparation.md).
+
+---
+
+## Phase 2B: Separate API Promise transport and Error aggregation
+
+### Problem
+
+Host-returned and public-operation Promises currently pass through helpers that may make rejection fatal or turn it into fulfillment with an Error. Multi-Error construction is local to export and always wraps, so one Error and several Errors do not follow one language-wide rule.
+
+### Design
+
+Keep graph poisoning separate from API transport:
+
+- return a ready Error directly;
+- if an API already returned a Cascada operation Promise because its preparation or graph transition was pending, later poison rejects that Promise with the final Error or aggregate;
+- `assignPath` and `deletePath` remain fire-and-register operations returning `undefined`; do not add result Promises merely to report later poison; and
+- a Promise returned by supported invoked code remains the API result with its original fulfillment and rejection behavior. Its rejection is an independent result failure and does not retroactively poison a successfully published mutation receiver.
+
+Add one API-result continuation that preserves fulfillment and rejection while performing required admission, lease release, or opaque ordering in the same FIFO continuation. Remove `invokeObservationMethodWithExportedArgs`'s `resolveInitialValueOrPoison` wrapper from the host-result path; graph data positions continue to use poisoning resolution. Keep `resolveOperationResultOrFatal` and `runOperationCallbackOrFatal` for trusted runtime transitions. Do not route a host-returned or public-operation Promise through graph-poisoning normalization.
+
+A rejected public Promise is an intentional API result and follows ordinary host unhandled-rejection behavior if ignored. No separate internal or helper Promise may reject without being represented by that public result or handled by the runtime.
+
+Generalize `exportErrorOutcome` into the one Error-combination utility. It deduplicates top-level Error identities in the order supplied by the operation, returns one original unchanged, and creates an Error with an `.errors` array only for several. Do not flatten an existing Error's `.errors` payload or attach a classification brand: any Error, including a user-created one with that property, remains one terminal identity. The caller supplies the aggregate message, so export retains `export: branch contains errors`. Delete the export-local constructor.
+
+### Verification
+
+- A selected observation executable that throws synchronously returns its Error. A selected mutating executable that throws synchronously also poisons its receiver.
+- A rejected graph Promise poisons its captured property version. An API operation already waiting on that transition rejects its public Promise with the same final Error outcome.
+- A Promise returned by invoked code preserves fulfillment and rejection and changes no graph state merely because it rejects.
+- `assignPath` and `deletePath` still return `undefined` for pending work; no hidden derived rejection escapes.
+- A consumed public rejection is the only rejection produced for one API result. Runtime-owned helper Promises do not create additional unhandled rejections.
+- One Error propagates unchanged. Several preserve every distinct top-level identity and their operation-defined order without flattening existing payloads.
+- Export and later consumers use the same Error-combination utility.
+- `enter` callback throws and callback-Promise rejection remain fatal trusted-transition failures.
+
+Update [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and [`export-error-set.md`](export-error-set.md).
 
 ---
 
@@ -204,7 +232,7 @@ Use one classifier with the precedence in `AGENTS.md`. `admitIdentity` is the on
 
 Every operation admits an identity before recording import, sharing, leasing, mirrors, counters, or any other identity fact. Later metadata operations require and extend that admitted record; they never classify or create one. Delete `ensureMeta` rather than recreating it behind another helper name. A definition-only prototype record has no admitted type and its mere existence proves neither admission nor ownership.
 
-Classification may reflect on a user-supplied identity. Route a throwing Proxy or prototype hook through Phase 2's exact language boundary before creating metadata; do not leave a partially admitted identity.
+Classification may reflect on a user-supplied identity. Route a throwing Proxy or prototype hook through Phase 2A's exact language boundary before creating metadata; do not leave a partially admitted identity.
 
 Class registration is the sole deliberate exception to ordinary admission: it creates a definition-only record on the prototype without admitting that prototype as language data. If the prototype is later admitted, `admitIdentity` completes the same record with a type. When an instance is admitted, consult its prototype record and store the definition with `TYPE_REGISTERED`. Registration must precede admission and has no retroactive effect.
 
@@ -252,21 +280,21 @@ Treat the complete unit as the value of its containing placement. Any mutation w
 2. If the unit is imported, shared, or leased, clone its complete logical state into one prototype-preserving runtime-owned unit. Preserve internal aliases and cycles, and fork every Promise property version at this operation's program position.
 3. Copy or transfer assigned state into the unit so no runtime-managed descendant gains an outside owner. Prepare the assigned value completely before its final host-value write.
 4. If preparation waits, publish the operation's ordinary Promise version at the unit placement and keep the prepared unit private.
-5. Apply the property change and republish the complete unit in one synchronous transition. Preparation failure restores the prior unit version; a detached completion cannot overwrite a later replacement or deletion.
+5. Apply the property change and republish the complete unit in one synchronous transition. A language Error during mutating preparation replaces the containing unit placement with that Error; a fatal preparation failure publishes nothing. A detached completion cannot overwrite a later replacement or deletion.
 
 Select a registered property operation before applying the transition:
 
 - Reading a class-defined getter uses the registered-class observation snapshot. Its result crosses the ordinary host-result admission boundary, and the getter cannot mutate the published unit.
 - Assigning through a class-defined setter completely resolves and exports the assigned value, prepares the same private whole-unit mutation used by a method, invokes the setter once and synchronously, then reconciles and publishes the complete unit. A setter cannot continue mutating asynchronously; JavaScript assignment exposes no setter return value to await.
-- Reading a setter-only accessor produces `undefined`, matching JavaScript property access. Assigning through a getter-only accessor produces the Phase 2 language Error.
-- A setter throw is a failed no-result mutation: poison the containing registered-class unit through Phase 2's outcome rule instead of publishing its private partial state as a valid unit. Effects already completed outside the unit cannot be rolled back.
+- Reading a setter-only accessor produces `undefined`, matching JavaScript property access. Assigning through a getter-only accessor produces the Phase 2A language Error.
+- A setter throw is a failed no-result mutation: poison the containing registered-class unit through Phase 2A's outcome rule instead of publishing its private partial state as a valid unit. Effects already completed outside the unit cannot be rolled back.
 - If no own state placement or class-defined accessor handles an assignment, create an own enumerable, writable, configurable data property without consulting the prototype chain. Generic inherited behavior, including `Object.prototype.__proto__`, never creates graph state.
 
 Working-unit selection is the transition's only representation branch. Reuse an exact unit when it is exclusively owned and safe to mutate; otherwise clone the complete unit. Preparation, Promise gating, invocation, publication, and detachment then follow the same path. Do not create separate in-place and copy-on-write pipelines.
 
 This transition serves state-property writes, class-defined setters, and later method mutations. It replaces per-property class gates, instance locks, queues, and shallow class COW. A ready transition completes synchronously without a gate. A rejected data Promise becomes a language Error at its captured state position and the mutation returns nothing.
 
-A registered host mutation starts with the unit's captured logical placements and reconciles its complete final own enumerable state through the same property-version transitions. The method must leave admissible, fully resolved state synchronously; a Promise left in state or another invalid state identity is a fatal class-contract violation. A normal host throw becomes the method's Error result after completed valid synchronous changes are reconciled. A returned Promise belongs only to the independent result and never authorizes later state mutation.
+A registered host mutation starts with the unit's captured logical placements and reconciles its complete final own enumerable state through the same property-version transitions. The method must leave admissible, fully resolved state synchronously; a Promise left in state or another invalid state identity is a fatal class-contract violation. A normal host throw replaces the containing unit placement with its Error and returns the same Error, making private partial state unreachable. A returned Promise belongs only to the independent result, preserves its fulfillment and rejection, and never authorizes later state mutation.
 
 Receiver preparation uses the same unit primitive. Locate the selected registered receiver inside its enclosing unit and preserve that correspondence through a copy. An observation prepares a host-ready snapshot and leases the enclosing unit while pending. A mutation prepares the complete private unit, then invokes the corresponding receiver inside it; if preparation waits, the unit placement is already its FIFO gate. The dispatch phase adds arguments and invocation to this operation state rather than adapting it.
 
@@ -288,12 +316,12 @@ Graph walks carry the enclosing registered-class unit after crossing its root. S
 - A class-defined setter receives one fully resolved exported value and runs once through the same whole-unit COW, Promise gate, reconciliation, and publication path as a method mutation.
 - A pending setter value gates the complete unit; later access through any alias resumes after publication in FIFO order.
 - Own state shadows class accessors. A setter-only accessor reads as `undefined`; a getter-only assignment and an own accessor state descriptor produce language Errors. An ordinary missing state key becomes an own data placement without invoking inherited behavior such as `Object.prototype.__proto__`.
-- A class-defined setter throw poisons the containing unit and cannot publish its private partial state as a valid unit; already-completed external effects remain observable.
+- A class-defined setter throw poisons the containing unit and returns the same Error; its private partial state is not published as a valid unit.
 - Receiver preparation captures complete state and registers receiver dependencies before dispatch adds argument dependencies.
 - Internal aliases and cycles cannot bypass the unit's Promise gate, lease, or COW boundary.
 - Functions and unregistered or intrinsic identities are rejected as registered-class semantic state before publication or host invocation.
-- A method of a registered class has its additions, replacements, and deletions reconciled across the complete unit, including valid changes completed before a host throw.
-- A method of a registered class cannot publish Promise state or mutate the unit after returning; its returned Promise delays only its independent result.
+- A successful method of a registered class has its additions, replacements, and deletions reconciled across the complete unit. A synchronous throw instead poisons the containing unit and leaves private partial changes unreachable.
+- A method of a registered class cannot publish Promise state or mutate the unit after returning; its returned Promise remains only the independent API result and rejection does not poison the published unit.
 
 Update [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), and the path-operation documentation. Replace the existing test that expects a class-defined prototype setter to be shadowed: its own-record-accessor case remains invalid, its class-defined setter must run, and its inherited non-accessor case must still create an own state placement.
 
@@ -307,15 +335,17 @@ Import currently treats existing runtime metadata as proof that an identity is r
 
 ### Design
 
+Complete the mirror presence rule here rather than adding a read-only half of it in Phase 2A. A live mirror contributes its logical key to `hasLanguageProperty` and language-key enumeration even when its physical slot is absent or no longer enumerable. Reads, presence, and enumeration therefore agree on the same live version. Use this same logical-key union for reconciliation instead of adding an import-only presence mechanism.
+
 Use one import walk for new and previously imported data:
 
 1. Visit each reached supported identity once, carrying its enclosing registered-class unit.
 2. Outside a registered-class unit, retain an existing import boundary or mark the identity imported and shared with the current boundary. An instance of a registered class starts one imported unit; its state descendants use that boundary without independent ownership.
 3. Stop at a Function, Error, or opaque identity without enumerating its properties or hidden state.
-4. Reconcile the union of the container's current physical language keys, previously indexed placement keys, and live mirror keys. Reuse an unchanged imported Promise version, replace a displaced version at the current program position, and publish an ordinary deletion transition for a recorded key that disappeared. Only current physical keys contribute children to recurse into.
+4. Reconcile the union of the container's current physical language keys, previously indexed placement keys, and live mirror keys. Reuse an unchanged imported Promise version, replace a displaced version at the current program position, and publish an ordinary deletion transition for a recorded key that disappeared. Only current physical data properties contribute children to recurse into.
 5. Recurse into every currently available supported child and apply the same admission before publishing a Promise fulfillment.
 
-Treat each external enumeration, descriptor lookup, and property read as its own admission boundary. If host reflection or an accessor fails, return the Phase 2 language Error for the imported branch; do not wrap the whole import transition and accidentally convert an internal reconciliation failure into data.
+Treat each external enumeration and descriptor lookup as its own admission boundary. A throwing Proxy trap or an own physical non-placement returns the Phase 2A language Error for the imported branch; never invoke an accessor as graph data. Do not wrap the whole import transition and accidentally convert an internal reconciliation failure into data.
 
 Import never infers runtime origin from metadata, mirrors, indexes, leases, or ArrayView attachment. Host-call result admission may instead recognize identities deliberately supplied to host code; it applies their category policy and imports every new host identity.
 
@@ -338,6 +368,7 @@ Delete runtime-island detection, `promoteRoot`, the separate runtime walk, `runt
 - A direct alias becomes imported in either traversal order.
 - Reimport reaches current children once, reconciles added, replaced, and deleted indexed and unindexed placements, and retains the first boundary.
 - External deletion of an indexed ordinary or Promise property is found through the recorded-key union even though the key is absent from current enumeration.
+- Reads, presence checks, and enumeration agree on every live mirror key before reimport; reconciliation detaches a version whose physical placement was deleted.
 - An unchanged Promise placement keeps one mirror and resolver; a changed placement gets a fresh version at the import position.
 - Indexed reconciliation reuses the existing cycle-cut state and stores no duplicate cut flag.
 - Registered state is traversed for preparation and indexing without giving descendants independent ownership.
@@ -371,7 +402,7 @@ Use one per-identity operation gate for property accesses and every host call th
 
 Run ready work synchronously. Register waits through the ordinary Promise helpers at the operation's program position; do not turn an unblocked operation into a Promise, add a microtask hop, or build separate property and method queues.
 
-An opaque property read is a host observation on the exact object. A write resolves and exports its value before touching the object, then performs native property assignment on that exact object, including a native setter. A setter must complete synchronously because JavaScript assignment exposes no returned Promise. A host throw follows Phase 2's language outcome, while effects already completed on the external object remain visible.
+An opaque property read is a host observation on the exact object. A write resolves and exports its value before touching the object, then performs native property assignment on that exact object, including a native setter. A setter must complete synchronously because JavaScript assignment exposes no returned Promise. A host throw follows Phase 2A's language outcome, while effects already completed on the external object remain visible.
 
 Phase 8 routes opaque method calls through this same gate. An explicitly requested method mutation may change only the exact receiver. Its returned Promise remains the API result and also keeps the mutation outstanding until settlement; observation Promises keep only their own observation outstanding.
 
@@ -384,7 +415,7 @@ Phase 8 routes opaque method calls through this same gate. An explicitly request
 - An opaque identity used several times in one host call contributes one gate entry; a mutating receiver takes precedence over its read-only argument aliases.
 - Fulfilled and rejected observation and mutation Promises release exactly the operations that depend on them while preserving their API outcomes. A rejection delays but does not poison later operations.
 - Imported and multiply referenced opaque identities mutate the exact object deliberately; no copy, traversal, or ownership mark creates a second resource.
-- Native getters and setters run only after ordered preparation. A setter throw preserves completed external effects and produces the Phase 2 Error outcome.
+- Native getters and setters run only after ordered preparation. A setter throw poisons the targeted Cascada placement or root and returns the same Error; completed effects on the exact external identity remain visible through other aliases.
 - Host mutation outside Cascada is not presented as ordered with runtime operations.
 
 Update [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the path-operation documentation.
@@ -402,7 +433,7 @@ Method dispatch still preserves the legacy capabilities of the tracked/untracked
 Implement the `AGENTS.md` capability table directly. Treat `run`'s Boolean as the requested operation mode, rename its internal `mutateArray` terminology without changing the positional API, and validate the mode only after classifying the resolved receiver and selected callable. A class or record function named `push` is not an Array mutator.
 
 Resolve the receiver and every explicit argument before deciding the poison result, even after finding an Error. Collect every distinct original Error consumed by their required preparation in receiver-then-argument order, independent of settlement order. Use one bucket for receiver resolution and selection, then one for each explicit argument; order within one composite input is not semantic. Return one Error unchanged; for several, return an Error whose `errors` array contains the originals. An Error nested inside composite data participates only when the receiver category's preparation or the operation's behavior reaches it.
-Use the Error-combination utility established in Phase 2; call preparation only owns discovery order.
+Use the Error-combination utility established in Phase 2B; call preparation only owns discovery order.
 
 Once the receiver version is available, method selection follows admitted type:
 
@@ -421,8 +452,8 @@ Prepare every call as one ordered transition:
 1. Capture the requested mode and the receiver, method-property, and argument versions at the operation's program position.
 2. Start receiver-version preparation first. Once that value is available and non-Error, capture its category and callable or accessor descriptor without invoking an executable getter. Then export one complete native Array snapshot for an override, use the registered-class observation snapshot or whole-unit mutation transition, reserve the Phase 7 opaque-identity entry, lease another exact observational receiver, or retain the controlled runtime receiver.
 3. Without waiting for a pending receiver, immediately start top-level resolution of every explicit argument from left to right and do not short-circuit after an Error. Once receiver selection determines the boundary, extend those captured values through the required deep preparation. Host-bound positions share one snapshot context that preserves aliases and cycles across the receiver and arguments and leases every exact runtime-managed identity that cannot be copied. Each exact opaque identity captured in those positions enters the Phase 7 gate once for the operation; a mutating receiver dominates its argument aliases. Controlled positions otherwise resolve only nested data their method consumes. Even a JavaScript method that ignores an argument position must wait for it and include its Errors.
-4. If preparation consumed any Errors, complete the API result without invoking an executable getter, callback, method, override, or mutator: return the single original or ordered aggregate when ready, or reject the already-returned operation Promise with it after all required inputs settle. A mutation poisoned before invocation leaves its receiver unchanged.
-5. Otherwise invoke the selected operation exactly once and synchronously. Controlled runtime code follows its method-specific logical transition. Host code follows its declared boundary. Reconcile a registered-class mutation's complete, ready final unit state through Phase 5's ordinary transitions before publishing it or its Error result. A returned Promise remains the API's asynchronous result and may reject. For a registered-class mutation it delays only that independent result, so publish and lease the unit; for an opaque operation it also keeps the Phase 7 gate entry outstanding until settlement.
+4. If preparation consumed any Errors, do not invoke an executable getter, callback, method, override, or mutator. An observation returns the single original or ordered aggregate and leaves its receiver unchanged. A mutation replaces its targeted receiver placement or root with that poison and exposes the same poison through the API. Return it when ready, or reject the already-returned operation Promise after all required inputs settle.
+5. Otherwise invoke the selected operation exactly once and synchronously. Controlled runtime code follows its method-specific logical transition. Host code follows its declared boundary. A synchronous mutating-function throw poisons the targeted receiver and becomes the API Error; an observation throw affects only the result. Reconcile a successful registered-class mutation's complete, ready final unit state through Phase 5's ordinary transitions. A returned Promise remains the API result with its original fulfillment and rejection. For a registered-class mutation the unit is already published and leased; for an opaque operation the Promise also keeps the Phase 7 gate entry outstanding until settlement.
 6. Admit every result immediately using known origins. A controlled runtime result retains its runtime origin and is not imported merely because it is a method result. Import new host identities and returned snapshot identities created for arguments, Array overrides, or registered-class observations. Preserve the origin of an exact receiver, opaque argument, or Function supplied without snapshotting and account for its additional owner. Preserve and share a registered-class mutation's whole receiver; copy out state still owned by the unit, or transfer state relinquished by the same transition. Release all operation leases and completed Phase 7 gate entries in this result transition.
 
 The coordinator owns sequencing and snapshot identity; category dispatch owns receiver policy. Use one local operation state for copies, aliases, cycles, Errors, and waits. Do not add a persistent coordinator, queue, or parallel preparation path.
@@ -441,7 +472,7 @@ Do not add sharing or lease guards that forbid otherwise safe ArrayView backing 
 
 Delete ordinary receiver selection through `requiresArrayMaterialization`, its `receiver === targetValue` lease inference, and `invokeObservationMethodWithExportedArgs`'s independent per-argument exports. Array overrides always export; exact observational receivers lease explicitly by category. Keep `requiresArrayMaterialization` where representation mutation and copy-on-write still need it.
 
-Preserve the host-call error boundary: a synchronous host-method, executable getter, or reflection throw becomes a ready Error result, while a returned Promise may reject the API result. Property and value failures follow Phase 2's publication rule; bookkeeping, impossible-transition, and declared host-contract violations remain fatal.
+Preserve the host-call error boundary: a synchronous host-method, executable getter, or reflection throw becomes a ready Error result, and a mutating-function throw also poisons its targeted receiver. A returned Promise preserves its own fulfillment and rejection without retroactive graph poisoning. Property and value failures follow Phase 2A's publication rule; bookkeeping, impossible-transition, and declared host-contract violations remain fatal.
 
 ### Verification
 
@@ -453,7 +484,7 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - An Error obtained from the selected record property or executable getter propagates unchanged instead of being replaced by a non-callable validation Error.
 - Nested Errors remain data until required preparation or method behavior reaches them; every Error reached by one call appears once in that call's poison result.
 - A controlled method that consumes several Error elements, such as sort preparation, returns their aggregate without invoking its comparator; a structure-only method leaves uninspected nested Errors as data.
-- A mutation poisoned before invocation leaves its receiver unchanged.
+- A mutation poisoned before invocation replaces its targeted receiver placement or root with the same single or aggregate Error returned through the API.
 - A record function waits for its captured property version, receives exported arguments, is not called with the record as `this`, and cannot observe record state; inherited and non-callable selections fail.
 - Array mutators requested as observations and mutations through Array overrides fail, while a same-named record or class function still follows its own category.
 - Supported standard Array methods retain controlled behavior and resolve only the properties each method consumes; unsupported native methods remain rejected unless explicitly overridden.
@@ -476,7 +507,7 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - A registered-state descendant returned while the unit still owns it becomes an independent copy. A descendant removed by the same mutation may transfer without copying.
 - An exact unsnapshotted receiver, opaque argument, or Function returned directly, through a Promise, or inside another result retains its origin and accounts for any additional owner.
 - Other new direct and fulfilled results are imported immediately.
-- A synchronous host throw returns an Error without changing the receiver beyond completed synchronous mutation effects; a host-returned Promise rejection rejects the API result while preserving those effects.
+- A synchronous observation throw returns an Error without changing its receiver. A synchronous mutating-function throw poisons its targeted receiver and returns the same Error; partial physical effects on an exact opaque identity remain visible through other aliases. A returned Promise preserves its fulfillment or rejection and does not retroactively poison the receiver.
 - Runtime invariant and bookkeeping failures remain fatal across the same call paths.
 - Promise interleavings preserve receiver-before-argument registration and FIFO transitions.
 - Valid `concat`, `push`, indexed growth, and length growth still reuse runtime-owned backing without changing earlier logical values.

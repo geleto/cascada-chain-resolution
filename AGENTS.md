@@ -34,6 +34,7 @@ The Core Contracts and the data-type capabilities, execution boundaries, and Err
 - **Array structure:** Present elements and enumerable named properties are placements; logical length and holes affect Array behavior but are not placements.
 - **Outside the graph:** Symbols, non-enumerable and inherited properties, and prototypes do not form property placements and are not traversed as graph data.
 - Creating a missing graph placement defines an own enumerable, writable, configurable data property; it never follows the prototype chain.
+- An own non-placement, such as a non-enumerable property or unsupported accessor, blocks ordinary graph mutation; it is neither invoked nor redefined. Class-defined accessors run only through their registered-class boundary.
 - The graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
 - Refcounting maintains an acyclic projection by cutting parent-key placements. Cuts affect bookkeeping only, not the graph or observable behavior. Their placement and resulting counter totals may depend on construction history and need not be canonical.
 
@@ -119,18 +120,31 @@ A property version is the exact logical state captured at one placement. A mirro
 - Replacing or deleting a property detaches its mirror. The mirror then keeps that version's latest value for operations that already captured it.
 - Settlement alone changes no language state. The first resolver advances the version within its transition; later resolvers ignore the settlement payload and continue from the state earlier resolvers left.
 
+## Errors
+
+Cascada distinguishes two kinds of failure:
+
+- **Error poisoning.** An Error is language data. Invalid language inputs or property conditions and synchronous failures from supported user code produce it. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it, while unrelated work continues.
+- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows. A representation limitation must first fall back or materialize; it is fatal only if the required handling fails.
+
+- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there; entering it through `run` does not make adjacent runtime code user-controlled. Never convert between poisoning and fatal failure.
+- A poisoned observation affects only the operation outcome. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and is also the operation outcome.
+- For a mutating call, that value is the receiver placement or root; poisoned preparation or a synchronous mutator throw poisons it. Poison confined to an independent result does not affect a successfully mutated receiver.
+- Ready poison is returned as an Error. If Cascada returned its own operation Promise while preparation or a graph transition was pending, later poison rejects it. A Promise returned by invoked code remains the API result unchanged; its rejection does not poison the graph.
+- No consumed Error is lost: one propagates unchanged; several produce an Error whose `errors` array contains every distinct original. Call errors follow receiver-then-argument order, independent of settlement; errors within one composite input are unordered.
+- Poisoning an opaque mutation replaces its targeted Cascada placement or root but cannot undo effects already made to the exact external identity; other aliases still observe them.
+
 ## Execution Boundaries
 
-- Every call prepares its receiver and every explicit argument for Error propagation. If any resolves to an Error, continue resolving the others to collect every distinct original Error, but do not invoke the selected function, getter, callback, method, override, or mutator, and leave a mutation receiver unchanged. One Error becomes the call's outcome unchanged; several become an Error whose `errors` array preserves receiver-then-argument order independently of settlement order. Errors within one composite input have no separate order. A controlled method otherwise resolves only the nested data it consumes and may return an internal representation such as an ArrayView.
+- Prepare every call's receiver and explicit arguments for Error propagation. Continue after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors participate only when required preparation or behavior reaches them. A controlled method otherwise resolves only the nested data it consumes and may return an internal representation such as an ArrayView.
 - A controlled callback receives only the logical values its method declares and must be synchronous, read-only, and non-retaining.
 - Invoke a record function without the record as its receiver. It may use explicit arguments and read-only host state, but must not read or mutate its containing record or other Cascada graph state.
 - Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit and preserve every logical value.
 - Host arguments are exported. Host code receives no internal representation or unresolved language Promise introduced by Cascada; traversable values become snapshots, while opaque identities and Functions remain exact. A snapshot captures logical values at the operation's program position, and later mutation cannot change it.
 - Admit results by origin: import new host and snapshot identities; keep controlled results runtime-owned. An exact unsnapshotted identity retains its origin wherever the result contains it, and normal sharing applies if the result adds an owner. Import records an opaque identity without traversing its state.
 - A host observation must not mutate an exact receiver or opaque argument. A host mutation may mutate only its designated receiver; ordinary arguments remain read-only.
-- Every host use of an opaque identity is ordered per identity. The ordering state belongs to the identity, not a Chain or placement, so every alias shares it. Observations, including use as an argument, wait for the preceding mutation but not for one another; a mutation waits for every preceding operation. A write resolves and exports its value before touching the object. A method Promise keeps its normal API result and rejection behavior.
+- Every host use of an opaque identity is ordered per identity. The ordering state belongs to the identity, not a Chain or placement, so every alias shares it. Observations, including use as an argument, wait for the preceding mutation but not for one another; a mutation waits for every preceding operation. A write resolves and exports its value before touching the object.
 - Host code may retain an exact receiver, opaque argument, or Function only through its result or until its returned Promise settles. Mutation after that interval is a host contract violation. Independently retained external references to an imported opaque object remain outside Cascada's ordering guarantees.
-- An Error nested in composite data remains data until required preparation or behavior reaches it.
 
 If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` and may then overlap; following mutation `M2` waits for both observations. The same order holds through every alias.
 
@@ -141,25 +155,10 @@ If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` 
 - Semantic state may contain primitives, Errors, records, logical Arrays, and nested instances of registered classes. A Promise contributes only its resolved value. Functions and opaque identities are invalid state because whole-unit copying cannot isolate them.
 - A runtime-owned instance exclusively owns the complete graph rooted in its semantic properties; nested instances of registered classes belong to the enclosing unit. No state identity may have an owner outside that unit.
 - Import, sharing, leasing, and copy-on-write apply to the whole unit. Assigning state copies or transfers it into the unit; extracting a descendant copies it out unless the unit relinquishes it; returning the receiver shares the whole unit.
-- A property write or method mutation transitions the instance at its containing placement. Pending preparation installs the ordinary Promise version there, so later unit access resumes in FIFO order.
-- Before host invocation, settle and export the complete state graph into a host-ready, prototype-preserving receiver. An observation receives an isolated snapshot and is side-effect-free; a mutation receives an exclusively owned unit version. Preparation failure restores the prior unit version.
+- A property write or method mutation transitions the instance at its containing placement. Pending preparation installs the ordinary Promise version there, so later unit access resumes in FIFO order; mutation poisoning replaces that whole-unit placement.
+- Before host invocation, settle and export the complete state graph into a host-ready, prototype-preserving receiver. An observation receives an isolated snapshot and is side-effect-free; a mutation receives an exclusively owned unit version.
 - A mutation completes and reconciles all state changes synchronously through the ordinary property-version transitions before publication. It must return with admissible, fully resolved state and may neither install Promise state nor continue mutating asynchronously. A returned Promise delays only the independent result: publish the unit before waiting, then lease it until settlement because the result may retain the receiver or its state.
 - A whole-unit copy preserves prototype, aliases, and cycles, but shares no mutable semantic-state identity with the preserved unit. Error identities remain immutable terminal data.
-
-## Errors
-
-Cascada distinguishes two kinds of failure:
-
-- **Error poisoning.** An Error is language data. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates the Error, while unrelated work continues.
-- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows. A representation limitation must first fall back or materialize; it is fatal only if the required handling fails.
-
-Apply that distinction at the boundary where the failure originates:
-
-- When the requested language operation cannot produce a valid value, make its logical outcome an Error. If the operation has an independent result, deliver the failure through that result channel according to the public API transport below; otherwise publish the Error at the nearest replaceable logical value whose transition failed. This includes invalid values or property conditions and synchronous failures from user-controlled accessors, coercions, callbacks, selected methods, and Proxy or reflection hooks.
-- Whether code threw or returned does not determine the category. Catch user-controlled execution only at its exact boundary; entering it through `run` does not make adjacent runtime code user-controlled. Never convert a runtime failure into data or a language failure into a fatal failure.
-- A synchronous host throw after mutation becomes the call's Error result without erasing valid effects already completed. An independent result failure does not poison a receiver whose mutation completed validly.
-- Public API transport is separate from graph poisoning. A ready language failure returns its Error instead of throwing. An operation that returned a Promise may reject it with its asynchronous failure, final Error, or aggregate; a directly returned host Promise preserves its rejection reason. Do not fulfill an API Promise with an Error merely to normalize synchronous and asynchronous results.
-- No consumed Error is lost; every operation that consumes several applies the same aggregation rule.
 
 ## Work Bounds
 
