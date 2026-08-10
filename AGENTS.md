@@ -34,7 +34,9 @@ The Core Contracts and the data-type capabilities, execution boundaries, and Err
 - **Array structure:** Present elements and enumerable named properties are placements; logical length and holes affect Array behavior but are not placements.
 - **Outside the graph:** Symbols, non-enumerable and inherited properties, and prototypes do not form property placements and are not traversed as graph data.
 - Creating a missing graph placement defines an own enumerable, writable, configurable data property; it never follows the prototype chain.
-- An own non-placement, such as a non-enumerable property or unsupported accessor, blocks ordinary graph mutation; it is neither invoked nor redefined. Class-defined accessors run only through their registered-class boundary.
+- An own non-placement, such as a non-enumerable property or unsupported accessor, is logically absent. Ordinary graph access neither invokes nor redefines it; class-defined accessors run only through their registered-class boundary.
+- A final read of an absent placement returns `undefined`. Traversing through an absent or `undefined` placement produces an Error, while reaching an Error propagates that same Error without replacing it.
+- Final assignment creates an absent placement, and final deletion of one is a no-op. A mutation that requires an absent receiver or intermediate placement poisons that first failed placement.
 - The graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
 - Refcounting maintains an acyclic projection by cutting parent-key placements. Cuts affect bookkeeping only, not the graph or observable behavior. Their placement and resulting counter totals may depend on construction history and need not be canonical.
 
@@ -76,6 +78,7 @@ A logical value is what Cascada operations observe; its physical representation 
 - For ordinary language data, protection belongs to the stored identity while permission to replace a placement belongs to its container. A path mutation considers both independently.
 - Ordinary COW builds the mutating owner's new value by shallow-copying each level from the first protected container down to the changed spot, applying the change there, and reusing every off-path value unchanged. It copies a path, not a graph.
 - Each new path node starts runtime-owned, unshared, and unleased. It is populated by reading each property's logical value, never its physical slot, and carries no source metadata. Reused children retain their identity facts and become shared when both owners retain them.
+- Writability, configurability, and extensibility constrain physical storage, not the logical graph. When an otherwise valid transition cannot use its current representation—including because an own non-placement occupies the key—materialize normal runtime-owned storage that omits non-placements and retry. Copy outward along the path as needed to publish it; never invoke or redefine the blocker.
 - A protected registered-class unit is copied as a complete prototype-preserving state graph rather than as a property path; the new unit starts exclusively owned.
 - Runtime-owned representation may be reused or changed whenever every protected logical value remains unchanged. Array backing may therefore grow visibly through a raw host reference while fixed ArrayView bounds preserve every Cascada value. Copy or materialize only when reuse would change a protected value.
 - Aliasing, multiplicity, and cycles within one ownership unit do not create more owners or by themselves require copying.
@@ -85,6 +88,7 @@ A logical value is what Cascada operations observe; its physical representation 
 ## Import and External Data
 
 - Import admits host-owned data, records its external origin, and reconciles the reached graph even when an identity was already admitted. Creating a Chain preserves existing admission, import, and ownership state; it does not imply import.
+- Host changes to traversable imported storage enter the language graph at reimport. Reimport changed data before another Cascada operation accesses it.
 - Import belongs to each admitted ownership unit—an ordinary identity or a registered-class unit root. Containment alone neither grants nor removes it.
 - Imported physical storage is borrowed and never modified. Metadata and logical Promise settlement remain outside it. An explicitly requested opaque mutation is the sole exception: it intentionally changes ordinary properties or hidden or intrinsic state on that exact external object.
 - Cascada never creates non-extensible language data. Such data must enter through import. The imported no-write rule is sufficient; do not infer import from non-extensibility or add frozen-specific behavior.
@@ -124,13 +128,13 @@ A property version is the exact logical state captured at one placement. A mirro
 
 Cascada distinguishes two kinds of failure:
 
-- **Error poisoning.** An Error is language data. Invalid language inputs or property conditions and synchronous failures from supported user code produce it. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it, while unrelated work continues.
-- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows. A representation limitation must first fall back or materialize; it is fatal only if the required handling fails.
+- **Error poisoning.** An Error is language data. Invalid logical inputs or transitions and synchronous failures from supported user code produce it. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it, while unrelated work continues.
+- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows.
 
-- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there; entering it through `run` does not make adjacent runtime code user-controlled. Never convert between poisoning and fatal failure.
+- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there; entering it through `run` does not make adjacent runtime code user-controlled. A physical representation limitation is not itself a failure: materialize and retry, and treat failure of that required handling as fatal. Never convert between poisoning and fatal failure.
 - A poisoned observation affects only the operation outcome. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and is also the operation outcome.
 - For a mutating call, that value is the receiver placement or root; poisoned preparation or a synchronous mutator throw poisons it. Poison confined to an independent result does not affect a successfully mutated receiver.
-- Ready poison is returned as an Error. If Cascada returned its own operation Promise while preparation or a graph transition was pending, later poison rejects it. A Promise returned by invoked code remains the API result unchanged; its rejection does not poison the graph.
+- Ready poison is returned as an Error. If Cascada returned its own operation Promise while preparation or a graph transition was pending, later poison rejects it. An operation whose contract consumes Errors instead completes with its normal result. A Promise returned by supported data or host execution remains the API result unchanged; its rejection does not poison the graph.
 - No consumed Error is lost: one propagates unchanged; several produce an Error whose `errors` array contains every distinct original. Call errors follow receiver-then-argument order, independent of settlement; errors within one composite input are unordered.
 - Poisoning an opaque mutation replaces its targeted Cascada placement or root but cannot undo effects already made to the exact external identity; other aliases still observe them.
 
@@ -145,13 +149,14 @@ Cascada distinguishes two kinds of failure:
 - A host observation must not mutate an exact receiver or opaque argument. A host mutation may mutate only its designated receiver; ordinary arguments remain read-only.
 - Every host use of an opaque identity is ordered per identity. The ordering state belongs to the identity, not a Chain or placement, so every alias shares it. Observations, including use as an argument, wait for the preceding mutation but not for one another; a mutation waits for every preceding operation. A write resolves and exports its value before touching the object.
 - Host code may retain an exact receiver, opaque argument, or Function only through its result or until its returned Promise settles. Mutation after that interval is a host contract violation. Independently retained external references to an imported opaque object remain outside Cascada's ordering guarantees.
+- Host calls, controlled callbacks, and reflection hooks must not issue Cascada operations before returning; synchronous reentry is a host contract violation. Trusted runtime control-flow callbacks such as `enter` follow their own transition contracts instead.
 
 If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` and may then overlap; following mutation `M2` waits for both observations. The same order holds through every alias.
 
 ## Instances of Registered Classes
 
 - Register a class before any of its instances is admitted. Registration is not retroactive, and an identity's classification is fixed at first admission.
-- All semantic state must be rooted in own enumerable string-keyed properties. Private fields, internal slots, Symbols, non-enumerables, and closure state must not hold semantic state. Class-defined accessors may observe or mutate only the enumerable state and follow the same whole-unit boundaries as methods.
+- All semantic state must be rooted in own enumerable string-keyed data properties. Private fields, internal slots, Symbols, non-enumerables, closure state, and own accessor descriptors are invalid state. Class-defined accessors may observe or mutate only the enumerable state and follow the same whole-unit boundaries as methods.
 - Semantic state may contain primitives, Errors, records, logical Arrays, and nested instances of registered classes. A Promise contributes only its resolved value. Functions and opaque identities are invalid state because whole-unit copying cannot isolate them.
 - A runtime-owned instance exclusively owns the complete graph rooted in its semantic properties; nested instances of registered classes belong to the enclosing unit. No state identity may have an owner outside that unit.
 - Import, sharing, leasing, and copy-on-write apply to the whole unit. Assigning state copies or transfers it into the unit; extracting a descendant copies it out unless the unit relinquishes it; returning the receiver shares the whole unit.
@@ -174,6 +179,7 @@ Cycle cuts are a bounded exception because they stop counter propagation. When c
 ## Verification
 
 - Prefer integration tests through public operations, covering observable sequential behavior and owner isolation across meaningful synchronous and Promise interleavings. Cover opaque ordering through aliases, overlapping observations, mutation barriers, and both Promise fulfillment and rejection.
+- Derive failure tests from boundary contracts, not existing catches. List every JavaScript action that can invoke user code, group call sites by where failure must return or publish an Error, and cover each distinct preparation and commit path through public operations.
 - Use focused unit tests only when integration tests cannot precisely verify a load-bearing invariant. Never pin an interchangeable representation; that turns accidental structure into a contract and obstructs simplification.
 
 ## Maintaining This Document

@@ -29,6 +29,15 @@ Import walks currently available language properties immediately. It:
 - marks repeated identities shared; and
 - installs the first resolver for each newly reached Promise property.
 
+Import marks an identity before enumerating it. If enumeration or descriptor
+reflection fails, a later explicit import revisits that already-marked identity
+and resumes admission; partial metadata is not treated as a completed pass.
+
+Only own enumerable string-keyed data properties are walked. Accessors and
+non-enumerable properties are absent and are never invoked. A throwing
+enumeration or descriptor trap returns its Error from import; adjacent runtime
+failures remain fatal.
+
 An identity that already has runtime metadata is an existing runtime-owned
 island. It remains runtime-owned and shared. Import discovers Promise
 placements in that island so their existing property versions continue through
@@ -44,7 +53,8 @@ The first resolver for an imported Promise property captures its import token
 in its registration closure. At settlement it:
 
 1. converts a rejection to a language Error;
-2. classifies newly exposed external identities; and
+2. classifies newly exposed external identities, publishing a reflection
+   failure as the property's Error value; and
 3. publishes the logical value synchronously.
 
 The external property remains the original Promise. Its mirror's single `value`
@@ -80,9 +90,10 @@ does not attempt any of them.
 
 ## Language surface
 
-Only own enumerable string keys participate. Canonical Array indexes are the
-Array data surface. An own enumerable `__proto__` is ordinary data; missing
-keys are defined as own properties so inherited setters never run.
+Only own enumerable string-keyed data properties participate. Canonical Array
+indexes are the Array data surface. An own enumerable `__proto__` is ordinary
+data; missing keys are defined as own properties so inherited setters never
+run.
 
 ## Module boundary
 

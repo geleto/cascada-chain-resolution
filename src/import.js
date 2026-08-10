@@ -1,6 +1,5 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
-import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
@@ -11,7 +10,6 @@ function importValue(value, errorContext) {
         }
         return resolution.resolveInitialValueOrPoison(value, resolvedValue => {
             if (!languageValues.isTracked(resolvedValue)) return resolvedValue
-            if (metadata.importBoundaryOf(resolvedValue)) return resolvedValue
 
             propertyVersions.prepareImportedRoot(
                 resolvedValue,

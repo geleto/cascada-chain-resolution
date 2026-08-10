@@ -28,11 +28,12 @@ executable descriptors outside the graph. Prototype methods on registered class
 instances are likewise outside the language-property surface. The kernel does
 not promise proactive callable validation at every assignment boundary.
 
-Language-visible object properties are own enumerable string keys. Arrays
+Language-visible object properties are own enumerable string-keyed data
+properties. Own accessors, non-enumerables, inherited properties, Symbols,
+and prototypes are outside the graph and are never invoked by graph access. Arrays
 instead expose canonical Array-index strings and the special `length`
 property; other string properties are outside their language surface and
-cannot be assigned or deleted through Cascada. Inherited and own
-non-enumerable properties are not readable as language data.
+cannot be assigned or deleted through Cascada.
 
 Registered data-class COW and exact prototype preservation are
 implemented support for class instances as data. Construction and mutating
@@ -50,7 +51,8 @@ or validated by the kernel.
 An empty path targets `_state.value`. This stable parent/key location lets a
 root Promise use the same Promise-mirror machinery as any nested property.
 
-Assignment and deletion change the `Chain` and return `undefined`. Values are
+Successful assignment and deletion change the `Chain` and return `undefined`.
+A ready failed mutation returns the Error it publishes. Values are
 observed through `lookupPath`, `export`, `hasError`, `getErrors`, and the
 restricted standard-method [`run`](run.md) operation.
 
@@ -230,18 +232,16 @@ A missing target key is created as an own enumerable, writable, configurable
 data property. This applies to `__proto__`, so the inherited legacy setter is
 never invoked and the object's prototype is unchanged.
 
-On an owned object:
+An accessor or non-enumerable property is logically absent. Final assignment
+materializes an ordinary runtime-owned container and creates a placement that
+shadows it; final deletion is a no-op. Traversal through it produces the same
+path Error as any other missing segment. No getter or setter runs.
 
-- assignment to an own accessor or non-writable property is fatal;
-- deletion of an own non-configurable property is fatal; and
-- mutation of any own non-enumerable property is fatal.
-
-On a shared or imported branch, copy-on-write occurs first. Non-enumerable
-properties are absent from the copy, so a language write may create a new
-enumerable property that shadows them.
-
-These failures indicate invalid compiler or host integration and are not
-language Error values.
+A physical restriction such as non-writability, non-configurability,
+non-extensibility, or blocked Array length change causes the mutation path to
+materialize ordinary writable storage before committing. It is not a language
+failure. If the selected representation still cannot perform a preflighted
+commit, the violated runtime invariant is fatal.
 
 ## Promise-backed properties
 
@@ -254,8 +254,10 @@ The mirror's single `value` field is the property version's authoritative logica
 value. Its first resolver captures the property's import boundary at creation.
 Every state-changing resolver uses the import status captured at registration;
 the boundary remains on the imported owner and imported tracked values, not the
-mirror. A live runtime-owned version also writes through to its physical
-property, while an imported version preserves the external Promise.
+mirror. A live runtime-owned version normally writes through to its physical
+property. If writeback reflection fails, its Error remains logical in the mirror
+and the physical Promise is preserved. An imported version always preserves the
+external Promise.
 
 A fork uses the canonical Promise only as a FIFO readiness signal and samples
 its source mirror at the fork position. Retained ArrayView properties have
@@ -270,8 +272,14 @@ The mirror stores no source Promise, parent, key, or import boundary.
 ## Errors and fatal failures
 
 A rejected data Promise is converted to a language Error before its value
-continuation runs. If the rejection reason is already an Error, its identity is
-preserved; otherwise the sandbox creates `new Error(String(reason))`.
+continuation runs. An Error keeps its identity. Every other reason is retained
+as the `cause`; a primitive also supplies the message, while an object receives
+a fixed message without invoking its properties or conversion hooks.
+
+Synchronous failures from supported user code and exact reflection hooks are
+language Errors. The boundary catches only the user-controlled invocation;
+adjacent runtime work remains outside it. Synchronous re-entry into Cascada
+from such code is a fatal host-contract violation.
 
 Internal failures are fatal. They are reported through `reportFatalError` and
 the original thrown value continues to throw or reject. Continuation throws,
@@ -293,13 +301,15 @@ several fatal wrapper boundaries.
 ### `assignPath(chain, path, value)`
 
 Assigns or replaces the target. It creates a fresh mirror when `value` is a
-Promise, performs copy-on-write where required, updates existing refcounts, and
-returns `undefined`.
+Promise, performs copy-on-write or representation materialization where
+required, and updates existing refcounts. Success returns `undefined`; a ready
+failed transition publishes and returns its Error.
 
 ### `deletePath(chain, path)`
 
 Deletes the target or replaces the root with `null` for an empty path. Missing
-targets are no-ops. It updates existing refcounts and returns `undefined`.
+targets are no-ops. It updates existing refcounts. Success returns `undefined`;
+a ready failed transition publishes and returns its Error.
 
 ### `lookupPath(chain, path)`
 
@@ -338,9 +348,9 @@ Returns host-ready data for the branch captured at its issue position.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise.
-Unexpected synchronous traversal failures and rejected internal readiness are
-fatal. Rejected data Promises are converted to ordinary Error values before
-collection.
+A synchronous reflection failure returns its Error. Other unexpected traversal
+failures and rejected internal readiness are fatal. Rejected data Promises are
+converted to ordinary Error values before collection.
 
 ### `hasError(chain, path)`
 

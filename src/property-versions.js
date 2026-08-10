@@ -7,7 +7,7 @@ import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
 import * as resolution from "./resolution.js"
 
-const PROPERTY_ORIGIN = Symbol("Property origin")
+const PROPERTY_ORIGINS = new WeakSet()
 
 function getPromiseMirror(owner, key) {
     return metadata.metaOf(owner)?.mirrors?.[key]
@@ -49,15 +49,20 @@ function continuePropertyValue(owner, key, promise, onValue) {
 function getPropertyOrigin(owner, key) {
     key = String(key)
     if (!languageProperties.hasLanguageProperty(owner, key)) return undefined
-    return { [PROPERTY_ORIGIN]: true, owner, key }
+    const origin = { owner, key }
+    PROPERTY_ORIGINS.add(origin)
+    return origin
 }
 
 function isPropertyOrigin(value) {
-    return value?.[PROPERTY_ORIGIN] === true
+    return PROPERTY_ORIGINS.has(value)
 }
 
 function capturePropertyVersion(origin) {
-    if (!origin || Object.hasOwn(origin, "value")) return
+    if (
+        !origin ||
+        Object.hasOwn(origin, "value")
+    ) return
     const { owner, key } = origin
     const value = languageProperties.readLanguageProperty(owner, key)
     origin.value = value
@@ -190,6 +195,70 @@ function publishValue(
     importBoundary,
     retained = false,
 ) {
+    const planPublication = nextValue => preparePromisePublication(
+        owner,
+        key,
+        mirror,
+        nextValue,
+        importBoundary === undefined,
+    )
+    const publication = errorUtils.recoverUserCodeFailure(
+        () => planPublication(
+            preparePublishedValue(value, importBoundary, retained),
+        ),
+        planPublication,
+    )
+    errorUtils.recoverUserCodeFailure(
+        () => commitPublication(publication),
+        failure => commitPublication(preparePromisePublication(
+            owner,
+            key,
+            mirror,
+            failure,
+            false,
+        )),
+    )
+
+    function commitPublication(prepared) {
+        value = prepared.value
+        if (!prepared.commit) {
+            mirror.value = value
+            return
+        }
+        prepared.commit(() => {
+            if (prepared.writeBack) {
+                languageProperties.writeLanguageProperty(owner, key, value)
+            }
+            mirror.value = value
+        })
+    }
+}
+
+function preparePromisePublication(owner, key, mirror, value, writeBack) {
+    // A runtime-owned version can be displaced when its owner is later imported.
+    // Check liveness before applying this version's captured writeback policy.
+    if (!isLivePromiseMirror(owner, key, mirror)) return { value }
+    if (writeBack) {
+        const failure = errorUtils.recoverUserCodeFailure(
+            () => languageProperties.assertCanPublishPromiseProperty(
+                owner,
+                key,
+            ),
+            failure => failure,
+        )
+        if (failure) {
+            value = failure
+            writeBack = false
+        }
+    }
+    return {
+        value,
+        writeBack,
+        commit: preparePropertyCommit(owner, key, value),
+    }
+}
+
+function preparePublishedValue(value, importBoundary, retained) {
     if (languageValues.isPromise(value)) {
         errorUtils.reportFatalError(
             new Error("A Promise requires a fresh property version"),
@@ -198,29 +267,11 @@ function publishValue(
     if (retained) metadata.markShared(value)
     if (importBoundary) {
         prepareImportedResult(value, importBoundary)
+    } else if (!retained) {
+        // Classify the settled value at its publication boundary.
+        languageValues.isTracked(value)
     }
-
-    // A runtime-owned version can be displaced when its owner is later imported.
-    // Check liveness before applying this version's captured writeback policy.
-    if (!isLivePromiseMirror(owner, key, mirror)) {
-        mirror.value = value
-        return
-    }
-
-    if (!importBoundary) {
-        languageProperties.assertCanPublishPromiseProperty(
-            owner,
-            key,
-            value,
-        )
-    }
-
-    commitProperty(owner, key, value, () => {
-        if (!importBoundary) {
-            languageProperties.writeLanguageProperty(owner, key, value)
-        }
-        mirror.value = value
-    })
+    return value
 }
 
 function replaceProperty(owner, key, mirror, value) {
@@ -247,21 +298,18 @@ function deleteProperty(owner, key) {
 
 function commitArrayLength(array, length) {
     const projection = arrayViews.projectionOf(array)
-    const current = projection.length
+    const current = arrayViews.logicalArrayLength(projection)
     const view = arrayViews.isArrayView(projection) ? projection : undefined
     if (view) {
         if (length >= current) {
-            if (!view.setLength(length)) {
-                return errorUtils.validationError(
-                    "Cannot grow this ArrayView in place",
+            const resized = view.setLength(length)
+            if (!resized) {
+                errorUtils.reportFatalError(
+                    new Error("ArrayView growth requires materialization"),
                 )
             }
             return undefined
         }
-    } else if (
-        Object.getOwnPropertyDescriptor(array, "length")?.writable !== true
-    ) {
-        return errorUtils.validationError("Array length is read-only")
     }
     if (length === current) return undefined
 
@@ -272,9 +320,8 @@ function commitArrayLength(array, length) {
             key,
         )
         if (property && !property.configurable) {
-            setLength(index + 1)
-            return errorUtils.validationError(
-                "Cannot delete an Array element while setting length",
+            errorUtils.reportFatalError(
+                new Error("Array shrink requires materialization"),
             )
         }
         if (property?.enumerable) {
@@ -292,18 +339,25 @@ function commitArrayLength(array, length) {
 
     function setLength(nextLength) {
         if (view) view.setLength(nextLength)
-        else array.length = nextLength
+        else {
+            errorUtils.runUserCode(() => {
+                array.length = nextLength
+            })
+        }
     }
 }
 
-function commitProperty(owner, key, value, updateProperty) {
-    refcounts.commitLiveEdge(
+function preparePropertyCommit(owner, key, value) {
+    return refcounts.prepareLiveEdge(
         owner,
         key,
         value,
         getOrCreatePromiseMirror,
-        updateProperty,
     )
+}
+
+function commitProperty(owner, key, value, updateProperty) {
+    preparePropertyCommit(owner, key, value)(updateProperty)
 }
 
 function buildRefIndex(value) {
@@ -326,11 +380,11 @@ function prepareImportedResult(value, importBoundary) {
     prepareImportedData(value, importBoundary, false)
 }
 
-function prepareImportedData(value, importBoundary, promoteRoot) {
+function prepareImportedData(value, importBoundary, explicitImport) {
     importPreparation.prepareImportedData(
         value,
         importBoundary,
-        promoteRoot,
+        explicitImport,
         promoteImportedPromiseVersion,
         getOrCreatePromiseMirror,
     )

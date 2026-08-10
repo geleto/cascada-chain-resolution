@@ -113,12 +113,10 @@ function verifyCycleCuts(node) {
             descriptor?.enumerable &&
             "value" in descriptor
         const physicalMatches = Object.is(descriptor?.value, mirror?.value)
-        const validStorage = imported
-            ? physicalMatches || (
-                !languageValues.isPromise(mirror?.value) &&
-                languageValues.isPromise(descriptor?.value)
-            )
-            : descriptor?.writable && physicalMatches
+        const preservedPromise = !languageValues.isPromise(mirror?.value) &&
+            languageValues.isPromise(descriptor?.value)
+        const validStorage = (imported || descriptor?.writable) &&
+            (physicalMatches || preservedPromise)
         if (!validShape || !validStorage) {
             fatal("Live Promise mirror has no valid language property")
         }

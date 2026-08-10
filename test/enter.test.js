@@ -791,7 +791,7 @@ describe("enter", () => {
 
             expect(result).to.be.an(Error)
             expect(result.message).to.be("Cannot enter length for mutation")
-            expect(chain._state.value).to.be(receiver)
+            expect(chain._state.value).to.be(result)
             expect(calls).to.be(0)
         }
     })
@@ -800,9 +800,10 @@ describe("enter", () => {
         for (const value of [[1, 2], "ab"]) {
             const receiver = deferred()
             const root = { target: receiver.promise }
+            const chain = new Chain(root)
             let calls = 0
             const result = enter(
-                new Chain(root),
+                chain,
                 ["target", "length"],
                 true,
                 () => {
@@ -815,7 +816,7 @@ describe("enter", () => {
 
             expect(error).to.be.an(Error)
             expect(error.message).to.be("Cannot enter length for mutation")
-            expect(root.target).to.be(value)
+            expect(root.target).to.be(error)
             expect(calls).to.be(0)
         }
     })

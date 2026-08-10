@@ -17,30 +17,32 @@ import {
 import * as resolution from "./resolution.js"
 
 function run(chain, path, method, mutateArray, ...args) {
-    if (typeof method !== "string") {
-        return errorUtils.validationError(
-            "run requires a string method name",
-        )
-    }
-    if (mutateArray !== true && mutateArray !== false) {
-        return errorUtils.validationError(
-            "run requires an exact mutateArray Boolean",
-        )
-    }
-    if (method === "constructor") {
-        return errorUtils.validationError(
-            "Constructors are unsupported",
-        )
-    }
-    if (mutateArray && !arrayInvocation.isArrayMutator(method)) {
-        return errorUtils.validationError(
-            "Array mutation supports only Array mutators",
-        )
-    }
+    return errorUtils.runFatal(() => {
+        if (typeof method !== "string") {
+            return errorUtils.validationError(
+                "run requires a string method name",
+            )
+        }
+        if (mutateArray !== true && mutateArray !== false) {
+            return errorUtils.validationError(
+                "run requires an exact mutateArray Boolean",
+            )
+        }
+        if (method === "constructor") {
+            return errorUtils.validationError(
+                "Constructors are unsupported",
+            )
+        }
+        if (mutateArray && !arrayInvocation.isArrayMutator(method)) {
+            return errorUtils.validationError(
+                "Array mutation supports only Array mutators",
+            )
+        }
 
-    return errorUtils.runFatal(() => mutateArray
-        ? runMutation(chain, path, method, args)
-        : runObservation(chain, path, method, args))
+        return mutateArray
+            ? runMutation(chain, path, method, args)
+            : runObservation(chain, path, method, args)
+    })
 }
 
 function runObservation(chain, path, method, args) {
@@ -114,7 +116,6 @@ function runObservation(chain, path, method, args) {
                 methodTarget,
                 method,
             )
-            if (languageValues.isError(entry)) return entry
             if (
                 entry &&
                 (
@@ -123,7 +124,9 @@ function runObservation(chain, path, method, args) {
                         // Recognize the base Array prototype across realms.
                         Array.isArray(entry.owner) &&
                         languageValues.isPlainObjectPrototype(
-                            Object.getPrototypeOf(entry.owner),
+                            errorUtils.runUserCode(
+                                () => Object.getPrototypeOf(entry.owner),
+                            ),
                         )
                     )
                 )
@@ -137,12 +140,10 @@ function runObservation(chain, path, method, args) {
             }
         }
 
-        let callable
-        try {
-            callable = methodTarget[method]
-        } catch (error) {
-            return errorUtils.toPoison(error)
-        }
+        const callable = errorUtils.runUserCode(
+            () => methodTarget[method],
+        )
+        if (languageValues.isError(callable)) return callable
         if (typeof callable !== "function") {
             return errorUtils.validationError(
                 `Method is not callable: ${method}`,
@@ -207,10 +208,12 @@ function runMutation(chain, path, method, args) {
                 target.propertyKind !==
                 languageProperties.ORDINARY_PROPERTY
             ) {
-                return languageProperties.propertyValidationError(
+                const error = languageProperties.propertyValidationError(
                     target.receiver,
                     "Array mutation receiver is not an Array",
                 )
+                target.replaceReceiver(error)
+                return error
             }
             result = transformProperty(
                 target.parent,

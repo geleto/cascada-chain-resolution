@@ -2,26 +2,24 @@ import * as errorUtils from "./error.js"
 import { exportArgument } from "./observations.js"
 import * as resolution from "./resolution.js"
 
-function invokeDataFunctionOrPoison(callable, thisValue, args) {
-    try {
-        return Reflect.apply(callable, thisValue, args)
-    } catch (error) {
-        return errorUtils.toPoison(error)
-    }
+function invokeDataFunction(callable, thisValue, args) {
+    return errorUtils.runUserCode(
+        () => Reflect.apply(callable, thisValue, args),
+    )
 }
 
 function findPropertyDescriptor(object, key) {
-    try {
-        let owner = object
-        while (owner !== null) {
-            const descriptor = Object.getOwnPropertyDescriptor(owner, key)
-            if (descriptor) return { descriptor, owner }
-            owner = Object.getPrototypeOf(owner)
-        }
-        return undefined
-    } catch (error) {
-        return errorUtils.toPoison(error)
+    let owner = object
+    while (owner !== null) {
+        const descriptor = errorUtils.runUserCode(
+            () => Object.getOwnPropertyDescriptor(owner, key),
+        )
+        if (descriptor) return { descriptor, owner }
+        owner = errorUtils.runUserCode(
+            () => Object.getPrototypeOf(owner),
+        )
     }
+    return undefined
 }
 
 function invokeObservationMethodWithExportedArgs(
@@ -32,7 +30,7 @@ function invokeObservationMethodWithExportedArgs(
     return resolution.continueOperationsUnlessPoison(
         args.map(exportArgument),
         preparedArgs => resolution.resolveInitialValueOrPoison(
-            invokeDataFunctionOrPoison(
+            invokeDataFunction(
                 callable,
                 thisValue,
                 preparedArgs,
@@ -43,6 +41,6 @@ function invokeObservationMethodWithExportedArgs(
 
 export {
     findPropertyDescriptor,
-    invokeDataFunctionOrPoison,
+    invokeDataFunction,
     invokeObservationMethodWithExportedArgs,
 }

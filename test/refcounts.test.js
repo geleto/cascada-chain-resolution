@@ -267,7 +267,7 @@ describe("subtree counters", () => {
         verifyRefCounts(publishedRoot, indexedRoot)
     })
 
-    it("preserves indexed state when its property cannot be assigned", () => {
+    it("materializes indexed state before a restricted assignment", () => {
         const root = { value: "original" }
         buildRefIndex(root)
         Object.defineProperty(root, "value", {
@@ -278,19 +278,21 @@ describe("subtree counters", () => {
         })
         const replacement = importValue({ clean: true }, "blocked assignment")
 
-        const failure = thrownBy(() => {
-            assignPath(new Chain(root), ["value"], replacement)
-        })
+        const chain = new Chain(root)
+        const result = assignPath(chain, ["value"], replacement)
+        const next = chain._state.value
 
-        expect(failure.message).to.be("Cannot assign to non-writable property")
+        expect(result).to.be(undefined)
+        expect(next).not.to.be(root)
+        expect(next.value).to.be(replacement)
         expect(root.value).to.be("original")
         expect(metaOf(root).mirrors).to.be(undefined)
-        expect(getRefCounter(replacement)).to.be(undefined)
         expectCounts(root, 0, 0)
-        verifyRefCounts(root)
+        expectCounts(next, 0, 0)
+        verifyRefCounts(root, next)
     })
 
-    it("preserves indexed counts and parents when a property cannot be deleted", () => {
+    it("materializes indexed state before a restricted deletion", () => {
         const child = { bad: new Error("bad") }
         const root = {}
         Object.defineProperty(root, "value", {
@@ -301,15 +303,18 @@ describe("subtree counters", () => {
         })
         buildRefIndex(root)
 
-        const failure = thrownBy(() => {
-            deletePath(new Chain(root), ["value"])
-        })
+        const chain = new Chain(root)
+        const result = deletePath(chain, ["value"])
+        const next = chain._state.value
 
-        expect(failure.message).to.be("Cannot delete non-configurable property")
+        expect(result).to.be(undefined)
+        expect(next).not.to.be(root)
+        expect(next).to.eql({})
         expect(root.value).to.be(child)
         expect(getRefCounter(child).parents.get(root)).to.be(1)
         expectCounts(root, 0, 1)
-        verifyRefCounts(root, child)
+        expectCounts(next, 0, 0)
+        verifyRefCounts(root, next, child)
     })
 
     it("counts path Errors installed by broken mutations", () => {
@@ -716,7 +721,7 @@ describe("subtree counters", () => {
         buildRefIndex(overlaid)
         metaOf(overlaid).mirrors.pending.value = {}
         expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
-            "Live Promise mirror has no valid language property",
+            "Ref-indexed parent contains non-ref-indexed child",
         )
     })
 

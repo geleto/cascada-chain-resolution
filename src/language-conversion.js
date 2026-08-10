@@ -11,7 +11,7 @@ const stringConcat = String.prototype.concat
 function toStringValue(value, ancestry = undefined) {
     return resolution.continueOperationUnlessPoison(
         toPrimitiveValue(value, ancestry),
-        primitive => invocation.invokeDataFunctionOrPoison(
+        primitive => invocation.invokeDataFunction(
             stringConcat,
             "",
             [primitive],
@@ -53,10 +53,11 @@ function toPrimitiveValue(value, ancestry) {
                     typeof resolved !== "function"
                 )
             ) return resolved
-            return !languageValues.isTracked(resolved) ||
-                Object.getPrototypeOf(resolved) === null
-                ? conversionError()
-                : "[object Object]"
+            if (!languageValues.isTracked(resolved)) return conversionError()
+            const prototype = errorUtils.runUserCode(
+                () => Object.getPrototypeOf(resolved),
+            )
+            return prototype === null ? conversionError() : "[object Object]"
         },
     )
 }
@@ -103,7 +104,7 @@ function joinLogicalArray(
     }
     return resolution.continueOperationsUnlessPoison(
         conversions,
-        values => invocation.invokeDataFunctionOrPoison(
+        values => invocation.invokeDataFunction(
             Array.prototype.join,
             values,
             [separator],

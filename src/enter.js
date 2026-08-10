@@ -60,10 +60,12 @@ function enterMutating(chain, path, onEntered) {
                 target.propertyKind !==
                 languageProperties.ORDINARY_PROPERTY
             ) {
-                return languageProperties.propertyValidationError(
+                const error = languageProperties.propertyValidationError(
                     target.receiver,
                     "Cannot enter length for mutation",
                 )
+                target.replaceReceiver(error)
+                return error
             }
             const { parent, key, attachmentRoot } = target
             const value = languageProperties.readLanguageProperty(parent, key)

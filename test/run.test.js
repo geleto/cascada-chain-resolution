@@ -5,6 +5,7 @@ import * as arrayViews from "../src/array-view.js"
 import {
     Chain,
     assignPath,
+    buildRefIndex,
     countPromiseRegistrations,
     deferred,
     enter,
@@ -270,6 +271,21 @@ describe("run", () => {
         expect(run(new Chain(source), [], "fail", false)).to.be(failure)
     })
 
+    it("returns a synchronous observation failure without changing its receiver", () => {
+        const failure = new Error("observation failed")
+        const source = { value: 2 }
+        Object.defineProperty(source, "fail", {
+            value() {
+                throw failure
+            },
+        })
+        const chain = new Chain(source)
+
+        expect(run(chain, [], "fail", false)).to.be(failure)
+        expect(chain._state.value).to.be(source)
+        expect(source).to.eql({ value: 2 })
+    })
+
     it("does not discover nested Promises read by ordinary methods", () => {
         const pending = deferred()
         const registrationCount = countPromiseRegistrations(pending.promise)
@@ -497,6 +513,29 @@ describe("run", () => {
             3,
         ])
         expect(exportValue(new Chain(self), [])).to.eql([1, , 3])
+    })
+
+    it("does not probe appended values for runtime-private brands", () => {
+        const value = new Proxy({}, {
+            get(target, key, receiver) {
+                if (
+                    typeof key === "symbol" &&
+                    key !== Symbol.isConcatSpreadable
+                ) throw new Error("runtime brand was probed")
+                return Reflect.get(target, key, receiver)
+            },
+        })
+
+        const result = run(
+            new Chain([1]),
+            [],
+            "concat",
+            false,
+            value,
+        )
+
+        expect(arrayViews.isArrayView(result)).to.be(true)
+        expect(result.get("1")).to.be(value)
     })
 
     it("gives concatenated Promise properties independent mirrors", async () => {
@@ -730,7 +769,7 @@ describe("run", () => {
             true,
             direct,
         )).to.be(direct)
-        expect(exportValue(mutation, [])).to.eql([1, 2])
+        expect(mutation._state.value).to.be(direct)
     })
 
     it("prepares flat candidates concurrently without resolving retained values", async () => {
@@ -762,16 +801,7 @@ describe("run", () => {
         retained.resolve(3)
     })
 
-    it("does not write length for same-length mutators", () => {
-        const root = [3, 1, 2]
-        Object.defineProperty(root, "length", { writable: false })
-        const chain = new Chain(root)
-
-        expect(run(chain, [], "reverse", true)).to.be(root)
-        expect(root).to.eql([2, 1, 3])
-    })
-
-    it("accounts for completed placements after a partial mutation error", () => {
+    it("materializes before a restricted element mutation", () => {
         const inserted = { value: 1 }
         const root = [1, 2]
         Object.defineProperty(root, "1", {
@@ -788,9 +818,10 @@ describe("run", () => {
             inserted,
         )
 
-        expect(result instanceof Error).to.be(true)
-        expect(root).to.eql([inserted, 2])
-        const chain = new Chain(root)
+        expect(result instanceof Error).to.be(false)
+        expect(result).to.eql([inserted, inserted])
+        expect(root).to.eql([1, 2])
+        const chain = new Chain(result)
         assignPath(chain, ["0", "value"], 2)
         expect(inserted).to.eql({ value: 1 })
         verifyRefCounts(chain._state.value)
@@ -1077,7 +1108,7 @@ describe("run", () => {
         expect(endConversions).to.be(0)
     })
 
-    it("reports slice source reflection as fatal", () => {
+    it("returns slice source reflection as a language Error", () => {
         const failure = new Error("slice reflection failed")
         const source = new Proxy([1], {
             getOwnPropertyDescriptor(target, key) {
@@ -1087,11 +1118,9 @@ describe("run", () => {
         })
         function start() {}
 
-        const thrown = thrownBy(() => {
-            run(new Chain(source), [], "slice", false, start)
-        })
-
-        expect(thrown).to.be(failure)
+        expect(run(new Chain(source), [], "slice", false, start)).to.be(
+            failure,
+        )
     })
 
     it("preserves imported cycles through structural mutations", () => {
@@ -1395,7 +1424,7 @@ describe("run", () => {
 
         expect(result instanceof Error).to.be(true)
         expect(registrations()).to.be(0)
-        expect(chain._state.value).to.be(values)
+        expect(chain._state.value).to.be(result)
         expect(values).to.eql([2, 1])
         comparison.resolve(0)
     })
@@ -1682,16 +1711,28 @@ describe("run", () => {
         ) instanceof Error).to.be(true)
     })
 
+    it("propagates an Error-valued selected method", () => {
+        const failure = new Error("broken method")
+        const source = []
+        Object.defineProperty(source, "broken", {
+            value: failure,
+            configurable: true,
+        })
+
+        expect(run(new Chain(source), [], "broken", false)).to.be(failure)
+    })
+
     it("returns a validation Error for intrinsic length receivers", () => {
         for (const receiver of ["abc", [1, 2]]) {
             const root = { target: receiver }
             const chain = new Chain(root)
+            const length = receiver.length
 
             const result = run(chain, ["target", "length"], "push", true, 1)
 
             expect(result instanceof Error).to.be(true)
-            expect(root.target).to.be(receiver)
-            expect(root.target.length).to.be(receiver.length)
+            expect(root.target).to.be(result)
+            expect(receiver.length).to.be(length)
         }
     })
 
@@ -1783,6 +1824,127 @@ describe("run", () => {
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Ref counts require a ref-indexed value")
         expect(reported).to.be(failure)
+    })
+
+    it("rejects synchronous Cascada reentry from supported user code", () => {
+        const observed = new Chain({ value: 1 })
+        const cases = [
+            () => {
+                const receiver = {}
+                Object.defineProperty(receiver, "reenter", {
+                    value() {
+                        readPath(observed, [])
+                    },
+                })
+                return run(new Chain(receiver), [], "reenter", false)
+            },
+            () => run(
+                new Chain([2, 1]),
+                [],
+                "sort",
+                true,
+                () => readPath(observed, []),
+            ),
+            () => {
+                const index = () => {}
+                index.valueOf = () => readPath(observed, [])
+                return run(new Chain([1]), [], "slice", false, index)
+            },
+            () => lookupPath(new Chain(new Proxy({}, {
+                getOwnPropertyDescriptor() {
+                    readPath(observed, [])
+                },
+            })), ["value"]),
+        ]
+
+        for (const invoke of cases) {
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+            const failure = thrownBy(invoke)
+
+            expect(failure instanceof Error).to.be(true)
+            expect(failure.message).to.be(
+                "Cascada cannot be re-entered from supported user code",
+            )
+            expect(reported).to.be(failure)
+        }
+        setFatalErrorReporter()
+    })
+
+    it("poisons Array mutation when preparation reflection fails", () => {
+        const failure = new Error("Array metadata reflection failed")
+        const receiver = new Proxy([1, 2], {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "0") throw failure
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new Chain(receiver)
+
+        expect(run(chain, [], "reverse", true)).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect([...receiver]).to.eql([1, 2])
+    })
+
+    it("poisons Array mutation when physical replay fails", () => {
+        const cases = [
+            {
+                method: "reverse",
+                handler: failure => ({
+                    set(target, key, value, receiver) {
+                        if (key === "0") throw failure
+                        return Reflect.set(target, key, value, receiver)
+                    },
+                }),
+            },
+            {
+                method: "pop",
+                handler: failure => ({
+                    deleteProperty() {
+                        throw failure
+                    },
+                }),
+            },
+            {
+                method: "pop",
+                source: [1, new Error("removed")],
+                handler: failure => ({
+                    set(target, key, value, receiver) {
+                        if (key === "length") throw failure
+                        return Reflect.set(target, key, value, receiver)
+                    },
+                }),
+            },
+        ]
+
+        for (const { method, source = [1, 2], handler } of cases) {
+            const failure = new Error(`${method} replay failed`)
+            const receiver = new Proxy(source, handler(failure))
+            const chain = new Chain(receiver)
+            buildRefIndex(receiver)
+
+            const result = run(chain, [], method, true)
+
+            expect(result).to.be(failure)
+            expect(chain._state.value).to.be(failure)
+            verifyRefCounts(receiver)
+        }
+    })
+
+    it("poisons Array mutation when a comparator throws", () => {
+        const failure = new Error("comparison failed")
+        const source = [2, 1]
+        const chain = new Chain(source)
+
+        const result = run(chain, [], "sort", true, () => {
+            throw failure
+        })
+
+        expect(result).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect(source).to.eql([2, 1])
     })
 
     it("reports an unlimited flat of an Array cycle as a language Error", () => {

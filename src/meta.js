@@ -4,13 +4,19 @@ import * as languageValues from "./language-values.js"
 const STORE_META_IN_WEAKMAP = process.env.CASCADA_META_STORAGE === "weakmap"
 const META = Symbol("META")
 const META_MAP = new WeakMap()
-const hasOwn = Object.prototype.hasOwnProperty
+
+function inlineMetaOf(value) {
+    if (STORE_META_IN_WEAKMAP) return undefined
+    const descriptor = errorUtils.runUserCode(
+        () => Object.getOwnPropertyDescriptor(value, META),
+    )
+    return descriptor?.value
+}
 
 function metaOf(value) {
     if (!languageValues.isTracked(value)) return undefined
-    if (!STORE_META_IN_WEAKMAP && hasOwn.call(value, META)) {
-        return value[META]
-    }
+    const inlineMeta = inlineMetaOf(value)
+    if (inlineMeta) return inlineMeta
     return META_MAP.get(value)
 }
 
@@ -21,15 +27,16 @@ function ensureMeta(value, imported = false) {
         )
     }
 
-    const hasInlineMeta = !STORE_META_IN_WEAKMAP && hasOwn.call(value, META)
-    let meta = hasInlineMeta ? value[META] : META_MAP.get(value)
+    const inlineMeta = inlineMetaOf(value)
+    const hasInlineMeta = inlineMeta !== undefined
+    let meta = inlineMeta ?? META_MAP.get(value)
     if (
         meta &&
         imported &&
         hasInlineMeta
     ) {
         // Move runtime metadata out before this identity becomes borrowed.
-        delete value[META]
+        errorUtils.runUserCode(() => delete value[META])
         META_MAP.set(value, meta)
     }
     if (!meta) {
@@ -40,11 +47,13 @@ function ensureMeta(value, imported = false) {
         if (STORE_META_IN_WEAKMAP || imported) {
             META_MAP.set(value, meta)
         } else {
-            Object.defineProperty(value, META, {
-                value: meta,
-                enumerable: false,
-                writable: true,
-                configurable: true,
+            errorUtils.runUserCode(() => {
+                Object.defineProperty(value, META, {
+                    value: meta,
+                    enumerable: false,
+                    writable: true,
+                    configurable: true,
+                })
             })
         }
     }

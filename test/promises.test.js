@@ -10,6 +10,14 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
+function failsClassification(failure) {
+    return new Proxy({}, {
+        getPrototypeOf() {
+            throw failure
+        },
+    })
+}
+
 import {
     Chain,
     expect,
@@ -28,6 +36,7 @@ import {
     hasError,
     lookupPath,
     readPath,
+    run,
     exportValue,
     importValue,
     countPromiseRegistrations,
@@ -83,15 +92,19 @@ describe("promise helpers", () => {
         expect(registrations).to.be(1)
     })
 
-    it("converts one property version's rejection only once", async () => {
+    it("does not inspect a non-Error rejection reason", async () => {
         const pending = deferred()
-        let conversions = 0
-        const reason = {
-            toString() {
-                conversions++
-                return "converted once"
+        let inspections = 0
+        const reason = new Proxy({}, {
+            get() {
+                inspections++
+                throw new Error("rejection reason was read")
             },
-        }
+            getPrototypeOf() {
+                inspections++
+                throw new Error("rejection reason was classified")
+            },
+        })
         const chain = new Chain({ branch: pending.promise })
         const first = lookupPath(chain, ["branch"])
         const second = lookupPath(chain, ["branch"])
@@ -99,8 +112,9 @@ describe("promise helpers", () => {
         pending.reject(reason)
         const [firstValue, secondValue] = await Promise.all([first, second])
 
-        expect(conversions).to.be(1)
+        expect(inspections).to.be(0)
         expect(firstValue).to.be(secondValue)
+        expect(firstValue.cause).to.be(reason)
         expect(chain._state.value.branch).to.be(firstValue)
     })
 
@@ -191,34 +205,6 @@ describe("promise helpers", () => {
         expect(caught).to.be(fatal)
     })
 
-    it("reports failures while converting data rejections", async () => {
-        const fatal = new TypeError("broken rejection reason")
-        const reason = {
-            toString() {
-                throw fatal
-            },
-        }
-        let reported
-        let caught
-
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-        try {
-            await resolveInitialValueOrPoison(
-                Promise.reject(reason),
-                value => value,
-            )
-        } catch (error) {
-            caught = error
-        } finally {
-            setFatalErrorReporter()
-        }
-
-        expect(reported).to.be(fatal)
-        expect(caught).to.be(fatal)
-    })
-
     it("throws the original fatal error when the fatal reporter throws", () => {
         const fatal = new TypeError("runtime bug")
         const reporterBug = new Error("reporter bug")
@@ -265,20 +251,17 @@ describe("promise helpers", () => {
         expect(reported).to.be(fatal)
     })
 
-    it("reports suspended mutator fatals and leaves them unhandled", () => {
+    it("materializes suspended descriptor-restricted mutations", () => {
         const fixture = path.join(__dirname, "fixtures", "suspended-mutator-fatal.js")
         const child = spawnSync(process.execPath, [fixture], { encoding: "utf8" })
 
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
             returnsUndefined: true,
-            reportCount: 2,
-            unhandledCount: 2,
+            reportCount: 0,
+            unhandledCount: 0,
             sameErrors: true,
-            messages: [
-                "Cannot mutate non-enumerable property",
-                "Cannot mutate non-enumerable property",
-            ],
+            messages: [],
             valuesUnchanged: true,
         })
     })
@@ -301,8 +284,7 @@ describe("promise helpers", () => {
                 "Cannot mutate non-enumerable property",
                 "Cannot assign to accessor property",
                 "Cannot assign to non-writable property",
-                "Cannot assign to non-writable property " +
-                    "(imported at: published value)",
+                "Cannot assign to non-writable property",
             ],
         })
     })
@@ -377,6 +359,102 @@ describe("promise mirrors and lookupPath", () => {
         expect(detachedMirror.value).to.be("detached")
         expect(Object.keys(detachedMirror)).to.eql(["value"])
         expect(detachedRoot.value).to.be("replacement")
+    })
+
+    it("publishes settlement reflection failures into retained values", async () => {
+        const pending = deferred()
+        const failure = new Error("settled value reflection failed")
+        const chain = new Chain([])
+
+        expect(run(chain, [], "push", true, pending.promise)).to.be(1)
+        pending.resolve(failsClassification(failure))
+        await flushMicrotasks()
+
+        expect(chain._state.value[0]).to.be(failure)
+        expect(readPath(chain, ["0"])).to.be(failure)
+        verifyRefCounts(chain._state.value)
+    })
+
+    it("counts settlement reflection failures in indexed values", async () => {
+        const pending = deferred()
+        const failure = new Error("indexed value reflection failed")
+        const root = { value: pending.promise }
+        const chain = new Chain(root)
+        buildRefIndex(root)
+
+        pending.resolve(new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        }))
+        await flushMicrotasks()
+
+        expect(root.value).to.be(failure)
+        expect(readPath(chain, ["value"])).to.be(failure)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("keeps publication reflection failures in the mirror", async () => {
+        const pending = deferred()
+        const failure = new Error("publication reflection failed")
+        let failReflection = false
+        const physical = { value: pending.promise }
+        const root = new Proxy(physical, {
+            getOwnPropertyDescriptor(target, key) {
+                if (failReflection && key === "value") throw failure
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new Chain(root)
+        const observed = lookupPath(chain, ["value"])
+
+        failReflection = true
+        pending.resolve("resolved")
+
+        const outcome = await observed
+        failReflection = false
+        expect(outcome).to.be(failure)
+        expect(physical.value).to.be(pending.promise)
+        expect(readPath(chain, ["value"])).to.be(failure)
+        verifyRefCounts(root)
+    })
+
+    it("keeps Promise writeback failures in the mirror", async () => {
+        const pending = deferred()
+        const failure = new Error("Promise writeback failed")
+        const physical = { value: pending.promise }
+        const root = new Proxy(physical, {
+            set() {
+                throw failure
+            },
+        })
+        const chain = new Chain(root)
+        buildRefIndex(root)
+        const observed = lookupPath(chain, ["value"])
+
+        pending.resolve("resolved")
+
+        expect(await observed).to.be(failure)
+        expect(physical.value).to.be(pending.promise)
+        expect(readPath(chain, ["value"])).to.be(failure)
+        expectCounts(root, 0, 1)
+        verifyRefCounts(root)
+    })
+
+    it("keeps settlement reflection failures on detached versions", async () => {
+        const pending = deferred()
+        const failure = new Error("detached value reflection failed")
+        const root = { value: pending.promise }
+        const chain = new Chain(root)
+        const observed = lookupPath(chain, ["value"])
+
+        assignPath(chain, ["value"], "replacement")
+        pending.resolve(failsClassification(failure))
+
+        expect(await observed).to.be(failure)
+        expect(root.value).to.be("replacement")
+        verifyRefCounts(root)
     })
 
     it("writes through existing writable properties on sealed holders", async () => {

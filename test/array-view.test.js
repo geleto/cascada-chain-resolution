@@ -51,9 +51,20 @@ describe("ArrayView", () => {
             "1",
             "2",
         ])
-        expect(view.has("hidden")).to.be(false)
         expect(view.descriptor("hidden")).to.be(undefined)
         expect([...view]).to.eql([1, 2, 3])
+    })
+
+    it("recognizes views by identity without reflecting on wrappers", () => {
+        const view = arrayViews.ArrayView.tryAttachTo([1])
+        const wrapper = new Proxy(view, {
+            getPrototypeOf() {
+                throw new Error("view wrapper was reflected")
+            },
+        })
+
+        expect(arrayViews.isArrayView(view)).to.be(true)
+        expect(arrayViews.isArrayView(wrapper)).to.be(false)
     })
 
     it("uses an attached projection when iterating the source identity", () => {
@@ -363,6 +374,44 @@ describe("ArrayView", () => {
         expect([...result]).to.eql([1, 2])
     })
 
+    it("returns an Error when observational endpoint growth fails", () => {
+        const failure = new Error("view length write failed")
+        const backing = new Proxy([1], {
+            set(target, key, value, receiver) {
+                if (key === "length") throw failure
+                return Reflect.set(target, key, value, receiver)
+            },
+        })
+        const source = new Chain(backing)
+
+        const result = run(source, [], "push", false, 2)
+
+        expect(result).to.be(failure)
+        expect(exportValue(source, [])).to.eql([1])
+    })
+
+    it("poisons mutation when an endpoint placement fails", () => {
+        const failure = new Error("view element write failed")
+        let failPlacement = false
+        const backing = new Proxy([1], {
+            defineProperty(target, key, descriptor) {
+                if (failPlacement && key === "2") throw failure
+                return Reflect.defineProperty(target, key, descriptor)
+            },
+        })
+        const source = new Chain(backing)
+        const view = run(source, [], "push", false, 2)
+        const chain = new Chain(view)
+        failPlacement = true
+
+        const result = run(chain, [], "push", true, 3)
+
+        expect(result).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect([...view]).to.eql([1, 2])
+        expect(exportValue(source, [])).to.eql([1])
+    })
+
     it("extends at the physical end through indexed assignment", () => {
         const source = [1, 2]
         const prototype = Object.create(Array.prototype)
@@ -380,8 +429,7 @@ describe("ArrayView", () => {
         expect(arrayViews.isArrayView(grown)).to.be(true)
         expect(grown.length).to.be(6)
         expect([...grown]).to.eql([1, 2, 3, undefined, undefined, 6])
-        expect(grown.has("3")).to.be(false)
-        expect(grown.has("4")).to.be(false)
+        expect(grown.keys()).to.eql(["0", "1", "2", "5"])
         expect([...view]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })

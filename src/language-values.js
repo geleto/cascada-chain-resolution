@@ -1,3 +1,5 @@
+import * as errorUtils from "./error.js"
+
 const DATA_CLASS_PROTOTYPES = new WeakSet()
 
 function registerDataClass(DataClass) {
@@ -8,12 +10,12 @@ function isPromise(value) {
     return (
         value !== null &&
         (typeof value === "object" || typeof value === "function") &&
-        typeof value.then === "function"
+        typeof errorUtils.runUserCode(() => value.then) === "function"
     )
 }
 
 function isError(value) {
-    return value instanceof Error
+    return Error.isError(value)
 }
 
 function isTracked(value) {
@@ -25,7 +27,9 @@ function isTracked(value) {
     ) return false
     if (Array.isArray(value)) return true
 
-    const prototype = Object.getPrototypeOf(value)
+    const prototype = errorUtils.runUserCode(
+        () => Object.getPrototypeOf(value),
+    )
     return prototype === null ||
         prototype === Object.prototype ||
         isPlainObjectPrototype(prototype) ||
@@ -34,15 +38,15 @@ function isTracked(value) {
 
 function isPlainObjectPrototype(prototype) {
     if (prototype === null) return false
-    if (Object.getPrototypeOf(prototype) !== null) return false
-    const constructor = Object.getOwnPropertyDescriptor(
-        prototype,
-        "constructor",
+    if (errorUtils.runUserCode(
+        () => Object.getPrototypeOf(prototype),
+    ) !== null) return false
+    const constructor = errorUtils.runUserCode(
+        () => Object.getOwnPropertyDescriptor(prototype, "constructor"),
     )?.value
     return typeof constructor === "function" &&
-        Object.getOwnPropertyDescriptor(
-            constructor,
-            "prototype",
+        errorUtils.runUserCode(
+            () => Object.getOwnPropertyDescriptor(constructor, "prototype"),
         )?.value === prototype
 }
 

@@ -61,7 +61,7 @@ describe("Chain root state", () => {
         expect(metaOf(chain)).to.be(undefined)
     })
 
-    it("reports synchronous public-operation failures as fatal", () => {
+    it("returns reflection failures as language Errors", () => {
         const operations = [
             value => importValue(value, "fatal import"),
             value => lookupPath(new Chain(value), ["key"]),
@@ -87,9 +87,22 @@ describe("Chain root state", () => {
                 reported = error
             })
 
-            expect(thrownBy(() => operation(value))).to.be(failure)
-            expect(reported).to.be(failure)
+            expect(operation(value)).to.be(failure)
+            expect(reported).to.be(undefined)
         }
+    })
+
+    it("poisons a mutation at a failing reflection boundary", () => {
+        const failure = new Error("prototype failed")
+        const value = new Proxy({}, {
+            getPrototypeOf() {
+                throw failure
+            },
+        })
+        const chain = new Chain(value)
+
+        expect(assignPath(chain, ["key"], 1)).to.be(failure)
+        expect(chain._state.value).to.be(failure)
     })
 
     it("handles number and string roots across every operation", () => {

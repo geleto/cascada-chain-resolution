@@ -360,7 +360,7 @@ describe("Array native equivalence", () => {
         }
     })
 
-    it("matches partial native mutation failures", async () => {
+    it("normalizes descriptor-restricted Array receivers", async () => {
         for (const [method, fact] of Object.entries(ARRAY_METHOD_FACTS)) {
             if (!fact.mutationArgs) continue
             for (const restriction of [
@@ -368,11 +368,11 @@ describe("Array native equivalence", () => {
                 "nonConfigurable",
                 "fixedLength",
             ]) {
-                const nativeSource = restrictedArray(restriction)
+                const expectedSource = [3, 1, 2, 0]
                 const runtimeSource = restrictedArray(restriction)
                 const chain = new Chain(runtimeSource)
-                const native = callArrayMethod(
-                    nativeSource,
+                const expected = callArrayMethod(
+                    expectedSource,
                     method,
                     cloneData(fact.mutationArgs),
                 )
@@ -387,8 +387,13 @@ describe("Array native equivalence", () => {
                     message: `${method} restriction=${restriction}`,
                 }
 
-                await assertOutcome(result, native.error, native.result, scenario)
-                await assertValue(chain._state.value, nativeSource, scenario)
+                await assertOutcome(
+                    result,
+                    expected.error,
+                    expected.result,
+                    scenario,
+                )
+                await assertValue(chain._state.value, expectedSource, scenario)
                 verifyRefCounts(chain._state.value, result)
             }
         }

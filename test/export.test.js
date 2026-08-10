@@ -197,7 +197,7 @@ describe("export", () => {
         )
     })
 
-    it("reports synchronous raw traversal failures as fatal", () => {
+    it("returns synchronous reflection failures as language Errors", () => {
         const failure = new Error("ownKeys failed")
         const root = new Proxy({}, {
             ownKeys() {
@@ -209,23 +209,20 @@ describe("export", () => {
             reported = error
         })
 
-        expect(thrownBy(() => exportValue(new Chain(root), []))).to.be(failure)
-        expect(reported).to.be(failure)
+        expect(exportValue(new Chain(root), [])).to.be(failure)
+        expect(reported).to.be(undefined)
     })
 
-    it("reports asynchronous raw traversal failures as fatal", async () => {
+    it("does not invoke accessors exposed after a Promise", async () => {
         const pending = deferred()
-        const failure = new Error("getter failed")
+        let reads = 0
         const value = {}
         Object.defineProperty(value, "bad", {
             enumerable: true,
             get() {
-                throw failure
+                reads++
+                throw new Error("getter failed")
             },
-        })
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
         })
 
         const result = exportValue(
@@ -234,14 +231,8 @@ describe("export", () => {
         )
         pending.resolve(value)
 
-        let rejected
-        try {
-            await result
-        } catch (error) {
-            rejected = error
-        }
-        expect(rejected).to.be(failure)
-        expect(reported).to.be(failure)
+        expect(await result).to.eql({ pending: {} })
+        expect(reads).to.be(0)
     })
 
     it("indexes a mirror discovered by export if its owner is indexed later", async () => {

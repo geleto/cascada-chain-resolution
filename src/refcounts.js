@@ -3,6 +3,8 @@ import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 
+const COMMIT_UNINDEXED_EDGE = updateProperty => updateProperty()
+
 function getRefCounter(node) {
     const meta = metadata.metaOf(node)
     return meta?.parents ? meta : undefined
@@ -22,17 +24,8 @@ function hasCycleCut(parent, key) {
     return metadata.metaOf(parent)?.cycleCuts?.has(key) === true
 }
 
-function clearCycleCut(parent, key) {
-    const meta = metadata.metaOf(parent)
-    if (!meta?.cycleCuts) return
-    meta.cycleCuts.delete(key)
-    if (meta.cycleCuts.size === 0) delete meta.cycleCuts
-}
-
 function setCycleCut(parent, key) {
-    const meta = metadata.ensureMeta(parent)
-    meta.cycleCuts ??= new Set()
-    meta.cycleCuts.add(key)
+    updateCycleCut(metadata.ensureMeta(parent), key, true)
 }
 
 function getRefCounts(value) {
@@ -50,26 +43,24 @@ function getRefCounts(value) {
     return { promiseCount, errorCount, cycleCutCount }
 }
 
-function getPropertyRefState(parent, key) {
-    let child = languageProperties.readLanguageProperty(parent, key)
+function getValueRefState(child, cycleCut = false) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
+    let childCounter
     if (languageValues.isPromise(child)) {
-        child = undefined
         promiseCount = 1
-    } else if (hasCycleCut(parent, key)) {
-        child = undefined
+    } else if (cycleCut) {
         cycleCutCount = 1
     } else if (languageValues.isError(child)) {
         errorCount = 1
     } else if (languageValues.isTracked(child)) {
-        const counter = getRequiredRefCounter(child)
-        promiseCount = counter.promiseCount
-        errorCount = counter.errorCount
-        cycleCutCount = counter.cycleCutCount
+        childCounter = getRequiredRefCounter(child)
+        promiseCount = childCounter.promiseCount
+        errorCount = childCounter.errorCount
+        cycleCutCount = childCounter.cycleCutCount
     }
-    return { child, promiseCount, errorCount, cycleCutCount }
+    return { childCounter, promiseCount, errorCount, cycleCutCount }
 }
 
 function buildRefIndex(value, preparePromiseProperty) {
@@ -96,20 +87,21 @@ function indexValueIfSourceIndexed(source, value, preparePromiseProperty) {
 
 // Index the prospective child, then ask the maintained reverse-edge DAG
 // whether adding parent -> child would close a cycle.
-function prepareRefEdge(parent, child, preparePromiseProperty) {
-    if (!getRefCounter(parent)) return false
-    buildRefIndex(child, preparePromiseProperty)
+function prepareRefEdge(parent, parentCounter, child, preparePromiseProperty) {
     if (!languageValues.isTracked(child)) return false
+    buildRefIndex(child, preparePromiseProperty)
 
     const visited = new WeakSet()
-    return reachesChild(parent)
+    return reachesChild(parent, parentCounter)
 
-    function reachesChild(node) {
+    function reachesChild(node, counter) {
         if (node === child) return true
         if (visited.has(node)) return false
         visited.add(node)
-        for (const ancestor of getRequiredRefCounter(node).parents.keys()) {
-            if (reachesChild(ancestor)) return true
+        for (const ancestor of counter.parents.keys()) {
+            if (reachesChild(ancestor, getRequiredRefCounter(ancestor))) {
+                return true
+            }
         }
         return false
     }
@@ -183,36 +175,55 @@ function indexComponent(
     return counter
 }
 
-function commitLiveEdge(
+// Complete fallible graph preparation before returning a commit that touches
+// only the property and captured bookkeeping state.
+function prepareLiveEdge(
     owner,
     key,
     value,
     preparePromiseProperty,
-    updateProperty,
 ) {
-    const cycleCut = prepareRefEdge(owner, value, preparePromiseProperty)
     const counter = getRefCounter(owner)
-    const oldState = counter ? getPropertyRefState(owner, key) : undefined
-    updateProperty()
-    if (!counter) return
+    if (!counter) return COMMIT_UNINDEXED_EDGE
 
-    if (cycleCut) setCycleCut(owner, key)
-    else clearCycleCut(owner, key)
-    const nextState = getPropertyRefState(owner, key)
-    removeParentEdge(oldState.child, owner)
-    addParentEdge(nextState.child, owner)
-    propagateCountDelta(owner, oldState, nextState)
+    const cycleCut = prepareRefEdge(
+        owner,
+        counter,
+        value,
+        preparePromiseProperty,
+    )
+    const previousState = getValueRefState(
+        languageProperties.readLanguageProperty(owner, key),
+        counter.cycleCuts?.has(key) === true,
+    )
+    const nextState = getValueRefState(value, cycleCut)
+    const applyCountUpdate = prepareCountUpdate(
+        owner,
+        counter,
+        previousState,
+        nextState,
+    )
+    return updateProperty => {
+        updateProperty()
+        updateCycleCut(counter, key, cycleCut)
+        removeParentCounterEdge(previousState.childCounter, owner)
+        addParentCounterEdge(nextState.childCounter, owner)
+        applyCountUpdate?.()
+    }
 }
 
 function addParentEdge(value, parent) {
     if (!languageValues.isTracked(value)) return
-    const counter = getRequiredRefCounter(value)
+    addParentCounterEdge(getRequiredRefCounter(value), parent)
+}
+
+function addParentCounterEdge(counter, parent) {
+    if (!counter) return
     counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
 }
 
-function removeParentEdge(value, parent) {
-    if (!languageValues.isTracked(value)) return
-    const counter = getRequiredRefCounter(value)
+function removeParentCounterEdge(counter, parent) {
+    if (!counter) return
     const count = counter.parents.get(parent)
     if (count === 1) {
         counter.parents.delete(parent)
@@ -221,30 +232,47 @@ function removeParentEdge(value, parent) {
     }
 }
 
-function propagateCountDelta(node, previousState, nextState) {
+function updateCycleCut(counter, key, cut) {
+    if (cut) {
+        counter.cycleCuts ??= new Set()
+        counter.cycleCuts.add(key)
+        return
+    }
+    if (!counter.cycleCuts) return
+    counter.cycleCuts.delete(key)
+    if (counter.cycleCuts.size === 0) delete counter.cycleCuts
+}
+
+function prepareCountUpdate(node, counter, previousState, nextState) {
     const promiseDelta = nextState.promiseCount - previousState.promiseCount
     const errorDelta = nextState.errorCount - previousState.errorCount
     const cycleCutDelta = nextState.cycleCutCount -
         previousState.cycleCutCount
-    if (promiseDelta === 0 && errorDelta === 0 && cycleCutDelta === 0) return
+    if (promiseDelta === 0 && errorDelta === 0 && cycleCutDelta === 0) {
+        return undefined
+    }
 
     const states = new Map()
     const ordered = []
-    const source = visit(node)
+    const source = visit(node, counter)
     source.multiplier = 1
     for (let index = ordered.length - 1; index >= 0; index--) {
-        const { counter, multiplier } = ordered[index]
-        counter.promiseCount += promiseDelta * multiplier
-        counter.errorCount += errorDelta * multiplier
-        counter.cycleCutCount += cycleCutDelta * multiplier
-        for (const [parent, multiplicity] of counter.parents) {
-            states.get(parent).multiplier += multiplier * multiplicity
+        const state = ordered[index]
+        for (const [parent, multiplicity] of state.counter.parents) {
+            states.get(parent).multiplier += state.multiplier * multiplicity
+        }
+    }
+    return () => {
+        for (const { counter, multiplier } of ordered) {
+            counter.promiseCount += promiseDelta * multiplier
+            counter.errorCount += errorDelta * multiplier
+            counter.cycleCutCount += cycleCutDelta * multiplier
         }
     }
 
     // Memoized DFS records parent-first postorder. Reversing it lets every
     // child contribute before a converging parent is updated.
-    function visit(current) {
+    function visit(current, currentCounter) {
         const existing = states.get(current)
         if (existing) {
             if (!existing.complete) {
@@ -256,12 +284,14 @@ function propagateCountDelta(node, previousState, nextState) {
         }
 
         const state = {
-            counter: getRequiredRefCounter(current),
+            counter: currentCounter,
             multiplier: 0,
             complete: false,
         }
         states.set(current, state)
-        for (const parent of state.counter.parents.keys()) visit(parent)
+        for (const parent of state.counter.parents.keys()) {
+            visit(parent, getRequiredRefCounter(parent))
+        }
         state.complete = true
         ordered.push(state)
         return state
@@ -270,10 +300,10 @@ function propagateCountDelta(node, previousState, nextState) {
 
 export {
     buildRefIndex,
-    commitLiveEdge,
     getRefCounter,
     getRequiredRefCounter,
     getRefCounts,
     hasCycleCut,
     indexValueIfSourceIndexed,
+    prepareLiveEdge,
 }

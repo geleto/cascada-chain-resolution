@@ -71,12 +71,11 @@ function invokeArrayObservationMethod(thisValue, method, args) {
                 remap = definition.remap(thisValue, preparedArgs)
             } else {
                 remap = arrayRemaps.createRemap(thisValue)
-                const result = invocation.invokeDataFunctionOrPoison(
+                const result = invocation.invokeDataFunction(
                     Array.prototype[method],
                     remap,
                     preparedArgs,
                 )
-                if (languageValues.isError(result)) return result
                 // Mutators change the receiver remap; other methods return one.
                 if (!definition.mutationResult) remap = result
             }
@@ -99,7 +98,6 @@ function invokeArrayMutationMethod(
     if (sourceSurvives && definition.view) {
         const view = definition.view(thisValue, preparedArguments)
         if (view !== undefined) {
-            if (languageValues.isError(view)) return view
             return {
                 mutatedValue: view,
                 result: definition.mutationResult(
@@ -118,17 +116,29 @@ function invokeArrayMutationMethod(
     }
 
     const { remap, working, operations } =
-        arrayRemaps.createMutationRemap(thisValue, !sourceSurvives)
-    const nativeResult = invocation.invokeDataFunctionOrPoison(
+        arrayRemaps.traceMutation(thisValue)
+    const nativeResult = invocation.invokeDataFunction(
         Array.prototype[method],
         working,
         preparedArguments,
     )
-    return languageValues.isError(nativeResult)
-        ? nativeResult
-        : finishMutation(remap, operations, nativeResult)
+    return finishMutation(remap, operations, nativeResult)
 
     function finishMutation(remap, operations, operationResult) {
+        const representationCopy = sourceSurvives
+            ? false
+            : arrayRemaps.mutationRequiresCopy(
+                thisValue,
+                remap,
+                operations,
+            )
+        const copiesReceiver = sourceSurvives || representationCopy
+        if (copiesReceiver && operations) {
+            remap = arrayRemaps.materializeMutationRemap(
+                thisValue,
+                operations,
+            )
+        }
         const returnsReceiver =
             definition.mutationResult === RECEIVER_RESULT
         // Capture removed property versions before committing the receiver.
@@ -136,19 +146,23 @@ function invokeArrayMutationMethod(
             ? undefined
             : definition.mutationResult(operationResult, sourceSurvives)
 
-        const mutatedValue = sourceSurvives
-            ? arrayRemaps.createArrayFromRemap(remap)
+        const mutatedValue = copiesReceiver
+            ? arrayRemaps.createArrayFromRemap(
+                remap,
+                undefined,
+                sourceSurvives,
+            )
             : thisValue
-        const error = sourceSurvives
-            ? undefined
-            : arrayRemaps.applyRemapToArray(
+        if (!copiesReceiver) {
+            arrayRemaps.applyRemapToArray(
                 thisValue,
                 remap,
                 operations,
             )
+        }
         return {
             mutatedValue,
-            result: error ?? (returnsReceiver ? mutatedValue : result),
+            result: returnsReceiver ? mutatedValue : result,
         }
     }
 }

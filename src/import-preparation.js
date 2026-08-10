@@ -8,15 +8,15 @@ import * as metadata from "./meta.js"
 function prepareImportedData(
     root,
     importBoundary,
-    promoteRoot,
+    explicitImport,
     prepareImportedPromise,
-    discoverRuntimePromise,
+    getOrCreatePromise,
 ) {
     if (!languageValues.isTracked(root)) return
     const importVisited = new WeakSet()
     const runtimeScanned = new WeakSet()
     const metadataBeforeRuntimeScan = new WeakSet()
-    walkImported(root, promoteRoot)
+    walkImported(root, explicitImport)
 
     function walkImported(value, promote = false) {
         if (!languageValues.isTracked(value)) return
@@ -29,20 +29,28 @@ function prepareImportedData(
         const hasExistingWorld = runtimeScanned.has(value)
             ? metadataBeforeRuntimeScan.has(value)
             : metadata.metaOf(value) !== undefined
-        if (!promote && hasExistingWorld) {
+        const alreadyImported = metadata.importBoundaryOf(value) !== undefined
+        if (
+            !promote &&
+            hasExistingWorld &&
+            (!alreadyImported || !explicitImport)
+        ) {
             metadata.markShared(value)
             walkRuntime(value)
             return
         }
 
-        // A later runtime path need not rescan an identity already prepared as
-        // external. A prior runtime scan does not block this imported pass.
+        // Explicit import revisits imported identities so interrupted admission
+        // can resume. A prior runtime scan does not block this imported pass.
         runtimeScanned.add(value)
         metadata.markImported(value, importBoundary)
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const child = languageProperties.readLanguageProperty(value, key)
             if (languageValues.isPromise(child)) {
-                prepareImportedPromise(value, key, child)
+                const preparePromise = alreadyImported
+                    ? getOrCreatePromise
+                    : prepareImportedPromise
+                preparePromise(value, key, child)
             } else {
                 walkImported(child)
             }
@@ -59,7 +67,7 @@ function prepareImportedData(
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const child = languageProperties.readLanguageProperty(value, key)
             if (languageValues.isPromise(child)) {
-                discoverRuntimePromise(value, key, child)
+                getOrCreatePromise(value, key, child)
             } else {
                 walkRuntime(child)
             }

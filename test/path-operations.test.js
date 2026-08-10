@@ -10,7 +10,9 @@ import {
     importValue,
     deferred,
     flushMicrotasks,
+    hasError,
     run,
+    setFatalErrorReporter,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -97,7 +99,7 @@ describe("path assignment", () => {
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
     })
 
-    it("keeps own non-enumerable __proto__ under normal descriptor rules", () => {
+    it("shadows own non-enumerable __proto__ in a materialized copy", () => {
         const hidden = { safe: true }
         const root = {}
         Object.defineProperty(root, "__proto__", {
@@ -107,13 +109,19 @@ describe("path assignment", () => {
             configurable: true,
         })
 
-        const failure = thrownBy(() => {
-            assignPath(new Chain(root), ["__proto__"], { replacement: true })
-        })
+        const replacement = { replacement: true }
+        const chain = new Chain(root)
 
-        expect(failure.message).to.be("Cannot mutate non-enumerable property")
+        expect(assignPath(chain, ["__proto__"], replacement)).to.be(undefined)
+        expect(chain._state.value).not.to.be(root)
         expect(Object.getOwnPropertyDescriptor(root, "__proto__").value).to.be(hidden)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
+        const descriptor = Object.getOwnPropertyDescriptor(
+            chain._state.value,
+            "__proto__",
+        )
+        expect(descriptor.value).to.be(replacement)
+        expect(descriptor.enumerable).to.be(true)
     })
 
     it("preserves own __proto__ data during COW without touching prototypes", () => {
@@ -247,7 +255,7 @@ describe("path assignment", () => {
         expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
     })
 
-    it("throws on non-enumerable mutation paths", () => {
+    it("treats non-enumerable properties as absent graph placements", () => {
         const hidden = { x: 1 }
         const root = {}
         Object.defineProperty(root, "hidden", {
@@ -257,16 +265,19 @@ describe("path assignment", () => {
             configurable: true,
         })
 
-        const assigned = thrownBy(() => assignPath(new Chain(root), ["hidden"], 2))
-        const nestedAssigned = thrownBy(() => assignPath(new Chain(root), ["hidden", "x"], 2))
-        const deleted = thrownBy(() => deletePath(new Chain(root), ["hidden"]))
+        const assignedChain = new Chain(root)
+        const nestedChain = new Chain(root)
+        const deletedChain = new Chain(root)
+        const assigned = assignPath(assignedChain, ["hidden"], 2)
+        const nestedAssigned = assignPath(nestedChain, ["hidden", "x"], 2)
+        const deleted = deletePath(deletedChain, ["hidden"])
 
-        expect(assigned instanceof Error).to.be(true)
+        expect(assigned).to.be(undefined)
+        expect(assignedChain._state.value.hidden).to.be(2)
         expect(nestedAssigned instanceof Error).to.be(true)
-        expect(deleted instanceof Error).to.be(true)
-        expect(assigned.message).to.be("Cannot mutate non-enumerable property")
-        expect(nestedAssigned.message).to.be("Cannot mutate non-enumerable property")
-        expect(deleted.message).to.be("Cannot mutate non-enumerable property")
+        expect(nestedChain._state.value.hidden).to.be(nestedAssigned)
+        expect(deleted).to.be(undefined)
+        expect(deletedChain._state.value).to.be(root)
         expect(root.hidden).to.be(hidden)
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
 
@@ -277,14 +288,16 @@ describe("path assignment", () => {
             writable: true,
             configurable: true,
         })
-        const arrayAssigned = assignPath(new Chain(array), ["hidden"], 2)
+        const arrayChain = new Chain(array)
+        const arrayAssigned = assignPath(arrayChain, ["hidden"], 2)
         expect(arrayAssigned.message).to.be(
             "Arrays support only indexes and length",
         )
+        expect(arrayChain._state.value).to.be(arrayAssigned)
         expect(array.hidden).to.be(1)
     })
 
-    it("throws for own accessors but safely shadows inherited blockers", () => {
+    it("materializes own accessors but safely shadows inherited blockers", () => {
         let ownSetterCalls = 0
         let inheritedSetterCalls = 0
         const accessor = {}
@@ -319,13 +332,13 @@ describe("path assignment", () => {
         })
         const inherited = new InheritedState()
 
-        const accessorFailure = thrownBy(() => {
-            assignPath(new Chain(accessor), ["value"], 2)
-        })
+        const accessorChain = new Chain(accessor)
+        expect(assignPath(accessorChain, ["value"], 2)).to.be(undefined)
         assignPath(new Chain(inherited), ["locked"], 2)
         assignPath(new Chain(inherited), ["hook"], 3)
 
-        expect(accessorFailure.message).to.be("Cannot assign to accessor property")
+        expect(accessorChain._state.value).not.to.be(accessor)
+        expect(accessorChain._state.value.value).to.be(2)
         expect(ownSetterCalls).to.be(0)
         expect(inheritedSetterCalls).to.be(0)
         expect(Object.getOwnPropertyDescriptor(inherited, "locked").value).to.be(2)
@@ -365,8 +378,99 @@ describe("path assignment", () => {
         const deleted = deletePath(chain, ["length"])
 
         expect(deleted instanceof Error).to.be(true)
-        expect(chain._state.value).to.eql([1])
+        expect(chain._state.value).to.be(deleted)
         expect(root).to.eql([1])
+    })
+
+    it("treats Array length reflection failures as language Errors", () => {
+        const failure = new Error("length reflection failed")
+        const target = [1, 2]
+        const array = new Proxy(target, {
+            get(value, key, receiver) {
+                if (key === "length") throw failure
+                return Reflect.get(value, key, receiver)
+            },
+        })
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        let observed
+        let mutation
+        let chain
+        try {
+            observed = lookupPath(new Chain(array), ["length"])
+            chain = new Chain(array)
+            mutation = assignPath(chain, ["length"], 1)
+        } finally {
+            setFatalErrorReporter()
+        }
+
+        expect(observed).to.be(failure)
+        expect(mutation).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect(target).to.eql([1, 2])
+        expect(reported).to.be(undefined)
+    })
+
+    it("turns physical property traps into mutation poison", () => {
+        const cases = [
+            {
+                target: { value: 1 },
+                handler: {
+                    set() {
+                        throw new Error("set failed")
+                    },
+                },
+                mutate: chain => assignPath(chain, ["value"], 2),
+                message: "set failed",
+            },
+            {
+                target: {},
+                handler: {
+                    defineProperty() {
+                        throw new Error("definition failed")
+                    },
+                },
+                mutate: chain => assignPath(chain, ["value"], 2),
+                message: "definition failed",
+            },
+            {
+                target: { value: 1 },
+                handler: {
+                    deleteProperty() {
+                        throw new Error("deletion failed")
+                    },
+                },
+                mutate: chain => deletePath(chain, ["value"]),
+                message: "deletion failed",
+            },
+        ]
+
+        for (const { target, handler, mutate, message } of cases) {
+            const chain = new Chain(new Proxy(target, handler))
+            const result = mutate(chain)
+
+            expect(result.message).to.be(message)
+            expect(chain._state.value).to.be(result)
+        }
+    })
+
+    it("turns an Array length write trap into mutation poison", () => {
+        const failure = new Error("length write failed")
+        const target = [1, 2]
+        const array = new Proxy(target, {
+            set(value, key, next, receiver) {
+                if (key === "length") throw failure
+                return Reflect.set(value, key, next, receiver)
+            },
+        })
+        const chain = new Chain(array)
+
+        const result = assignPath(chain, ["length"], 1)
+
+        expect(result).to.be(failure)
+        expect(chain._state.value).to.be(failure)
     })
 
     it("attributes intrinsic errors to an imported receiver", () => {
@@ -391,7 +495,7 @@ describe("path assignment", () => {
         expect(source).to.eql([1])
     })
 
-    it("does not copy imported ancestors for rejected intrinsic targets", () => {
+    it("poisons intrinsic targets without changing imported data", () => {
         const source = importValue({
             values: [1, 2],
             text: "abc",
@@ -413,7 +517,10 @@ describe("path assignment", () => {
             const chain = new Chain(source)
 
             expect(operation(chain)).to.be.an(Error)
-            expect(readPath(chain, [])).to.be(source)
+            expect(readPath(chain, [])).not.to.be(source)
+            expect(hasError(chain, [])).to.be(true)
+            expect(source.values).to.eql([1, 2])
+            expect(source.text).to.be("abc")
         }
     })
 
@@ -435,7 +542,7 @@ describe("path assignment", () => {
         )
     })
 
-    it("grows Array length with holes and rejects invalid lengths unchanged", () => {
+    it("grows Array length with holes and poisons invalid lengths", () => {
         const root = [1]
         const chain = new Chain(root)
 
@@ -445,11 +552,11 @@ describe("path assignment", () => {
 
         const error = assignPath(chain, ["length"], 1.5)
         expect(error instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(root)
+        expect(chain._state.value).to.be(error)
         expect(root.length).to.be(3)
     })
 
-    it("matches partial ArraySetLength failure", () => {
+    it("materializes before a restricted Array shrink", () => {
         const root = [0, 1, 2]
         Object.defineProperty(root, "1", {
             value: 1,
@@ -459,22 +566,25 @@ describe("path assignment", () => {
         })
         const chain = new Chain(root)
 
-        const error = assignPath(chain, ["length"], 0)
+        const result = assignPath(chain, ["length"], 0)
 
-        expect(error instanceof Error).to.be(true)
-        expect(root.length).to.be(2)
-        expect(root).to.eql([0, 1])
-        verifyRefCounts(root)
+        expect(result).to.be(undefined)
+        expect(chain._state.value).to.eql([])
+        expect(chain._state.value).not.to.be(root)
+        expect(root).to.eql([0, 1, 2])
+        verifyRefCounts(chain._state.value)
     })
 
-    it("respects a non-writable native Array length", () => {
+    it("materializes a non-writable native Array length", () => {
         const root = [1, 2]
         Object.defineProperty(root, "length", { writable: false })
         const chain = new Chain(root)
 
-        const error = assignPath(chain, ["length"], 2)
+        const result = assignPath(chain, ["length"], 1)
 
-        expect(error instanceof Error).to.be(true)
+        expect(result).to.be(undefined)
+        expect(chain._state.value).to.eql([1])
+        expect(chain._state.value).not.to.be(root)
         expect(root).to.eql([1, 2])
     })
 
@@ -579,7 +689,7 @@ describe("path assignment", () => {
         const result = assignPath(chain, ["length"], length.promise)
 
         expect(result instanceof Error).to.be(true)
-        expect(chain._state.value).to.be("abc")
+        expect(chain._state.value).to.be(result)
         length.resolve(1)
     })
 
@@ -600,7 +710,7 @@ describe("path assignment", () => {
         verifyRefCounts(viewChain._state.value)
     })
 
-    it("matches partial length failure on an ArrayView", () => {
+    it("materializes a restricted ArrayView shrink", () => {
         const source = [0, 1, 2]
         Object.defineProperty(source, "1", {
             value: 1,
@@ -612,12 +722,13 @@ describe("path assignment", () => {
         const view = run(sourceChain, [], "push", false, 3)
         const chain = new Chain(view)
 
-        const error = assignPath(chain, ["length"], 0)
+        const result = assignPath(chain, ["length"], 0)
 
-        expect(error instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(view)
-        expect(view.length).to.be(2)
-        expect([...view]).to.eql([0, 1])
+        expect(result).to.be(undefined)
+        expect(chain._state.value).not.to.be(view)
+        expect(exportValue(chain, [])).to.eql([])
+        expect(view.length).to.be(4)
+        expect([...view]).to.eql([0, 1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([0, 1, 2])
         verifyRefCounts(view, source)
     })
@@ -626,9 +737,14 @@ describe("path assignment", () => {
         const chain = new Chain("abc")
 
         expect(lookupPath(chain, ["length"])).to.be(3)
-        expect(assignPath(chain, ["length"], 1) instanceof Error).to.be(true)
-        expect(deletePath(chain, ["length"]) instanceof Error).to.be(true)
-        expect(chain._state.value).to.be("abc")
+        const assigned = assignPath(chain, ["length"], 1)
+        expect(assigned instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(assigned)
+
+        const deletedChain = new Chain("abc")
+        const deleted = deletePath(deletedChain, ["length"])
+        expect(deleted instanceof Error).to.be(true)
+        expect(deletedChain._state.value).to.be(deleted)
     })
 
     it("can shadow inherited properties", () => {
@@ -826,29 +942,36 @@ describe("path assignment", () => {
             "4294967295",
             "name",
         ]) {
-            const assigned = assignPath(chain, [key], key)
-            const deleted = deletePath(chain, [key])
+            const assignedChain = new Chain([])
+            const deletedChain = new Chain([])
+            const assigned = assignPath(assignedChain, [key], key)
+            const deleted = deletePath(deletedChain, [key])
 
             expect(assigned instanceof Error).to.be(true)
             expect(deleted instanceof Error).to.be(true)
-            expect(Object.hasOwn(root, key)).to.be(false)
-            expect(lookupPath(chain, [key])).to.be(undefined)
+            expect(assignedChain._state.value).to.be(assigned)
+            expect(deletedChain._state.value).to.be(deleted)
         }
 
-        root.name = "host-only"
-        expect(assignPath(chain, ["name"], "changed") instanceof Error).to.be(
-            true,
-        )
-        expect(deletePath(chain, ["name"]) instanceof Error).to.be(true)
-        expect(lookupPath(chain, ["name"])).to.be(undefined)
-        expect(root.name).to.be("host-only")
+        const hostArray = []
+        hostArray.name = "host-only"
+        const hostChain = new Chain(hostArray)
+        const hostFailure = assignPath(hostChain, ["name"], "changed")
+        expect(hostFailure instanceof Error).to.be(true)
+        expect(hostChain._state.value).to.be(hostFailure)
+        expect(hostArray.name).to.be("host-only")
 
         const imported = importValue([], "indexed growth")
-        const importedChain = new Chain(imported)
-        expect(assignPath(importedChain, ["name"], "value").message).to.be(
+        const invalidImportedChain = new Chain(imported)
+        expect(assignPath(
+            invalidImportedChain,
+            ["name"],
+            "value",
+        ).message).to.be(
             "Arrays support only indexes and length " +
             "(imported at: indexed growth)",
         )
+        const importedChain = new Chain(imported)
         expect(assignPath(importedChain, ["2"], "value")).to.be(undefined)
         expect(importedChain._state.value).not.to.be(imported)
         expect(imported.length).to.be(0)
@@ -884,7 +1007,11 @@ describe("path assignment", () => {
     it("turns every missing or primitive intermediate into Error", () => {
         const root = { old: 7, nothing: null, unset: undefined }
 
-        assignPath(new Chain(root), ["new", "value"], 1)
+        const missingResult = assignPath(
+            new Chain(root),
+            ["new", "value"],
+            1,
+        )
         assignPath(new Chain(root), ["old", "value"], 2)
         assignPath(new Chain(root), ["nothing", "value"], 3)
         assignPath(new Chain(root), ["unset", "value"], 4)
@@ -895,6 +1022,7 @@ describe("path assignment", () => {
                 "Cannot access property through missing or primitive value",
             )
         }
+        expect(missingResult).to.be(root.new)
     })
 
     it("copies a shared branch before installing a path Error", () => {
@@ -937,9 +1065,15 @@ describe("path assignment", () => {
         const root = { branch: new Error("branch") }
         const chain = new Chain(errorRoot)
 
-        assignPath(chain, ["value"], 1)
-        assignPath(new Chain(root), ["branch", "value"], 1)
+        const rootResult = assignPath(chain, ["value"], 1)
+        const branchResult = assignPath(
+            new Chain(root),
+            ["branch", "value"],
+            1,
+        )
 
+        expect(rootResult).to.be(errorRoot)
+        expect(branchResult).to.be(root.branch)
         expect(chain._state.value).to.be(errorRoot)
         expect(root.branch instanceof Error).to.be(true)
         expect(root.branch.message).to.be("branch")
@@ -1001,8 +1135,9 @@ describe("lookupPath", () => {
         )
     })
 
-    it("reads own enumerable __proto__ data but not inherited or non-enumerable properties", () => {
+    it("reads only own enumerable data properties", () => {
         const root = {}
+        let getterCalls = 0
         Object.defineProperty(root, "__proto__", {
             value: { unsafe: true },
             enumerable: true,
@@ -1015,18 +1150,28 @@ describe("lookupPath", () => {
             writable: true,
             configurable: true,
         })
+        Object.defineProperty(root, "accessor", {
+            enumerable: true,
+            get() {
+                getterCalls++
+                return { x: 1 }
+            },
+        })
 
         expect(lookupPath(new Chain(root), ["__proto__"])).to.be(root.__proto__)
         expect(lookupPath(new Chain(root), ["__proto__", "unsafe"])).to.be(true)
         expect(lookupPath(new Chain({}), ["__proto__"])).to.be(undefined)
         expect(lookupPath(new Chain(root), ["hidden"])).to.be(undefined)
-        for (const path of [["hidden", "x"]]) {
+        expect(lookupPath(new Chain(root), ["accessor"])).to.be(undefined)
+        expect(getterCalls).to.be(0)
+        for (const path of [["hidden", "x"], ["accessor", "x"]]) {
             const result = lookupPath(new Chain(root), path)
             expect(result instanceof Error).to.be(true)
             expect(result.message).to.be(
                 "Cannot access property through missing or primitive value",
             )
         }
+        expect(getterCalls).to.be(0)
     })
 
     it("supports primitive roots for empty lookup paths", () => {
@@ -1054,7 +1199,9 @@ describe("deletePath", () => {
         const values = [null, undefined, 7, "text"]
         for (const value of values) {
             const chain = new Chain(value)
-            expect(deletePath(chain, ["value"])).to.be(undefined)
+            const result = deletePath(chain, ["value"])
+            expect(result instanceof Error).to.be(true)
+            expect(chain._state.value).to.be(result)
             expect(chain._state.value instanceof Error).to.be(true)
             expect(chain._state.value.message).to.be(
                 "Cannot access property through missing or primitive value",
@@ -1081,7 +1228,7 @@ describe("deletePath", () => {
         expect(root.config).not.to.be(oldConfig)
     })
 
-    it("drops a non-enumerable property when deleting through COW", () => {
+    it("treats deletion of a non-enumerable property as a no-op", () => {
         const hidden = { x: 1 }
         const root = { keep: true }
         Object.defineProperty(root, "hidden", {
@@ -1096,13 +1243,12 @@ describe("deletePath", () => {
         deletePath(chain, ["hidden"])
         const next = chain._state.value
 
-        expect(next).not.to.be(root)
-        expect(next).to.eql({ keep: true })
+        expect(next).to.be(root)
         expect(root.hidden).to.be(hidden)
         expect(Object.prototype.propertyIsEnumerable.call(root, "hidden")).to.be(false)
     })
 
-    it("shadows a hidden property during a suspended imported delete", async () => {
+    it("ignores a hidden property during a suspended imported delete", async () => {
         const pending = deferred()
         const external = { keep: true }
         Object.defineProperty(external, "hidden", {
@@ -1120,8 +1266,7 @@ describe("deletePath", () => {
         pending.resolve(external)
         await flushMicrotasks()
 
-        expect(chain._state.value.branch).not.to.be(external)
-        expect(chain._state.value.branch).to.eql({ keep: true })
+        expect(chain._state.value.branch).to.be(external)
         expect(external.hidden).to.eql({ x: 1 })
     })
 
@@ -1161,8 +1306,7 @@ describe("deletePath", () => {
         const result = deletePath(chain, ["length"])
 
         expect(result instanceof Error).to.be(true)
-        expect(chain._state.value).to.be(view)
-        expect(exportValue(chain, [])).to.eql([1, 2, 3])
+        expect(chain._state.value).to.be(result)
         expect(exportValue(source, [])).to.eql([1, 2])
     })
 
@@ -1179,7 +1323,7 @@ describe("deletePath", () => {
             receiver.resolve(value)
             await flushMicrotasks()
 
-            expect(root.value).to.be(value)
+            expect(root.value instanceof Error).to.be(true)
             expect(value.length).to.be(length)
         }
     })

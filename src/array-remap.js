@@ -24,12 +24,6 @@ function createRemap(
     return remap
 }
 
-function createMutationRemap(array, inPlace) {
-    if (inPlace) return traceMutation(array)
-    const remap = createRemap(array)
-    return { remap, working: remap }
-}
-
 function traceMutation(array) {
     const operations = []
     const deleted = new Set()
@@ -98,12 +92,61 @@ function createPlacementOperation(entry, newIndex) {
         : { kind: KIND_ADD, newIndex, value: entry }
 }
 
-function applyRemapToArray(array, remap, operations) {
-    operations ??= Array.from({ length: remap.length }, (_, newIndex) => {
+function mutationRequiresCopy(array, remap, operations) {
+    // ArrayView receivers are materialized or handled by a view transition
+    // before this preflight; this function decides only whether the selected
+    // operations fit the physical native Array receiver.
+    operations ??= operationsForRemap(remap)
+    for (const operation of operations) {
+        const requiresCopy = operation.kind === KIND_LENGTH
+            ? languageProperties.arrayLengthMutationRequiresCopy(
+                array,
+                operation.value,
+            )
+            : languageProperties.propertyMutationRequiresCopy(
+                array,
+                String(operation.kind === KIND_DELETE
+                    ? operation.index
+                    : operation.newIndex),
+                operation.kind === KIND_DELETE,
+            )
+        if (requiresCopy) return true
+    }
+    return false
+}
+
+function operationsForRemap(remap) {
+    return Array.from({ length: remap.length }, (_, newIndex) => {
         return newIndex in remap
             ? createPlacementOperation(remap[newIndex], newIndex)
             : { kind: KIND_DELETE, index: newIndex }
     })
+}
+
+function materializeMutationRemap(array, operations) {
+    const remap = createRemap(array)
+    for (const operation of operations) {
+        if (operation.kind === KIND_LENGTH) {
+            remap.length = operation.value
+        } else if (operation.kind === KIND_DELETE) {
+            delete remap[operation.index]
+        } else {
+            languageProperties.writeLanguageProperty(
+                remap,
+                String(operation.newIndex),
+                operation.kind === KIND_MOVE
+                    ? operation.origin
+                    : operation.value,
+            )
+        }
+    }
+    return remap
+}
+
+function applyRemapToArray(array, remap, operations) {
+    // The invocation layer calls this only for an in-place native Array.
+    // ArrayView receivers take a view transition or a materialized copy.
+    operations ??= operationsForRemap(remap)
     const placementCount = new Map()
     remap.forEach(origin => {
         if (!propertyVersions.isPropertyOrigin(origin)) return
@@ -118,35 +161,28 @@ function applyRemapToArray(array, remap, operations) {
         }
     }
 
-    try {
-        for (const operation of operations) {
-            if (operation.kind === KIND_LENGTH) {
-                const error = propertyVersions.commitArrayLength(
-                    array,
-                    operation.value,
-                )
-                if (languageValues.isError(error)) return error
-                continue
-            }
-            if (operation.kind === KIND_DELETE) {
-                propertyVersions.deleteProperty(
-                    array,
-                    String(operation.index),
-                )
-                continue
-            }
-            const key = String(operation.newIndex)
-            const entry = operation.kind === KIND_MOVE
-                ? operation.origin
-                : operation.value
-            const retained = operation.kind === KIND_ADD ||
-                (placementCount.get(entry) ?? 0) > 1
-            placeEntry(array, key, entry, retained)
+    for (const operation of operations) {
+        if (operation.kind === KIND_LENGTH) {
+            propertyVersions.commitArrayLength(
+                array,
+                operation.value,
+            )
+            continue
         }
-        return undefined
-    } catch (error) {
-        if (!languageProperties.isPropertyShapeError(error)) throw error
-        return error
+        if (operation.kind === KIND_DELETE) {
+            propertyVersions.deleteProperty(
+                array,
+                String(operation.index),
+            )
+            continue
+        }
+        const key = String(operation.newIndex)
+        const entry = operation.kind === KIND_MOVE
+            ? operation.origin
+            : operation.value
+        const retained = operation.kind === KIND_ADD ||
+            (placementCount.get(entry) ?? 0) > 1
+        placeEntry(array, key, entry, retained)
     }
 }
 
@@ -206,6 +242,8 @@ export {
     applyRemapToArray,
     createArrayFromRemap,
     createRemap,
-    createMutationRemap,
+    materializeMutationRemap,
+    mutationRequiresCopy,
     placeRemap,
+    traceMutation,
 }

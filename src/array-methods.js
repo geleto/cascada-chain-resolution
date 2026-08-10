@@ -88,14 +88,12 @@ function observeAt(thisValue, args) {
             },
         },
     )
-    const element = invocation.invokeDataFunctionOrPoison(
+    const element = invocation.invokeDataFunction(
         Array.prototype.at,
         receiver,
         args,
     )
-    return languageValues.isError(element)
-        ? element
-        : retainElement(element)
+    return retainElement(element)
 }
 
 function slice(thisValue, args) {
@@ -104,9 +102,7 @@ function slice(thisValue, args) {
     })
     const length = arrayViews.logicalArrayLength(thisValue)
     const start = toRelativeIndex(args[0], length, 0)
-    if (languageValues.isError(start)) return start
     let end = toRelativeIndex(args[1], length, length)
-    if (languageValues.isError(end)) return end
     end = Math.max(start, end)
 
     if (canDeriveView) {
@@ -178,7 +174,6 @@ function prepareConcatArguments(args) {
                     value,
                     Symbol.isConcatSpreadable,
                 )
-                if (languageValues.isError(entry)) return entry
                 const descriptor = entry?.descriptor
                 if (
                     descriptor === undefined ||
@@ -212,7 +207,7 @@ function createConcatRemap(receiver, items) {
             ? arrayRemaps.createRemap(item)
             : item
     })
-    return invocation.invokeDataFunctionOrPoison(
+    return invocation.invokeDataFunction(
         Array.prototype.concat,
         receiver,
         prepared,
@@ -234,7 +229,7 @@ function flatRemap(thisValue, depth) {
     depth = Math.max(depth, 0)
     return resolution.continueOperationUnlessPoison(
         prepareFlatArray(thisValue, depth),
-        prepared => invocation.invokeDataFunctionOrPoison(
+        prepared => invocation.invokeDataFunction(
             Array.prototype.flat,
             prepared,
             [depth],
@@ -381,12 +376,11 @@ function prepareAndSortAndRemap(
                 const compare = comparator === undefined
                     ? comparePreparedKeys
                     : compareRecords
-                const sorted = invocation.invokeDataFunctionOrPoison(
+                const sorted = invocation.invokeDataFunction(
                     Array.prototype.toSorted,
                     sortable,
                     [compare],
                 )
-                if (languageValues.isError(sorted)) return sorted
                 source.length = sorted.length
                 for (let index = 0; index < sorted.length; index++) {
                     source[index] = sorted[index].origin
@@ -424,10 +418,14 @@ function prepareAndSortAndRemap(
             [left.value, right.value],
         )
         if (languageValues.isPromise(result)) {
+            // Abort native sort through its callback boundary; invokeDataFunction
+            // preserves this validation Error as the operation's poison.
             throw errorUtils.validationError(
                 "Promise-returning Array sort comparators are unsupported",
             )
         }
+        // An Error comparator result poisons sort, so stop native comparison
+        // before it can invoke the comparator again or publish a partial order.
         if (languageValues.isError(result)) throw result
         return result
     }
@@ -548,11 +546,7 @@ function normalizeBackwardStart(fromIndex, length) {
 
 function toRelativeIndex(value, length, defaultValue) {
     if (value === undefined) return defaultValue
-    try {
-        value = +value
-    } catch (error) {
-        return errorUtils.toPoison(error)
-    }
+    value = errorUtils.runUserCode(() => +value)
     value = Number.isNaN(value) ? 0 : Math.trunc(value)
     return value < 0
         ? Math.max(length + value, 0)
@@ -587,7 +581,6 @@ function deriveArrayView(thisValue, start, end) {
 
 function tryConcatArrayView(thisValue, items) {
     const suffix = createConcatRemap([], items)
-    if (languageValues.isError(suffix)) return suffix
     return tryAppendArrayView(thisValue, suffix)
 }
 

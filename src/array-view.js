@@ -2,23 +2,25 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
+const ARRAY_VIEWS = new WeakSet()
 
 class ArrayView {
     constructor(arrayOrArrayView, start = 0, end) {
         const source = projectionOf(arrayOrArrayView)
         const sourceView = isArrayView(source) ? source : undefined
         const sourceStart = sourceView?._start ?? 0
+        if (end === undefined) {
+            end = sourceView ? sourceView.length : physicalArrayLength(source)
+        }
         Object.defineProperties(this, {
             _backing: { value: sourceView?._backing ?? source },
             _start: { value: sourceStart + start },
             _end: {
-                value: sourceStart + (
-                    end === undefined ? source.length : end
-                ),
+                value: sourceStart + end,
                 writable: true,
             },
         })
+        ARRAY_VIEWS.add(this)
     }
 
     static tryAttachTo(arrayOrArrayView) {
@@ -39,12 +41,19 @@ class ArrayView {
         if (count === 0) return true
         const projection = projectionOf(source)
         const backing = backingOf(projection)
+        const backingLength = physicalArrayLength(backing)
         if (
             isArrayView(projection) &&
-            projection._end !== backing.length
+            projection._end !== backingLength
         ) return false
-        if (backing.length + count > 0xffffffff) return false
-        return Object.getOwnPropertyDescriptor(backing, "length").writable
+        if (backingLength + count > 0xffffffff) return false
+        if (!errorUtils.runUserCode(
+            () => Object.isExtensible(backing),
+        )) return false
+        const descriptor = errorUtils.runUserCode(
+            () => Object.getOwnPropertyDescriptor(backing, "length"),
+        )
+        return descriptor?.writable === true
     }
 
     static tryExtendEnd(source, count, beforeWrite) {
@@ -53,7 +62,7 @@ class ArrayView {
         if (!view) return
         const next = new ArrayView(view, 0, view.length + count)
         beforeWrite(next)
-        if (count > 0) view._backing.length += count
+        if (count > 0) extendPhysicalArray(view._backing, count)
         return next
     }
 
@@ -68,19 +77,11 @@ class ArrayView {
         return String(this._start + index)
     }
 
-    has(key) {
-        if (key === "length") return true
-        const physical = this.#physicalKey(key)
-        return physical !== undefined &&
-            propertyIsEnumerable.call(this._backing, physical)
-    }
-
     get(key) {
         if (key === "length") return this.length
-        const physical = this.#physicalKey(key)
-        return physical !== undefined &&
-            propertyIsEnumerable.call(this._backing, physical)
-            ? this._backing[physical]
+        const descriptor = this.descriptor(key)
+        return isDataPlacement(descriptor)
+            ? descriptor.value
             : undefined
     }
 
@@ -96,9 +97,11 @@ class ArrayView {
         const physical = this.#physicalKey(key)
         return physical === undefined
             ? undefined
-            : Object.getOwnPropertyDescriptor(
-                this._backing,
-                physical,
+            : errorUtils.runUserCode(
+                () => Object.getOwnPropertyDescriptor(
+                    this._backing,
+                    physical,
+                ),
             )
     }
 
@@ -118,22 +121,26 @@ class ArrayView {
             )
         }
         const backing = this._backing
-        if (Object.hasOwn(backing, physical)) {
-            backing[physical] = value
-        } else {
-            Object.defineProperty(backing, physical, {
-                value,
-                enumerable: true,
-                writable: true,
-                configurable: true,
-            })
-        }
+        errorUtils.runUserCode(() => {
+            if (Object.hasOwn(backing, physical)) {
+                backing[physical] = value
+            } else {
+                Object.defineProperty(backing, physical, {
+                    value,
+                    enumerable: true,
+                    writable: true,
+                    configurable: true,
+                })
+            }
+        })
     }
 
     delete(key) {
         if (key === "length") return false
         const physical = this.#physicalKey(key)
-        return physical === undefined || delete this._backing[physical]
+        return physical === undefined || errorUtils.runUserCode(
+            () => delete this._backing[physical],
+        )
     }
 
     keys() {
@@ -144,7 +151,7 @@ class ArrayView {
         const growth = length - this.length
         if (growth > 0) {
             if (!ArrayView.canGrowEnd(this, growth)) return false
-            this._backing.length += growth
+            extendPhysicalArray(this._backing, growth)
         }
         this._end = this._start + length
         return true
@@ -160,7 +167,7 @@ class ArrayView {
 languageValues.registerDataClass(ArrayView)
 
 function isArrayView(value) {
-    return value instanceof ArrayView
+    return ARRAY_VIEWS.has(value)
 }
 
 function isLogicalArray(value) {
@@ -192,8 +199,21 @@ function backingOf(value) {
         : projection
 }
 
+function physicalArrayLength(array) {
+    return errorUtils.runUserCode(() => array.length)
+}
+
+function extendPhysicalArray(array, count) {
+    errorUtils.runUserCode(() => {
+        array.length += count
+    })
+}
+
 function logicalArrayLength(value) {
-    return projectionOf(value).length
+    const projection = projectionOf(value)
+    return isArrayView(projection)
+        ? projection.length
+        : physicalArrayLength(projection)
 }
 
 function requiresArrayMaterialization(value) {
@@ -216,7 +236,7 @@ function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
     const projection = projectionOf(arrayOrView)
     const view = isArrayView(projection) ? projection : undefined
     const backing = view ? view._backing : projection
-    const backingLength = backing.length
+    const backingLength = physicalArrayLength(backing)
     const origin = view ? view._start : 0
     const extent = view ? view.length : backingLength
     start = origin + Math.max(0, start)
@@ -225,17 +245,33 @@ function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
     // Avoid inherited numeric setters while preserving numeric key order.
     const keys = Object.create(null)
     if (start === 0 && end === backingLength) {
-        for (const key of Object.keys(backing)) {
-            if (isArrayIndex(key) && Number(key) < end) keys[key] = true
+        const ownKeys = errorUtils.runUserCode(
+            () => Reflect.ownKeys(backing),
+        )
+        for (const key of ownKeys) {
+            if (!isArrayIndex(key) || Number(key) >= end) continue
+            const descriptor = errorUtils.runUserCode(
+                () => Object.getOwnPropertyDescriptor(backing, key),
+            )
+            if (isDataPlacement(descriptor)) {
+                keys[key] = true
+            }
         }
     } else {
         for (let index = start; index < end; index++) {
-            if (propertyIsEnumerable.call(backing, index)) {
+            const descriptor = errorUtils.runUserCode(
+                () => Object.getOwnPropertyDescriptor(backing, String(index)),
+            )
+            if (isDataPlacement(descriptor)) {
                 keys[index - origin] = true
             }
         }
     }
     return Object.keys(keys)
+}
+
+function isDataPlacement(descriptor) {
+    return descriptor?.enumerable === true && "value" in descriptor
 }
 
 export {

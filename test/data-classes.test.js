@@ -516,21 +516,16 @@ describe("data class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("reports reflection traps as fatal", () => {
+    it("returns classification reflection traps as language Errors", () => {
+        const failure = new Error("reflection trap")
         const source = new Proxy({ value: 1 }, {
             getPrototypeOf() {
-                throw new Error("reflection trap")
+                throw failure
             },
         })
-        const failure = thrownBy(() => {
-            const chain = new Chain(importValue(
-                source,
-                "proxy prototype",
-            ))
-            assignPath(chain, ["value"], 2)
-        })
+        const result = importValue(source, "proxy prototype")
 
-        expect(failure.message).to.be("reflection trap")
+        expect(result).to.be(failure)
         expect(source.value).to.be(1)
     })
 })

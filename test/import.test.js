@@ -1139,7 +1139,7 @@ describe("import", () => {
         verifyRefCounts(sealed, frozen, nonExtensibleError)
     })
 
-    it("rejects imported accessor Promise properties", () => {
+    it("ignores imported accessor properties", () => {
         const pending = deferred()
         const external = {}
         let reads = 0
@@ -1150,18 +1150,9 @@ describe("import", () => {
             },
             enumerable: true,
         })
-        let caught
-
-        try {
-            importValue(external, "accessor promise")
-        } catch (error) {
-            caught = error
-        }
-
-        expect(caught.message).to.be(
-            "Cannot assign to accessor property (imported at: accessor promise)",
-        )
-        expect(reads).to.be(1)
+        expect(importValue(external, "accessor promise")).to.be(external)
+        expect(readPath(new Chain(external), ["pending"])).to.be(undefined)
+        expect(reads).to.be(0)
     })
 
     it("exports pending elements in a sealed array", async () => {
@@ -2097,6 +2088,53 @@ describe("import", () => {
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("external boom")
+    })
+
+    it("publishes reflection failure when an imported Promise resolves", async () => {
+        const pending = deferred()
+        const root = importValue(
+            { value: pending.promise },
+            "resolved reflection",
+        )
+        const chain = new Chain(root)
+        const read = lookupPath(chain, ["value"])
+        const failure = new Error("resolved ownKeys failed")
+
+        pending.resolve(new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        }))
+
+        expect(await read).to.be(failure)
+        expect(lookupPath(chain, ["value"])).to.be(failure)
+        expect(root.value).to.be(pending.promise)
+    })
+
+    it("retries an imported identity after reflection fails", async () => {
+        const pending = deferred()
+        const failure = new Error("child ownKeys failed")
+        let ownKeysCalls = 0
+        const childTarget = { pending: pending.promise }
+        const child = new Proxy(childTarget, {
+            ownKeys(target) {
+                ownKeysCalls++
+                if (ownKeysCalls === 1) throw failure
+                return Reflect.ownKeys(target)
+            },
+        })
+        const root = { child }
+
+        expect(importValue(root, "failed import")).to.be(failure)
+        expect(importValue(root, "retried import")).to.be(root)
+        expect(ownKeysCalls).to.be(2)
+
+        pending.resolve(7)
+        await flushMicrotasks()
+
+        expect(childTarget.pending).to.be(pending.promise)
+        expect(readPath(new Chain(root), ["child", "pending"])).to.be(7)
+        verifyRefCounts(root)
     })
 
     it("turns an already-rejected imported promise into an Error", async () => {
