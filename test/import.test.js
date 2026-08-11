@@ -6,7 +6,6 @@ import {
     getRefCounter,
     buildRefIndex,
     metaOf,
-    STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -113,7 +112,7 @@ describe("import", () => {
         expect(readPath(new Chain(child), ["pending"])).to.be(resolved)
     })
 
-    it("moves runtime metadata out when its owner is imported", async () => {
+    it("keeps runtime metadata external when its owner is imported", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const root = { pending: pending.promise }
@@ -121,9 +120,7 @@ describe("import", () => {
         const earlierRead = readPath(new Chain(root), ["pending"])
         expect(registrations()).to.be(2)
 
-        if (!STORE_META_IN_WEAKMAP) {
-            expect(Reflect.ownKeys(root).length).to.be(originalKeys.length + 1)
-        }
+        expect(Reflect.ownKeys(root)).to.eql(originalKeys)
 
         importValue(root, "promoted runtime owner")
 
@@ -978,7 +975,7 @@ describe("import", () => {
         expect(getErrors(new Chain(incoming), [])).to.eql([])
     })
 
-    it("stores cycle cuts for frozen imports in both metadata modes", () => {
+    it("stores cycle cuts for frozen imports", () => {
         const frozen = {}
         frozen.self = frozen
         Object.freeze(frozen)

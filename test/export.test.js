@@ -1155,7 +1155,7 @@ describe("export", () => {
         expect(getRefCounter(child).promiseCount).to.be(1)
         pending.resolve("done")
         expect(await exported).to.eql({ child: { pending: "done" } })
-        // Existing META makes child a trusted runtime island rather than a
+        // Existing metadata makes child a trusted runtime island rather than a
         // newly imported host holder.
         expect(child.pending).to.be("done")
         expect(readPath(new Chain(frozen), ["child", "pending"])).to.be("done")

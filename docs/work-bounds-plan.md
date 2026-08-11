@@ -10,7 +10,7 @@ Phases remain in this document after completion. Update their status and final d
 
 Implement pending phases in order and evaluate each independently. After every code phase:
 
-- run the complete suite with inline and WeakMap metadata;
+- run the complete suite;
 - verify the bound through public operations where possible;
 - review architecture, source size, and remaining special cases; and
 - keep only changes whose reduction in work justifies their complexity.
@@ -57,7 +57,7 @@ Verification:
 - unindexed values, clean cycles, and Promises beyond cuts retain their behavior;
 - aliases and cut regions are visited at most once per call; and
 - focused Proxy checks exercise assignment through a copied attachment via public operations; and
-- the complete suite passes with inline and WeakMap metadata.
+- the complete suite passes.
 
 ## Phase 3: Keep Array range work inside the logical range
 
@@ -81,7 +81,7 @@ Verification:
 - full-range sparse operations do not materialize or inspect every hole;
 - Promise versions, ownership, holes, imported materialization, and native slice argument conversion remain correct; and
 - indexing, copy-on-write, raw export, retained views, and ordinary method materialization obey the same range bound through shared enumeration; and
-- focused Proxy checks and the complete suite pass with inline and WeakMap metadata.
+- focused Proxy checks and the complete suite pass.
 
 ## Phase 4: Make detached-result indexing consumer-driven
 
@@ -104,7 +104,7 @@ Verification:
 - settling an unconsumed runtime-owned detached version neither enumerates its result nor creates its ref index or nested Promise mirrors; imported settlement still performs its independent admission walk;
 - Error collection through a captured detached version still finds direct Errors, follows nested Promises, and supports imported non-extensible values;
 - already-settled nested Promises, recursive Error search, export, path operations, cycles, rejection conversion, and same-source FIFO ordering retain their behavior; and
-- the complete suite passes with inline and WeakMap metadata.
+- the complete suite passes.
 
 ## Phase 5: Evaluate bounded ref-index maintenance for bulk Array changes
 

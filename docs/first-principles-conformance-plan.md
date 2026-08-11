@@ -11,7 +11,7 @@ This plan brings the remaining `src` behavior into conformance with the first pr
 Implement each phase independently. After every phase:
 
 - reproduce the affected behavior and add integration coverage;
-- run the complete suite in every supported metadata mode;
+- run the complete suite;
 - run `test/verify-refcounts.js`; and
 - review the result for structural simplifications, unifications, dead weight, and load-bearing complexity.
 
@@ -140,29 +140,32 @@ refcount oracle.
 
 ## Phase 3: Use one external metadata store
 
+Complete.
+
 ### Problem
 
 Inline metadata modifies runtime identities, must migrate when an identity becomes imported, and forces every metadata operation through a storage-mode branch. Metadata location therefore carries meaning that does not belong to the identity's semantics.
 
-### Design
+### Final design
 
-Keep all identity metadata in one `WeakMap`:
+All identity metadata lives in one `WeakMap`:
 
 - make `metaOf` a direct `WeakMap.get`, which safely returns `undefined` for values that cannot have metadata and triggers no Proxy reflection;
 - insert new records only in that map;
 - remove `ensureMeta`'s storage-location option, the metadata Symbol, inline/WeakMap switch, import migration, mode files, scripts, test plumbing, and documentation obligations; and
 - keep imported and runtime-owned values physically unchanged by bookkeeping.
 
-Benchmark representative property walks. If the single map has a material cost, optimize its access path without restoring parallel storage modes.
+A representative logical-property-read benchmark showed no regression; the
+direct lookup was the fastest measured path.
 
 ### Verification
 
 - Metadata lookup changes no identity and triggers no Proxy reflection.
 - Imported language containers carry metadata without physical modification.
 - Existing conformant ownership, Promise-version, ArrayView, and refcount behavior is unchanged.
-- The complete suite and refcount oracle pass in the single metadata mode; representative lookup results are recorded.
-
-Update active documentation that requires both metadata modes.
+- The complete suite passes 679 tests through the single metadata store, and
+  the refcount oracle passes.
+- Active documentation describes only external metadata.
 
 ---
 

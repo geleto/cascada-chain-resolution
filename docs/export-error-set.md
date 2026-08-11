@@ -189,7 +189,7 @@ to collection-only mode.
 
 ## Required coverage
 
-The inline and WeakMap suites cover:
+The complete suite covers:
 
 - primitives, objects, arrays, sparse arrays, aliases, cycles, own-key order,
   and enumerable `__proto__`;

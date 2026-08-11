@@ -165,8 +165,8 @@ Import admission:
 
 Newly reached host objects receive externally stored metadata recording their
 import status. Existing metadata identifies a previously imported or
-runtime-owned identity. Directly importing a runtime identity moves any inline metadata to the
-WeakMap and advances its pending properties to imported mirror versions at that
+runtime-owned identity. Directly importing a runtime identity reuses that
+record and advances its pending properties to imported mirror versions at that
 FIFO position. Containment does not transfer import status: an imported
 identity remains external under a runtime-owned container, and a runtime-owned
 identity remains runtime-owned under an imported container. Language mutation

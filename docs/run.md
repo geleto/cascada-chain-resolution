@@ -12,7 +12,7 @@ run(chain, path, method, mutateArray, ...arguments)
 
 `method` must be a string and `mutateArray` must be exactly `true` or `false`. Both are supplied before the receiver or any argument settles. A non-string method, invalid Boolean, `constructor`, or mutation request outside the intercepted set returns a language Error before any path walk or gate.
 
-`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, or tracked object with a trusted read-only executable surface. Tracked objects are plain records, null-prototype records, and registered data-class instances. Opaque class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays carrying `META.arrayView`, and internally branded `ArrayView` instances are logical Arrays.
+`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, or tracked object with a trusted read-only executable surface. Tracked objects are plain records, null-prototype records, and registered data-class instances. Opaque class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays with an attached metadata `arrayView`, and internally branded `ArrayView` instances are logical Arrays.
 
 ## Dispatch
 
@@ -192,7 +192,7 @@ Logical-Array and intrinsic-`length` access is routed through `src/language-prop
 
 ## Verification
 
-Run all coverage in inline-Symbol and WeakMap metadata modes. Do not duplicate the JavaScript engine's intrinsic method-algorithm tests; cover the Cascada boundary:
+Run the complete suite. Do not duplicate the JavaScript engine's intrinsic method-algorithm tests; cover the Cascada boundary:
 
 - validation before walking, intrinsic shadowing, ordinary overrides, rejected constructors, String protocols and callbacks, deferred Array callbacks, and opaque results;
 - direct and delayed paths, zero or multiple readiness Promises, concurrent receiver and argument preparation, assignment-style Promise payloads without waiting, operation leases, gates before returning from required waits, receiver-before-result settlement, supersession, and gate-free ready transitions;

@@ -79,7 +79,7 @@ intermediate designs used to reach it.
 
 - Convert rejected data Promises to language Error values.
 - Report invariants, integration violations, and unexpected throws as fatal.
-- Run the complete suite with inline and WeakMap metadata.
+- Run the complete suite.
 - Independently verify counter totals, raw index closure, mirror and cut shape,
   reverse-edge multiplicity, and parent-DAG acyclicity.
 

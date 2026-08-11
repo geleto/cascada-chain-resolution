@@ -17,9 +17,8 @@ marked shared. The token belongs to identities, not paths: containment neither
 imports a runtime-owned identity nor declassifies an imported one. A shallow
 copy-on-write copy has no token and is runtime-owned.
 
-Imported metadata always lives in the WeakMap. Directly importing an identity
-that already has inline runtime metadata moves that same record into the
-WeakMap before returning.
+All identity metadata lives in one WeakMap. Directly importing an identity
+reuses its existing record.
 
 ## Synchronous admission
 
@@ -100,6 +99,6 @@ run.
 - `src/import.js` owns the public import boundary.
 - `src/import-preparation.js` owns external identity classification and
   Promise-frontier discovery.
-- `src/meta.js` owns import tokens and external metadata storage.
+- `src/meta.js` owns import tokens and identity metadata.
 - `src/property-versions.js` owns Promise-backed property versions and applies
   settlement through ordinary logical publication.

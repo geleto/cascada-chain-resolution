@@ -45,7 +45,7 @@ Mutating `enter` uses `walkMutationPath` to perform COW and install a public gat
 
 The callback's Chain is rooted at the property version captured at `enter`'s exact program position, which may still hold a Promise. Before publication, a mutating Chain owns that data; afterward, already-issued continuations and the public world operate on the same graph through their established mirror positions. Completion removes the Chain's capability, preventing new issuance.
 
-`new Chain(value, mutates = true)` stores an exact Boolean capability in `_mutates` on the host Chain: ordinary and mutating entered Chains use `true`, while read-only entered Chains use `false`. The Chain is outside the language graph; its `_state` holder contains only the language root. `chain.close()` deletes the capability, preventing new issuance without cancelling work already issued through the Chain. Closing is one-shot and does not publish an entered mutation; `enter` owns automatic closure and publication after its callback completes. The mutating setup and completion closures retain the gate resolver; the gate itself already lives at the public placement, so neither belongs in the Chain state. After setup, no entry-specific lifecycle state retains the source Chain, captured placement, or an import boundary; imported targets carry their ordinary direct boundary in META. Only `enter` is exported from `src/enter.js` for compiler/runtime use, not from the package entry module.
+`new Chain(value, mutates = true)` stores an exact Boolean capability in `_mutates` on the host Chain: ordinary and mutating entered Chains use `true`, while read-only entered Chains use `false`. The Chain is outside the language graph; its `_state` holder contains only the language root. `chain.close()` deletes the capability, preventing new issuance without cancelling work already issued through the Chain. Closing is one-shot and does not publish an entered mutation; `enter` owns automatic closure and publication after its callback completes. The mutating setup and completion closures retain the gate resolver; the gate itself already lives at the public placement, so neither belongs in the Chain state. After setup, no entry-specific lifecycle state retains the source Chain, captured placement, or an import boundary; imported targets carry their ordinary direct boundary in metadata. Only `enter` is exported from `src/enter.js` for compiler/runtime use, not from the package entry module.
 
 ## Mutating entries
 
@@ -84,7 +84,7 @@ The gate is the ordering channel. Every later traversal of the entered path regi
 
 No gate is installed. The callback receives a read-only Chain rooted at the captured value. The value retains its own import status without boundary state on the Chain.
 
-Every tracked root increments `META.readEnterCount`, including one already protected by sharing or import. Primitives need neither a count nor metadata. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary mirror semantics.
+Every tracked root increments its metadata `readEnterCount`, including one already protected by sharing or import. Primitives need neither a count nor metadata. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary mirror semantics.
 
 The callback may wait before issuing commands because its returned Promise keeps the Chain active and its read count acquired. After it fulfills, read-only `enter` prevents new issuance and releases the exact value captured at acquisition exactly once. Already-issued commands remain valid through their captured mirrors. Completing one read entry cannot weaken another or any permanent protection; if no mutation or ownership escape occurred, completing the last read entry restores singly-owned write behavior.
 
@@ -230,7 +230,7 @@ src/property-versions.js
 test/enter.test.js
 ```
 
-`src/index.js` re-exports `Chain` from `src/chain.js`, preserving its package identity while allowing `enter.js` to create private Chains without importing the package entry module. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains only the language root in `value`; the host Chain owns its non-language issuance capability. A root value may be primitive, shared, or replaced, while a mirror may be absent or detached, so neither language META nor `PromiseMirror` owns this lifecycle.
+`src/index.js` re-exports `Chain` from `src/chain.js`, preserving its package identity while allowing `enter.js` to create private Chains without importing the package entry module. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains only the language root in `value`; the host Chain owns its non-language issuance capability. A root value may be primitive, shared, or replaced, while a mirror may be absent or detached, so neither identity metadata nor `PromiseMirror` owns this lifecycle.
 
 ### Chain capability and read entries
 
@@ -287,7 +287,7 @@ Property-version advancement fatally rejects `languageValues.isPromise(newValue)
 
 ## Verification
 
-Run all coverage under inline-Symbol and WeakMap metadata modes. Parameterize the main fixtures across root/nested paths, direct/pending ancestors, direct/Promise/Error/missing targets, and owned/shared/imported roots or roots with active read entries.
+Run the complete suite. Parameterize the main fixtures across root/nested paths, direct/pending ancestors, direct/Promise/Error/missing targets, and owned/shared/imported roots or roots with active read entries.
 
 Core lifecycle and access:
 

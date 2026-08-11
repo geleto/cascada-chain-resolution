@@ -7,7 +7,6 @@ import {
     getRefCounts,
     metaOf,
     registerDataClass,
-    STORE_META_IN_WEAKMAP,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -45,18 +44,6 @@ function assignThroughCopiedRoot(value) {
 }
 
 describe("subtree counters", () => {
-    it("keeps inline metadata visible after a node becomes non-extensible", () => {
-        const root = { bad: new Error("bad") }
-
-        buildRefIndex(root)
-        const counter = getRefCounter(root)
-        Object.preventExtensions(root)
-
-        expect(getRefCounter(root)).to.be(counter)
-        expectCounts(root, 0, 1)
-        verifyRefCounts(root)
-    })
-
     it("keeps non-ref-indexed writes on the normal mutation path", () => {
         const deferredValue = deferred()
         const root = { nested: {} }
@@ -359,12 +346,7 @@ describe("subtree counters", () => {
         const nextMeta = metaOf(next)
         const nextSymbols = Object.getOwnPropertySymbols(next)
 
-        if (STORE_META_IN_WEAKMAP) {
-            expect(nextSymbols.length).to.be(0)
-        } else {
-            expect(nextSymbols.length).to.be(1)
-            expect(next[nextSymbols[0]]).to.be(nextMeta)
-        }
+        expect(nextSymbols.length).to.be(0)
         expect(nextMeta).not.to.be(rootMeta)
         expect(getRefCounter(next)).to.be(nextMeta)
         verifyRefCounts(root, next)

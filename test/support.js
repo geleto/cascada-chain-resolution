@@ -85,10 +85,7 @@ export {
 
 export { buildRefIndex } from "../src/property-versions.js"
 
-export {
-    metaOf,
-    STORE_META_IN_WEAKMAP,
-} from "../src/meta.js"
+export { metaOf } from "../src/meta.js"
 
 export { verifyRefCounts } from "./verify-refcounts.js"
 

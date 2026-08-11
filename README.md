@@ -152,9 +152,9 @@ indexed counters and reverse-parent edges remain exact; the private Chain's
 host-state holder is not added to the language graph.
 
 A read-only `enter(..., false, onEntered)` installs no gate and invokes its
-callback only after capturing a protected root. Every tracked root
-increments `META.readEnterCount`, including values already protected by
-sharing or import; primitives require no metadata.
+callback only after capturing a protected root. Every tracked root increments
+its metadata `readEnterCount`, including values already protected by sharing
+or import; primitives require no metadata.
 An imported target already carries its own import status; a runtime-owned
 target does not inherit it from its containing path.
 Overlapping readers increment independently. Live mutation then uses
@@ -436,13 +436,10 @@ not ref-index, mark, or pin the branch.
 
 ## Metadata
 
-One META record per tracked node contains only the fields whose subsystems have
-become active: ownership marks, import state, Promise mirrors, cycle
-cuts, counters, and reverse parents.
-
-Inline mode stores runtime-owned META in an own non-enumerable Symbol property.
-Imported META and all META in WeakMap mode live externally. Both modes have
-identical behavior and run the complete test suite.
+One external metadata record per tracked node contains only the fields whose
+subsystems have become active: ownership marks, import state, Promise mirrors,
+cycle cuts, counters, and reverse parents. A single WeakMap stores every
+record, so bookkeeping never modifies the tracked identity.
 
 The detailed invariants and transitions live in
 [`counters-implementation.md`](docs/counters-implementation.md).

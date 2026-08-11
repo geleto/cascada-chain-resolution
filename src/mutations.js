@@ -61,9 +61,8 @@ function copyForWrite(source, pathKey, attachmentRoot) {
     attachmentRoot ??= destination
     const pathKeyString = String(pathKey)
 
-    // Copy only language-visible own enumerable string keys; META lives outside
-    // that surface (non-enumerable Symbol or WeakMap entry), so mirrors,
-    // counters, and marks never enter the copy. The source keeps its own marks.
+    // Copy only language-visible own enumerable string keys. Metadata lives
+    // outside that surface, so the source alone keeps its metadata.
     // Reused off-path children are marked shared because both copies retain
     // them. The path child is replaced or copied by the current walk.
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
