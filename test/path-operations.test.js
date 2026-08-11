@@ -1370,21 +1370,44 @@ describe("deletePath", () => {
     it("returns immediately when assign and delete suspend", async () => {
         const assigned = deferred()
         const deleted = deferred()
+        const failedAssignment = deferred()
+        const failedDeletion = deferred()
         const assignChain = new Chain({ branch: assigned.promise })
         const deleteChain = new Chain({ branch: deleted.promise })
+        const failedAssignChain = new Chain({ branch: failedAssignment.promise })
+        const failedDeleteChain = new Chain({ branch: failedDeletion.promise })
 
         const assignResult = assignPath(assignChain, ["branch", "x"], 1)
         const deleteResult = deletePath(deleteChain, ["branch", "x"])
+        const failedAssignResult = assignPath(
+            failedAssignChain,
+            ["branch", "x"],
+            1,
+        )
+        const failedDeleteResult = deletePath(
+            failedDeleteChain,
+            ["branch", "x"],
+        )
 
         expect(assignResult).to.be(undefined)
         expect(deleteResult).to.be(undefined)
+        expect(failedAssignResult).to.be(undefined)
+        expect(failedDeleteResult).to.be(undefined)
 
         assigned.resolve({})
         deleted.resolve({ x: 1 })
+        failedAssignment.reject("assignment failed")
+        failedDeletion.reject("deletion failed")
         await flushMicrotasks()
 
         expect(assignChain._state.value.branch).to.eql({ x: 1 })
         expect(deleteChain._state.value.branch).to.eql({})
+        expect(failedAssignChain._state.value.branch.message).to.be(
+            "assignment failed",
+        )
+        expect(failedDeleteChain._state.value.branch.message).to.be(
+            "deletion failed",
+        )
     })
 
     it("captures mutation paths before a pending root settles", async () => {

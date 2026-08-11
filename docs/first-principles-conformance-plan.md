@@ -105,39 +105,36 @@ Complete.
 
 ## Phase 2B: Separate API Promise transport and Error aggregation
 
-### Problem
+Complete.
 
-Host-returned and public-operation Promises currently pass through helpers that may make rejection fatal or turn it into fulfillment with an Error. Multi-Error construction is local to export and always wraps, so one Error and several Errors do not follow one language-wide rule.
+### Final design
 
-### Design
-
-Keep graph poisoning separate from API transport:
-
-- return a ready Error directly;
-- if an API already returned a Cascada operation Promise and that operation later becomes poisoned, reject it with the final Error or aggregate;
-- an operation that deliberately consumes Errors, such as `hasError` or `getErrors`, fulfills with its declared result instead;
-- ready `assignPath` and `deletePath` failures return their Error, while successful or pending calls return `undefined`; do not add result Promises merely to report a later failure; and
-- a Promise returned by supported data or host execution remains the API result with its original fulfillment and rejection behavior. Its rejection is an independent result failure and does not retroactively poison a successfully published mutation receiver.
-
-Keep three Promise meanings explicit while sharing the canonical FIFO machinery: graph-value rejection becomes poison, a trusted transition rejection is fatal, and a data/host result preserves its outcome. A Cascada operation completion applies that operation's outcome contract, rejecting only when its final result is poison. Remove `invokeObservationMethodWithExportedArgs`'s `resolveInitialValueOrPoison` wrapper from the host-result path. Keep `resolveOperationResultOrFatal` and `runOperationCallbackOrFatal` for trusted runtime transitions.
-
-A rejected public Promise is an intentional API result and follows ordinary host unhandled-rejection behavior if ignored. No separate internal or helper Promise may reject without being represented by that public result or handled by the runtime.
-
-Generalize `exportErrorOutcome` into the one Error-combination utility. It deduplicates top-level Error identities in the order supplied by the operation, returns one original unchanged, and creates an Error with an `.errors` array only for several. Do not flatten an existing Error's `.errors` payload or attach a classification brand: any Error, including a user-created one with that property, remains one terminal identity. The caller supplies the aggregate message, so export retains `export: branch contains errors`. Delete the export-local constructor.
+- Graph-value rejection becomes poison, trusted-transition rejection is fatal, and a data or host result preserves its Promise outcome. Canonical Promises are used only for ordered runtime continuations, not to convert results.
+- Return the produced result unchanged: a value or Error directly, and a Promise or thenable with its original fulfillment or rejection. If producing it was already pending, the existing operation Promise adopts it. Result rejection does not retroactively poison published state.
+- When settlement must admit a fulfilled host value or release a lease, register an internal FIFO observer without replacing the result.
+- Scope leases to actual pending use. Controlled argument preparation releases its receiver before invocation; a controlled method that continues reading its receiver owns that lease itself. An independent controlled result never prolongs receiver protection. Host-call resources remain active through a returned Promise only where host code may still retain them.
+- Ready `assignPath` and `deletePath` failures return their Error. Successful and suspended calls return `undefined`; later poison is published in the graph without a hidden result rejection.
+- Internal bookkeeping observers handle their own failures and leave no unhandled rejection.
+- `combineErrors` deduplicates top-level Error identities in supplied order, returns one unchanged, and combines several without flattening an existing `.errors` payload. Each caller supplies its message; export retains `export: branch contains errors`.
 
 ### Verification
 
 - A selected observation executable that throws synchronously returns its Error. A selected mutating executable that throws synchronously also poisons its receiver.
-- A rejected graph Promise poisons its captured property version. An operation poisoned by that transition rejects its public Promise, while `hasError`, `getErrors`, and other Error consumers fulfill normally.
+- A rejected graph Promise poisons its captured property version. An operation that observes that transition produces the Error, while `hasError`, `getErrors`, and other Error consumers produce their declared results.
 - A Promise returned by supported data or host execution preserves fulfillment and rejection and changes no graph state merely because it rejects or fulfills with an Error.
 - Ready `assignPath` and `deletePath` failures return an Error; successful and pending work returns `undefined`, with no hidden derived rejection.
-- Direct and delayed synchronous invocation failures follow the same graph outcome, returning a ready Error or rejecting an already-returned Cascada operation Promise respectively.
-- A consumed public rejection is the only rejection produced for one API result. Runtime-owned helper Promises do not create additional unhandled rejections.
-- One Error propagates unchanged. Several preserve every distinct top-level identity and their operation-defined order without flattening existing payloads.
+- Direct and delayed synchronous invocation failures produce the same graph and Error result.
+- Runtime bookkeeping observers do not replace the public result or create additional unhandled rejections.
+- Pending controlled arguments preserve the captured receiver until invocation. A captured independent result does not force later mutation to copy that receiver, while an ordered search that continues reading after a pending element does.
+- Whenever preparation supplies one Error to combination, it propagates unchanged; several preserve every distinct top-level identity and their supplied order without flattening existing payloads. Phase 8 completes discovery across mixed ready and pending call inputs.
 - Export and later consumers use the same Error-combination utility.
 - `enter` callback throws and callback-Promise rejection remain fatal trusted-transition failures.
 
-Update [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and [`export-error-set.md`](export-error-set.md).
+The complete suite passes 679 tests in both metadata modes, including the
+refcount oracle.
+
+[`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and
+[`export-error-set.md`](export-error-set.md) record the completed behavior.
 
 ---
 
@@ -362,9 +359,11 @@ Treat each opaque identity as one exact external resource. Its aliases deliberat
 
 Use one per-identity operation gate for property accesses and every host call that receives the identity as an exact receiver or argument. One host operation contributes at most one entry per opaque identity; a designated mutating receiver makes that entry a mutation, while every other use is an observation.
 
+Reserve an opaque identity's entry as soon as that identity is available from the operation's captured version, before further preparation or invocation. Thus `db.write(1); db.read()` reserves the read behind the write even when the write must still prepare input. If the receiver version itself is pending, its FIFO continuation reserves the resolved identity before later consumers of that version continue.
+
 - An observation waits for the preceding mutation, then runs without waiting for other observations in the same interval. It remains outstanding until its synchronous result completes or its returned Promise settles.
 - A mutation reserves its place as soon as its receiver identity is captured, waits for the preceding mutation and every earlier outstanding observation, and blocks every later operation until it completes. Argument or assigned-value preparation is part of that mutation, so later work cannot overtake a pending input.
-- Aliases use the same gate. Fulfillment, rejection, and a synchronous Error all finish the operation and release the work behind it without changing that operation's own API outcome.
+- Aliases use the same gate. A returned Promise keeps the entry outstanding because the host operation may still be using the identity. Fulfillment, rejection, and a synchronous Error all finish the operation and release the work behind it without changing that operation's own API outcome.
 
 Run ready work synchronously. Register waits through the ordinary Promise helpers at the operation's program position; do not turn an unblocked operation into a Promise, add a microtask hop, or build separate property and method queues.
 
@@ -398,7 +397,7 @@ Method dispatch still preserves the legacy capabilities of the tracked/untracked
 
 Implement the `AGENTS.md` capability table directly. Treat `run`'s Boolean as the requested operation mode, rename its internal `mutateArray` terminology without changing the positional API, and validate the mode only after classifying the resolved receiver and selected callable. A class or record function named `push` is not an Array mutator.
 
-Resolve the receiver and every explicit argument before deciding the poison result, even after finding an Error. Collect every distinct original Error consumed by their required preparation in receiver-then-argument order, independent of settlement order. Use one bucket for receiver resolution and selection, then one for each explicit argument; order within one composite input is not semantic. Return one Error unchanged; for several, return an Error whose `errors` array contains the originals. An Error nested inside composite data participates only when the receiver category's preparation or the operation's behavior reaches it.
+Prepare the receiver and each explicit argument only to the extent selected by the receiver category and method. Host calls export and therefore consume every argument; controlled methods leave retained payloads untouched. Continue all required preparation after finding an Error. Collect every distinct original Error consumed by that preparation in receiver-then-argument order, independent of settlement order. Use one bucket for receiver resolution and selection, then one for each consumed explicit argument; order within one composite input is not semantic. Return one Error unchanged; for several, return an Error whose `errors` array contains the originals. An Error nested inside composite data participates only when the receiver category's preparation or the operation's behavior reaches it.
 Use the Error-combination utility established in Phase 2B; call preparation only owns discovery order.
 
 Once the receiver version is available, method selection follows admitted type:
@@ -417,14 +416,16 @@ Prepare every call as one ordered transition:
 
 1. Capture the requested mode and the receiver, method-property, and argument versions at the operation's program position.
 2. Start receiver-version preparation first. Once that value is available and non-Error, capture its category and callable or accessor descriptor without invoking an executable getter. Then export one complete native Array snapshot for an override, use the registered-class observation snapshot or whole-unit mutation transition, reserve the Phase 7 opaque-identity entry, lease another exact observational receiver, or retain the controlled runtime receiver.
-3. Without waiting for a pending receiver, immediately start top-level resolution of every explicit argument from left to right and do not short-circuit after an Error. Once receiver selection determines the boundary, extend those captured values through the required deep preparation. Host-bound positions share one snapshot context that preserves aliases and cycles across the receiver and arguments and leases every exact runtime-managed identity that cannot be copied. Each exact opaque identity captured in those positions enters the Phase 7 gate once for the operation; a mutating receiver dominates its argument aliases. Controlled positions otherwise resolve only nested data their method consumes. Even a JavaScript method that ignores an argument position must wait for it and include its Errors.
-4. If preparation consumed any Errors, do not invoke an executable getter, callback, method, override, or mutator. An observation returns the single original or ordered aggregate and leaves its receiver unchanged. A mutation replaces its targeted receiver placement or root with that poison and exposes the same poison through the API. Return it when ready, or reject the already-returned operation Promise after all required inputs settle.
+3. Capture every explicit argument version from left to right when the call is issued. Once receiver selection determines the boundary, start every required argument preparation without short-circuiting after an Error. Host-bound positions consume every argument and share one snapshot context that preserves aliases and cycles across the receiver and arguments and leases every exact runtime-managed identity that cannot be copied. Each exact opaque identity captured in those positions enters the Phase 7 gate once for the operation; a mutating receiver dominates its argument aliases. Controlled positions resolve only data the method consumes; retained payloads remain exact Errors or Promises.
+4. If preparation consumed any Errors, do not invoke an executable getter, callback, method, override, or mutator. An observation returns the single original or ordered aggregate and leaves its receiver unchanged. A mutation replaces its targeted receiver placement or root with that poison and exposes the same poison through the API, directly or through pending operation work.
 5. Otherwise invoke the selected operation exactly once and synchronously. Controlled runtime code follows its method-specific logical transition. Host code follows its declared boundary. A synchronous mutating-function throw poisons the targeted receiver and becomes the API Error; an observation throw affects only the result. Reconcile a successful registered-class mutation's complete, ready final unit state through Phase 5's ordinary transitions. A returned Promise remains the API result with its original fulfillment and rejection. For a registered-class mutation the unit is already published and leased; for an opaque operation the Promise also keeps the Phase 7 gate entry outstanding until settlement.
-6. Admit every result immediately using known origins. A controlled runtime result retains its runtime origin and is not imported merely because it is a method result. Import new host identities and returned snapshot identities created for arguments, Array overrides, or registered-class observations. Preserve the origin of an exact receiver, opaque argument, or Function supplied without snapshotting and account for its additional owner. Preserve and share a registered-class mutation's whole receiver; copy out state still owned by the unit, or transfer state relinquished by the same transition. Release all operation leases and completed Phase 7 gate entries in this result transition.
+6. Complete the call using known origins. Admit a direct result before returning it. For a Promise result, register one internal FIFO observer that admits fulfillment and performs cleanup without replacing the result or changing rejection. A controlled runtime result retains its runtime origin and is not imported merely because it is a method result. Import new host identities and returned snapshot identities created for arguments, Array overrides, or registered-class observations. Preserve the origin of an exact receiver, opaque argument, or Function supplied without snapshotting and account for its additional owner. Preserve and share a registered-class mutation's whole receiver; copy out state still owned by the unit, or transfer state relinquished by the same transition. After direct admission, fulfilled admission, rejection, or synchronous failure, release exactly the leases and Phase 7 entries acquired for that call.
 
-The coordinator owns sequencing and snapshot identity; category dispatch owns receiver policy. Use one local operation state for copies, aliases, cycles, Errors, and waits. Do not add a persistent coordinator, queue, or parallel preparation path.
+The coordinator owns sequencing, snapshot identity, result admission, and cleanup; category dispatch owns receiver policy and contributes the leases or opaque entries its boundary requires. Use one local operation state for copies, aliases, cycles, Errors, waits, and idempotent release. Do not infer resource lifetime from a generic observation result or add a persistent coordinator, queue, or parallel preparation path.
 
 Controlled method preparation contributes every nested Error it actually reaches to the receiver bucket before dependent mutation or callback work runs. Structure-only methods do not inspect nested values merely to search for Errors.
+
+Controlled receiver protection ends when controlled code no longer needs that receiver, not whenever its independent result settles. Pending argument preparation leases the captured receiver until invocation. A method that returns pending work and later reads the receiver owns a method-local lease; a method whose result has already captured all required property versions owns none. Host calls instead retain only the category-specific resources supplied to them, through synchronous completion or returned-Promise settlement.
 
 Generalize the existing raw export walk into one multi-root host snapshot. Public export, Array override receivers, and host-call arguments share its copies map, visited set, readiness tree, and ordered per-input Error buckets, so aliases and cycles remain shared across receiver and argument positions and settlement order cannot reorder Errors. One operation-wide seen set removes duplicate Error identities without determining their order. Controlled runtime methods bypass this snapshot because they consume Cascada values and nested data selectively. Do not introduce another host graph copier.
 
@@ -436,7 +437,7 @@ Reject Array mutators in observation mode and mutations through Array overrides.
 
 Do not add sharing or lease guards that forbid otherwise safe ArrayView backing reuse. An Array imported directly or as registered-unit state never attaches or serves as mutable backing; it materializes or COWs first using the operation's carried unit context.
 
-Delete ordinary receiver selection through `requiresArrayMaterialization`, its `receiver === targetValue` lease inference, and `invokeObservationMethodWithExportedArgs`'s independent per-argument exports. Array overrides always export; exact observational receivers lease explicitly by category. Keep `requiresArrayMaterialization` where representation mutation and copy-on-write still need it.
+Delete ordinary receiver selection through `requiresArrayMaterialization`, its `receiver === targetValue` lease inference, and `invokeObservationMethodWithExportedArgs`'s independent per-argument exports. The coordinator becomes the sole collector of Errors reached by the selected preparation. Array overrides always export; exact observational receivers lease explicitly by category. Keep `requiresArrayMaterialization` where representation mutation and copy-on-write still need it.
 
 Preserve the host-call error boundary: a synchronous host-method, executable getter, or reflection throw becomes a ready Error result, and a mutating-function throw also poisons its targeted receiver. A returned Promise preserves its own fulfillment and rejection without retroactive graph poisoning. Property and value failures follow Phase 2A's publication rule; bookkeeping, impossible-transition, and declared host-contract violations remain fatal.
 
@@ -444,8 +445,8 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 
 - Every data type accepts only the methods and modes in `AGENTS.md`.
 - A ready call invokes and returns synchronously.
-- A call waits for every explicit argument even when an earlier input is already an Error.
-- One ready input Error is returned unchanged. A delayed poisoned call rejects its operation Promise with the single original or an aggregate containing every original Error in receiver-then-argument order, even when their Promises settle in another order.
+- A host call waits for every explicit argument, while a controlled method waits only for consumed inputs; neither short-circuits the preparation it requires after an earlier Error.
+- One consumed input Error is returned unchanged. Several produce an aggregate containing every original Error in receiver-then-argument order, including mixed ready and pending Errors even when their Promises settle in another order. Pending preparation fulfills with the same outcome.
 - A descriptor or non-callable selection Error combines ahead of argument Errors; an executable getter is not invoked after preparation is poisoned.
 - An Error obtained from the selected record property or executable getter propagates unchanged instead of being replaced by a non-callable validation Error.
 - Nested Errors remain data until required preparation or method behavior reaches them; every Error reached by one call appears once in that call's poison result.
@@ -454,6 +455,7 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - A record function waits for its captured property version, receives exported arguments, is not called with the record as `this`, and cannot observe record state; inherited and non-callable selections fail.
 - Array mutators requested as observations and mutations through Array overrides fail, while a same-named record or class function still follows its own category.
 - Supported standard Array methods retain controlled behavior and resolve only the properties each method consumes; unsupported native methods remain rejected unless explicitly overridden.
+- Retaining methods such as `push` store an Error or rejecting Promise as payload without poisoning the call; consuming methods such as `concat` propagate either as call poison. A retained rejection later poisons only its property version.
 - Array overrides receive complete exported native Arrays containing no ArrayView, unresolved language property, or original runtime-managed identity.
 - Receiver and argument preparation uses one operation state, preserves aliases and cycles across positions, and cannot be changed by later Cascada mutation.
 - Public export and host calls use one multi-root snapshot engine; receiver and argument aliases share one exported identity.
@@ -463,11 +465,12 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - Opaque observations and explicit mutations receive the exact identity and use Phase 7 ordering through every alias.
 - Opaque property accesses and method calls use the same gate; neither path can bypass the other.
 - A pending host result leases each exact traversable argument and keeps every opaque receiver or argument in the Phase 7 gate until settlement. Opaque observations may overlap, while later mutation waits for every preceding use; all leases and gate entries are released on fulfillment or rejection.
+- A controlled method with pending arguments sees its captured receiver, an independent controlled result does not extend the receiver lease, and a controlled method that continues reading after returning pending work protects only that remaining interval.
 - `Date.prototype.getTime` succeeds as an observation. `Date.prototype.setTime` succeeds only as an explicit mutation, and an observation-mode request leaves the Date unchanged.
 - Strings retain native observational behavior.
 - Record functions may observe read-only host state such as time, but cannot read or mutate their containing record or other Cascada graph state.
 - Own enumerable data state shadows non-record methods. Ordinary graph accessors remain absent and uninvoked; constructor, missing-getter, non-callable, and throwing supported descriptor/accessor cases retain their specified classification.
-- Receiver and top-level argument preparation begin together with receiver registration first. A ready receiver's callable or accessor is captured before category-specific argument preparation, without invoking executable host code early.
+- Receiver and argument versions are captured at issue time with receiver registration first. A ready receiver's callable or accessor is captured before category-specific argument preparation, without invoking executable host code early.
 - An Array override returning `this` yields its imported exported snapshot. A registered result may contain its whole receiver at any depth; that identity retains its runtime origin and the whole unit becomes shared.
 - A registered-class observation returning its receiver snapshot or state imports that snapshot rather than exposing the original unit.
 - A registered-state descendant returned while the unit still owns it becomes an independent copy. A descendant removed by the same mutation may transfer without copying.

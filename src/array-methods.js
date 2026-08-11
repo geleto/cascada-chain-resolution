@@ -135,7 +135,7 @@ function transferElement(element) {
 }
 
 function retainElement(element) {
-    return resolution.resolveOperationResultOrFatal(
+    return resolution.continueInternalPromiseOrFatal(
         transferElement(element),
         value => {
             metadata.markShared(value)
@@ -188,7 +188,7 @@ function prepareConcatArguments(args) {
             },
         )
     })
-    return resolution.continueOperationsUnlessPoison(
+    return resolution.continuePreparedValuesUnlessPoison(
         items,
         prepared => prepared,
     )
@@ -227,7 +227,7 @@ function prepareFlatArguments(args) {
 
 function flatRemap(thisValue, depth) {
     depth = Math.max(depth, 0)
-    return resolution.continueOperationUnlessPoison(
+    return resolution.continuePreparedValueUnlessPoison(
         prepareFlatArray(thisValue, depth),
         prepared => invocation.invokeDataFunction(
             Array.prototype.flat,
@@ -262,7 +262,7 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
         )
         if (languageValues.isError(prepared)) return prepared
         if (languageValues.isPromise(prepared)) {
-            pending.push(resolution.continueOperationUnlessPoison(
+            pending.push(resolution.continuePreparedValueUnlessPoison(
                 prepared,
                 value => ({ index, value }),
             ))
@@ -270,7 +270,7 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
             output[index] = prepared
         }
     }
-    return resolution.continueOperationsUnlessPoison(pending, entries => {
+    return resolution.continuePreparedValuesUnlessPoison(pending, entries => {
         for (const { index, value } of entries) {
             output[index] = value
         }
@@ -280,7 +280,7 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
 
 function prepareFlatProperty(origin, depth, ancestry) {
     if (depth === 0) return origin
-    return resolution.resolveOperationResultOrFatal(
+    return resolution.continueInternalPromiseOrFatal(
         propertyVersions.resolvePropertyValue(origin),
         value => {
             if (arrayViews.isLogicalArray(value)) {
@@ -296,7 +296,7 @@ function prepareSearchArguments(args) {
     const fromResult = args.length > 1
         ? conversion.toIntegerOrInfinity(args[1])
         : undefined
-    return resolution.continueOperationsUnlessPoison(
+    return resolution.continuePreparedValuesUnlessPoison(
         [searchResult, fromResult],
         ([searchValue, fromIndex]) => ({ searchValue, fromIndex }),
     )
@@ -350,7 +350,7 @@ function prepareAndSortAndRemap(
             continue
         }
         const valueResult = propertyVersions.resolvePropertyValue(origin)
-        records.push(resolution.resolveOperationResultOrFatal(
+        records.push(resolution.continueInternalPromiseOrFatal(
             valueResult,
             value => {
                 return {
@@ -360,17 +360,17 @@ function prepareAndSortAndRemap(
             },
         ))
     }
-    return resolution.resolveOperationResultsOrFatal(records, prepared => {
+    return resolution.continueInternalPromisesOrFatal(records, prepared => {
         const ready = comparator === undefined
             ? prepared.map(record => {
                 if (record.value === undefined) return record
-                return resolution.continueOperationUnlessPoison(
+                return resolution.continuePreparedValueUnlessPoison(
                     conversion.toStringValue(record.value),
                     key => ({ ...record, key }),
                 )
             })
             : prepared
-        return resolution.continueOperationsUnlessPoison(
+        return resolution.continuePreparedValuesUnlessPoison(
             ready,
             sortable => {
                 const compare = comparator === undefined
@@ -466,7 +466,7 @@ function includes(
             thisValue,
             key,
         )
-        resolution.resolveOperationResultOrFatal(
+        resolution.continueInternalPromiseOrFatal(
             valueResult,
             value => {
                 if (!matched && matches(value)) {
@@ -504,7 +504,16 @@ function orderedIndexSearch(
     let index = backwards
         ? normalizeBackwardStart(fromIndex, length)
         : normalizeForwardStart(fromIndex, length)
-    return next()
+    const result = next()
+    if (
+        !languageValues.isPromise(result) ||
+        !languageValues.isTracked(thisValue)
+    ) return result
+
+    // Other Array observations capture every property version before returning.
+    // An ordered search resumes scanning the receiver after a pending element.
+    const releaseLease = metadata.acquireReadLease(thisValue)
+    return resolution.observeResultPromise(result, releaseLease, releaseLease)
 
     function next() {
         while (index >= 0 && index < length) {
@@ -519,7 +528,7 @@ function orderedIndexSearch(
                 key,
             )
             if (languageValues.isPromise(value)) {
-                return resolution.resolveOperationResultOrFatal(
+                return resolution.continueInternalPromiseOrFatal(
                     propertyVersions.resolvePropertyValueAtKey(thisValue, key),
                     resolved => resolved === searchValue
                         ? current

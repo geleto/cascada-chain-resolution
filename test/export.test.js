@@ -29,6 +29,10 @@ import {
 
 function expectExportErrors(outcome, expected) {
     expect(outcome instanceof Error).to.be(true)
+    if (expected.length === 1) {
+        expect(outcome).to.be(expected[0])
+        return
+    }
     expect(outcome.message).to.be("export: branch contains errors")
     expect(outcome.errors.length).to.be(expected.length)
     for (const error of expected) {
@@ -385,7 +389,10 @@ describe("export", () => {
         expect(hasError(chain, [])).to.be(true)
         pending.resolve({ known, hidden })
 
-        const [outcome, errors] = await Promise.all([exported, errorsResult])
+        const [outcome, errors] = await Promise.all([
+            exported,
+            errorsResult,
+        ])
         expectExportErrors(outcome, [known, hidden])
         expect(errors.length).to.be(2)
         expect(errors.includes(known)).to.be(true)
@@ -429,8 +436,7 @@ describe("export", () => {
         expect(branch.opaque).to.be(opaque)
         expect(missing).to.be(undefined)
         expect(broken instanceof Error).to.be(true)
-        expect(broken.errors.length).to.be(1)
-        expect(broken.errors[0].message).to.be(
+        expect(broken.message).to.be(
             "Cannot access property through missing or primitive value",
         )
         expect(typeof waiting.then).to.be("function")
@@ -668,7 +674,10 @@ describe("export", () => {
         const first = exportValue(chain, [])
         const second = exportValue(chain, [])
         pending.resolve({ known, hidden })
-        const outcomes = await Promise.all([first, second])
+        const outcomes = await Promise.all([
+            first,
+            second,
+        ])
 
         expectExportErrors(outcomes[0], [known, hidden])
         expectExportErrors(outcomes[1], [known, hidden])

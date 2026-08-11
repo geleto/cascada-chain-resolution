@@ -9,7 +9,7 @@ import * as resolution from "./resolution.js"
 const stringConcat = String.prototype.concat
 
 function toStringValue(value, ancestry = undefined) {
-    return resolution.continueOperationUnlessPoison(
+    return resolution.continuePreparedValueUnlessPoison(
         toPrimitiveValue(value, ancestry),
         primitive => invocation.invokeDataFunction(
             stringConcat,
@@ -20,7 +20,7 @@ function toStringValue(value, ancestry = undefined) {
 }
 
 function toNumberValue(value) {
-    return resolution.continueOperationUnlessPoison(
+    return resolution.continuePreparedValueUnlessPoison(
         toPrimitiveValue(value),
         primitive => {
             try {
@@ -63,7 +63,7 @@ function toPrimitiveValue(value, ancestry) {
 }
 
 function toIntegerOrInfinity(value) {
-    return resolution.continueOperationUnlessPoison(
+    return resolution.continuePreparedValueUnlessPoison(
         toNumberValue(value),
         number => {
             if (Number.isNaN(number) || number === 0) return 0
@@ -94,7 +94,7 @@ function joinLogicalArray(
             conversions[index] = ""
             continue
         }
-        conversions[index] = resolution.continueOperationUnlessPoison(
+        conversions[index] = resolution.continuePreparedValueUnlessPoison(
             propertyVersions.resolvePropertyValueAtKey(array, key),
             value => {
                 if (value === undefined || value === null) return ""
@@ -102,7 +102,7 @@ function joinLogicalArray(
             },
         )
     }
-    return resolution.continueOperationsUnlessPoison(
+    return resolution.continuePreparedValuesUnlessPoison(
         conversions,
         values => invocation.invokeDataFunction(
             Array.prototype.join,

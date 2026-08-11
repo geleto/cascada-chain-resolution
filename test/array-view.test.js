@@ -207,7 +207,7 @@ describe("ArrayView", () => {
         expect(await errors).to.eql([error])
         const outcome = await exported
         expect(outcome instanceof Error).to.be(true)
-        expect(outcome.errors).to.eql([error])
+        expect(outcome).to.be(error)
         verifyRefCounts(view, source)
     })
 

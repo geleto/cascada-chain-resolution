@@ -25,7 +25,7 @@ import {
     setFatalErrorReporter,
     resolveInitialValueOrPoison,
     onLaterPromiseReady,
-    resolveOperationResultOrFatal,
+    continueInternalPromiseOrFatal,
     runFatal,
     buildRefIndex,
     getRefCounts,
@@ -47,7 +47,7 @@ import {
 } from "./support.js"
 
 describe("promise helpers", () => {
-    it("keeps initial and internal reactions in registration order", async () => {
+    it("keeps source reactions in registration order", async () => {
         const pending = deferred()
         const order = []
 
@@ -55,9 +55,9 @@ describe("promise helpers", () => {
             pending.promise,
             () => order.push("value 1"),
         )
-        resolveOperationResultOrFatal(
+        onLaterPromiseReady(
             pending.promise,
-            () => order.push("internal"),
+            () => order.push("later"),
         )
         resolveInitialValueOrPoison(
             pending.promise,
@@ -67,7 +67,7 @@ describe("promise helpers", () => {
         pending.resolve("done")
         await flushMicrotasks()
 
-        expect(order).to.eql(["value 1", "internal", "value 2"])
+        expect(order).to.eql(["value 1", "later", "value 2"])
     })
 
     it("canonicalizes callable thenables onto one FIFO reaction queue", async () => {
@@ -165,7 +165,7 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await resolveOperationResultOrFatal(
+            await continueInternalPromiseOrFatal(
                 resolveInitialValueOrPoison(
                     Promise.resolve("ok"),
                     () => reportFatalError(fatal),
@@ -191,7 +191,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await resolveOperationResultOrFatal(
+            await continueInternalPromiseOrFatal(
                 Promise.reject(fatal),
                 () => "ignored",
             )
@@ -237,7 +237,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            resolveOperationResultOrFatal(cleanWait.promise, () => false),
+            continueInternalPromiseOrFatal(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)
@@ -477,9 +477,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.value).to.be(value)
         expectCounts(root, 0, 1)
         expect(hasError(new Chain(root), [])).to.be(true)
-        expect(exportValue(new Chain(root), []).message).to.be(
-            "export: branch contains errors",
-        )
+        expect(exportValue(new Chain(root), [])).to.be(error)
         verifyRefCounts(root)
     })
 

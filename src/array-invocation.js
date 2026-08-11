@@ -15,10 +15,9 @@ function isArrayMethod(method) {
 
 function prepareArrayMethodArguments(method, args) {
     const definition = ARRAY_METHODS[method]
-    return args.find(languageValues.isError) ??
-        (definition.prepare
-            ? definition.prepare(args)
-            : prepareDeclaredArguments())
+    return definition.prepare
+        ? definition.prepare(args)
+        : prepareDeclaredArguments()
 
     function prepareDeclaredArguments() {
         const mask = definition.exportArgs ?? []
@@ -30,7 +29,7 @@ function prepareArrayMethodArguments(method, args) {
         for (let index = 0; index < fixedCount; index++) {
             if (mask[index]) {
                 results.push(
-                    resolution.continueOperationUnlessPoison(
+                    resolution.continuePreparedValueUnlessPoison(
                         exportArgument(args[index]),
                         value => {
                             prepared[index] = value
@@ -46,44 +45,42 @@ function prepareArrayMethodArguments(method, args) {
                 prepared[index] = args[index]
             }
         }
-        return resolution.continueOperationsUnlessPoison(
+        return resolution.continuePreparedValuesUnlessPoison(
             results,
             () => prepared,
         )
     }
 }
 
-function invokeArrayObservationMethod(thisValue, method, args) {
+// Callers resolve preparation first. These functions receive a direct prepared
+// value or Error, never a pending Promise.
+function invokeArrayObservationMethod(thisValue, method, preparedArgs) {
+    if (languageValues.isError(preparedArgs)) return preparedArgs
     const definition = ARRAY_METHODS[method]
-    return resolution.continueOperationUnlessPoison(
-        prepareArrayMethodArguments(method, args),
-        preparedArgs => {
-            if (definition.view) {
-                const view = definition.view(thisValue, preparedArgs)
-                if (view !== undefined) return view
-            }
-            if (definition.observe) {
-                return definition.observe(thisValue, preparedArgs)
-            }
+    if (definition.view) {
+        const view = definition.view(thisValue, preparedArgs)
+        if (view !== undefined) return view
+    }
+    if (definition.observe) {
+        return definition.observe(thisValue, preparedArgs)
+    }
 
-            let remap
-            if (definition.remap) {
-                remap = definition.remap(thisValue, preparedArgs)
-            } else {
-                remap = arrayRemaps.createRemap(thisValue)
-                const result = invocation.invokeDataFunction(
-                    Array.prototype[method],
-                    remap,
-                    preparedArgs,
-                )
-                // Mutators change the receiver remap; other methods return one.
-                if (!definition.mutationResult) remap = result
-            }
-            return resolution.continueOperationUnlessPoison(
-                remap,
-                arrayRemaps.createArrayFromRemap,
-            )
-        },
+    let remap
+    if (definition.remap) {
+        remap = definition.remap(thisValue, preparedArgs)
+    } else {
+        remap = arrayRemaps.createRemap(thisValue)
+        const result = invocation.invokeDataFunction(
+            Array.prototype[method],
+            remap,
+            preparedArgs,
+        )
+        // Mutators change the receiver remap; other methods return one.
+        if (!definition.mutationResult) remap = result
+    }
+    return resolution.continuePreparedValueUnlessPoison(
+        remap,
+        arrayRemaps.createArrayFromRemap,
     )
 }
 
@@ -109,7 +106,7 @@ function invokeArrayMutationMethod(
     }
 
     if (definition.remap) {
-        return resolution.continueOperationUnlessPoison(
+        return resolution.continuePreparedValueUnlessPoison(
             definition.remap(thisValue, preparedArguments),
             remap => finishMutation(remap, undefined, remap),
         )

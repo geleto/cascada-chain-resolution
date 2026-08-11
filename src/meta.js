@@ -77,6 +77,12 @@ function updateReadLease(value, change) {
     else meta.readEnterCount = next
 }
 
+function acquireReadLease(value) {
+    if (!languageValues.isTracked(value)) return () => {}
+    updateReadLease(value, 1)
+    return () => updateReadLease(value, -1)
+}
+
 function markShared(value) {
     if (languageValues.isPromise(value)) {
         errorUtils.reportFatalError(
@@ -99,6 +105,7 @@ function importBoundaryOf(value) {
 }
 
 export {
+    acquireReadLease,
     ensureMeta,
     markImported,
     markShared,
@@ -106,5 +113,4 @@ export {
     importBoundaryOf,
     requiresCopyOnWrite,
     STORE_META_IN_WEAKMAP,
-    updateReadLease,
 }

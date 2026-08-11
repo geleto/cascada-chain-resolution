@@ -71,9 +71,9 @@ export {
 } from "../src/error.js"
 
 export {
+    continueInternalPromiseOrFatal,
     resolveInitialValueOrPoison,
     onLaterPromiseReady,
-    resolveOperationResultOrFatal,
 } from "../src/resolution.js"
 
 export { runFatal } from "../src/error.js"

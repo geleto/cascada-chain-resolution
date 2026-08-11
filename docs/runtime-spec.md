@@ -66,11 +66,13 @@ calls. Each operation:
 3. registers all continuations needed at its current program position; and
 4. returns before unresolved data is available.
 
-Each callable thenable is canonicalized once to one native Promise. Reactions
-registered on that shared Promise run in registration order. Every consumer of
-a Promise-backed property registers through that property's captured mirror,
-so its synchronous continuation observes all earlier consumers and none issued
-later.
+A callable thenable is canonicalized once only when Cascada needs FIFO ordering
+among continuations on that source: to advance or consume a captured version,
+resume or finish a transition, or perform settlement bookkeeping before later
+Cascada use. Returning a result alone does not canonicalize or replace it.
+Every consumer of a Promise-backed property registers through that property's
+captured mirror, so its synchronous continuation observes all earlier
+consumers and none issued later.
 
 An operation describes the state at its own issue position. A later overwrite,
 deletion, or copy-on-write transition cannot change the result captured by an
@@ -218,8 +220,8 @@ The final target has operation-specific behavior:
 | --- | --- | --- | --- | --- | --- | --- |
 | Missing | Create it | No-op | `undefined` | `undefined` | `false` | `[]` |
 | Primitive or `null` | Replace it | Delete it | Return it | Return it | `false` | `[]` |
-| Error | Replace it | Delete it | Return it | Error outcome containing it | `true` | `[error]` |
-| Tracked | Replace it | Delete it | Return it | Copy or Error outcome | Query branch | Query branch |
+| Error | Replace it | Delete it | Return it | Return it | `true` | `[error]` |
+| Tracked | Replace it | Delete it | Return it | Copy, one Error, or combined Errors | Query branch | Query branch |
 
 An empty assignment path replaces the root. An empty deletion path replaces
 the root with `null`.
@@ -287,11 +289,14 @@ rejection-conversion failures, invariant violations, and rejected internal
 aggregate waits are never converted into language Error values.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
-The helpers share one canonical native Promise for each callable thenable.
+The FIFO helpers share one canonical native Promise for each ordered source.
 `resolveInitialValueOrPoison` converts the first data result,
 `onLaterPromiseReady` runs later property resolvers without reconverting
-rejection, and `resolveOperationResultOrFatal` owns internal operation and readiness failures. None adds a per-consumer proxy or second
-reaction.
+rejection, and `observeResultPromise` registers ordered admission or lease
+bookkeeping without replacing a result. `continueInternalPromiseOrFatal`
+continues an already-native intermediate wait directly and owns its rejection.
+An independent result Promise remains unchanged. None adds a per-consumer
+proxy.
 
 An object-like fatal value is reported once per identity even if it crosses
 several fatal wrapper boundaries.
@@ -303,13 +308,15 @@ several fatal wrapper boundaries.
 Assigns or replaces the target. It creates a fresh mirror when `value` is a
 Promise, performs copy-on-write or representation materialization where
 required, and updates existing refcounts. Success returns `undefined`; a ready
-failed transition publishes and returns its Error.
+failed transition publishes and returns its Error. A suspended call still
+returns `undefined`; any later failure is published only in the graph.
 
 ### `deletePath(chain, path)`
 
 Deletes the target or replaces the root with `null` for an empty path. Missing
 targets are no-ops. It updates existing refcounts. Success returns `undefined`;
-a ready failed transition publishes and returns its Error.
+a ready failed transition publishes and returns its Error. A suspended call
+still returns `undefined`; any later failure is published only in the graph.
 
 ### `lookupPath(chain, path)`
 
@@ -333,8 +340,7 @@ ordering, and result contracts.
 Returns host-ready data for the branch captured at its issue position.
 
 - Primitive and missing terminals return directly.
-- An Error terminal returns a fresh outer Error whose `.errors` array contains
-  that terminal identity.
+- One Error returns unchanged.
 - A successful result is always a metadata-free deep copy preserving arrays,
   holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
   Promise-property values.
@@ -342,15 +348,16 @@ Returns host-ready data for the branch captured at its issue position.
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
-- Failure returns a fresh outer Error with message
-  `export: branch contains errors`; `.errors` contains each reachable Error
-  identity once, and its order is not semantic.
+- Several Errors return an Error with message
+  `export: branch contains errors`; `.errors` contains each distinct reachable
+  Error identity, and its order is not semantic.
 - Cycle cuts alone do not prevent successful output.
 
-The result is direct when complete synchronously and otherwise a Promise.
-A synchronous reflection failure returns its Error. Other unexpected traversal
-failures and rejected internal readiness are fatal. Rejected data Promises are
-converted to ordinary Error values before collection.
+The result is direct when complete synchronously and otherwise a Promise. A
+pending export fulfills with its final single or combined Error. A synchronous
+reflection failure returns its Error. Other unexpected traversal failures and
+rejected internal readiness are fatal. Rejected data Promises are converted to
+ordinary Error values before collection.
 
 ### `hasError(chain, path)`
 
@@ -425,9 +432,13 @@ logical Cascada values before native invocation; locale methods likewise
 construct only the small native input their intrinsic inspects. An ordinary
 native observation receives its path-resolved receiver directly. `run` exports
 each native-bound argument after dispatch; controlled logical payloads retain
-their identity. A pending call holds a read lease, and an ArrayView receiver is
-shallow-materialized. The method remains trusted read-only, non-retaining, and
-free of external side effects.
+their identity. Pending controlled argument preparation leases its captured
+receiver only until invocation. A controlled method owns any lease required by
+later receiver reads, while an independent result Promise adds none. An
+ordinary native call retains an exact tracked receiver through its returned
+Promise, and an ArrayView receiver is shallow-materialized. The method remains
+trusted read-only, non-retaining beyond that result, and free of external side
+effects.
 
 A `sort` or `toSorted` comparator is the second executable-control
 exception. A direct or Promise-resolved callable remains outside the graph and

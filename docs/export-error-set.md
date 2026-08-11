@@ -8,11 +8,12 @@ branch. Cycles are valid data and remain cycles in successful output.
 
 ## Result channel
 
-Successful data returns directly. Failure returns a fresh non-thenable Error
-with message `export: branch contains errors`. Its `.errors` array contains
-every distinct reachable Error identity.
+Successful data returns directly. One Error returns unchanged. Several return
+an Error with message `export: branch contains errors`; its `.errors` array
+contains every distinct reachable Error identity.
 
-The outer Error distinguishes failure from a successful array value.
+When export had to return a Promise, that Promise fulfills with the same final
+Error outcome.
 
 ## One captured operation
 
@@ -39,7 +40,7 @@ collection-only mode begins.
 
 ## Direct terminals
 
-- A path-blocking or terminal Error produces a one-element Error outcome.
+- A path-blocking or terminal Error returns unchanged.
 - A primitive or missing terminal returns directly.
 - A tracked terminal begins the raw copy-or-collect walk.
 
@@ -91,10 +92,10 @@ The raw walk begins immediately:
 - an already resolved logical property is read synchronously and causes no
   duplicate Promise registration.
 
-Every callable thenable has one canonical native Promise. Every resolver uses
-one direct reaction on that shared Promise and completes its local work
-synchronously. Same-Promise FIFO order therefore makes earlier operations
-visible and excludes later ones.
+A callable thenable has one canonical native Promise when Cascada needs ordered
+runtime continuations on that source. Each such resolver completes its local
+work synchronously, so FIFO order includes earlier operations and excludes
+later ones.
 
 ## Ownership precondition
 
@@ -144,7 +145,7 @@ successful copy.
 The raw walk returns no readiness when its complete frontier is synchronous.
 Otherwise it returns one hierarchical `Promise.all` tree.
 
-Export consumes that tree with `resolveOperationResultOrFatal`:
+Export consumes internal readiness with `continueInternalPromiseOrFatal`:
 
 - rejected data Promises were converted to ordinary Error values by their
   first property resolver; and
@@ -213,5 +214,6 @@ At equivalent captured positions:
 hasError(chain, path) === (getErrors(chain, path).length > 0)
 ```
 
-Export succeeds exactly when both sides are false. Otherwise its `.errors`
-array contains the same distinct data Error identities, disregarding order.
+Export succeeds exactly when both sides are false. Otherwise it returns the
+single Error unchanged or combines the same distinct data Error identities,
+disregarding order.

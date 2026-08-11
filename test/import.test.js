@@ -2138,7 +2138,9 @@ describe("import", () => {
     })
 
     it("turns an already-rejected imported promise into an Error", async () => {
-        const value = await importValue(Promise.reject("already external boom"))
+        const value = await importValue(
+            Promise.reject("already external boom"),
+        )
 
         expect(value instanceof Error).to.be(true)
         expect(value.message).to.be("already external boom")

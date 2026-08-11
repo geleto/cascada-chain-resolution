@@ -47,7 +47,7 @@ function exportBranch(value) {
 
 function exportTrackedValue(value, preserveErrors) {
     if (languageValues.isError(value)) {
-        return preserveErrors ? value : exportErrorOutcome([value])
+        return preserveErrors ? value : combineExportErrors([value])
     }
     if (!languageValues.isTracked(value)) return value
 
@@ -58,17 +58,18 @@ function exportTrackedValue(value, preserveErrors) {
     const readiness = rawWalk.walkRawBranch(value, state)
     if (state.copying) output = state.copies.get(value)
     const finish = () => !preserveErrors && state.errors.size > 0
-        ? exportErrorOutcome(state.errors)
+        ? combineExportErrors(state.errors)
         : output
     return readiness
-        ? resolution.resolveOperationResultOrFatal(readiness, finish)
+        ? resolution.continueInternalPromiseOrFatal(readiness, finish)
         : finish()
 }
 
-function exportErrorOutcome(errors) {
-    const outcome = new Error("export: branch contains errors")
-    outcome.errors = [...errors]
-    return outcome
+function combineExportErrors(errors) {
+    return errorUtils.combineErrors(
+        errors,
+        "export: branch contains errors",
+    )
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
@@ -111,7 +112,7 @@ function searchForFirstError(value) {
     })
     return Promise.race([
         errorPromise,
-        resolution.resolveOperationResultOrFatal(readiness, () => false),
+        resolution.continueInternalPromiseOrFatal(readiness, () => false),
     ])
 }
 
@@ -135,7 +136,7 @@ function getErrors(chain, path) {
             readiness = collectFencedErrorWaits(value, strategy)
         }
         return readiness
-            ? resolution.resolveOperationResultOrFatal(
+            ? resolution.continueInternalPromiseOrFatal(
                 readiness,
                 () => [...errors],
             )

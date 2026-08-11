@@ -130,7 +130,7 @@ function transformValue(
     returnResultPromise,
 ) {
     let originalValue
-    const operation = resolution.resolveOperationResultsOrFatal(
+    const operation = resolution.continueInternalPromisesOrFatal(
         [value, preparedInput],
         values => recoverMutationFailure(
             () => {
@@ -140,7 +140,7 @@ function transformValue(
                     resolvedTargetValue,
                     attachmentRoot,
                 )
-                return resolution.resolveOperationResultOrFatal(
+                return resolution.continueInternalPromiseOrFatal(
                     transform(
                         resolvedTargetValue,
                         preparedArguments,
@@ -171,7 +171,7 @@ function transformValue(
         })
         : undefined
     publishValue(mutatedValueGate)
-    resolution.resolveOperationResultOrFatal(
+    resolution.continueInternalPromiseOrFatal(
         operation,
         outcome => {
             outcome = prepareMutationPublication(outcome)
@@ -286,7 +286,7 @@ function assignPath(chain, path, value) {
         _input,
         { mustPreserveValue },
     ) {
-        return resolution.continueOperationUnlessPoison(
+        return resolution.continuePreparedValueUnlessPoison(
             toArrayLength(value),
             length => {
                 let mutatedValue = array
@@ -315,7 +315,7 @@ function assignPath(chain, path, value) {
 }
 
 function toArrayLength(value) {
-    return resolution.continueOperationUnlessPoison(
+    return resolution.continuePreparedValueUnlessPoison(
         conversion.toNumberValue(value),
         number => {
             const length = number >>> 0

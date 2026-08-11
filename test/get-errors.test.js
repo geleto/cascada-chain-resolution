@@ -514,9 +514,14 @@ describe("getErrors", () => {
         let getErrorsSettled = false
 
         const exported = exportValue(chain, ["branch"])
-        exported.then(() => {
-            exportSettled = true
-        })
+        exported.then(
+            () => {
+                exportSettled = true
+            },
+            () => {
+                exportSettled = true
+            },
+        )
 
         const collected = getErrors(chain, ["branch"])
         collected.then(() => {
@@ -530,9 +535,12 @@ describe("getErrors", () => {
         expect(getErrorsSettled).to.be(false)
 
         slow.resolve("clean")
-        const [exportedValue, errors] = await Promise.all([exported, collected])
+        const [exportedValue, errors] = await Promise.all([
+            exported,
+            collected,
+        ])
 
-        expectErrors(exportedValue.errors, [error])
+        expect(exportedValue).to.be(error)
         expectErrors(errors, [error])
         verifyRefCounts(chain._state.value)
     })

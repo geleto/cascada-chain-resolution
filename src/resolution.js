@@ -3,9 +3,9 @@ import * as languageValues from "./language-values.js"
 
 const CANONICAL_PROMISES = new WeakMap()
 
-// Every callable thenable is canonicalized once. Runtime Promise consumers
-// register synchronously through this module so each source runs one FIFO
-// reaction batch. Raw .then belongs only here.
+// Canonicalize only sources whose runtime continuations require FIFO order.
+// Returning a result alone does not come through here. Raw .then belongs only
+// in this module.
 function getCanonicalPromise(promise) {
     let canonical = CANONICAL_PROMISES.get(promise)
     if (!canonical) {
@@ -37,38 +37,33 @@ function onLaterPromiseReady(promise, fn) {
     return getCanonicalPromise(promise).then(onReady, onReady)
 }
 
-// An operation result may be direct or promised. Its rejection is Fatal.
-function resolveOperationResultOrFatal(
+// Promise inputs must already be native runtime readiness or continuation
+// Promises whose source ordering is established. Never pass an uncanonicalized
+// graph or host thenable here. Continue directly; rejection is Fatal.
+function continueInternalPromiseOrFatal(
     result,
     onFulfilled,
-    onRejected,
 ) {
     if (!languageValues.isPromise(result)) {
         return errorUtils.runFatal(onFulfilled, result)
     }
-    return getCanonicalPromise(result).then(
+    return result.then(
         value => errorUtils.runFatal(onFulfilled, value),
-        reason => {
-            if (onRejected) errorUtils.runFatal(onRejected, reason)
-            return errorUtils.reportFatalError(reason)
-        },
+        errorUtils.reportFatalError,
     )
 }
 
-function runOperationCallbackOrFatal(
-    callback,
-    argument,
-    onFulfilled,
-    onRejected,
-) {
-    let result
-    try {
-        result = callback(argument)
-    } catch (error) {
-        errorUtils.runFatal(onRejected, error)
-        return errorUtils.reportFatalError(error)
-    }
-    return resolveOperationResultOrFatal(result, onFulfilled, onRejected)
+// Observe settlement for runtime bookkeeping without replacing the result.
+// Registering here ensures this work precedes later Cascada consumers of the
+// same thenable. The observer is internal, so consume any Fatal it has already
+// reported.
+function observeResultPromise(promise, onFulfilled, onRejected) {
+    const observer = getCanonicalPromise(promise).then(
+        value => errorUtils.runFatal(onFulfilled, value),
+        reason => errorUtils.runFatal(onRejected, reason),
+    )
+    observer.then(undefined, () => {})
+    return promise
 }
 
 function unlessPoison(onResolved) {
@@ -85,11 +80,11 @@ function continueInitialValueUnlessPoison(
     )
 }
 
-function continueOperationUnlessPoison(result, onResolved) {
-    return resolveOperationResultOrFatal(result, unlessPoison(onResolved))
+function continuePreparedValueUnlessPoison(result, onResolved) {
+    return continueInternalPromiseOrFatal(result, unlessPoison(onResolved))
 }
 
-function resolveOperationResultsOrFatal(results, onResolved) {
+function continueInternalPromisesOrFatal(results, onResolved) {
     const values = new Array(results.length)
     const waits = []
     for (let index = 0; index < results.length; index++) {
@@ -98,7 +93,7 @@ function resolveOperationResultsOrFatal(results, onResolved) {
             values[index] = result
             continue
         }
-        waits.push(resolveOperationResultOrFatal(
+        waits.push(continueInternalPromiseOrFatal(
             result,
             value => {
                 values[index] = value
@@ -106,26 +101,34 @@ function resolveOperationResultsOrFatal(results, onResolved) {
         ))
     }
     if (waits.length === 0) return errorUtils.runFatal(onResolved, values)
-    return resolveOperationResultOrFatal(
+    return continueInternalPromiseOrFatal(
         Promise.all(waits),
         () => onResolved(values),
     )
 }
 
-function continueOperationsUnlessPoison(results, onResolved) {
-    return resolveOperationResultsOrFatal(
+function continuePreparedValuesUnlessPoison(results, onResolved) {
+    return continueInternalPromisesOrFatal(
         results,
-        values => values.find(languageValues.isError) ?? onResolved(values),
+        values => {
+            const errors = values.filter(languageValues.isError)
+            return errors.length > 0
+                ? errorUtils.combineErrors(
+                    errors,
+                    "Operation received multiple Errors",
+                )
+                : onResolved(values)
+        },
     )
 }
 
 export {
     continueInitialValueUnlessPoison,
-    continueOperationUnlessPoison,
-    continueOperationsUnlessPoison,
+    continueInternalPromiseOrFatal,
+    continueInternalPromisesOrFatal,
+    continuePreparedValueUnlessPoison,
+    continuePreparedValuesUnlessPoison,
+    observeResultPromise,
     onLaterPromiseReady,
     resolveInitialValueOrPoison,
-    resolveOperationResultOrFatal,
-    resolveOperationResultsOrFatal,
-    runOperationCallbackOrFatal,
 }

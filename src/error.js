@@ -84,6 +84,15 @@ function pathAccessError() {
     return new Error("Cannot access property through missing or primitive value")
 }
 
+function combineErrors(errors, message) {
+    const distinct = [...new Set(errors)]
+    if (distinct.length < 2) return distinct[0]
+
+    const combined = new Error(message)
+    combined.errors = distinct
+    return combined
+}
+
 function toPoison(reason) {
     if (Error.isError(reason)) return reason
     const type = typeof reason
@@ -95,6 +104,7 @@ function toPoison(reason) {
 }
 
 export {
+    combineErrors,
     pathAccessError,
     recoverUserCodeFailure,
     reportFatalError,

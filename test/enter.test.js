@@ -2,7 +2,7 @@ import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
 import { Chain as InternalChain } from "../src/chain.js"
-import { updateReadLease } from "../src/meta.js"
+import { acquireReadLease } from "../src/meta.js"
 import {
     Chain,
     assignPath,
@@ -40,7 +40,9 @@ describe("enter", () => {
     })
 
     it("rejects a read lease underflow", () => {
-        const failure = thrownBy(() => updateReadLease({}, -1))
+        const release = acquireReadLease({})
+        release()
+        const failure = thrownBy(release)
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Read lease underflow")
@@ -355,6 +357,7 @@ describe("enter", () => {
             return completion.promise
         })
 
+        expect(result).to.be(completion.promise)
         assignPath(entered, ["value"], 2)
         completion.resolve("done")
         expect(await result).to.be("done")

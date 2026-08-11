@@ -115,10 +115,9 @@ describe("Chain root state", () => {
             const lookupError = lookupPath(new Chain(primitive), ["child"])
             const exportError = exportValue(new Chain(primitive), ["child"])
             const errors = getErrors(new Chain(primitive), ["child"])
-            expect(exportError.errors.length).to.be(1)
             for (const error of [
                 lookupError,
-                exportError.errors[0],
+                exportError,
                 ...errors,
             ]) {
                 expect(error instanceof Error).to.be(true)

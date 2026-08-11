@@ -110,7 +110,7 @@ An operation is one issued command. A transition is one synchronous unit of work
 
 - Process all available work synchronously and in program order.
 - Register on a pending property only when, and exactly where, the operation depends on it. Structural discovery alone does not make the operation a consumer.
-- Route every registration through the Promise helpers; raw `.then` belongs only inside them. The helpers canonicalize each callable thenable once, and every continuation registers directly on that native Promise.
+- Canonicalize a thenable only when Cascada needs FIFO ordering among continuations on that source: to advance or consume a captured version, resume or finish a transition, or run settlement bookkeeping before later Cascada use. Route every such registration through the Promise helpers; raw `.then` belongs only inside them. Returning a Promise or thenable alone never canonicalizes or replaces it.
 - Registrations made before settlement form one FIFO batch. Each continuation completes its transition synchronously; never split one with `await`, another `.then`, `queueMicrotask`, or lazy registration.
 
 If three operations reach one pending property, the first resolver publishes `V`, the second observes `V` and may leave `V'`, and the third observes `V'`. Each sees every earlier effect and no later one.
@@ -134,13 +134,14 @@ Cascada distinguishes two kinds of failure:
 - Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there; entering it through `run` does not make adjacent runtime code user-controlled. A physical representation limitation is not itself a failure: materialize and retry, and treat failure of that required handling as fatal. Never convert between poisoning and fatal failure.
 - A poisoned observation affects only the operation outcome. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and is also the operation outcome.
 - For a mutating call, that value is the receiver placement or root; poisoned preparation or a synchronous mutator throw poisons it. Poison confined to an independent result does not affect a successfully mutated receiver.
-- Ready poison is returned as an Error. If Cascada returned its own operation Promise while preparation or a graph transition was pending, later poison rejects it. An operation whose contract consumes Errors instead completes with its normal result. A Promise returned by supported data or host execution remains the API result unchanged; its rejection does not poison the graph.
+- Return the produced result unchanged: a value or Error directly, and a Promise or thenable with its original fulfillment or rejection. If producing the result was already pending, the existing operation Promise adopts it. An operation whose contract consumes Errors instead produces its normal result; result rejection does not poison the graph.
 - No consumed Error is lost: one propagates unchanged; several produce an Error whose `errors` array contains every distinct original. Call errors follow receiver-then-argument order, independent of settlement; errors within one composite input are unordered.
 - Poisoning an opaque mutation replaces its targeted Cascada placement or root but cannot undo effects already made to the exact external identity; other aliases still observe them.
 
 ## Execution Boundaries
 
-- Prepare every call's receiver and explicit arguments for Error propagation. Continue after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors participate only when required preparation or behavior reaches them. A controlled method otherwise resolves only the nested data it consumes and may return an internal representation such as an ArrayView.
+- Prepare each call input only to the extent its selected boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors participate only when required preparation or behavior reaches them.
+- Host calls export and therefore consume every explicit argument. A controlled method resolves only the data it consumes; a payload it merely retains stays unchanged, including an Error or Promise. A rejected retained Promise poisons its eventual placement, not the call that retained it. Controlled methods may return internal representations such as ArrayViews.
 - A controlled callback receives only the logical values its method declares and must be synchronous, read-only, and non-retaining.
 - Invoke a record function without the record as its receiver. It may use explicit arguments and read-only host state, but must not read or mutate its containing record or other Cascada graph state.
 - Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit and preserve every logical value.

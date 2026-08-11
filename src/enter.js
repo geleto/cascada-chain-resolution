@@ -25,18 +25,38 @@ function enter(chain, path, mutates, onEntered) {
     })
 }
 
+function runEnteredCallback(callback, entered, onFulfilled, onRejected) {
+    let result
+    try {
+        result = callback(entered)
+    } catch (error) {
+        errorUtils.runFatal(onRejected, error)
+        return errorUtils.reportFatalError(error)
+    }
+    if (!languageValues.isPromise(result)) {
+        return errorUtils.runFatal(onFulfilled, result)
+    }
+    return resolution.observeResultPromise(
+        result,
+        onFulfilled,
+        reason => {
+            onRejected(reason)
+            errorUtils.reportFatalError(reason)
+        },
+    )
+}
+
 function enterReadOnly(chain, path, onEntered) {
     return walkObservationPath(chain, path, value => {
         if (languageValues.isError(value)) return value
 
         const entered = new Chain(value, false)
-        const leaseValue = languageValues.isTracked(value) ? value : undefined
-        if (leaseValue) metadata.updateReadLease(leaseValue, 1)
+        const releaseLease = metadata.acquireReadLease(value)
         const close = () => {
             entered.close()
-            if (leaseValue) metadata.updateReadLease(leaseValue, -1)
+            releaseLease()
         }
-        return resolution.runOperationCallbackOrFatal(
+        return runEnteredCallback(
             onEntered,
             entered,
             result => {
@@ -112,7 +132,7 @@ function enterMutating(chain, path, onEntered) {
             const close = () => {
                 entered.close()
             }
-            return resolution.runOperationCallbackOrFatal(
+            return runEnteredCallback(
                 onEntered,
                 entered,
                 result => {

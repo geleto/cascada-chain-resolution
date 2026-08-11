@@ -61,28 +61,6 @@ function runObservation(chain, path, method, args) {
         },
     )
 
-    function finishObservation(leaseValue, operationResult, admitResult) {
-        if (!languageValues.isPromise(operationResult)) {
-            return admitResult(operationResult)
-        }
-        if (!languageValues.isTracked(leaseValue)) {
-            return resolution.resolveOperationResultOrFatal(
-                operationResult,
-                admitResult,
-            )
-        }
-
-        metadata.updateReadLease(leaseValue, 1)
-        return resolution.resolveOperationResultOrFatal(
-            operationResult,
-            value => {
-                metadata.updateReadLease(leaseValue, -1)
-                return admitResult(value)
-            },
-            () => metadata.updateReadLease(leaseValue, -1),
-        )
-    }
-
     function invokeSelectedMethod(targetValue) {
         const isArray = arrayViews.isLogicalArray(targetValue)
         if (isArray && arrayInvocation.isArrayMutator(method)) {
@@ -153,14 +131,30 @@ function runObservation(chain, path, method, args) {
     }
 
     function invokeIntrinsicArray(targetValue) {
-        return finishObservation(
-            targetValue,
-            arrayInvocation.invokeArrayObservationMethod(
+        const preparedArgs = arrayInvocation.prepareArrayMethodArguments(
+            method,
+            args,
+        )
+        if (!languageValues.isPromise(preparedArgs)) {
+            return arrayInvocation.invokeArrayObservationMethod(
                 targetValue,
                 method,
-                args,
-            ),
-            keepResult,
+                preparedArgs,
+            )
+        }
+
+        const releaseLease = metadata.acquireReadLease(targetValue)
+        return resolution.continueInternalPromiseOrFatal(
+            preparedArgs,
+            readyArgs => {
+                const result = arrayInvocation.invokeArrayObservationMethod(
+                    targetValue,
+                    method,
+                    readyArgs,
+                )
+                releaseLease()
+                return result
+            },
         )
     }
 
@@ -175,26 +169,34 @@ function runObservation(chain, path, method, args) {
         const leaseValue = receiver === targetValue
             ? targetValue
             : undefined
-        return finishObservation(
-            leaseValue,
-            invocation.invokeObservationMethodWithExportedArgs(
-                callable,
-                receiver,
-                args,
-            ),
-            importOrdinaryResult,
+        const result = invocation.invokeObservationMethodWithExportedArgs(
+            callable,
+            receiver,
+            args,
         )
-    }
+        if (!languageValues.isPromise(result)) {
+            importOrdinaryResult(result)
+            return result
+        }
 
-    function keepResult(value) {
-        return value
+        const releaseLease = metadata.acquireReadLease(leaseValue)
+        return resolution.observeResultPromise(
+            result,
+            value => {
+                try {
+                    importOrdinaryResult(value)
+                } finally {
+                    releaseLease()
+                }
+            },
+            releaseLease,
+        )
     }
 
     function importOrdinaryResult(value) {
         if (languageValues.isTracked(value)) {
             imports.import(value, "run method result")
         }
-        return value
     }
 }
 

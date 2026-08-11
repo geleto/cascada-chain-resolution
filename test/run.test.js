@@ -286,6 +286,188 @@ describe("run", () => {
         expect(source).to.eql({ value: 2 })
     })
 
+    it("returns a delayed synchronous observation failure", async () => {
+        const argument = deferred()
+        const failure = new Error("delayed observation failed")
+        const source = { value: 2 }
+        Object.defineProperty(source, "fail", {
+            value() {
+                throw failure
+            },
+        })
+        const chain = new Chain(source)
+
+        const result = run(
+            chain,
+            [],
+            "fail",
+            false,
+            argument.promise,
+        )
+        argument.resolve("ready")
+
+        expect(await result).to.be(failure)
+        expect(chain._state.value).to.be(source)
+        expect(source).to.eql({ value: 2 })
+        expect(metaOf(source).readEnterCount).to.be(undefined)
+    })
+
+    it("preserves host result Promise outcomes", async () => {
+        const returned = deferred()
+        const argument = deferred()
+        const fulfilledError = new Error("fulfilled Error")
+        const rejectedError = new Error("rejected Error")
+        const source = {}
+        const chain = new Chain(source)
+        Object.defineProperty(source, "result", {
+            value() {
+                return returned.promise
+            },
+        })
+
+        const fulfilled = run(
+            chain,
+            [],
+            "result",
+            false,
+            argument.promise,
+        )
+        argument.resolve("ready")
+        returned.resolve(fulfilledError)
+        expect(await fulfilled).to.be(fulfilledError)
+
+        const ready = run(
+            chain,
+            [],
+            "result",
+            false,
+        )
+        expect(ready).to.be(returned.promise)
+        expect(await ready).to.be(fulfilledError)
+
+        const returnedData = deferred()
+        const hostValue = {}
+        Object.defineProperty(source, "data", {
+            value() {
+                return returnedData.promise
+            },
+        })
+        const dataResult = run(chain, [], "data", false)
+        expect(dataResult).to.be(returnedData.promise)
+        returnedData.resolve(hostValue)
+        expect(await dataResult).to.be(hostValue)
+        expect(metaOf(hostValue).importBoundary).not.to.be(undefined)
+
+        const failed = deferred()
+        Object.defineProperty(source, "failure", {
+            value() {
+                return failed.promise
+            },
+        })
+        const rejection = run(chain, [], "failure", false)
+        failed.reject(rejectedError)
+        let rejected
+        try {
+            await rejection
+        } catch (error) {
+            rejected = error
+        }
+        expect(rejected).to.be(rejectedError)
+        expect(chain._state.value).to.be(source)
+    })
+
+    it("leases a receiver through a pending host result", async () => {
+        const completion = deferred()
+        const source = { value: 1 }
+        Object.defineProperty(source, "laterRead", {
+            value() {
+                return completion.promise.then(() => this.value)
+            },
+        })
+        const chain = new Chain(source)
+
+        const result = run(chain, [], "laterRead", false)
+        assignPath(chain, ["value"], 2)
+        completion.resolve()
+
+        expect(await result).to.be(1)
+        expect(source.value).to.be(1)
+        expect(chain._state.value).not.to.be(source)
+        expect(chain._state.value.value).to.be(2)
+        expect(metaOf(source).readEnterCount).to.be(undefined)
+    })
+
+    it("admits a promised host receiver alias before releasing its lease", async () => {
+        const completion = deferred()
+        const source = { value: 1 }
+        Object.defineProperty(source, "laterSelf", {
+            value() {
+                return completion.promise.then(() => this)
+            },
+        })
+        const chain = new Chain(source)
+
+        const result = run(chain, [], "laterSelf", false)
+        completion.resolve()
+        const alias = await result
+        assignPath(chain, ["value"], 2)
+
+        expect(alias).to.be(source)
+        expect(alias.value).to.be(1)
+        expect(chain._state.value).not.to.be(source)
+        expect(chain._state.value.value).to.be(2)
+        expect(metaOf(source).readEnterCount).to.be(undefined)
+    })
+
+    it("returns host result thenables unchanged", async () => {
+        const completion = deferred()
+        const thenable = {
+            then: completion.promise.then.bind(completion.promise),
+        }
+        let returned = thenable
+        const source = { value: 1 }
+        Object.defineProperty(source, "result", {
+            value() {
+                return returned
+            },
+        })
+        const chain = new Chain(source)
+
+        const result = run(chain, [], "result", false)
+
+        expect(result).to.be(thenable)
+        completion.resolve("done")
+        expect(await result).to.be("done")
+
+        const failed = deferred()
+        const failure = new Error("failed")
+        const rejectedThenable = {
+            then: failed.promise.then.bind(failed.promise),
+        }
+        returned = rejectedThenable
+
+        const rejectedResult = run(
+            chain,
+            [],
+            "result",
+            false,
+        )
+        expect(rejectedResult).to.be(rejectedThenable)
+        failed.reject(failure)
+        let rejection
+        try {
+            await rejectedResult
+        } catch (error) {
+            rejection = error
+        }
+        expect(rejection).to.be(failure)
+
+        assignPath(chain, ["value"], 2)
+        expect(chain._state.value).to.be(source)
+        expect(source.value).to.be(2)
+        expect(metaOf(source).readEnterCount).to.be(undefined)
+    })
+
     it("does not discover nested Promises read by ordinary methods", () => {
         const pending = deferred()
         const registrationCount = countPromiseRegistrations(pending.promise)
@@ -703,7 +885,7 @@ describe("run", () => {
         expect(received.error).to.be(direct)
     })
 
-    it("applies Error poisoning to every resolved argument", async () => {
+    it("poisons only arguments consumed by an Array method", async () => {
         const direct = new Error("direct")
         const rejected = new Error("rejected")
         const pending = deferred()
@@ -725,14 +907,30 @@ describe("run", () => {
             2,
         )).to.be(direct)
 
-        const pushed = run(
-            new Chain([1]),
+        const pushed = new Chain([1])
+        expect(run(
+            pushed,
             [],
             "push",
-            false,
+            true,
             direct,
-        )
-        expect(pushed).to.be(direct)
+        )).to.be(2)
+        expect(pushed._state.value).to.eql([1, direct])
+
+        const pushedPromise = deferred()
+        const promisedPush = new Chain([])
+        expect(run(
+            promisedPush,
+            [],
+            "push",
+            true,
+            pushedPromise.promise,
+        )).to.be(1)
+        pushedPromise.reject(rejected)
+        await flushMicrotasks()
+        expect(readPath(promisedPush, ["0"])).to.be(rejected)
+        expect(promisedPush._state.value).not.to.be(rejected)
+
         expect(run(
             new Chain([direct]),
             [],
@@ -769,7 +967,78 @@ describe("run", () => {
             true,
             direct,
         )).to.be(direct)
+        expect(run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            direct,
+        )).to.be(direct)
         expect(mutation._state.value).to.be(direct)
+
+        const mutationPending = deferred()
+        const delayedMutation = new Chain([1, 2])
+        const mutationResult = run(
+            delayedMutation,
+            [],
+            "copyWithin",
+            true,
+            mutationPending.promise,
+        )
+        mutationPending.reject(rejected)
+        expect(await mutationResult).to.be(rejected)
+        expect(delayedMutation._state.value).to.be(rejected)
+    })
+
+    it("combines distinct argument Errors in argument order", async () => {
+        const firstPending = deferred()
+        const secondPending = deferred()
+        const first = new Error("first")
+        const second = new Error("second")
+        const nested = new Error("nested")
+        second.errors = [nested]
+
+        const delayed = run(
+            new Chain([1, 2]),
+            [],
+            "copyWithin",
+            false,
+            firstPending.promise,
+            secondPending.promise,
+            firstPending.promise,
+        )
+        secondPending.reject(second)
+        firstPending.reject(first)
+
+        const combined = await delayed
+        expect(combined.errors).to.eql([first, second])
+        expect(combined.errors.includes(nested)).to.be(false)
+
+        const ready = run(
+            new Chain([1, 2]),
+            [],
+            "copyWithin",
+            false,
+            first,
+            second,
+            first,
+        )
+        expect(ready.errors).to.eql([first, second])
+
+        const concatPending = deferred()
+        const concatResult = run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            first,
+            concatPending.promise,
+            first,
+        )
+        concatPending.reject(second)
+        const concatCombined = await concatResult
+        expect(concatCombined.errors).to.eql([first, second])
+        expect(concatCombined.errors.includes(nested)).to.be(false)
     })
 
     it("prepares flat candidates concurrently without resolving retained values", async () => {
@@ -1337,6 +1606,34 @@ describe("run", () => {
         expect(await result).to.be(7)
     })
 
+    it("does not lease an Array for an independent controlled result", async () => {
+        const selected = deferred()
+        const array = [selected.promise]
+        const chain = new Chain(array)
+
+        const result = run(chain, [], "at", false, 0)
+        assignPath(chain, ["0"], 2)
+
+        expect(chain._state.value).to.be(array)
+        selected.resolve(1)
+        expect(await result).to.be(1)
+        expect(array).to.eql([2])
+    })
+
+    it("leases an Array only while controlled arguments resolve", async () => {
+        const index = deferred()
+        const array = [1]
+        const chain = new Chain(array)
+
+        const result = run(chain, [], "at", false, index.promise)
+        assignPath(chain, ["0"], 2)
+
+        index.resolve(0)
+        expect(await result).to.be(1)
+        expect(array).to.eql([1])
+        expect(chain._state.value).to.eql([2])
+    })
+
     it("searches Promise elements with method-specific early stopping", async () => {
         const first = deferred()
         const later = deferred()
@@ -1347,6 +1644,34 @@ describe("run", () => {
         first.resolve(1)
         expect(await index).to.be(1)
         later.resolve(3)
+    })
+
+    it("leases an Array while ordered search continues", async () => {
+        const first = deferred()
+        const array = [first.promise, 2]
+        const chain = new Chain(array)
+
+        const result = run(chain, [], "indexOf", false, 2)
+        assignPath(chain, ["1"], 3)
+
+        first.resolve(1)
+        expect(await result).to.be(1)
+        expect(array).to.eql([1, 2])
+        expect(chain._state.value).to.eql([1, 3])
+    })
+
+    it("does not lease an Array after includes captures its versions", async () => {
+        const first = deferred()
+        const array = [first.promise, 2]
+        const chain = new Chain(array)
+
+        const result = run(chain, [], "includes", false, 1)
+        assignPath(chain, ["1"], 1)
+
+        expect(chain._state.value).to.be(array)
+        first.resolve(0)
+        expect(await result).to.be(false)
+        expect(array).to.eql([0, 1])
     })
 
     it("does not register Promise elements beyond an indexOf match", async () => {
@@ -1943,6 +2268,28 @@ describe("run", () => {
         })
 
         expect(result).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect(source).to.eql([2, 1])
+    })
+
+    it("returns a delayed comparator throw after poisoning mutation", async () => {
+        const comparator = deferred()
+        const failure = new Error("delayed comparison failed")
+        const source = [2, 1]
+        const chain = new Chain(source)
+
+        const result = run(
+            chain,
+            [],
+            "sort",
+            true,
+            comparator.promise,
+        )
+        comparator.resolve(() => {
+            throw failure
+        })
+
+        expect(await result).to.be(failure)
         expect(chain._state.value).to.be(failure)
         expect(source).to.eql([2, 1])
     })

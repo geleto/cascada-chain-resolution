@@ -27,14 +27,12 @@ function invokeObservationMethodWithExportedArgs(
     thisValue,
     args,
 ) {
-    return resolution.continueOperationsUnlessPoison(
+    return resolution.continuePreparedValuesUnlessPoison(
         args.map(exportArgument),
-        preparedArgs => resolution.resolveInitialValueOrPoison(
-            invokeDataFunction(
-                callable,
-                thisValue,
-                preparedArgs,
-            ),
+        preparedArgs => invokeDataFunction(
+            callable,
+            thisValue,
+            preparedArgs,
         ),
     )
 }

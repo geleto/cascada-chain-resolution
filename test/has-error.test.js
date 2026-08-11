@@ -472,9 +472,14 @@ describe("hasError", () => {
         let exported = false
 
         const exportedBranch = exportValue(new Chain(root), ["branch"])
-        exportedBranch.then(() => {
-            exported = true
-        })
+        exportedBranch.then(
+            () => {
+                exported = true
+            },
+            () => {
+                exported = true
+            },
+        )
         const branchHasError = hasError(new Chain(root), ["branch"])
 
         bad.reject("bad")
