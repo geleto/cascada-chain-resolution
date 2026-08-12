@@ -67,10 +67,10 @@ An owner is a placement or retained result that can independently preserve a log
 
 ### Protection
 
-- A COW-managed value is protected exactly while it is shared permanently or leased temporarily; otherwise it may be mutated in place. Explicit opaque mutations are ordered effects on an external identity, not COW.
+- An ordinary COW-managed value is protected exactly while it is shared permanently or leased temporarily; otherwise it may be mutated in place. Explicit opaque mutations are ordered effects on an external identity, not COW.
 - Reading without retaining or exposing an identity adds no owner. Any transition that retains the same identity for another owner marks its ownership unit shared; this includes import, lookup, COW reuse, and retained operation results. An ownership transfer instead ends the previous ownership.
 - Import adds no other COW condition.
-- An instance of a registered class and its complete semantic state graph form one atomic ownership and COW unit. Its internal placements are not separate owners; sharing and leasing protect the whole unit.
+- An instance of a registered class and its complete semantic state graph form one atomic ownership unit; its internal placements are not separate owners.
 
 ### Copying and representation
 
@@ -80,7 +80,7 @@ A logical value is what Cascada operations observe; its physical representation 
 - Ordinary COW builds the mutating owner's new value by shallow-copying each level from the first protected container down to the changed spot, applying the change there, and reusing every off-path value unchanged. It copies a path, not a graph.
 - Each new path node starts runtime-owned, unshared, and unleased. It is populated by reading each property's logical value, never its physical slot, and carries no source metadata. Reused children retain their identity facts and become shared when both owners retain them.
 - Writability, configurability, and extensibility constrain physical storage, not the logical graph. When an otherwise valid transition cannot use its current representation—including because an own non-placement occupies the key—materialize normal runtime-owned storage that omits non-placements and retry. Copy outward along the path as needed to publish it; never invoke or redefine the blocker.
-- A protected registered-class unit is copied as a complete prototype-preserving state graph rather than as a property path; the new unit starts exclusively owned.
+- Every registered-class mutation prepares a fresh, exclusively owned, prototype-preserving copy of the complete unit rather than copying a property path or mutating the published unit.
 - Runtime-owned representation may be reused or changed whenever every protected logical value remains unchanged. Array backing may therefore grow visibly through a raw host reference while fixed ArrayView bounds preserve every Cascada value. Copy or materialize only when reuse would change a protected value.
 - Aliasing, multiplicity, and cycles within one ownership unit do not create more owners or by themselves require copying.
 - Assignments capture the right-hand value before mutating the left-hand path. In `x.self = x`, the lookup retains the original `x` for the new placement and marks it shared; the assignment therefore copies `x` and stores the original in the copy: `newX.self === oldX`, not `newX.self === newX`. Ordinary Cascada assignments link to captured versions rather than create new graph cycles; new cycles may enter through imported host data or supported host execution inside a registered-class whole-unit mutation.
@@ -99,7 +99,7 @@ A logical value is what Cascada operations observe; its physical representation 
 
 Pending work either needs to keep observing a stable value while later mutation continues, or leaves a mutation unfinished so later access must wait. These require different mechanisms:
 
-- A **lease** is temporary COW protection for an exact logical value still in use. It never delays later operations; a later mutation copies, and the lease ends when its operation completes or fails. Read-only entry and pending host use of an exact runtime-managed value require leases.
+- A **lease** is temporary COW protection for an exact logical value still in use when later mutation may reuse its representation. It never delays later operations; a later mutation copies, and the lease ends when its operation completes or fails. Read-only entry and pending host use of an exact ordinary COW-managed value require leases. Registered units need none because every mutation publishes a fresh unit.
 - A **transition gate** preserves ordering when a mutation cannot publish its final value synchronously. It does not preserve the old published value; it makes the placement's next version pending and keeps the captured or working value private. Install an ordinary Promise version there before leaving the transition. Later operations wait at that placement and resume through its normal mirror and FIFO continuations. A ready mutation needs no gate.
 - Ordinary pending mutation preparation gates only its final target while required values such as its receiver or arguments resolve. A mutating `enter` deliberately keeps the entered transition open, so its gate remains until the callback and its private commands finish.
 - A Promise that represents only an independent operation result is not a transition gate. Publish completed state immediately; lease it only if the pending result may still retain or observe it.
@@ -158,13 +158,14 @@ If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` 
 ## Instances of Registered Classes
 
 - Register a class before any of its instances is admitted. Registration is not retroactive, and an identity's classification is fixed at first admission.
+- Registered execution is selected from the prototype captured at admission and its inherited class chain up to, but excluding, `Object.prototype`.
 - All semantic state must be rooted in own enumerable string-keyed data properties. Private fields, internal slots, Symbols, non-enumerables, closure state, and own accessor descriptors are invalid state. Class-defined accessors may observe or mutate only the enumerable state and follow the same whole-unit boundaries as methods.
-- Semantic state may contain primitives, Errors, records, logical Arrays, and nested instances of registered classes. A Promise contributes only its resolved value. Functions and opaque identities are invalid state because whole-unit copying cannot isolate them.
+- Semantic state may contain primitives, Errors, records, logical Arrays, and nested instances of registered classes. A Promise contributes only its resolved value. Functions and opaque identities are invalid because whole-unit copying cannot isolate them: a language transition introducing one poisons the unit, while invalid initial or imported state and state left by registered host code are fatal.
 - A runtime-owned instance exclusively owns the complete graph rooted in its semantic properties; nested instances of registered classes belong to the enclosing unit. No state identity may have an owner outside that unit.
-- Import, sharing, leasing, and copy-on-write apply to the whole unit. Assigning state copies or transfers it into the unit; extracting a descendant copies it out unless the unit relinquishes it; returning the receiver shares the whole unit.
+- Import and sharing are recorded only on the unit root. Mutable values crossing the unit boundary are copied, and unit membership is never transferred or retagged. Retaining the root marks the whole unit shared, but every mutation still publishes a fresh unit.
 - A property write or method mutation transitions the instance at its containing placement. Pending preparation installs the ordinary Promise version there, so later unit access resumes in FIFO order; mutation poisoning replaces that whole-unit placement.
 - Before host invocation, settle and export the complete state graph into a host-ready, prototype-preserving receiver. An observation receives an isolated snapshot and is side-effect-free; a mutation receives an exclusively owned unit version.
-- A mutation completes and reconciles all state changes synchronously through the ordinary property-version transitions before publication. It must return with admissible, fully resolved state and may neither install Promise state nor continue mutating asynchronously. A returned Promise delays only the independent result: publish the unit before waiting, then lease it until settlement because the result may retain the receiver or its state.
+- A mutation completes and reconciles all state changes synchronously through the ordinary property-version transitions before publication. It must return with admissible, fully resolved state and may neither install Promise state nor continue mutating asynchronously. A returned Promise delays only the independent result; the unit is published first, and later mutations use fresh units rather than leasing it.
 - A whole-unit copy preserves prototype, aliases, and cycles, but shares no mutable semantic-state identity with the preserved unit. Error identities remain immutable terminal data.
 
 ## Work Bounds
