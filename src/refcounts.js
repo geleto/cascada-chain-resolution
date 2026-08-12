@@ -25,7 +25,7 @@ function hasCycleCut(parent, key) {
 }
 
 function setCycleCut(parent, key) {
-    updateCycleCut(metadata.ensureMeta(parent), key, true)
+    updateCycleCut(metadata.requireMeta(parent), key, true)
 }
 
 function getRefCounts(value) {
@@ -34,7 +34,7 @@ function getRefCounts(value) {
     let cycleCutCount = 0
     if (languageValues.isPromise(value)) promiseCount = 1
     else if (languageValues.isError(value)) errorCount = 1
-    else if (languageValues.isTracked(value)) {
+    else if (languageValues.isTraversable(value)) {
         const counter = getRequiredRefCounter(value)
         promiseCount = counter.promiseCount
         errorCount = counter.errorCount
@@ -54,7 +54,7 @@ function getValueRefState(child, cycleCut = false) {
         cycleCutCount = 1
     } else if (languageValues.isError(child)) {
         errorCount = 1
-    } else if (languageValues.isTracked(child)) {
+    } else if (languageValues.isTraversable(child)) {
         childCounter = getRequiredRefCounter(child)
         promiseCount = childCounter.promiseCount
         errorCount = childCounter.errorCount
@@ -64,7 +64,9 @@ function getValueRefState(child, cycleCut = false) {
 }
 
 function buildRefIndex(value, preparePromiseProperty) {
-    if (!languageValues.isTracked(value) || getRefCounter(value)) return value
+    if (!languageValues.isTraversable(value) || getRefCounter(value)) {
+        return value
+    }
 
     const cutTargetQueue = []
     indexComponent(value, cutTargetQueue, preparePromiseProperty)
@@ -88,10 +90,10 @@ function indexValueIfSourceIndexed(source, value, preparePromiseProperty) {
 // Index the prospective child, then ask the maintained reverse-edge DAG
 // whether adding parent -> child would close a cycle.
 function prepareRefEdge(parent, parentCounter, child, preparePromiseProperty) {
-    if (!languageValues.isTracked(child)) return false
+    if (!languageValues.isTraversable(child)) return false
     buildRefIndex(child, preparePromiseProperty)
 
-    const visited = new WeakSet()
+    const visited = new Set()
     return reachesChild(parent, parentCounter)
 
     function reachesChild(node, counter) {
@@ -113,7 +115,7 @@ function indexComponent(
     node,
     cutTargetQueue,
     preparePromiseProperty,
-    active = new WeakSet(),
+    active = new Set(),
 ) {
     const existing = getRefCounter(node)
     if (existing) return existing
@@ -142,7 +144,7 @@ function indexComponent(
             errorCount++
             continue
         }
-        if (!languageValues.isTracked(child)) continue
+        if (!languageValues.isTraversable(child)) continue
 
         if (active.has(child)) {
             setCycleCut(node, key)
@@ -164,7 +166,7 @@ function indexComponent(
     }
     active.delete(node)
 
-    const counter = metadata.ensureMeta(node)
+    const counter = metadata.requireMeta(node)
     counter.promiseCount = promiseCount
     counter.errorCount = errorCount
     counter.cycleCutCount = cycleCutCount
@@ -213,7 +215,7 @@ function prepareLiveEdge(
 }
 
 function addParentEdge(value, parent) {
-    if (!languageValues.isTracked(value)) return
+    if (!languageValues.isTraversable(value)) return
     addParentCounterEdge(getRequiredRefCounter(value), parent)
 }
 

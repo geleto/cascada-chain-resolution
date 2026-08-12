@@ -1,59 +1,137 @@
 import * as errorUtils from "./error.js"
+import * as metadata from "./meta.js"
 
-const DATA_CLASS_PROTOTYPES = new WeakSet()
+const {
+    TYPE_ARRAY,
+    TYPE_ERROR,
+    TYPE_FUNCTION,
+    TYPE_OPAQUE,
+    TYPE_PRIMITIVE,
+    TYPE_RECORD,
+    TYPE_REGISTERED,
+    TYPE_STRING,
+} = metadata
 
-function registerDataClass(DataClass) {
-    DATA_CLASS_PROTOTYPES.add(DataClass.prototype)
-}
+const CAPTURED_THENABLES = new WeakMap()
 
 function isPromise(value) {
-    return (
-        value !== null &&
-        (typeof value === "object" || typeof value === "function") &&
-        typeof errorUtils.runUserCode(() => value.then) === "function"
+    return !isError(value) && capturedThenableOf(value) !== undefined
+}
+
+// Reading `then` may invoke a getter or Proxy trap. The first sample
+// permanently fixes this object's Promise behavior; acquisition failure is a
+// rejection, and a callable is captured exactly once.
+function capturedThenableOf(value) {
+    if (!metadata.isObjectLike(value)) return undefined
+    if (metadata.metaOf(value)) return undefined
+
+    let captured = CAPTURED_THENABLES.get(value)
+    if (captured) return captured
+    captured = errorUtils.catchUserCodeFailure(
+        () => {
+            const then = errorUtils.runUserCode(() => value.then)
+            return typeof then === "function" ? { then } : undefined
+        },
+        rejection => ({
+            then: (_resolve, reject) => reject(rejection),
+        }),
     )
+    if (!captured) return undefined
+    CAPTURED_THENABLES.set(value, captured)
+    return captured
+}
+
+function continuePromise(value, onFulfilled, onRejected) {
+    const captured = capturedThenableOf(value)
+    if (!captured) {
+        errorUtils.reportFatalError(
+            new TypeError("Value is not a captured Promise"),
+        )
+    }
+
+    // A local native Promise already is the FIFO queue. Register directly so
+    // its reaction keeps that queue position; failed registration runs the
+    // rejection continuation synchronously because no reaction was installed.
+    if (
+        captured.canonical === undefined &&
+        captured.then === Promise.prototype.then
+    ) {
+        return errorUtils.catchUserCodeFailure(
+            () => errorUtils.runUserCode(() => Reflect.apply(
+                captured.then,
+                value,
+                [onFulfilled, onRejected],
+            )),
+            onRejected,
+        )
+    }
+    if (captured.canonical === undefined) {
+        const { promise, resolve, reject } = Promise.withResolvers()
+        captured.canonical = promise
+        errorUtils.catchUserCodeFailure(
+            () => errorUtils.runUserCode(() => Reflect.apply(
+                captured.then,
+                value,
+                [resolve, reject],
+            )),
+            reject,
+        )
+    }
+    return captured.canonical.then(onFulfilled, onRejected)
 }
 
 function isError(value) {
-    return Error.isError(value)
-}
-
-function isTracked(value) {
-    if (
-        value === null ||
-        typeof value !== "object" ||
-        isPromise(value) ||
-        isError(value)
-    ) return false
-    if (Array.isArray(value)) return true
-
-    const prototype = errorUtils.runUserCode(
-        () => Object.getPrototypeOf(value),
+    const type = metadata.metaOf(value)?.type
+    return type === TYPE_ERROR || (
+        type === undefined && Error.isError(value)
     )
-    return prototype === null ||
-        prototype === Object.prototype ||
-        isPlainObjectPrototype(prototype) ||
-        DATA_CLASS_PROTOTYPES.has(prototype)
 }
 
-function isPlainObjectPrototype(prototype) {
-    if (prototype === null) return false
-    if (errorUtils.runUserCode(
-        () => Object.getPrototypeOf(prototype),
-    ) !== null) return false
-    const constructor = errorUtils.runUserCode(
-        () => Object.getOwnPropertyDescriptor(prototype, "constructor"),
-    )?.value
-    return typeof constructor === "function" &&
-        errorUtils.runUserCode(
-            () => Object.getOwnPropertyDescriptor(constructor, "prototype"),
-        )?.value === prototype
+function admitValue(value) {
+    if (!isPromise(value)) admitReadyValue(value)
+}
+
+// Thenability has already been sampled at this program position. Ready-value
+// admission always preserves the value and creates complete typed metadata.
+function admitReadyValue(value, knownType = undefined) {
+    if (metadata.isObjectLike(value)) {
+        metadata.getOrCreateMeta(value, knownType)
+    }
+}
+
+function typeOf(value) {
+    if (typeof value === "string") return TYPE_STRING
+    if (!metadata.isObjectLike(value)) return TYPE_PRIMITIVE
+    const type = metadata.metaOf(value)?.type
+    if (type === undefined) {
+        errorUtils.reportFatalError(
+            new TypeError("Value was not admitted"),
+        )
+    }
+    return type
+}
+
+function isTraversable(value) {
+    const type = metadata.metaOf(value)?.type
+    return type === TYPE_ARRAY ||
+        type === TYPE_RECORD ||
+        type === TYPE_REGISTERED
 }
 
 export {
+    TYPE_ARRAY,
+    TYPE_ERROR,
+    TYPE_FUNCTION,
+    TYPE_OPAQUE,
+    TYPE_PRIMITIVE,
+    TYPE_RECORD,
+    TYPE_REGISTERED,
+    TYPE_STRING,
+    admitReadyValue,
+    admitValue,
+    continuePromise,
     isError,
-    isPlainObjectPrototype,
     isPromise,
-    isTracked,
-    registerDataClass,
+    isTraversable,
+    typeOf,
 }

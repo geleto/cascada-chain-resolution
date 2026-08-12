@@ -16,7 +16,7 @@ function verifyRefCounts(...roots) {
 }
 
 function verifyReachable(node, seen) {
-    if (!languageValues.isTracked(node) || seen.has(node)) return
+    if (!languageValues.isTraversable(node) || seen.has(node)) return
     seen.add(node)
     verifyCycleCuts(node)
 
@@ -30,7 +30,7 @@ function verifyReachable(node, seen) {
         for (const key of languageProperties.enumerableLanguageKeys(node)) {
             const state = recountProperty(node, key)
             const { child } = state
-            if (languageValues.isTracked(child) && !getRefCounter(child)) {
+            if (languageValues.isTraversable(child) && !getRefCounter(child)) {
                 fatal("Ref-indexed parent contains non-ref-indexed child")
             }
 
@@ -55,13 +55,13 @@ function verifyReachable(node, seen) {
         verifyStoredParentEdges(node)
     }
 
-    // Cuts omit parent edges and count propagation, but every tracked target in
-    // a ref-indexed raw graph still owns an independent counter.
+    // Cuts omit parent edges and count propagation, but every traversable
+    // target in a ref-indexed raw graph still owns an independent counter.
     for (const key of languageProperties.enumerableLanguageKeys(node)) {
         const child = readPropertyForRecount(node, key)
         if (
             counter &&
-            languageValues.isTracked(child) &&
+            languageValues.isTraversable(child) &&
             !getRefCounter(child)
         ) {
             fatal("Ref-indexed parent contains non-ref-indexed child")
@@ -93,10 +93,10 @@ function verifyCycleCuts(node) {
             )) {
                 fatal("Pending Promise property also has a cycle cut")
             }
-            if (!languageValues.isTracked(
+            if (!languageValues.isTraversable(
                 languageProperties.readLanguageProperty(node, key),
             )) {
-                fatal("Cycle cut must contain a tracked value")
+                fatal("Cycle cut must contain a traversable value")
             }
         }
     }
@@ -126,8 +126,8 @@ function verifyCycleCuts(node) {
 function verifyStoredParentEdges(node) {
     const counter = getRefCounter(node)
     for (const [parent, count] of counter.parents) {
-        if (!languageValues.isTracked(parent)) {
-            fatal("Parent edge points to untracked parent")
+        if (!languageValues.isTraversable(parent)) {
+            fatal("Parent edge points to a non-traversable value")
         }
         if (!getRefCounter(parent)) {
             fatal("Parent edge points to non-ref-indexed parent")
@@ -177,7 +177,7 @@ function recountProperty(node, key) {
         cycleCutCount = 1
     } else if (languageValues.isError(child)) {
         errorCount = 1
-    } else if (languageValues.isTracked(child)) {
+    } else if (languageValues.isTraversable(child)) {
         const counter = getRefCounter(child)
         if (counter) {
             promiseCount = counter.promiseCount

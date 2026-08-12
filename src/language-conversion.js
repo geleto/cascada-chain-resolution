@@ -3,6 +3,7 @@ import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
+import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
@@ -53,11 +54,15 @@ function toPrimitiveValue(value, ancestry) {
                     typeof resolved !== "function"
                 )
             ) return resolved
-            if (!languageValues.isTracked(resolved)) return conversionError()
-            const prototype = errorUtils.runUserCode(
-                () => Object.getPrototypeOf(resolved),
-            )
-            return prototype === null ? conversionError() : "[object Object]"
+            const type = languageValues.typeOf(resolved)
+            if (type === languageValues.TYPE_RECORD) {
+                return metadata.requireMeta(resolved).prototype === null
+                    ? conversionError()
+                    : "[object Object]"
+            }
+            return type === languageValues.TYPE_REGISTERED
+                ? "[object Object]"
+                : conversionError()
         },
     )
 }

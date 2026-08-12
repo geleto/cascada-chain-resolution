@@ -14,7 +14,7 @@ function getPromiseMirror(owner, key) {
 }
 
 function installPromiseMirror(owner, key, mirror) {
-    const meta = metadata.ensureMeta(owner)
+    const meta = metadata.requireMeta(owner)
     meta.mirrors ??= Object.create(null)
     meta.mirrors[key] = mirror
 }
@@ -121,6 +121,7 @@ function getOrCreatePromiseMirror(owner, key, promise) {
 function assignProperty(owner, key, value, retained = false) {
     languageProperties.assertCanSetLanguageProperty(owner, key)
     const isPromise = languageValues.isPromise(value)
+    if (!isPromise) languageValues.admitReadyValue(value)
     if (retained && !isPromise) metadata.markShared(value)
     const mirror = isPromise
         ? createInitialPromiseMirror(
@@ -145,7 +146,14 @@ function createInitialPromiseMirror(
 ) {
     const mirror = { value: promise }
     resolution.resolveInitialValueOrPoison(promise, value => {
-        publishValue(owner, key, mirror, value, importBoundary, retained)
+        publishPromiseValue(
+            owner,
+            key,
+            mirror,
+            value,
+            importBoundary,
+            retained,
+        )
     })
     return mirror
 }
@@ -162,7 +170,7 @@ function placePromiseVersion(
     // same-parent promotion, which does not replace their physical edge.
     const mirror = { value: promise }
     continuePromiseVersion(promise, sourceMirror, value => {
-        publishValue(owner, key, mirror, value, undefined, retained)
+        publishPromiseValue(owner, key, mirror, value, undefined, retained)
     })
     replaceProperty(owner, key, mirror, promise)
     return mirror
@@ -175,19 +183,20 @@ function promoteImportedPromiseVersion(owner, key, promise) {
     const importBoundary = metadata.importBoundaryOf(owner)
     const mirror = { value: promise }
     continuePromiseVersion(promise, sourceMirror, value => {
-        publishValue(owner, key, mirror, value, importBoundary)
+        publishPromiseValue(owner, key, mirror, value, importBoundary)
     })
-    // Promotion changes only the version's publication policy. The imported
-    // property and its refcount edge remain physically and logically pending.
+    // Promotion changes only the Promise version's publication policy. The
+    // imported property and its refcount edge remain physically and logically
+    // pending.
     installPromiseMirror(owner, key, mirror)
     return mirror
 }
 
 function advancePromiseVersion(owner, key, mirror, value) {
-    publishValue(owner, key, mirror, value)
+    publishPromiseValue(owner, key, mirror, value)
 }
 
-function publishValue(
+function publishPromiseValue(
     owner,
     key,
     mirror,
@@ -195,83 +204,71 @@ function publishValue(
     importBoundary,
     retained = false,
 ) {
-    const planPublication = nextValue => preparePromisePublication(
-        owner,
-        key,
-        mirror,
-        nextValue,
-        importBoundary === undefined,
-    )
-    const publication = errorUtils.recoverUserCodeFailure(
-        () => planPublication(
-            preparePublishedValue(value, importBoundary, retained),
-        ),
-        planPublication,
-    )
-    errorUtils.recoverUserCodeFailure(
-        () => commitPublication(publication),
-        failure => commitPublication(preparePromisePublication(
-            owner,
-            key,
-            mirror,
-            failure,
-            false,
-        )),
-    )
-
-    function commitPublication(prepared) {
-        value = prepared.value
-        if (!prepared.commit) {
-            mirror.value = value
-            return
-        }
-        prepared.commit(() => {
-            if (prepared.writeBack) {
-                languageProperties.writeLanguageProperty(owner, key, value)
+    value = errorUtils.catchUserCodeFailure(
+        () => {
+            if (languageValues.isPromise(value)) {
+                errorUtils.reportFatalError(
+                    new Error("A Promise requires a fresh property version"),
+                )
             }
-            mirror.value = value
-        })
-    }
-}
+            languageValues.admitReadyValue(value)
+            if (retained) metadata.markShared(value)
+            if (importBoundary) {
+                prepareImportedResult(value, importBoundary)
+            }
+            return value
+        },
+        admitFailure,
+    )
+    const writeBack = importBoundary === undefined
+    const commit = errorUtils.catchUserCodeFailure(
+        () => prepareCommit(value, writeBack),
+        failure => {
+            value = admitFailure(failure)
+            return prepareCommit(value, writeBack)
+        },
+    )
+    errorUtils.catchUserCodeFailure(
+        commit,
+        failure => prepareCommit(admitFailure(failure), false)(),
+    )
 
-function preparePromisePublication(owner, key, mirror, value, writeBack) {
-    // A runtime-owned version can be displaced when its owner is later imported.
-    // Check liveness before applying this version's captured writeback policy.
-    if (!isLivePromiseMirror(owner, key, mirror)) return { value }
-    if (writeBack) {
-        const failure = errorUtils.recoverUserCodeFailure(
-            () => languageProperties.assertCanPublishPromiseProperty(
+    function admitFailure(failure) {
+        languageValues.admitReadyValue(failure)
+        return failure
+    }
+
+    function prepareCommit(nextValue, canWriteBack) {
+        // A runtime-owned version can be displaced when its owner is later
+        // imported. A detached version survives only in its mirror.
+        if (!isLivePromiseMirror(owner, key, mirror)) {
+            return () => {
+                mirror.value = nextValue
+            }
+        }
+        if (canWriteBack) {
+            const failure = errorUtils.catchUserCodeFailure(
+                () => languageProperties.assertCanPublishPromiseProperty(
+                    owner,
+                    key,
+                ),
+                admitFailure,
+            )
+            if (failure) {
+                nextValue = failure
+                canWriteBack = false
+            }
+        }
+        const commitEdge = preparePropertyCommit(owner, key, nextValue)
+        return () => commitEdge(() => {
+            if (canWriteBack) languageProperties.writeLanguageProperty(
                 owner,
                 key,
-            ),
-            failure => failure,
-        )
-        if (failure) {
-            value = failure
-            writeBack = false
-        }
+                nextValue,
+            )
+            mirror.value = nextValue
+        })
     }
-    return {
-        value,
-        writeBack,
-        commit: preparePropertyCommit(owner, key, value),
-    }
-}
-
-function preparePublishedValue(value, importBoundary, retained) {
-    if (languageValues.isPromise(value)) {
-        errorUtils.reportFatalError(
-            new Error("A Promise requires a fresh property version"),
-        )
-    }
-    if (retained) metadata.markShared(value)
-    if (importBoundary) {
-        prepareImportedResult(value, importBoundary)
-    } else if (!retained) {
-        // Classify the settled value at its publication boundary.
-        languageValues.isTracked(value)
-    }
-    return value
 }
 
 function replaceProperty(owner, key, mirror, value) {
@@ -340,6 +337,7 @@ function commitArrayLength(array, length) {
     function setLength(nextLength) {
         if (view) view.setLength(nextLength)
         else {
+            // A logical Array may be a Proxy whose set trap runs here.
             errorUtils.runUserCode(() => {
                 array.length = nextLength
             })
@@ -361,6 +359,7 @@ function commitProperty(owner, key, value, updateProperty) {
 }
 
 function buildRefIndex(value) {
+    languageValues.admitValue(value)
     return refcounts.buildRefIndex(value, getOrCreatePromiseMirror)
 }
 

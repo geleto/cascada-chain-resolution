@@ -118,7 +118,7 @@ describe("import", () => {
         const root = { pending: pending.promise }
         const originalKeys = Reflect.ownKeys(root)
         const earlierRead = readPath(new Chain(root), ["pending"])
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
 
@@ -126,7 +126,7 @@ describe("import", () => {
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
         expect(metaOf(root).importBoundary).not.to.be(undefined)
-        expect(registrations()).to.be(3)
+        expect(registrations()).to.be(1)
 
         const resolved = { done: true }
         pending.resolve(resolved)
@@ -177,6 +177,32 @@ describe("import", () => {
         const mirror = metaOf(external).mirrors.pending
         expect(metaOf(external).importBoundary).not.to.be(undefined)
         expect(Object.hasOwn(mirror, "importBoundary")).to.be(false)
+    })
+
+    it("publishes a nested then rejection without changing imported data", async () => {
+        const failure = new Error("then failed")
+        let reads = 0
+        const value = Object.defineProperty({}, "then", {
+            get() {
+                reads++
+                if (reads === 1) throw failure
+                return undefined
+            },
+        })
+        const external = { value }
+
+        expect(importValue(external, "throwing then")).to.be(external)
+        const chain = new Chain(external)
+        const first = readPath(chain, ["value"])
+
+        expect(external.value).to.be(value)
+        expect(await first).to.be(failure)
+        expect(readPath(chain, ["value"])).to.be(failure)
+        expect(external.value).to.be(value)
+        expect(reads).to.be(1)
+        buildRefIndex(external)
+        expectCounts(external, 0, 1)
+        verifyRefCounts(external)
     })
 
     it("writes through Promise properties of runtime islands", async () => {
@@ -255,13 +281,13 @@ describe("import", () => {
         const first = importValue({ child }, "first wrapper")
         const second = importValue({ child }, "second wrapper")
 
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
 
         pending.resolve(second)
         expect(await observed).to.be(second)
         await flushMicrotasks()
 
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         expect(child.pending).to.be(second)
         buildRefIndex(second)
         expect(hasCycleCut(child, "pending")).to.be(true)
@@ -289,7 +315,7 @@ describe("import", () => {
         expect(importValue(7, "number import")).to.be(7)
         expect(importValue("text", "string import")).to.be("text")
         expect(importValue(error, "error import")).to.be(error)
-        expect(metaOf(error)).to.be(undefined)
+        expect(metaOf(error).type).to.be.a("number")
     })
 
     it("marks resolved promise roots before returning them", async () => {
@@ -432,7 +458,7 @@ describe("import", () => {
         expect(metaOf(leaf).importBoundary).not.to.be(undefined)
     })
 
-    it("eagerly registers one first resolver per promise placement", async () => {
+    it("canonicalizes one Promise identity across placements", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const root = {
@@ -441,9 +467,9 @@ describe("import", () => {
         }
 
         importValue(root, "repeated promise")
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         buildRefIndex(root)
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
 
         const resolved = { nested: {} }
         pending.resolve(resolved)
@@ -1792,11 +1818,11 @@ describe("import", () => {
             ["pending"],
             false,
         )
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         const root = { child }
 
         importValue(root, "runtime mirror back-edge")
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         pending.resolve(root)
         expect(await earlierRead).to.be(root)
         await flushMicrotasks()
@@ -1883,11 +1909,11 @@ describe("import", () => {
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
         const copy = chain._state.value
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         buildRefIndex(copy)
         expect(hasCycleCut(root, "pending")).to.be(false)
         expect(hasCycleCut(copy, "pending")).to.be(true)

@@ -318,9 +318,11 @@ describe("data class copy-on-write", () => {
         expect(copy.value).to.be(2)
     })
 
-    it("preserves null-prototype records", () => {
+    it("preserves a record's admitted null prototype", () => {
         const source = Object.create(null)
         source.value = 1
+        new Chain(source)
+        Object.setPrototypeOf(source, Object.prototype)
         importValue(source, "null prototype")
         const chain = new Chain(source)
 
@@ -329,6 +331,7 @@ describe("data class copy-on-write", () => {
 
         expect(copy).not.to.be(source)
         expect(Object.getPrototypeOf(copy)).to.be(null)
+        expect(Object.getPrototypeOf(source)).to.be(Object.prototype)
         expect(source.value).to.be(1)
         expect(copy.value).to.be(2)
     })
@@ -516,16 +519,15 @@ describe("data class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("returns classification reflection traps as language Errors", () => {
-        const failure = new Error("reflection trap")
+    it("imports a value with uninspectable type as opaque", () => {
         const source = new Proxy({ value: 1 }, {
             getPrototypeOf() {
-                throw failure
+                throw new Error("reflection trap")
             },
         })
         const result = importValue(source, "proxy prototype")
 
-        expect(result).to.be(failure)
+        expect(result).to.be(source)
         expect(source.value).to.be(1)
     })
 })

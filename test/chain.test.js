@@ -22,7 +22,8 @@ describe("Chain root state", () => {
         const chain = new Chain(value)
 
         expect(chain._state.value).to.be(value)
-        expect(metaOf(value)).to.be(undefined)
+        expect(metaOf(value).shared).to.be(undefined)
+        expect(metaOf(value).importBoundary).to.be(undefined)
     })
 
     it("owns its capability mode and closure", async () => {
@@ -92,17 +93,21 @@ describe("Chain root state", () => {
         }
     })
 
-    it("poisons a mutation at a failing reflection boundary", () => {
-        const failure = new Error("prototype failed")
+    it("treats an uninspectable mutation receiver as opaque", () => {
         const value = new Proxy({}, {
             getPrototypeOf() {
-                throw failure
+                throw new Error("prototype failed")
             },
         })
         const chain = new Chain(value)
 
-        expect(assignPath(chain, ["key"], 1)).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(chain._state.value).to.be(value)
+        const outcome = assignPath(chain, ["key"], 1)
+        expect(outcome).to.be.a(Error)
+        expect(outcome.message).to.be(
+            "Cannot access property through missing or primitive value",
+        )
+        expect(chain._state.value).to.be(outcome)
     })
 
     it("handles number and string roots across every operation", () => {
@@ -147,7 +152,7 @@ describe("Chain root state", () => {
         }
     })
 
-    it("treats an array root as tracked language data", () => {
+    it("treats an array root as traversable language data", () => {
         const child = { value: 1 }
         const root = [child]
         const chain = new Chain(root)

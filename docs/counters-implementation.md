@@ -6,7 +6,7 @@ data out of reverse propagation.
 
 ## Metadata
 
-Each indexed tracked identity stores:
+Each indexed traversable identity stores:
 
 - `promiseCount`: pending Promise placements in its projected subtree;
 - `errorCount`: Error placements in its projected subtree;
@@ -24,10 +24,10 @@ these counters.
 | Pending Promise | One Promise | None |
 | Cycle cut | One cycle cut | None |
 | Error | One Error | None |
-| Indexed tracked value | Child totals | The value |
+| Indexed traversable value | Child totals | The value |
 | Other value | None | None |
 
-Every raw-reachable tracked value beneath an indexed root is indexed. Cuts
+Every raw-reachable traversable value beneath an indexed root is indexed. Cuts
 separate that raw graph into projected components; their targets have
 independent counters.
 
@@ -48,7 +48,7 @@ not prepare the graph for ref-indexing.
 
 ## Publishing an indexed edge
 
-Before a tracked value enters an indexed container, Cascada indexes it. The new
+Before a traversable value enters an indexed container, Cascada indexes it. The new
 edge closes a projected cycle exactly when walking upward from the container
 through the maintained `parents` DAG reaches that value. Such an edge becomes a
 cut; every other edge receives the normal reverse-parent entry.

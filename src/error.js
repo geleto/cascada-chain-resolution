@@ -64,14 +64,14 @@ function isFatalError(error) {
         reportedFatalErrors.has(error)
 }
 
-// Recover only the private signal from an exact user-code boundary. Every
+// Catch only the private signal from an exact user-code boundary. Every
 // ordinary throw keeps crossing toward the fatal boundary.
-function recoverUserCodeFailure(fn, recover) {
+function catchUserCodeFailure(fn, onFailure) {
     try {
         return fn()
     } catch (error) {
         if (!(error instanceof UserCodeFailure)) throw error
-        return recover(error.error)
+        return onFailure(error.error)
     }
 }
 
@@ -106,7 +106,7 @@ function toPoison(reason) {
 export {
     combineErrors,
     pathAccessError,
-    recoverUserCodeFailure,
+    catchUserCodeFailure,
     reportFatalError,
     runFatal,
     runUserCode,

@@ -44,7 +44,8 @@ The Core Contracts and the data-type capabilities, execution boundaries, and Err
 
 Any Cascada value—and therefore any graph root or property—may be a Promise. Pending and resolved values use the same logical value path: an operation uses an available value immediately or registers at the captured version and continues with the resolved value. A Promise represents asynchronous availability, not a separate data category or a mechanism limited to transition gates.
 
-Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admitting their values. Classification precedence is Error, logical Array, Function, record, instance of a registered class, then opaque instance; primitives use their primitive category. Array and Promise subclasses retain Array and Promise semantics even if registered.
+Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admitting their values. A synchronous failure while acquiring or invoking `then` is that captured Promise's rejection unless it is already fatal. Classification precedence is Error, logical Array, Function, record, instance of a registered class, then opaque instance; primitives use their primitive category. Array and Promise subclasses retain Array and Promise semantics even if registered.
+An object that cannot be inspected for classification is admitted unchanged as opaque.
 
 A controlled method is runtime code that consumes logical Cascada values. A host call invokes native or user JavaScript across the export/import boundary. An opaque instance is an instance of an unregistered class or another intrinsic identity kept exact and not traversed.
 

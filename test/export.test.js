@@ -78,12 +78,12 @@ describe("export", () => {
         const error = new Error("stop copying")
         const later = { value: 1 }
         const root = { error, later }
+        new Chain(root)
         const state = createRawWalkState()
 
         const readiness = walkRawBranch(root, state)
 
         expect(readiness).to.be(undefined)
-        expect(state.copying).to.be(false)
         expect(state.copies).to.be(undefined)
         expect(state.visited.has(root)).to.be(true)
         expect(state.visited.has(later)).to.be(true)
@@ -97,6 +97,7 @@ describe("export", () => {
             first: first.promise,
             second: second.promise,
         }
+        new Chain(root)
         let output
         const state = createRawWalkState(() => {
             output = undefined
@@ -109,7 +110,6 @@ describe("export", () => {
         first.resolve(error)
         await flushMicrotasks()
 
-        expect(state.copying).to.be(false)
         expect(state.copies).to.be(undefined)
         expect(output).to.be(undefined)
 
@@ -132,13 +132,13 @@ describe("export", () => {
             pending: pending.promise,
             error,
         }
+        new Chain(root)
         let output
         const state = createRawWalkState(() => {
             output = undefined
         })
         const readiness = walkRawBranch(root, state)
 
-        expect(state.copying).to.be(false)
         expect(state.copies).to.be(undefined)
         expect(output).to.be(undefined)
 

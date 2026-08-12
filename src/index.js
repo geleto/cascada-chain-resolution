@@ -30,5 +30,5 @@ export {
 } from "./observations.js"
 
 export { import } from "./import.js"
-export { registerDataClass } from "./language-values.js"
+export { registerDataClass } from "./meta.js"
 export { run } from "./run.js"

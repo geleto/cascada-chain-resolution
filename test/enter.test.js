@@ -40,7 +40,9 @@ describe("enter", () => {
     })
 
     it("rejects a read lease underflow", () => {
-        const release = acquireReadLease({})
+        const value = {}
+        new Chain(value)
+        const release = acquireReadLease(value)
         release()
         const failure = thrownBy(release)
 

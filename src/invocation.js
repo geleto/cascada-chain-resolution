@@ -9,6 +9,7 @@ function invokeDataFunction(callable, thisValue, args) {
 }
 
 function findPropertyDescriptor(object, key) {
+    // Walking a host prototype chain can invoke Proxy reflection traps.
     let owner = object
     while (owner !== null) {
         const descriptor = errorUtils.runUserCode(

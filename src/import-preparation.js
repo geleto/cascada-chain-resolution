@@ -12,14 +12,14 @@ function prepareImportedData(
     prepareImportedPromise,
     getOrCreatePromise,
 ) {
-    if (!languageValues.isTracked(root)) return
-    const importVisited = new WeakSet()
-    const runtimeScanned = new WeakSet()
-    const metadataBeforeRuntimeScan = new WeakSet()
+    if (!canHaveImportBoundary(root)) return
+    const importVisited = new Set()
+    const runtimeScanned = new Set()
+    const metadataBeforeRuntimeScan = new Set()
     walkImported(root, explicitImport)
 
     function walkImported(value, promote = false) {
-        if (!languageValues.isTracked(value)) return
+        if (!canHaveImportBoundary(value)) return
         if (importVisited.has(value)) {
             metadata.markShared(value)
             return
@@ -28,7 +28,7 @@ function prepareImportedData(
 
         const hasExistingWorld = runtimeScanned.has(value)
             ? metadataBeforeRuntimeScan.has(value)
-            : metadata.metaOf(value) !== undefined
+            : metadata.hasOperationalMetadata(value)
         const alreadyImported = metadata.importBoundaryOf(value) !== undefined
         if (
             !promote &&
@@ -44,6 +44,7 @@ function prepareImportedData(
         // can resume. A prior runtime scan does not block this imported pass.
         runtimeScanned.add(value)
         metadata.markImported(value, importBoundary)
+        if (!languageValues.isTraversable(value)) return
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const child = languageProperties.readLanguageProperty(value, key)
             if (languageValues.isPromise(child)) {
@@ -57,12 +58,24 @@ function prepareImportedData(
         }
     }
 
+    function canHaveImportBoundary(value) {
+        const type = languageValues.typeOf(value)
+        return type !== languageValues.TYPE_PRIMITIVE &&
+            type !== languageValues.TYPE_STRING &&
+            type !== languageValues.TYPE_ERROR
+    }
+
     function walkRuntime(value) {
-        if (!languageValues.isTracked(value) || runtimeScanned.has(value)) return
+        if (
+            !languageValues.isTraversable(value) ||
+            runtimeScanned.has(value)
+        ) return
         // Promise discovery can add metadata. Remember whether the identity
         // already had a world so new metadata cannot hide a later direct path
         // from the imported graph.
-        if (metadata.metaOf(value)) metadataBeforeRuntimeScan.add(value)
+        if (metadata.hasOperationalMetadata(value)) {
+            metadataBeforeRuntimeScan.add(value)
+        }
         runtimeScanned.add(value)
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const child = languageProperties.readLanguageProperty(value, key)

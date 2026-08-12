@@ -1,32 +1,27 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 
-const CANONICAL_PROMISES = new WeakMap()
-
-// Canonicalize only sources whose runtime continuations require FIFO order.
-// Returning a result alone does not come through here. Raw .then belongs only
-// in this module.
-function getCanonicalPromise(promise) {
-    let canonical = CANONICAL_PROMISES.get(promise)
-    if (!canonical) {
-        canonical = Promise.resolve(promise)
-        CANONICAL_PROMISES.set(promise, canonical)
-    }
-    return canonical
-}
-
 // A direct value runs immediately. Data-Promise rejection becomes a Poison
 // before the continuation runs; continuation throws are Fatal.
 function resolveInitialValueOrPoison(
     value,
     fn = value => value,
 ) {
-    if (!languageValues.isPromise(value)) return errorUtils.runFatal(fn, value)
-    return getCanonicalPromise(value).then(
-        value => errorUtils.runFatal(fn, value),
-        reason => errorUtils.runFatal(
-            () => fn(errorUtils.toPoison(reason)),
-        ),
+    if (!languageValues.isPromise(value)) {
+        languageValues.admitReadyValue(value)
+        return errorUtils.runFatal(fn, value)
+    }
+    return languageValues.continuePromise(
+        value,
+        value => {
+            languageValues.admitReadyValue(value)
+            return errorUtils.runFatal(fn, value)
+        },
+        reason => errorUtils.runFatal(() => {
+            const failure = errorUtils.toPoison(reason)
+            languageValues.admitReadyValue(failure)
+            return fn(failure)
+        }),
     )
 }
 
@@ -34,7 +29,7 @@ function resolveInitialValueOrPoison(
 // resolver uses the source only as readiness and reads the current mirror.
 function onLaterPromiseReady(promise, fn) {
     const onReady = () => errorUtils.runFatal(fn)
-    return getCanonicalPromise(promise).then(onReady, onReady)
+    return languageValues.continuePromise(promise, onReady, onReady)
 }
 
 // Promise inputs must already be native runtime readiness or continuation
@@ -58,7 +53,8 @@ function continueInternalPromiseOrFatal(
 // same thenable. The observer is internal, so consume any Fatal it has already
 // reported.
 function observeResultPromise(promise, onFulfilled, onRejected) {
-    const observer = getCanonicalPromise(promise).then(
+    const observer = languageValues.continuePromise(
+        promise,
         value => errorUtils.runFatal(onFulfilled, value),
         reason => errorUtils.runFatal(onRejected, reason),
     )

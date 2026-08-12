@@ -152,7 +152,7 @@ indexed counters and reverse-parent edges remain exact; the private Chain's
 host-state holder is not added to the language graph.
 
 A read-only `enter(..., false, onEntered)` installs no gate and invokes its
-callback only after capturing a protected root. Every tracked root increments
+callback only after capturing a protected root. Every identity root increments
 its metadata `readEnterCount`, including values already protected by sharing
 or import; primitives require no metadata.
 An imported target already carries its own import status; a runtime-owned
@@ -271,14 +271,15 @@ Three rules shape the kernel:
 - **Variables have value semantics.** Reusing a value behaves like copying it:
   changing one owner must never change another.
 
-Objects and arrays are tracked nodes. A node and everything reachable below it
-form a branch. Runtime operations work on a `Chain`, whose private
+Records, logical Arrays, and registered-class instances are traversable graph
+nodes. A node and everything reachable below it form a branch. Runtime
+operations work on a `Chain`, whose private
 `_state.value` slot is the mutable root location; other `Chain` fields are not
 language data.
 
 ## Owned and imported data
 
-Compiler-created data follows a single-owner contract. A new tracked value has
+Compiler-created data follows a single-owner contract. A new graph identity has
 one owner. When it escapes or receives another owner, the runtime marks it
 shared. A later mutation through a shared branch copies only the path being
 changed.
@@ -287,7 +288,7 @@ External JavaScript data has no such guarantees. It may contain repeated
 identities, cycles, non-extensible objects, and Promises at any depth. Every
 external value enters through `import(value, errorContext)`, which:
 
-- marks each imported tracked identity shared;
+- marks each imported ownership identity shared;
 - retains the attribution context;
 - marks repeated identities shared;
 - registers imported Promise continuations in issue order;
@@ -305,10 +306,10 @@ came from. A cut is structural bookkeeping, not an Error: finite paths cross it
 normally, Error queries ignore it as data, and export reconstructs the original
 cyclic topology.
 
-Host code receives tracked Cascada data only through `export`, which returns a
+Host code receives traversable Cascada data only through `export`, which returns a
 metadata-free deep copy with captured Promise-property values materialized.
 Internal code may use non-sharing lookup only when it does not expose the
-returned tracked value to mutable host code.
+returned graph identity to mutable host code.
 
 ## Commands and issue order
 
@@ -321,7 +322,7 @@ The public operations are:
 | `lookupPath(chain, path)` | Extract a path value |
 | `readPath(chain, path)` | Read without adding an owner |
 | `run(chain, path, method, mutateArray, ...arguments)` | Invoke a supported method |
-| `registerDataClass(Class)` | Register an exact class prototype as tracked data |
+| `registerDataClass(Class)` | Register an exact class prototype as traversable data |
 | `import(value, errorContext)` | Admit external data |
 | `export(chain, path)` | Copy host-ready output or collect its Errors |
 | `hasError(chain, path)` | Test for a reachable Error |
@@ -368,7 +369,7 @@ diverge independently afterward.
 
 ## Copy-on-write
 
-A tracked node starts owned. Shared lookup and import establish shared
+A COW-managed graph identity starts owned. Shared lookup and import establish shared
 ownership. A shared node is never mutated in place.
 
 For a write such as:
@@ -378,7 +379,7 @@ doc.body.title = "Final"
 ```
 
 the runtime shallow-copies only `doc` and `body`, installs the new title, and
-reuses every off-path child. Reused tracked children are marked shared because
+reuses every off-path child. Reused traversable children are marked shared because
 both worlds can now reach them.
 
 The language-visible object-property surface is own enumerable string keys.
@@ -436,10 +437,11 @@ not ref-index, mark, or pin the branch.
 
 ## Metadata
 
-One external metadata record per tracked node contains only the fields whose
-subsystems have become active: ownership marks, import state, Promise mirrors,
-cycle cuts, counters, and reverse parents. A single WeakMap stores every
-record, so bookkeeping never modifies the tracked identity.
+One external metadata record stores an object's fixed admitted type plus only
+the facts whose subsystems have become active: ownership, import, leases,
+Promise mirrors, cycle cuts, counters, and reverse parents. Pending thenable
+capture uses separate weak state, and class definitions use a dedicated
+prototype set. Bookkeeping therefore never modifies the object itself.
 
 The detailed invariants and transitions live in
 [`counters-implementation.md`](docs/counters-implementation.md).

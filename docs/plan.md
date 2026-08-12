@@ -49,7 +49,7 @@ intermediate designs used to reach it.
 - Build counters lazily only for branches queried by counter-based operations.
 - During initial indexing, cut DFS back edges and index cut targets as separate
   components.
-- Before publishing a tracked value into an indexed container, index it and
+- Before publishing a traversable value into an indexed container, index it and
   use the reverse-parent DAG to decide whether the new edge closes a cycle.
 - Publish value, cut, reverse edges, and count deltas in one synchronous
   property transition.

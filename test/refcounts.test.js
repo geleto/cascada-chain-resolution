@@ -392,8 +392,10 @@ describe("subtree counters", () => {
         verifyRefCounts(frozen, frozenDAG)
     })
 
-    it("rejects count reads from non-ref-indexed tracked values", () => {
-        const failure = thrownBy(() => getRefCounts({ value: 1 }))
+    it("rejects count reads from non-ref-indexed traversable values", () => {
+        const value = { value: 1 }
+        new Chain(value)
+        const failure = thrownBy(() => getRefCounts(value))
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Ref counts require a ref-indexed value")
@@ -629,6 +631,7 @@ describe("subtree counters", () => {
         const child = { clean: true }
         const wrapper = { child }
 
+        new Chain(wrapper)
         buildRefIndex(child)
         getRefCounter(child).errorCount = 1
 
@@ -663,7 +666,7 @@ describe("subtree counters", () => {
         buildRefIndex(primitive)
         primitive.self = 1
         expect(thrownBy(() => verifyRefCounts(primitive)).message).to.be(
-            "Cycle cut must contain a tracked value",
+            "Cycle cut must contain a traversable value",
         )
 
         const nonStringKey = { 1: {} }
@@ -739,11 +742,12 @@ describe("subtree counters", () => {
         buildRefIndex(primitiveParentChild)
         getRefCounter(primitiveParentChild).parents.set(7, 1)
         expect(thrownBy(() => verifyRefCounts(primitiveParentChild)).message).to.be(
-            "Parent edge points to untracked parent",
+            "Parent edge points to a non-traversable value",
         )
 
         const unindexedParentChild = {}
         const unindexedParent = { child: unindexedParentChild }
+        new Chain(unindexedParent)
         buildRefIndex(unindexedParentChild)
         getRefCounter(unindexedParentChild).parents.set(unindexedParent, 1)
         expect(thrownBy(() => verifyRefCounts(unindexedParentChild)).message).to.be(
@@ -781,7 +785,7 @@ describe("subtree counters", () => {
         )
     })
 
-    it("bookkeeps tracked branches after ref-indexing", () => {
+    it("bookkeeps traversable branches after ref-indexing", () => {
         const deferredValue = deferred()
         const nestedPromise = deferred()
         const root = {

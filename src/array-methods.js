@@ -505,10 +505,7 @@ function orderedIndexSearch(
         ? normalizeBackwardStart(fromIndex, length)
         : normalizeForwardStart(fromIndex, length)
     const result = next()
-    if (
-        !languageValues.isPromise(result) ||
-        !languageValues.isTracked(thisValue)
-    ) return result
+    if (!languageValues.isPromise(result)) return result
 
     // Other Array observations capture every property version before returning.
     // An ordered search resumes scanning the receiver after a pending element.
@@ -555,6 +552,7 @@ function normalizeBackwardStart(fromIndex, length) {
 
 function toRelativeIndex(value, length, defaultValue) {
     if (value === undefined) return defaultValue
+    // Numeric coercion may invoke Symbol.toPrimitive or valueOf.
     value = errorUtils.runUserCode(() => +value)
     value = Number.isNaN(value) ? 0 : Math.trunc(value)
     return value < 0
@@ -573,7 +571,7 @@ function tryPopArrayView(thisValue) {
 }
 
 function deriveArrayView(thisValue, start, end) {
-    if (start === end) return []
+    if (start === end) return arrayRemaps.createArrayFromRemap([])
     const projection = arrayViews.ArrayView.tryAttachTo(thisValue)
     if (!projection) return undefined
 

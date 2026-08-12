@@ -12,7 +12,6 @@ function createRawWalkState(
     preserveErrors = false,
 ) {
     const state = {
-        copying: true,
         copies: new WeakMap(),
         errors: new Set(),
         visited: new WeakSet(),
@@ -20,8 +19,7 @@ function createRawWalkState(
             if (preserveErrors) return
             if (state.errors.has(error)) return
             state.errors.add(error)
-            if (!state.copying) return
-            state.copying = false
+            if (!state.copies) return
             state.copies = undefined
             if (onError) onError(error)
         },
@@ -35,19 +33,19 @@ function walkRawBranch(value, state) {
         state.foundError(value)
         return undefined
     }
-    if (!languageValues.isTracked(value)) return undefined
+    if (!languageValues.isTraversable(value)) return undefined
 
     if (state.visited.has(value)) return undefined
     state.visited.add(value)
 
-    const output = state.copying
+    const output = state.copies
         ? (
             arrayViews.isLogicalArray(value)
                 ? new Array(arrayViews.logicalArrayLength(value))
                 : {}
         )
         : undefined
-    if (state.copying) state.copies.set(value, output)
+    if (state.copies) state.copies.set(value, output)
 
     const waits = []
     // Sanctioned write bypass: export output stays outside the runtime graph.
@@ -56,7 +54,7 @@ function walkRawBranch(value, state) {
         if (languageValues.isPromise(child)) {
             // Reserve the captured key now so later settlement cannot change
             // the source's observable own-key order.
-            if (state.copying) {
+            if (state.copies) {
                 languageProperties.writeLanguageProperty(output, key, undefined)
             }
             waits.push(walkRawPromise(value, key, child, state))
@@ -64,7 +62,7 @@ function walkRawBranch(value, state) {
         }
 
         const readiness = walkRawBranch(child, state)
-        if (state.copying) {
+        if (state.copies) {
             languageProperties.writeLanguageProperty(
                 output,
                 key,
@@ -86,7 +84,7 @@ function walkRawPromise(parent, key, promise, state) {
         promise,
         value => {
             const readiness = walkRawBranch(value, state)
-            if (state.copying) {
+            if (state.copies) {
                 languageProperties.writeLanguageProperty(
                     state.copies.get(parent),
                     key,
@@ -99,7 +97,9 @@ function walkRawPromise(parent, key, promise, state) {
 }
 
 function getCopiedValue(value, state) {
-    return languageValues.isTracked(value) ? state.copies.get(value) : value
+    return languageValues.isTraversable(value)
+        ? state.copies.get(value)
+        : value
 }
 
 export { createRawWalkState, walkRawBranch }

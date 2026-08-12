@@ -171,13 +171,11 @@ direct lookup was the fastest measured path.
 
 ## Phase 4: Establish data-type and identity classification
 
-### Problem
+Complete.
 
-`isTracked` currently answers whether a value is a language container, can have metadata, and can be a method receiver. Those are different questions, and the predicate cannot express opaque identities, record functions, or the capability table in `AGENTS.md`.
+### Final design
 
-### Design
-
-Represent every available value's admitted category with named numeric constants, never strings or constructor names:
+Every available value has one admitted category represented by named numeric constants, never strings or constructor names:
 
 ```js
 const TYPE_ERROR = 1
@@ -190,37 +188,74 @@ const TYPE_REGISTERED = 7
 const TYPE_OPAQUE = 8
 ```
 
-The numbers carry no ordering. Resolve a callable thenable at its captured property version before classifying its available result. There is no `TYPE_PROMISE` because a Promise is version transport, not an available value category; an Error is available terminal data and therefore has `TYPE_ERROR`.
+The numbers carry no ordering. A callable thenable is resolved at its captured
+property version before its available result is admitted; Promise therefore
+has no type constant. Error is available terminal data and has `TYPE_ERROR`.
 
-Use one classifier with the precedence in `AGENTS.md`. `admitIdentity` is the only ordinary metadata-creation path: it classifies every available non-primitive identity, creates its record, and stores its type at first admission. This includes Functions and Errors; retaining `TYPE_ERROR` ensures later prototype mutation cannot change an Error's category. Primitives have no identity metadata, and Promises are resolved rather than admitted as available values. COW admits a created identity with its source unit's known type and registered-class definition.
+Admission is the sole ordinary type-classification boundary. `admitValue`
+samples thenability at the current program position and leaves a pending
+Promise unclassified. Its first callable `then` and optional native FIFO queue
+live in separate Promise-capture state, so pending transport never creates
+typeless value metadata. Continuation registration invokes that exact function,
+and no layer reads `then` again.
 
-Every operation admits an identity before recording import, sharing, leasing, mirrors, counters, or any other identity fact. Later metadata operations require and extend that admitted record; they never classify or create one. Delete `ensureMeta` rather than recreating it behind another helper name. A definition-only prototype record has no admitted type and its mere existence proves neither admission nor ownership.
+`getOrCreateMeta(value, knownType?)` is the sole metadata-record creator.
+Existing records win; a known runtime-created type avoids reflection; otherwise
+creation classifies the available value and stores all resulting facts
+atomically. `admitReadyValue` delegates to it without replacing the input.
+If classification reflection cannot identify a supported structure, creation
+conservatively admits that object unchanged as opaque. A non-fatal failure while
+sampling or invoking `then` is captured as that Promise's rejection and follows
+the ordinary property-version resolver.
+Every created metadata record therefore has a fixed type, and every later
+operation requires and extends that record.
 
-Classification may reflect on a user-supplied identity. Route a throwing Proxy or prototype hook through Phase 2A's exact language boundary before creating metadata; do not leave a partially admitted identity.
+Class registration records the exact prototype in a dedicated `Set`; it
+does not admit or attach metadata to the prototype. An admitted instance stores
+that exact prototype with `TYPE_REGISTERED`. The registry and instance metadata
+are separate because a subclass prototype may itself be admitted as an
+instance of its registered base while also defining another registered class.
+An instance admitted before registration remains opaque. Type and class
+definition remain fixed across later registration and prototype mutation.
+Records and registered instances use one admitted `prototype` fact for copying;
+later work never re-reflects on the value to derive it.
 
-Class registration is the sole deliberate exception to ordinary admission: it creates a definition-only record on the prototype without admitting that prototype as language data. If the prototype is later admitted, `admitIdentity` completes the same record with a type. When an instance is admitted, consult its prototype record and store the definition with `TYPE_REGISTERED`. Registration must precede admission and has no retroactive effect.
+Records, Arrays, and registered instances are traversable. Functions, Errors,
+and opaque identities can carry import, ownership, and lease facts, but graph
+traversal stops at them. `new Chain(value)` admits its root without changing
+ownership or import status; normal property reads admit children before any
+identity fact is recorded.
 
-Make admitted type the only source for semantic category decisions. Import and export traversal, ownership, path access, method selection, receiver preparation, mutation policy, and capability helpers consume it instead of repeating prototype, registration, `isTracked`, or category tests. Structural predicates remain only for representation and property shape, such as whether a classified logical Array currently has native backing.
-
-Records, Arrays, and registered state are traversable. Functions, Errors, and unregistered or intrinsic identities may carry identity facts, but traversal stops without inspecting their properties or hidden state. `new Chain(value)` admits the root type without changing ownership or import status; supported children are admitted when normal traversal reaches them.
-
-Metadata, type, and class definition follow identity across prototype changes. Delete `isTracked`, public semantic use of `isPlainObjectPrototype`, direct registration tests after admission, and every parallel category inference. This phase changes category decisions, not the import-origin rules replaced in Phase 6.
+Semantic category decisions consume admitted type. The class registry is read
+only during first admission; later decisions never reclassify an instance from
+its prototype. Other structural checks remain only for representation and
+property shape. `isTracked`, typeless metadata, and public semantic prototype
+classification are gone. This phase preserves the import-origin rules that
+Phase 6 will replace.
 
 ### Verification
 
 - Every category in `AGENTS.md` is classified independently of method name, using named numeric constants.
 - A Promise is resolved before classification; an Error is classified as available terminal data.
+- Thenability is sampled once at a program position; both callable and non-callable samples are covered, and direct admission leaves a Promise identity unclassified.
+- A fresh assigned graph is admitted at issuance, so nested Promise discovery protects any COW attachment before later mutation.
 - An admitted Error remains `TYPE_ERROR` after prototype mutation makes `instanceof Error` false.
-- Class registration and identity state use the same metadata map, with no separate registry or prototype property.
-- Admission is the only ordinary metadata-record creation path; no subsystem lazily creates an untyped record.
+- Class registration uses a dedicated `Set` of exact prototypes and neither admits nor modifies them.
+- Admitting a registered subclass prototype preserves both its base-instance classification and its own class definition.
+- Metadata creation classifies the available value or accepts its known runtime-created type; every created record is typed.
+- Callable-then capture uses separate Promise state and creates no value metadata.
 - A previously unseen child is admitted before extraction, sharing, leasing, indexing, or Promise-mirror installation records facts on it.
 - A class registered before admission is registered data; an instance admitted first remains opaque.
 - Array and Promise subclasses retain Array and Promise semantics even if registered.
 - Every semantic category decision uses admitted type; remaining structural predicates cannot override it.
 - Import, extraction, and leases record identity facts on opaque instances without traversing them.
-- Classification lookup after admission adds no Proxy reflection, and prototype mutation changes neither type nor class definition.
-- A classification reflection trap becomes the admitting operation's language Error and leaves no partial type record.
+- Classification lookup after admission adds no Proxy reflection, and prototype mutation changes neither type nor admitted prototype.
+- A classification reflection trap preserves the exact object and admits it as opaque.
+- Non-fatal synchronous `then` acquisition and invocation failures become captured rejections; ordinary Promise resolution publishes their Errors without changing imported storage.
 - `new Chain` admits type while preserving ownership status.
+- Invalid class registration is reported as a fatal host-contract failure.
+- The complete suite passes 700 tests through the single metadata store,
+  including the refcount oracle.
 
 ---
 
@@ -315,7 +350,10 @@ Treat each external enumeration and descriptor lookup as its own admission bound
 
 Import never infers runtime origin from metadata, mirrors, indexes, leases, or ArrayView attachment. Host-call result admission may instead recognize identities deliberately supplied to host code; it applies their category policy and imports every new host identity.
 
-Retain the source Promise identity on an imported property's mirror so reimport can distinguish an unchanged physical placement after settlement. This is property-version state, not import state, and an unchanged placement gains no second resolver.
+Retain the source Promise identity on an imported property's mirror so reimport
+can distinguish an unchanged physical placement after settlement. This is
+property-version state, not import state, and an unchanged placement gains no
+second resolver.
 
 Reconcile indexed properties through the ordinary old-to-new edge transition. Each indexed placement retains only its last published logical value; the existing `cycleCuts` entry already is its previous cut state. Runtime publication and external reconciliation update the value record and ordinary cut state together. This preserves reverse parents and Promise, Error, and cycle-cut totals after the host changes a physical property without maintaining a second cut flag. Unindexed containers need no parallel snapshot.
 

@@ -85,23 +85,23 @@ and a Promise only when resolution or settlement is required.
 
 ## Ownership
 
-Compiler-created tracked data is initially singly owned but may be cyclic.
-Reusing or exposing an existing tracked identity gives it another owner and
+Compiler-created graph data is initially singly owned but may be cyclic.
+Reusing or exposing an existing graph identity gives it another owner and
 marks it shared. Mutation through a shared branch performs copy-on-write before
 the first language write.
 
-`lookupPath` extracts its result and marks a returned tracked value shared.
+`lookupPath` extracts its result and marks a returned graph identity shared.
 `readPath` adds no owner; use it only for a temporary read or when prior
 ownership is ceded. Imported values retain their existing import and sharing
 state in either case.
 
-Non-extensible tracked nodes are external and must enter through import. Their
+Non-extensible language nodes are external and must enter through import. Their
 imported ownership, rather than their physical shape, causes copy-on-write.
 
 ## Copy-on-write
 
 Mutation through a shared branch shallow-copies each node on the target path.
-Off-path properties are reused. Reused tracked children are marked shared, and
+Off-path properties are reused. Reused traversable children are marked shared, and
 Promise-backed properties receive independent mirrors at the copy's program
 position.
 
@@ -117,21 +117,24 @@ The copy contains only language-visible keys:
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 
-`registerDataClass(Class)` permanently adds the constructor's exact prototype
-to a private `WeakSet` without modifying it. Registration must happen before
-instances enter Cascada, is not inherited, does not invoke a constructor or
-copying callback, and asserts that all required state is compatible with own
-enumerable string-key copying.
+`registerDataClass(Class)` stores a definition on the constructor's exact
+prototype in the external metadata map without modifying it. Registration must
+happen before instances enter Cascada, is not inherited, does not invoke a
+constructor or copying callback, and asserts that all required state is
+compatible with own enumerable string-key copying. The API requires a callable
+constructor with an identity prototype; invalid registration is fatal. First
+admission fixes an identity's type and class definition; later registration or
+prototype mutation does not reclassify it.
 The kernel does not attempt to detect private fields, required hidden state,
 native internal slots, or other false assertions.
 
 All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
 Unregistered classes and native internal-slot objects are opaque identity
-leaves. They may be stored and exported, but the graph does not traverse,
-index, copy, or attach metadata to them. A path cannot enter an opaque value,
-and `run` cannot use one as a receiver. Registered class export remains plain
-data and does not preserve its prototype or methods.
+leaves. They may carry external metadata for import, ownership, and leases, but
+the graph does not traverse, index, or copy their state. A path cannot enter an
+opaque value, and `run` cannot yet use one as a receiver. Registered class
+export remains plain data and does not preserve its prototype or methods.
 
 Imported attribution remains attached to retained external children. Newly
 copied path nodes are language-owned. If the copied source was already
@@ -156,7 +159,7 @@ performs the same work on its settled value before exposing it.
 
 Import admission:
 
-- gives each newly imported tracked identity direct access to one import
+- gives each newly imported ownership identity direct access to one import
   token and shared ownership;
 - stores the attribution context once in that token;
 - marks repeated identities shared;
@@ -177,7 +180,7 @@ its Promise. Frozen imported data therefore follows the same path as writable
 imported data.
 
 External code must not mutate an imported graph after import. Native code must
-receive tracked Cascada data through `export`, not through a direct runtime
+receive traversable Cascada data through `export`, not through a direct runtime
 identity.
 
 ## Cycles
@@ -209,7 +212,7 @@ When a required intermediate is:
 - missing, `null`, `undefined`, or primitive, a path-access Error is produced;
 - a Promise, the operation registers at that property's program position and
     continues from the state captured by its Promise mirror; or
-- tracked, traversal continues.
+- traversable, traversal continues.
 
 A mutation installs a produced path-access Error at the broken intermediate
 and stops. Observations return the Error.
@@ -255,7 +258,7 @@ share the property's physical backing slot.
 The mirror's single `value` field is the property version's authoritative logical
 value. Its first resolver captures the property's import boundary at creation.
 Every state-changing resolver uses the import status captured at registration;
-the boundary remains on the imported owner and imported tracked values, not the
+the boundary remains on the imported owner and imported graph values, not the
 mirror. A live runtime-owned version normally writes through to its physical
 property. If writeback reflection fails, its Error remains logical in the mirror
 and the physical Promise is preserved. An imported version always preserves the
@@ -289,7 +292,8 @@ rejection-conversion failures, invariant violations, and rejected internal
 aggregate waits are never converted into language Error values.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
-The FIFO helpers share one canonical native Promise for each ordered source.
+The FIFO helpers register directly on a native Promise and otherwise share one
+canonical native Promise for each ordered thenable.
 `resolveInitialValueOrPoison` converts the first data result,
 `onLaterPromiseReady` runs later property resolvers without reconverting
 rejection, and `observeResultPromise` registers ordered admission or lease
@@ -320,7 +324,7 @@ still returns `undefined`; any later failure is published only in the graph.
 
 ### `lookupPath(chain, path)`
 
-Extracts the value captured at the path and marks a returned tracked value
+Extracts the value captured at the path and marks a returned graph identity
 shared. The result is synchronous unless path resolution crosses a Promise.
 
 ### `readPath(chain, path)`
@@ -344,7 +348,7 @@ Returns host-ready data for the branch captured at its issue position.
 - A successful result is always a metadata-free deep copy preserving arrays,
   holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
   Promise-property values.
-- A tracked branch starts one raw identity-aware copy-or-collect walk
+- A traversable branch starts one raw identity-aware copy-or-collect walk
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
@@ -392,7 +396,7 @@ when no wait is required and otherwise returns a Promise for that array.
 ## Ref-index contract
 
 Subtree counters are created lazily at the path value reached by `hasError` or
-`getErrors`. A successful build indexes every raw-reachable tracked value.
+`getErrors`. A successful build indexes every raw-reachable traversable value.
 Ordinary properties connect components through reverse child edges; pending
 Promise placements and cycle cuts are propagation frontiers and install no
 such edge. Initial DFS back edges and later cycle-closing publications become
@@ -412,10 +416,10 @@ The complete implementation is specified in
 The compiler and host layer must:
 
 - wrap every external value with `import(value, errorContext)`;
-- establish shared ownership whenever an existing tracked value gains another
+- establish shared ownership whenever an existing graph identity gains another
   owner or escapes;
 - use non-sharing lookup only for internal inspection or proven final transfer;
-- send tracked output to native code only through `export`;
+- send traversable output to native code only through `export`;
 - evaluate assignment right-hand sides before mutating their destinations; and
 - treat fatal kernel exceptions as integration/runtime failures rather than
   language Error values.
@@ -435,7 +439,7 @@ each native-bound argument after dispatch; controlled logical payloads retain
 their identity. Pending controlled argument preparation leases its captured
 receiver only until invocation. A controlled method owns any lease required by
 later receiver reads, while an independent result Promise adds none. An
-ordinary native call retains an exact tracked receiver through its returned
+ordinary native call retains an exact traversable receiver through its returned
 Promise, and an ArrayView receiver is shallow-materialized. The method remains
 trusted read-only, non-retaining beyond that result, and free of external side
 effects.
@@ -445,4 +449,4 @@ exception. A direct or Promise-resolved callable remains outside the graph and
 receives resolved logical elements under a trusted read-only, side-effect-free,
 non-retaining contract. Its result and Cascada numeric conversion must complete
 synchronously before native stable sorting can continue; this does not
-authorize other callbacks or native access to tracked identities.
+authorize other callbacks or native access to runtime-managed identities.

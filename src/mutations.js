@@ -21,9 +21,9 @@ function setProperty(
     propertyVersions.assignProperty(parent, key, value)
 }
 
-function containsPromise(value, visited = new WeakSet()) {
+function containsPromise(value, visited = new Set()) {
     if (languageValues.isPromise(value)) return true
-    if (!languageValues.isTracked(value) || visited.has(value)) return false
+    if (!languageValues.isTraversable(value) || visited.has(value)) return false
     visited.add(value)
 
     const counter = refcounts.getRefCounter(value)
@@ -44,19 +44,26 @@ function mustPreserveValue(value, attachmentRoot) {
         metadata.requiresCopyOnWrite(value)
 }
 
-function copyForWrite(source, pathKey, attachmentRoot) {
-    const prototype = errorUtils.runUserCode(
-        () => Object.getPrototypeOf(source),
-    )
+function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
+    const sourceMeta = metadata.requireMeta(source)
+    const type = sourceMeta.type
     let destination
-    if (arrayViews.isLogicalArray(source)) {
+    if (type === languageValues.TYPE_ARRAY) {
         destination = new Array(arrayViews.logicalArrayLength(source))
-    } else if (prototype === null) {
-        destination = Object.create(null)
+    } else if (
+        type === languageValues.TYPE_RECORD ||
+        type === languageValues.TYPE_REGISTERED
+    ) {
+        destination = Object.create(sourceMeta.prototype)
     } else {
-        destination = languageValues.isPlainObjectPrototype(prototype)
-            ? {}
-            : Object.create(prototype)
+        errorUtils.reportFatalError(
+            new TypeError("Cannot copy a non-container value"),
+        )
+    }
+    languageValues.admitReadyValue(destination, type)
+    const destinationMeta = metadata.requireMeta(destination)
+    if (type !== languageValues.TYPE_ARRAY) {
+        destinationMeta.prototype = sourceMeta.prototype
     }
     attachmentRoot ??= destination
     const pathKeyString = String(pathKey)
@@ -193,7 +200,7 @@ function transformValue(
     }
 
     function recoverMutationFailure(fn) {
-        return errorUtils.recoverUserCodeFailure(fn, mutationFailureOutcome)
+        return errorUtils.catchUserCodeFailure(fn, mutationFailureOutcome)
     }
 
     function mutationFailureOutcome(failure) {
@@ -214,6 +221,7 @@ function transformValue(
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(chain, path, value) {
     return errorUtils.runFatal(() => {
+        languageValues.admitValue(value)
         return walkMutationPath(
             chain,
             path,
@@ -353,6 +361,7 @@ function walkMutationPath(
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
     function complete(writeBack, next, operationError = undefined) {
+        languageValues.admitValue(next)
         writeBack(next)
         const outcome = operationError ?? (
             languageValues.isError(next) ? next : undefined
@@ -361,7 +370,7 @@ function walkMutationPath(
     }
 
     function walk(value, index, writeBack, placement = undefined) {
-        return errorUtils.recoverUserCodeFailure(
+        return errorUtils.catchUserCodeFailure(
             () => walkReady(value, index, writeBack, placement),
             failure => complete(writeBack, failure, failure),
         )
@@ -416,7 +425,7 @@ function walkMutationPath(
                 { parent: value, key },
             )
         }
-        if (!languageValues.isTracked(value)) {
+        if (!languageValues.isTraversable(value)) {
             return complete(writeBack, errorUtils.pathAccessError())
         }
 
@@ -450,7 +459,7 @@ function walkMutationPath(
             representationCopy
 
         if (mustCopyParent) {
-            const copied = copyForWrite(
+            const copied = shallowCopyPathContainer(
                 parent,
                 key,
                 attachmentRoot,

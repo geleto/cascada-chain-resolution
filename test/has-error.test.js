@@ -542,10 +542,10 @@ describe("hasError", () => {
         const root = { direct: shared, delayed: delayed.promise }
         const result = hasError(new Chain(root), [])
 
-        expect(registrations()).to.be(2) // first resolver plus one query wait
+        expect(registrations()).to.be(1)
         delayed.resolve(shared)
         await flushMicrotasks()
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
 
         pending.reject("bad")
         expect(await result).to.be(true)

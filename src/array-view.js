@@ -2,10 +2,11 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-const ARRAY_VIEWS = new WeakSet()
-
+// An Array operand or backing may be a Proxy, so physical reflection and
+// writes can invoke its traps.
 class ArrayView {
     constructor(arrayOrArrayView, start = 0, end) {
+        languageValues.admitValue(arrayOrArrayView)
         const source = projectionOf(arrayOrArrayView)
         const sourceView = isArrayView(source) ? source : undefined
         const sourceStart = sourceView?._start ?? 0
@@ -20,7 +21,8 @@ class ArrayView {
                 writable: true,
             },
         })
-        ARRAY_VIEWS.add(this)
+        languageValues.admitReadyValue(this, languageValues.TYPE_ARRAY)
+        metadata.requireMeta(this).arrayView = this
     }
 
     static tryAttachTo(arrayOrArrayView) {
@@ -33,7 +35,7 @@ class ArrayView {
         if (isArrayView(projection)) return projection
 
         const view = new ArrayView(projection)
-        metadata.ensureMeta(projection).arrayView = view
+        metadata.requireMeta(projection).arrayView = view
         return view
     }
 
@@ -164,14 +166,12 @@ class ArrayView {
     }
 }
 
-languageValues.registerDataClass(ArrayView)
-
 function isArrayView(value) {
-    return ARRAY_VIEWS.has(value)
+    return metadata.metaOf(value)?.arrayView === value
 }
 
 function isLogicalArray(value) {
-    return Array.isArray(value) || isArrayView(value)
+    return metadata.metaOf(value)?.type === languageValues.TYPE_ARRAY
 }
 
 function hasArrayAncestor(ancestry, array) {

@@ -24,7 +24,7 @@ The property's projected contribution is:
 | Pending Promise | One Promise | No |
 | Cycle cut | One cycle cut | No |
 | Error | One Error | No |
-| Indexed tracked value | Child totals | Yes |
+| Indexed traversable value | Child totals | Yes |
 | Other value | None | No |
 
 A property cannot be both logically pending and cut. Replacing or deleting it
@@ -38,7 +38,7 @@ target is queued and indexed as another component after the current component
 has been published. Structural aliases outside the active path remain ordinary
 edges with their exact multiplicity.
 
-Consequently every raw-reachable tracked identity is indexed, while reverse
+Consequently every raw-reachable traversable identity is indexed, while reverse
 parent edges form a DAG.
 
 Indexing records no ownership. Neither aliases nor cycle cuts make an identity
@@ -56,7 +56,7 @@ from every cut target.
 
 ## Updating an indexed graph
 
-Before publishing a tracked child under an indexed parent, Cascada indexes the
+Before publishing a traversable child under an indexed parent, Cascada indexes the
 child and walks upward from the parent through reverse parent edges. Reaching
 the child means the new forward edge would close a cycle, so that placement is
 published as a cut. Otherwise it receives the ordinary reverse edge.

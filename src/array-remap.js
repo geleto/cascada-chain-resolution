@@ -192,6 +192,7 @@ function createArrayFromRemap(
     retained = true,
 ) {
     const output = new Array(remap.length)
+    languageValues.admitReadyValue(output, languageValues.TYPE_ARRAY)
     placeRemap(output, remap, 0, retained)
     if (refIndexSource !== undefined) {
         propertyVersions.indexValueIfSourceIndexed(refIndexSource, output)

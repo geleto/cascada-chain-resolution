@@ -1,4 +1,5 @@
 import * as errorUtils from "./error.js"
+import * as languageValues from "./language-values.js"
 
 const hasOwn = Object.prototype.hasOwnProperty
 
@@ -9,7 +10,13 @@ class Chain {
                 new TypeError("Chain requires an exact mutates Boolean"),
             )
         }
-        this._state = { value: initialValue }
+        languageValues.admitValue(initialValue)
+        const state = { value: initialValue }
+        languageValues.admitReadyValue(
+            state,
+            languageValues.TYPE_RECORD,
+        )
+        this._state = state
         this._mutates = mutates
     }
 

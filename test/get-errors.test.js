@@ -236,7 +236,7 @@ describe("getErrors", () => {
 
         const result = getErrors(new Chain(second), [])
 
-        expect(registrations()).to.be(registrationsBeforeQuery + 1)
+        expect(registrations()).to.be(registrationsBeforeQuery)
         pending.reject(rejection)
         expectErrors(
             await result,
@@ -388,13 +388,13 @@ describe("getErrors", () => {
         const branchMeta = metaOf(branch)
         const childMeta = metaOf(child)
         const result = getErrors(new Chain(root), ["branch"])
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         expect(branchMeta.shared).to.be(true)
         expect(childMeta.shared).to.be(true)
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         expect(metaOf(child)).to.be(childMeta)
 
         pending.reject("bad")
@@ -416,7 +416,7 @@ describe("getErrors", () => {
         const root = importValue(branch, "imported diamond")
         const result = getErrors(new Chain(root), [])
 
-        expect(registrations()).to.be(2)
+        expect(registrations()).to.be(1)
         expect(metaOf(leaf).shared).to.be(true)
 
         pending.reject("diamond failure")

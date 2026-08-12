@@ -101,6 +101,7 @@ describe("ArrayView", () => {
     it("forks retained Promise mirrors for each derived value", async () => {
         const pending = deferred()
         const source = [pending.promise, 2]
+        new Chain(source)
         const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
             source,
             "0",
@@ -173,7 +174,7 @@ describe("ArrayView", () => {
         expect(exportValue(chain, [])).to.eql([9])
     })
 
-    it("shares tracked values retained by another view", () => {
+    it("shares traversable values retained by another view", () => {
         const retained = { value: 1 }
         const first = run(new Chain([0]), [], "push", false)
         const extendedChain = new Chain(first)

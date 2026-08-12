@@ -92,6 +92,33 @@ describe("promise helpers", () => {
         expect(registrations).to.be(1)
     })
 
+    it("keeps native Promise hooks inside the user-code boundary", () => {
+        const pending = deferred()
+        const observed = new Chain({ value: 1 })
+        pending.promise.constructor = {
+            get [Symbol.species]() {
+                lookupPath(observed, ["value"])
+                return Promise
+            },
+        }
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            const failure = thrownBy(() => {
+                return lookupPath(new Chain(pending.promise), [])
+            })
+
+            expect(failure?.message).to.be(
+                "Cascada cannot be re-entered from supported user code",
+            )
+            expect(reported).to.be(failure)
+        } finally {
+            setFatalErrorReporter()
+        }
+    })
+
     it("does not inspect a non-Error rejection reason", async () => {
         const pending = deferred()
         let inspections = 0
@@ -294,7 +321,7 @@ describe("promise mirrors and lookupPath", () => {
     it("rejects a Promise at the synchronous sharing boundary", () => {
         const error = thrownBy(() => markShared(Promise.resolve("value")))
         expect(error.message).to.be(
-            "A Promise must be shared by its property version",
+            "Value metadata requires prior admission",
         )
     })
 
@@ -361,17 +388,18 @@ describe("promise mirrors and lookupPath", () => {
         expect(detachedRoot.value).to.be("replacement")
     })
 
-    it("publishes settlement reflection failures into retained values", async () => {
+    it("publishes uninspectable settled values as opaque", async () => {
         const pending = deferred()
         const failure = new Error("settled value reflection failed")
+        const settled = failsClassification(failure)
         const chain = new Chain([])
 
         expect(run(chain, [], "push", true, pending.promise)).to.be(1)
-        pending.resolve(failsClassification(failure))
+        pending.resolve(settled)
         await flushMicrotasks()
 
-        expect(chain._state.value[0]).to.be(failure)
-        expect(readPath(chain, ["0"])).to.be(failure)
+        expect(chain._state.value[0]).to.be(settled)
+        expect(readPath(chain, ["0"])).to.be(settled)
         verifyRefCounts(chain._state.value)
     })
 
@@ -442,17 +470,18 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps settlement reflection failures on detached versions", async () => {
+    it("keeps uninspectable settled values on detached versions", async () => {
         const pending = deferred()
         const failure = new Error("detached value reflection failed")
+        const settled = failsClassification(failure)
         const root = { value: pending.promise }
         const chain = new Chain(root)
         const observed = lookupPath(chain, ["value"])
 
         assignPath(chain, ["value"], "replacement")
-        pending.resolve(failsClassification(failure))
+        pending.resolve(settled)
 
-        expect(await observed).to.be(failure)
+        expect(await observed).to.be(settled)
         expect(root.value).to.be("replacement")
         verifyRefCounts(root)
     })

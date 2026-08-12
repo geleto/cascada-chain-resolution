@@ -57,19 +57,20 @@ function runObservation(chain, path, method, args) {
             }
             if (languageValues.isError(targetValue)) return targetValue
 
-            return invokeSelectedMethod(targetValue)
+            return dispatchMethodCall(targetValue)
         },
     )
 
-    function invokeSelectedMethod(targetValue) {
-        const isArray = arrayViews.isLogicalArray(targetValue)
+    function dispatchMethodCall(targetValue) {
+        const targetType = languageValues.typeOf(targetValue)
+        const isArray = targetType === languageValues.TYPE_ARRAY
         if (isArray && arrayInvocation.isArrayMutator(method)) {
             return invokeIntrinsicArray(targetValue)
         }
 
-        const tracked = languageValues.isTracked(targetValue)
+        const traversable = languageValues.isTraversable(targetValue)
         if (
-            tracked &&
+            traversable &&
             languageProperties.hasLanguageProperty(targetValue, method)
         ) {
             return errorUtils.validationError(
@@ -79,8 +80,8 @@ function runObservation(chain, path, method, args) {
 
         if (
             !isArray &&
-            typeof targetValue !== "string" &&
-            !tracked
+            targetType !== languageValues.TYPE_STRING &&
+            !traversable
         ) {
             return errorUtils.validationError(
                 "run receiver does not support methods",
@@ -101,11 +102,7 @@ function runObservation(chain, path, method, args) {
                     (
                         // Recognize the base Array prototype across realms.
                         Array.isArray(entry.owner) &&
-                        languageValues.isPlainObjectPrototype(
-                            errorUtils.runUserCode(
-                                () => Object.getPrototypeOf(entry.owner),
-                            ),
-                        )
+                        isBaseArrayPrototype(entry.owner)
                     )
                 )
             ) {
@@ -118,6 +115,7 @@ function runObservation(chain, path, method, args) {
             }
         }
 
+        // Method selection may invoke an own/inherited getter or Proxy trap.
         const callable = errorUtils.runUserCode(
             () => methodTarget[method],
         )
@@ -175,8 +173,7 @@ function runObservation(chain, path, method, args) {
             args,
         )
         if (!languageValues.isPromise(result)) {
-            importOrdinaryResult(result)
-            return result
+            return importOrdinaryResult(result)
         }
 
         const releaseLease = metadata.acquireReadLease(leaseValue)
@@ -194,10 +191,17 @@ function runObservation(chain, path, method, args) {
     }
 
     function importOrdinaryResult(value) {
-        if (languageValues.isTracked(value)) {
-            imports.import(value, "run method result")
-        }
+        return imports.import(value, "run method result")
     }
+}
+
+function isBaseArrayPrototype(value) {
+    if (!Array.isArray(value)) return false
+    // Cross-realm Array recognition may invoke a Proxy getPrototypeOf trap.
+    const prototype = errorUtils.runUserCode(
+        () => Object.getPrototypeOf(value),
+    )
+    return metadata.isPlainObjectPrototype(prototype)
 }
 
 function runMutation(chain, path, method, args) {

@@ -42,7 +42,7 @@ collection-only mode begins.
 
 - A path-blocking or terminal Error returns unchanged.
 - A primitive or missing terminal returns directly.
-- A tracked terminal begins the raw copy-or-collect walk.
+- A traversable terminal begins the raw copy-or-collect walk.
 
 Export never requires a ref index.
 
@@ -51,7 +51,7 @@ Export never requires a ref index.
 Before an Error is found, the raw walk creates one plain-data output graph:
 
 - arrays retain length and sparse slots;
-- tracked non-array containers become plain objects;
+- traversable non-array containers become plain objects;
 - opaque values retain their identity;
 - aliases retain one output identity;
 - cycles point back into the output graph;
@@ -60,7 +60,7 @@ Before an Error is found, the raw walk creates one plain-data output graph:
 - an own enumerable `__proto__` key is defined as ordinary data; and
 - runtime metadata, mirrors, counters, descriptors, and prototypes are omitted.
 
-A tracked identity enters both identity tables before descent so aliases and
+A traversable identity enters both identity tables before descent so aliases and
 cycles can refer to its output immediately.
 
 ## Collection-only mode
@@ -103,7 +103,7 @@ Export does not pin or mark the source branch. Its issue-time behavior relies
 on the runtime ownership contract:
 
 - compiler-created mutable data has one owner;
-- extracting or otherwise sharing a tracked value marks it shared;
+- extracting or otherwise sharing a traversable value marks it shared;
 - repeated imported identities are classified as shared; and
 - mutation through a shared route COWs before writing.
 
@@ -132,7 +132,7 @@ Mirror acquisition enforces downward closure:
 and created every required mirror.
 
 If an export-created mirror later resolves after its owner becomes indexed, its
-first resolver indexes the new tracked value and commits the exact counter and
+first resolver indexes the new traversable value and commits the exact counter and
 parent-edge delta.
 
 Export does not use `buildRefIndex`, subtree counters, shared marking, or a

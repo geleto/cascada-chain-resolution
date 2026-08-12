@@ -49,14 +49,14 @@ function exportTrackedValue(value, preserveErrors) {
     if (languageValues.isError(value)) {
         return preserveErrors ? value : combineExportErrors([value])
     }
-    if (!languageValues.isTracked(value)) return value
+    if (!languageValues.isTraversable(value)) return value
 
     let output
     const state = rawWalk.createRawWalkState(() => {
         output = undefined
     }, preserveErrors)
     const readiness = rawWalk.walkRawBranch(value, state)
-    if (state.copying) output = state.copies.get(value)
+    if (state.copies) output = state.copies.get(value)
     const finish = () => !preserveErrors && state.errors.size > 0
         ? combineExportErrors(state.errors)
         : output
@@ -81,7 +81,7 @@ function hasError(chain, path) {
 
 function hasErrorAtPathValue(value) {
     if (languageValues.isError(value)) return true
-    if (!languageValues.isTracked(value)) return false
+    if (!languageValues.isTraversable(value)) return false
 
     propertyVersions.buildRefIndex(value)
     const counter = refcounts.getRequiredRefCounter(value)
@@ -132,7 +132,7 @@ function getErrors(chain, path) {
         let readiness
         if (languageValues.isError(value)) {
             strategy.foundError(value)
-        } else if (languageValues.isTracked(value)) {
+        } else if (languageValues.isTraversable(value)) {
             readiness = collectFencedErrorWaits(value, strategy)
         }
         return readiness
@@ -179,7 +179,7 @@ function collectFencedErrorWaits(
                 strategy.foundError(child)
             } else if (languageValues.isPromise(child)) {
                 waits.push(collectPromiseErrors(node, key, child))
-            } else if (languageValues.isTracked(child)) {
+            } else if (languageValues.isTraversable(child)) {
                 const childCounter = refcounts.getRequiredRefCounter(child)
                 if (counterHasErrorSearchWork(childCounter)) {
                     walk(child)
@@ -199,7 +199,7 @@ function collectFencedErrorWaits(
                     strategy.foundError(value)
                     return undefined
                 }
-                if (!languageValues.isTracked(value)) return undefined
+                if (!languageValues.isTraversable(value)) return undefined
 
                 return collectFencedErrorWaits(value, strategy, visited)
             },
@@ -248,8 +248,10 @@ function walkObservationPath(chain, path, onResolved) {
         ) {
             return walkFromParent(value, index + 1)
         }
-        if (!languageValues.isTracked(value)) {
-            return onResolved(errorUtils.pathAccessError(), false)
+        if (!languageValues.isTraversable(value)) {
+            const failure = errorUtils.pathAccessError()
+            languageValues.admitReadyValue(failure)
+            return onResolved(failure, false)
         }
         return walkFromParent(value, index + 1)
     }

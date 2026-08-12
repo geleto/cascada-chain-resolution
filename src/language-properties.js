@@ -1,5 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
+import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
 const ORDINARY_PROPERTY = 0
@@ -39,6 +40,8 @@ function isDataPlacement(descriptor) {
     return descriptor?.enumerable === true && "value" in descriptor
 }
 
+// A language container may be a Proxy, so the physical property operations
+// below can invoke its traps even though accessors never run as graph values.
 function getLanguagePropertyDescriptor(parent, key) {
     parent = arrayViews.projectionOf(parent)
     key = String(key)
@@ -191,10 +194,11 @@ function readLanguageProperty(parent, key) {
     if (propertyKind === STRING_LENGTH) return parent.length
 
     const mirror = metadata.metaOf(logicalParent)?.mirrors?.[key]
-    if (mirror) return mirror.value
-
-    const descriptor = getLanguagePlacementDescriptor(parent, key)
-    return descriptor?.value
+    const value = mirror
+        ? mirror.value
+        : getLanguagePlacementDescriptor(parent, key)?.value
+    languageValues.admitValue(value)
+    return value
 }
 
 function hasLanguageProperty(parent, key) {
