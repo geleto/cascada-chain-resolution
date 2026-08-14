@@ -10,10 +10,12 @@ import * as propertyVersions from "./property-versions.js"
 function createRawWalkState(
     onError = undefined,
     preserveErrors = false,
+    retainSource = undefined,
 ) {
     const state = {
         copies: new WeakMap(),
         errors: new Set(),
+        retainSource,
         visited: new WeakSet(),
         foundError(error) {
             if (preserveErrors) return
@@ -52,6 +54,7 @@ function walkRawBranch(value, state) {
     for (const key of languageProperties.enumerableLanguageKeys(value)) {
         const child = languageProperties.readLanguageProperty(value, key)
         if (languageValues.isPromise(child)) {
+            if (state.retainSource) state.retainSource(value)
             // Reserve the captured key now so later settlement cannot change
             // the source's observable own-key order.
             if (state.copies) {

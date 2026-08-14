@@ -159,7 +159,7 @@ function getViewLength(_thisValue, view) {
     return view.length
 }
 
-function prepareConcatArguments(args) {
+function prepareConcatArguments(args, retainSource) {
     const items = args.map(item => {
         return resolution.continueInitialValueUnlessPoison(
             item,
@@ -168,7 +168,7 @@ function prepareConcatArguments(args) {
                 if (
                     value === null ||
                     (type !== "object" && type !== "function")
-                ) return value
+                ) return retainSource(value)
 
                 const entry = invocation.findPropertyDescriptor(
                     value,
@@ -181,7 +181,7 @@ function prepareConcatArguments(args) {
                         "value" in descriptor &&
                         descriptor.value === undefined
                     )
-                ) return value
+                ) return retainSource(value)
                 return errorUtils.validationError(
                     "Concat protocols are unsupported",
                 )
@@ -291,8 +291,11 @@ function prepareFlatProperty(origin, depth, ancestry) {
     )
 }
 
-function prepareSearchArguments(args) {
-    const searchResult = resolution.resolveInitialValueOrPoison(args[0])
+function prepareSearchArguments(args, retainSource) {
+    const searchResult = resolution.resolveInitialValueOrPoison(
+        args[0],
+        retainSource,
+    )
     const fromResult = args.length > 1
         ? conversion.toIntegerOrInfinity(args[1])
         : undefined

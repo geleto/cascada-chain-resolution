@@ -360,12 +360,13 @@ function walkMutationPath(
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
-    function complete(writeBack, next, operationError = undefined) {
+    function complete(writeBack, next, targetResult = undefined) {
         languageValues.admitValue(next)
         writeBack(next)
-        const outcome = operationError ?? (
-            languageValues.isError(next) ? next : undefined
-        )
+        const outcome = targetResult === undefined &&
+            languageValues.isError(next)
+            ? next
+            : targetResult
         return onComplete ? onComplete(outcome) : outcome
     }
 

@@ -33,11 +33,11 @@ function exportPath(chain, path) {
 
 // Native argument export preserves nested Errors. A top-level Error remains
 // available for the caller's shallow argument poisoning.
-function exportArgument(value) {
+function exportArgument(value, retainSource = undefined) {
     return resolution.resolveInitialValueOrPoison(value, resolved => {
         return languageValues.isError(resolved)
             ? resolved
-            : exportTrackedValue(resolved, true)
+            : exportTrackedValue(resolved, true, retainSource)
     })
 }
 
@@ -45,7 +45,7 @@ function exportBranch(value) {
     return exportTrackedValue(value, false)
 }
 
-function exportTrackedValue(value, preserveErrors) {
+function exportTrackedValue(value, preserveErrors, retainSource = undefined) {
     if (languageValues.isError(value)) {
         return preserveErrors ? value : combineExportErrors([value])
     }
@@ -54,7 +54,7 @@ function exportTrackedValue(value, preserveErrors) {
     let output
     const state = rawWalk.createRawWalkState(() => {
         output = undefined
-    }, preserveErrors)
+    }, preserveErrors, retainSource)
     const readiness = rawWalk.walkRawBranch(value, state)
     if (state.copies) output = state.copies.get(value)
     const finish = () => !preserveErrors && state.errors.size > 0

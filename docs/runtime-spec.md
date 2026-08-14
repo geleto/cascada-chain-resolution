@@ -332,12 +332,12 @@ shared. The result is synchronous unless path resolution crosses a Promise.
 Returns the value captured at the path without adding an owner. The caller must
 either use it temporarily or cede the prior ownership.
 
-### `run(chain, path, method, mutateArray, ...arguments)`
+### `run(chain, path, method, mutation, ...arguments)`
 
-Invokes supported String and Array operations or a trusted read-only method.
-Array mutation mode publishes through the normal mutation path; observation
-mode preserves the receiver. See [`run.md`](run.md) for dispatch, argument,
-ordering, and result contracts.
+Invokes a supported operation through one common lifecycle after classifying
+the receiver. Mutation mode publishes through the normal mutation path;
+observation mode preserves the receiver. See [`run.md`](run.md) for dispatch,
+argument, ordering, and result contracts.
 
 ### `export(chain, path)`
 
@@ -436,9 +436,12 @@ logical Cascada values before native invocation; locale methods likewise
 construct only the small native input their intrinsic inspects. An ordinary
 native observation receives its path-resolved receiver directly. `run` exports
 each native-bound argument after dispatch; controlled logical payloads retain
-their identity. Pending controlled argument preparation leases its captured
-receiver only until invocation. A controlled method owns any lease required by
-later receiver reads, while an independent result Promise adds none. An
+their identity. Pending preparation leases each exact traversable source that
+its continuations retain, including sources revealed by required Promise
+resolution, and releases those leases after their last access. Pending
+controlled argument preparation leases its captured receiver only until
+invocation. A controlled method owns any lease required by later receiver
+reads, while an independent result Promise adds none. An
 ordinary native call retains an exact traversable receiver through its returned
 Promise, and an ArrayView receiver is shallow-materialized. The method remains
 trusted read-only, non-retaining beyond that result, and free of external side

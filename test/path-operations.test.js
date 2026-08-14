@@ -489,7 +489,7 @@ describe("path assignment", () => {
             "Cannot delete length (imported at: intrinsic receiver)",
         )
         expect(mutation.message).to.be(
-            "Array mutation receiver is not an Array " +
+            "run mutation receiver is not an ordinary property " +
             "(imported at: intrinsic receiver)",
         )
         expect(source).to.eql([1])

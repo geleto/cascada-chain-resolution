@@ -26,13 +26,29 @@ import {
 } from "./support.js"
 
 describe("run", () => {
-    it("validates mutation calls before walking", () => {
-        const chain = new Chain([1])
+    it("validates call syntax before dispatch and mode by category", () => {
+        const mutation = new Chain([1])
+        const mutationError = run(mutation, [], "map", true)
+        expect(mutationError instanceof Error).to.be(true)
+        expect(mutation._state.value).to.be(mutationError)
 
-        expect(run(chain, [], "map", true) instanceof Error).to.be(true)
-        expect(run(chain, [], "constructor", false) instanceof Error).to.be(true)
-        expect(run(chain, [], "push", "yes") instanceof Error).to.be(true)
-        expect(chain._state.value).to.eql([1])
+        const observation = new Chain([1])
+        expect(run(
+            observation,
+            [],
+            "constructor",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(observation._state.value).to.eql([1])
+
+        const invalidMode = new Chain([1])
+        expect(run(
+            invalidMode,
+            [],
+            "push",
+            "yes",
+        ) instanceof Error).to.be(true)
+        expect(invalidMode._state.value).to.eql([1])
     })
 
     it("resolves arguments while leaving coercion native", async () => {
@@ -1041,6 +1057,29 @@ describe("run", () => {
         expect(concatCombined.errors.includes(nested)).to.be(false)
     })
 
+    it("orders selection failure before every argument Error", async () => {
+        const first = new Error("first argument")
+        const second = new Error("second argument")
+        const pending = deferred()
+
+        const result = run(
+            new Chain({}),
+            [],
+            "missing",
+            false,
+            first,
+            pending.promise,
+        )
+        pending.reject(second)
+        const combined = await result
+
+        expect(combined.errors.length).to.be(3)
+        expect(combined.errors[0].message).to.be(
+            "Method is not callable: missing",
+        )
+        expect(combined.errors.slice(1)).to.eql([first, second])
+    })
+
     it("prepares flat candidates concurrently without resolving retained values", async () => {
         const first = deferred()
         const second = deferred()
@@ -1505,7 +1544,7 @@ describe("run", () => {
         expect(await exportValue(chain, [])).to.eql([1, 9, 3])
     })
 
-    it("prepares a pending mutation receiver and argument together", async () => {
+    it("selects a pending mutation receiver before its inputs", async () => {
         const receiver = deferred()
         const start = deferred()
         const receiverCount = countPromiseRegistrations(receiver.promise)
@@ -1517,13 +1556,140 @@ describe("run", () => {
         const result = run(chain, [], "splice", true, start.promise, 1)
 
         expect(receiverCount() > initialReceiverCount).to.be(true)
-        expect(startCount() > initialStartCount).to.be(true)
+        expect(startCount()).to.be(initialStartCount)
         expect(chain._state.value instanceof Promise).to.be(true)
 
         receiver.resolve([1, 2])
+        await flushMicrotasks()
+        expect(startCount() > initialStartCount).to.be(true)
         start.resolve(0)
         expect(await result).to.eql([1])
         expect(await exportValue(chain, [])).to.eql([2])
+    })
+
+    it("leases captured arguments while the receiver is pending", async () => {
+        const receiver = deferred()
+        const payload = { value: 1 }
+        const payloadChain = new Chain(payload)
+        const chain = new Chain(receiver.promise)
+
+        const result = run(
+            chain,
+            [],
+            "splice",
+            true,
+            1,
+            0,
+            payload,
+        )
+        expect(metaOf(payload).readEnterCount).to.be(1)
+
+        assignPath(payloadChain, ["value"], 2)
+        receiver.resolve([0])
+        expect(await result).to.eql([])
+
+        expect(payload.value).to.be(1)
+        expect(payloadChain._state.value.value).to.be(2)
+        expect(chain._state.value[1]).to.be(payload)
+        expect(metaOf(payload).readEnterCount).to.be(undefined)
+    })
+
+    it("leases retained controlled inputs while preparation is pending", async () => {
+        const start = deferred()
+        const payload = { value: 1 }
+        const payloadChain = new Chain(payload)
+        const receiver = new Chain([0])
+
+        const result = run(
+            receiver,
+            [],
+            "splice",
+            true,
+            start.promise,
+            0,
+            payload,
+        )
+        expect(metaOf(payload).readEnterCount).to.be(1)
+
+        assignPath(payloadChain, ["value"], 2)
+        start.resolve(1)
+        expect(await result).to.eql([])
+
+        expect(payload.value).to.be(1)
+        expect(payloadChain._state.value.value).to.be(2)
+        expect(receiver._state.value[1]).to.be(payload)
+        expect(metaOf(payload).readEnterCount).to.be(undefined)
+    })
+
+    it("does not lease arguments ignored by a controlled method", async () => {
+        const start = deferred()
+        const ignored = { value: 1 }
+
+        const result = run(
+            new Chain([1, 2]),
+            [],
+            "slice",
+            false,
+            start.promise,
+            undefined,
+            ignored,
+        )
+        expect(metaOf(ignored)).to.be(undefined)
+
+        start.resolve(0)
+        expect(await exportValue(new Chain(await result), [])).to.eql([1, 2])
+        expect(metaOf(ignored)).to.be(undefined)
+    })
+
+    it("releases retained-input leases when preparation fails", async () => {
+        const start = deferred()
+        const failure = new Error("invalid start")
+        const payload = { value: 1 }
+        const receiver = new Chain([0])
+
+        const result = run(
+            receiver,
+            [],
+            "splice",
+            true,
+            start.promise,
+            0,
+            payload,
+        )
+        expect(metaOf(payload).readEnterCount).to.be(1)
+
+        start.reject(failure)
+        expect(await result).to.be(failure)
+        expect(receiver._state.value).to.be(failure)
+        expect(metaOf(payload).readEnterCount).to.be(undefined)
+    })
+
+    it("leases controlled inputs revealed while another input waits", async () => {
+        const first = deferred()
+        const second = deferred()
+        const value = { answer: 1 }
+        const valueChain = new Chain(value)
+
+        const result = run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            first.promise,
+            second.promise,
+        )
+        first.resolve(value)
+        await flushMicrotasks()
+        expect(metaOf(value).readEnterCount).to.be(1)
+
+        assignPath(valueChain, ["answer"], 2)
+        second.resolve("done")
+        const concatenated = await result
+
+        expect(readPath(new Chain(concatenated), ["0"])).to.be(value)
+        expect(value.answer).to.be(1)
+        expect(valueChain._state.value.answer).to.be(2)
+        expect(metaOf(value).readEnterCount).to.be(undefined)
     })
 
     it("transforms the FIFO property version of a pending receiver", async () => {
@@ -1604,6 +1770,13 @@ describe("run", () => {
         expect(exportValue(chain, [])).to.eql([1])
         removed.resolve(7)
         expect(await result).to.be(7)
+    })
+
+    it("preserves a null mutation result", () => {
+        const chain = new Chain([null])
+
+        expect(run(chain, [], "pop", true)).to.be(null)
+        expect(chain._state.value).to.eql([])
     })
 
     it("does not lease an Array for an independent controlled result", async () => {
@@ -1948,6 +2121,39 @@ describe("run", () => {
         )).to.be(date)
     })
 
+    it("routes registered and opaque receivers through category dispatch", () => {
+        class RegisteredReceiver {
+            read(addend) {
+                return this.value + addend
+            }
+        }
+        registerDataClass(RegisteredReceiver)
+        const registered = new RegisteredReceiver()
+        registered.value = 1
+
+        expect(run(
+            new Chain(registered),
+            [],
+            "read",
+            false,
+            2,
+        )).to.be(3)
+
+        let invoked = false
+        class OpaqueReceiver {
+            read() {
+                invoked = true
+            }
+        }
+        expect(run(
+            new Chain(new OpaqueReceiver()),
+            [],
+            "read",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(invoked).to.be(false)
+    })
+
     it("leases a method receiver while exported arguments resolve", async () => {
         const argument = deferred()
         const record = { value: 1 }
@@ -1971,6 +2177,59 @@ describe("run", () => {
 
         expect(await result).to.be(1)
         expect(chain._state.value.value).to.be(2)
+    })
+
+    it("leases host argument sources retained by pending export", async () => {
+        const pending = deferred()
+        const argument = { pending: pending.promise, value: 1 }
+        const argumentChain = new Chain(argument)
+        const receiver = {}
+        Object.defineProperty(receiver, "read", {
+            value(value) {
+                return value.value
+            },
+        })
+
+        const result = run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            argument,
+        )
+        expect(metaOf(argument).readEnterCount).to.be(1)
+
+        assignPath(argumentChain, ["value"], 2)
+        pending.resolve("ready")
+
+        expect(await result).to.be(1)
+        expect(argument.value).to.be(1)
+        expect(argumentChain._state.value.value).to.be(2)
+        expect(metaOf(argument).readEnterCount).to.be(undefined)
+    })
+
+    it("releases input leases after synchronous preparation failure", () => {
+        const pending = deferred()
+        const retained = { pending: pending.promise }
+        const failure = new Error("argument reflection failed")
+        const broken = new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        })
+        const receiver = {}
+        Object.defineProperty(receiver, "read", {
+            value() {},
+        })
+
+        expect(run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            { retained, broken },
+        )).to.be(failure)
+        expect(metaOf(retained).readEnterCount).to.be(undefined)
     })
 
     it("balances nested entry and method-argument read leases", async () => {

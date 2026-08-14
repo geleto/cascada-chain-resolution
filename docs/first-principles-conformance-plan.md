@@ -263,13 +263,15 @@ Phase 6 will replace.
 
 ### Problem
 
-Invocation is split across receiver-specific paths, and `run` exposes an Array-specific mutation flag before it knows the receiver category. Registered class code also receives its physical receiver without complete Promise preparation or protection against direct nested mutation. Implementing registered calls on the current split would duplicate argument preparation, leasing, Error handling, publication, and result admission.
+Registered invocation is not implemented. Registered class code still receives its physical receiver without complete Promise preparation or protection against direct nested mutation. It must join the common invocation lifecycle rather than duplicate argument preparation, leasing, Error handling, publication, and result admission.
 
 ### Design
 
 [`registered-class-invocation.md`](registered-class-invocation.md) is the detailed architecture.
 
 #### 1. Establish the common invocation lifecycle
+
+Complete.
 
 Consolidate record, Array, String, registered, and opaque invocation into one lifecycle before adding registered execution. Replace the internal Array-mutation Boolean with an observation-or-mutation request interpreted after receiver classification. The lifecycle coordinates category-owned method selection, selected input preparation, leases and opaque ordering, ordered Error collection, one invocation, mutation publication through `transformProperty`, result admission, and cleanup. Each receiver category defines its selection rules, capabilities, and consumed state. Preserve controlled Array methods' selective input preparation, and delete superseded invocation paths rather than adapting them.
 
@@ -494,7 +496,7 @@ Reject Array mutators in observation mode and mutations through Array overrides.
 
 Do not add sharing or lease guards that forbid otherwise safe ArrayView backing reuse. An imported Array never attaches or serves as mutable backing; ordinary import attribution makes the operation materialize or COW first.
 
-Delete ordinary receiver selection through `requiresArrayMaterialization`, its `receiver === targetValue` lease inference, and `invokeObservationMethodWithExportedArgs`'s independent per-argument exports. The coordinator becomes the sole collector of Errors reached by the selected preparation. Array overrides always export; exact observational receivers lease explicitly by category. Keep `requiresArrayMaterialization` where representation mutation and copy-on-write still need it.
+Delete ordinary receiver selection through `requiresArrayMaterialization` and its receiver-identity lease inference. The coordinator becomes the sole collector of Errors reached by the selected preparation. Array overrides always export; exact observational receivers lease explicitly by category. Keep `requiresArrayMaterialization` where representation mutation and copy-on-write still need it.
 
 Preserve the host-call error boundary: a synchronous host-method, executable getter, or reflection throw becomes a ready Error result, and a mutating-function throw also poisons its targeted receiver. A returned Promise preserves its own fulfillment and rejection without retroactive graph poisoning. Property and value failures follow Phase 2A's publication rule; bookkeeping, impossible-transition, and declared host-contract violations remain fatal.
 

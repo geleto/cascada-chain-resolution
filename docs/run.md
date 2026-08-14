@@ -7,10 +7,10 @@
 ## Contract
 
 ```js
-run(chain, path, method, mutateArray, ...arguments)
+run(chain, path, method, mutation, ...arguments)
 ```
 
-`method` must be a string and `mutateArray` must be exactly `true` or `false`. Both are supplied before the receiver or any argument settles. A non-string method, invalid Boolean, `constructor`, or mutation request outside the intercepted set returns a language Error before any path walk or gate.
+`method` must be a string and `mutation` must be exactly `true` or `false`. Both are supplied before the receiver or any argument settles. A non-string method or invalid Boolean returns a language Error before path traversal. After the receiver is classified, its category rejects `constructor`, an unsupported method, or an unsupported mode. An observational rejection leaves the receiver unchanged; a mutation rejection publishes the Error through the normal receiver transition.
 
 `path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, or traversable object with a trusted read-only executable surface. Traversable objects are plain records, null-prototype records, and registered data-class instances. Opaque class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays with an attached metadata `arrayView`, and internally branded `ArrayView` instances are logical Arrays.
 
@@ -22,7 +22,7 @@ The intercepted Array mutators are:
 copyWithin fill pop push reverse shift sort splice unshift
 ```
 
-| `mutateArray` | Resolved call | Behavior |
+| `mutation` | Resolved call | Behavior |
 | --- | --- | --- |
 | `false` | Logical Array mutator | Leave the receiver unchanged and return a distinct transformed logical Array. |
 | `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
@@ -117,11 +117,13 @@ An argument retained as Array payload is not preparation input. `push`, `unshift
 
 ## Path and operation readiness
 
-`mutateArray` selects `walkMutationPath` or `walkObservationPath` when the call is issued. `walkObservationPath` resolves the complete receiver path, including a Promise-valued final receiver. `walkMutationPath` resolves only through the receiver's owning parent so the terminal can gate a Promise-valued final receiver before waiting.
+`mutation` selects `walkMutationPath` or `walkObservationPath` when the call is issued. The request is interpreted only after receiver classification. `walkObservationPath` resolves the complete receiver path, including a Promise-valued final receiver. `walkMutationPath` resolves only through the receiver's owning parent so the terminal can gate a Promise-valued final receiver before waiting.
 
 A path Promise is handled entirely by the selected walker. If post-target work is ready when its continuation reaches the target, the operation completes synchronously inside that continuation and the walker-produced Promise carries the result. Path delay alone creates no receiver gate or additional wrapper.
 
-After an observation target is reached, `run` starts argument preparation. A direct result returns without lease bookkeeping. Pending controlled arguments lease an exact runtime-managed receiver only until invocation, so later mutation cannot change the receiver captured by the call. A controlled method that continues reading after a pending property owns a lease for that remaining work; an independent result Promise does not extend it. An ordinary host call retains an exact traversable receiver through pending preparation and a returned Promise because host code may still use it. Immutable String receivers and materialized temporary views need no lease.
+After the receiver is classified and its method selected, the common invocation lifecycle starts category-specific argument preparation. It leases each exact traversable input source retained by the call, including sources revealed by required Promise resolution, and releases those leases after invocation or failed preparation. No lease remains after a direct result.
+
+Pending controlled arguments lease an exact runtime-managed receiver only until invocation, so later mutation cannot change the receiver captured by the call. A controlled method that continues reading after a pending property owns a lease for that remaining work; an independent result Promise does not extend it. An ordinary host call retains an exact traversable receiver through pending preparation and a returned Promise because host code may still use it. Immutable String receivers and materialized temporary views need no lease.
 
 `run` in mutation mode calls `walkMutationPath` directly. Its terminal callback passes the reached property to `transformProperty`, which captures that property version, starts preparation of every required argument, and invokes the operation callback with the resolved receiver, prepared arguments, and copy-on-write context. The operation callback contains no parent, key, mirror, gate, publication, or path-walking logic.
 
@@ -178,7 +180,7 @@ A `run` receiver path ending at either intrinsic `length` selects a number, neve
 
 ## Errors
 
-A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. An Array mutation on a missing or non-Array final receiver installs its validation Error at that path and returns the same Error.
+A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. A mutation rejected after receiver classification installs its validation Error at that path and returns the same Error.
 
 A synchronous supported-method, callback, accessor, or reflection throw becomes a language Error at that exact boundary. A failed mutating call poisons its receiver placement; an observation leaves its receiver unchanged. The Error is the call result. A returned method-Promise preserves its own outcome. Unlimited `flat` of a logical Array cycle has no finite result and returns a language RangeError corresponding to native stack overflow. An observational mutator discards its private working copy.
 
@@ -186,7 +188,7 @@ A kernel invariant, bookkeeping failure, or host-contract violation is fatal. Sy
 
 ## Implementation boundary
 
-`src/run.js` owns routing, observation coordination, mutation policy, and result admission. `src/invocation.js` owns safe descriptor lookup, native calls, and ordinary exported-argument invocation, including String methods. `src/mutations.js` owns path copying, receiver replacement, Promise gates, and `transformProperty`; `src/language-properties.js` owns terminal-property classification, descriptors, validation, and physical language-property access. `src/property-versions.js` owns exact property versions, placement, publication, validated deletion, and Array-length commits. `src/array-methods.js` declares and implements supported Array methods, while `src/array-invocation.js` interprets those declarations. `src/array-remap.js` owns property-origin remaps, native-mutation tracing, application, and materialization. `src/observations.js` owns path export and native-argument export. `src/resolution.js` owns ordered Promise continuations and internal settlement observers. `src/error.js` owns Error conversion and combination. `src/language-conversion.js` owns Promise-aware scalar conversion required by logical wrappers. `src/array-view.js` owns ArrayView representation, backing preflight, endpoint transitions, and bounds. `src/refcounts.js` owns logical-edge accounting, and `src/meta.js` owns reusable read leases.
+`src/run.js` owns path routing and top-level receiver classification. `src/invocation.js` owns the common preparation, protection, invocation, Error ordering, result-admission, and cleanup lifecycle, together with ordinary host-call selection, safe descriptor lookup, and native calls. `src/mutations.js` owns path copying, receiver replacement, Promise gates, and `transformProperty`; `src/language-properties.js` owns terminal-property classification, descriptors, validation, and physical language-property access. `src/property-versions.js` owns exact property versions, placement, publication, validated deletion, and Array-length commits. `src/array-methods.js` declares and implements supported Array methods, while `src/array-invocation.js` owns Array call selection and interprets those declarations. `src/array-remap.js` owns property-origin remaps, native-mutation tracing, application, and materialization. `src/observations.js` owns path export and native-argument export. `src/resolution.js` owns ordered Promise continuations and internal settlement observers. `src/error.js` owns Error conversion and combination. `src/language-conversion.js` owns Promise-aware scalar conversion required by logical wrappers. `src/array-view.js` owns ArrayView representation, backing preflight, endpoint transitions, and bounds. `src/refcounts.js` owns logical-edge accounting, and `src/meta.js` owns reusable read leases.
 
 Logical-Array and intrinsic-`length` access is routed through `src/language-properties.js` for every graph operation. Traversal recognizes String `length` without treating a primitive String as a traversable object; assignment and deletion reject it without replacing the String receiver. `src/index.js` exports `run`; ArrayView and derived-assignment helpers remain internal. Array callback methods other than sort comparison, Map/Set support, and proxy-backed mutating class methods are outside this step.
 
@@ -194,7 +196,7 @@ Logical-Array and intrinsic-`length` access is routed through `src/language-prop
 
 Run the complete suite. Do not duplicate the JavaScript engine's intrinsic method-algorithm tests; cover the Cascada boundary:
 
-- validation before walking, intrinsic shadowing, ordinary overrides, rejected constructors, String protocols and callbacks, deferred Array callbacks, and opaque results;
+- syntactic validation before walking, category validation after classification, intrinsic shadowing, ordinary overrides, rejected constructors, String protocols and callbacks, deferred Array callbacks, and opaque results;
 - direct and delayed paths, zero or multiple readiness Promises, concurrent receiver and argument preparation, assignment-style Promise payloads without waiting, operation leases, gates before returning from required waits, receiver-before-result settlement, supersession, and gate-free ready transitions;
 - argument export boundaries, logical preparation, direct ordinary receivers, result admission, and no raw ArrayView backing exposure;
 - Cascada scalar conversion of primitives, logical Arrays, supported records and instances, null prototypes, opaque objects, direct and nested Promise frontiers, and Errors, including ignoring protocol-named data properties;
