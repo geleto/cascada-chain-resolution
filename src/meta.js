@@ -92,8 +92,28 @@ function registerDataClass(DataClass) {
                 "registerDataClass requires an object prototype",
             )
         }
+        validateRegisteredPrototype(prototype)
         REGISTERED_PROTOTYPES.add(prototype)
     })
+}
+
+function validateRegisteredPrototype(prototype) {
+    // Registration is a trusted host-contract boundary. Its outer runFatal
+    // deliberately makes reflection failure fatal rather than language data.
+    for (
+        let current = prototype;
+        current !== null && !isPlainObjectPrototypeUnchecked(current);
+        current = Object.getPrototypeOf(current)
+    ) {
+        for (const key of Reflect.ownKeys(current)) {
+            const descriptor = Object.getOwnPropertyDescriptor(current, key)
+            if (descriptor && !("value" in descriptor)) {
+                throw new TypeError(
+                    "Registered class prototypes cannot contain accessors",
+                )
+            }
+        }
+    }
 }
 
 function isObjectLike(value) {
@@ -124,26 +144,28 @@ function hasOperationalMetadata(value) {
 }
 
 function requiresCopyOnWrite(value) {
-    const meta = metaOf(value)
-    return meta?.shared === true ||
-        (meta?.readEnterCount ?? 0) > 0
+    return metaOf(value)?.shared === true || hasReadLease(value)
 }
 
-function updateReadLease(value, change) {
+function hasReadLease(value) {
+    return (metaOf(value)?.readLeaseCount ?? 0) > 0
+}
+
+function incrementReadLease(value) {
+    if (!isObjectLike(value)) return
     const meta = requireMeta(value)
-    const count = meta.readEnterCount ?? 0
-    const next = count + change
-    if (next < 0) {
+    meta.readLeaseCount = (meta.readLeaseCount ?? 0) + 1
+}
+
+function decrementReadLease(value) {
+    if (!isObjectLike(value)) return
+    const meta = requireMeta(value)
+    const count = meta.readLeaseCount ?? 0
+    if (count < 1) {
         errorUtils.reportFatalError(new Error("Read lease underflow"))
     }
-    if (next === 0) delete meta.readEnterCount
-    else meta.readEnterCount = next
-}
-
-function acquireReadLease(value) {
-    if (!isObjectLike(value)) return () => {}
-    updateReadLease(value, 1)
-    return () => updateReadLease(value, -1)
+    if (count === 1) delete meta.readLeaseCount
+    else meta.readLeaseCount = count - 1
 }
 
 function markShared(value) {
@@ -172,9 +194,11 @@ export {
     TYPE_RECORD,
     TYPE_REGISTERED,
     TYPE_STRING,
-    acquireReadLease,
+    decrementReadLease,
     getOrCreateMeta,
+    hasReadLease,
     hasOperationalMetadata,
+    incrementReadLease,
     importBoundaryOf,
     isObjectLike,
     isPlainObjectPrototype,

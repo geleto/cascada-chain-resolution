@@ -325,7 +325,7 @@ describe("run", () => {
         expect(await result).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source).to.eql({ value: 2 })
-        expect(metaOf(source).readEnterCount).to.be(undefined)
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
     it("preserves host result Promise outcomes", async () => {
@@ -410,7 +410,7 @@ describe("run", () => {
         expect(source.value).to.be(1)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
-        expect(metaOf(source).readEnterCount).to.be(undefined)
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
     it("admits a promised host receiver alias before releasing its lease", async () => {
@@ -432,7 +432,7 @@ describe("run", () => {
         expect(alias.value).to.be(1)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
-        expect(metaOf(source).readEnterCount).to.be(undefined)
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
     it("returns host result thenables unchanged", async () => {
@@ -481,7 +481,7 @@ describe("run", () => {
         assignPath(chain, ["value"], 2)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
-        expect(metaOf(source).readEnterCount).to.be(undefined)
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
     it("does not discover nested Promises read by ordinary methods", () => {
@@ -1582,7 +1582,7 @@ describe("run", () => {
             0,
             payload,
         )
-        expect(metaOf(payload).readEnterCount).to.be(1)
+        expect(metaOf(payload).readLeaseCount).to.be(1)
 
         assignPath(payloadChain, ["value"], 2)
         receiver.resolve([0])
@@ -1591,7 +1591,7 @@ describe("run", () => {
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
         expect(chain._state.value[1]).to.be(payload)
-        expect(metaOf(payload).readEnterCount).to.be(undefined)
+        expect(metaOf(payload).readLeaseCount).to.be(undefined)
     })
 
     it("leases retained controlled inputs while preparation is pending", async () => {
@@ -1609,7 +1609,7 @@ describe("run", () => {
             0,
             payload,
         )
-        expect(metaOf(payload).readEnterCount).to.be(1)
+        expect(metaOf(payload).readLeaseCount).to.be(1)
 
         assignPath(payloadChain, ["value"], 2)
         start.resolve(1)
@@ -1618,7 +1618,7 @@ describe("run", () => {
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
         expect(receiver._state.value[1]).to.be(payload)
-        expect(metaOf(payload).readEnterCount).to.be(undefined)
+        expect(metaOf(payload).readLeaseCount).to.be(undefined)
     })
 
     it("does not lease arguments ignored by a controlled method", async () => {
@@ -1656,12 +1656,12 @@ describe("run", () => {
             0,
             payload,
         )
-        expect(metaOf(payload).readEnterCount).to.be(1)
+        expect(metaOf(payload).readLeaseCount).to.be(1)
 
         start.reject(failure)
         expect(await result).to.be(failure)
         expect(receiver._state.value).to.be(failure)
-        expect(metaOf(payload).readEnterCount).to.be(undefined)
+        expect(metaOf(payload).readLeaseCount).to.be(undefined)
     })
 
     it("leases controlled inputs revealed while another input waits", async () => {
@@ -1680,7 +1680,7 @@ describe("run", () => {
         )
         first.resolve(value)
         await flushMicrotasks()
-        expect(metaOf(value).readEnterCount).to.be(1)
+        expect(metaOf(value).readLeaseCount).to.be(1)
 
         assignPath(valueChain, ["answer"], 2)
         second.resolve("done")
@@ -1689,7 +1689,7 @@ describe("run", () => {
         expect(readPath(new Chain(concatenated), ["0"])).to.be(value)
         expect(value.answer).to.be(1)
         expect(valueChain._state.value.answer).to.be(2)
-        expect(metaOf(value).readEnterCount).to.be(undefined)
+        expect(metaOf(value).readLeaseCount).to.be(undefined)
     })
 
     it("transforms the FIFO property version of a pending receiver", async () => {
@@ -2121,14 +2121,14 @@ describe("run", () => {
         )).to.be(date)
     })
 
-    it("routes registered and opaque receivers through category dispatch", () => {
-        class RegisteredReceiver {
+    it("routes registered-class and opaque receivers through category dispatch", () => {
+        class RegisteredClassReceiver {
             read(addend) {
                 return this.value + addend
             }
         }
-        registerDataClass(RegisteredReceiver)
-        const registered = new RegisteredReceiver()
+        registerDataClass(RegisteredClassReceiver)
+        const registered = new RegisteredClassReceiver()
         registered.value = 1
 
         expect(run(
@@ -2185,8 +2185,8 @@ describe("run", () => {
         const argumentChain = new Chain(argument)
         const receiver = {}
         Object.defineProperty(receiver, "read", {
-            value(value) {
-                return value.value
+            value(first, second) {
+                return first.value + second.value
             },
         })
 
@@ -2196,16 +2196,17 @@ describe("run", () => {
             "read",
             false,
             argument,
+            argument,
         )
-        expect(metaOf(argument).readEnterCount).to.be(1)
+        expect(metaOf(argument).readLeaseCount).to.be(2)
 
         assignPath(argumentChain, ["value"], 2)
         pending.resolve("ready")
 
-        expect(await result).to.be(1)
+        expect(await result).to.be(2)
         expect(argument.value).to.be(1)
         expect(argumentChain._state.value.value).to.be(2)
-        expect(metaOf(argument).readEnterCount).to.be(undefined)
+        expect(metaOf(argument).readLeaseCount).to.be(undefined)
     })
 
     it("releases input leases after synchronous preparation failure", () => {
@@ -2229,7 +2230,7 @@ describe("run", () => {
             false,
             { retained, broken },
         )).to.be(failure)
-        expect(metaOf(retained).readEnterCount).to.be(undefined)
+        expect(metaOf(retained).readLeaseCount).to.be(undefined)
     })
 
     it("balances nested entry and method-argument read leases", async () => {
@@ -2250,13 +2251,13 @@ describe("run", () => {
                 false,
                 argument.promise,
             )
-            expect(metaOf(record).readEnterCount).to.be(2)
+            expect(metaOf(record).readLeaseCount).to.be(2)
             return observed
         })
 
         argument.resolve(2)
         expect(await result).to.be(3)
-        expect(metaOf(record).readEnterCount).to.be(undefined)
+        expect(metaOf(record).readLeaseCount).to.be(undefined)
     })
 
     it("installs an Error for a missing mutation receiver", () => {

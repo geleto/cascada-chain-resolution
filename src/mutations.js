@@ -44,7 +44,7 @@ function mustPreserveValue(value, attachmentRoot) {
         metadata.requiresCopyOnWrite(value)
 }
 
-function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
+function createEmptyContainerCopy(source) {
     const sourceMeta = metadata.requireMeta(source)
     const type = sourceMeta.type
     let destination
@@ -65,6 +65,11 @@ function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
     if (type !== languageValues.TYPE_ARRAY) {
         destinationMeta.prototype = sourceMeta.prototype
     }
+    return destination
+}
+
+function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
+    const destination = createEmptyContainerCopy(source)
     attachmentRoot ??= destination
     const pathKeyString = String(pathKey)
 
@@ -568,6 +573,7 @@ function deletePath(chain, path) {
 
 export {
     assignPath,
+    createEmptyContainerCopy,
     deletePath,
     setProperty,
     transformProperty,

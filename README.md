@@ -153,7 +153,7 @@ host-state holder is not added to the language graph.
 
 A read-only `enter(..., false, onEntered)` installs no gate and invokes its
 callback only after capturing a protected root. Every identity root increments
-its metadata `readEnterCount`, including values already protected by sharing
+its metadata `readLeaseCount`, including values already protected by sharing
 or import; primitives require no metadata.
 An imported target already carries its own import status; a runtime-owned
 target does not inherit it from its containing path.

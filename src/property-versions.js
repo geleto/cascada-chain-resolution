@@ -13,6 +13,13 @@ function getPromiseMirror(owner, key) {
     return metadata.metaOf(owner)?.mirrors?.[key]
 }
 
+function hasPromiseMirrors(owner) {
+    const mirrors = metadata.metaOf(owner)?.mirrors
+    if (!mirrors) return false
+    for (const _key in mirrors) return true
+    return false
+}
+
 function installPromiseMirror(owner, key, mirror) {
     const meta = metadata.requireMeta(owner)
     meta.mirrors ??= Object.create(null)
@@ -429,6 +436,7 @@ export {
     getOrCreatePromiseMirror,
     getPropertyOrigin,
     getPromiseMirror,
+    hasPromiseMirrors,
     indexValueIfSourceIndexed,
     isPropertyOrigin,
     placePromiseVersion,

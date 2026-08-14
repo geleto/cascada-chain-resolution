@@ -80,7 +80,7 @@ function getControlledCallDescription(
 ) {
     return {
         leaseReceiver: mutation ? undefined : receiver,
-        prepareArguments: (args, retainSource) =>
+        prepareInputs: (args, retainSource) =>
             prepareArrayMethodArguments(method, args, retainSource),
         invoke(preparedArguments) {
             if (!mutation) return invokeArrayObservationMethod(

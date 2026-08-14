@@ -5,10 +5,10 @@
 **Deferred and archived for possible future work.** This is not part of the
 current implementation plan.
 
-The runtime graph remains data-only. Functions are not language data, and the
-restricted standard [`run`](../run.md) does not permit mutating class
-methods. The current kernel supports registered data-class instances only as
-data whose prototype can survive copy-on-write.
+The runtime graph remains data-only and Functions are not language data.
+[`run`](../run.md) supports trusted synchronous methods on registered classes;
+proxy-backed methods for unregistered or less restricted classes remain
+deferred.
 
 This document records the design to use if broader invocation is revisited. It combines:
 
@@ -43,7 +43,7 @@ It would not:
 - turn external side effects into a transaction.
 
 A standalone callable would come from compiler or host integration metadata. A
-class method would come from the registered receiver's prototype together with a
+class method would come from the registered-class receiver's prototype together with a
 trusted method descriptor. Own enumerable graph properties remain data even
 when their keys shadow method names.
 
@@ -329,7 +329,7 @@ supported data uses the corresponding ordinary shell. No runtime metadata is
 placed on proxy targets.
 
 The receiver proxy is the method's `this`. Prototype lookup may therefore
-reach the registered method normally, but descriptor lookup for dispatch occurs
+reach the registered-class method normally, but descriptor lookup for dispatch occurs
 before draft invocation and must not execute a getter.
 
 ## Mutation scope
@@ -397,7 +397,7 @@ the final draft view.
 Allocating first preserves aliases and cycles. Shell selection reuses the
 data-class copy rules:
 
-- supported class identities retain their exact registered prototype;
+- supported class identities retain their exact registered-class prototype;
 - ordinary language-data containers use their existing supported shell; and
 - unsupported identities produce an Error before publication.
 
@@ -658,9 +658,9 @@ Every applicable test runs under inline-Symbol and WeakMap metadata modes.
 
 ## Decision summary
 
-The current runtime graph is data-only. Restricted standard and read-only
-method execution is implemented by [`run`](../run.md); proxy-backed mutating
-class methods remain deferred.
+The current runtime graph is data-only. Standard methods and trusted
+synchronous registered-class methods are implemented by [`run`](../run.md);
+proxy-backed methods for broader classes remain deferred.
 
 If method execution is revisited, ordinary mutating class syntax should use a
 recursive operation-local draft proxy rather than requiring class authors to

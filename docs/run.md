@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented.** This is the restricted invocation layer for standard String and Array operations and trusted read-only methods. It does not implement general side-effecting class methods.
+**Implemented.** This is the common invocation layer for standard String and Array operations, trusted record observations, and synchronous registered-class observations and mutations.
 
 ## Contract
 
@@ -12,7 +12,7 @@ run(chain, path, method, mutation, ...arguments)
 
 `method` must be a string and `mutation` must be exactly `true` or `false`. Both are supplied before the receiver or any argument settles. A non-string method or invalid Boolean returns a language Error before path traversal. After the receiver is classified, its category rejects `constructor`, an unsupported method, or an unsupported mode. An observational rejection leaves the receiver unchanged; a mutation rejection publishes the Error through the normal receiver transition.
 
-`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, or traversable object with a trusted read-only executable surface. Traversable objects are plain records, null-prototype records, and registered data-class instances. Opaque class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays with an attached metadata `arrayView`, and internally branded `ArrayView` instances are logical Arrays.
+`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, record, or registered data-class instance. Opaque class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays with an attached metadata `arrayView`, and internally branded `ArrayView` instances are logical Arrays.
 
 ## Dispatch
 
@@ -27,13 +27,16 @@ copyWithin fill pop push reverse shift sort splice unshift
 | `false` | Logical Array mutator | Leave the receiver unchanged and return a distinct transformed logical Array. |
 | `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
 | `true` | Logical Array mutator | Mutate or publish a new receiver and return the JavaScript mutator result. |
-| `true` | Non-Array receiver | Publish and return a language Error without invocation. |
+| `true` | Registered-class method | Isolate, invoke, validate, and publish the receiver; return the method result. |
+| `true` | Other receiver | Publish and return a language Error without invocation. |
 
 A logical Array mutator is selected intrinsically by name even when a receiver property shadows that name. The same-named method on a non-Array object remains an ordinary observation.
 
 Method lookup for a logical Array uses the backing Array, so a view and its source identity select the same executable surface. The materialized receiver passed to an ordinary selected method is a temporary native shape that is never published, ref-indexed, or treated as another language owner.
 
-Ordinary lookup preserves JavaScript shadowing. An own enumerable data property shadows the prototype but is never an executable method. Otherwise method selection may use the supported host surface, including a getter. Lookup and the selected method must be trusted read-only and must not retain inputs or cause external side effects; other side-effecting methods are unsupported.
+Ordinary lookup preserves JavaScript shadowing. An own enumerable data property shadows the prototype but is never an executable method. A record observation may use its supported host surface, including a getter, and remains trusted read-only and non-retaining. Registered dispatch selects a data method from the prototype captured at admission and its inherited chain up to, but excluding, `Object.prototype`; registration rejects accessors on that chain.
+
+After registered-class method selection succeeds, the call resolves the complete receiver graph and every explicit argument through captured property versions. An observation leases its prepared receiver without a gate. A mutation uses the ordinary receiver gate while pending, leases the complete argument graph through finalization, selectively isolates receiver identities protected by COW or runtime bookkeeping, and publishes only a valid completed receiver. Registered-class methods execute synchronously and follow the trusted class contract in [`registered-class-invocation.md`](registered-class-invocation.md).
 
 String methods use the ordinary observation path. Their dispatch protocols, such as `Symbol.match`, `Symbol.replace`, and `Symbol.split`, and callable arguments such as replacement callbacks are part of the same trusted read-only call and are subject to the ordinary exported-argument and result-admission boundaries. Controlled Array intrinsics support the methods declared by the Array method table; `sort` and `toSorted` additionally support the comparator contract below. Array callback methods such as `map`, `filter`, `reduce`, and `forEach` are deferred. Array `keys`, `values`, and `entries` are outside the controlled method table; direct Array iteration and spread use the runtime iterator path.
 
@@ -50,6 +53,7 @@ Lowering captures every argument position before issuing `run`, preserves omissi
 | Delegated Array argument | `run` exports the positions marked by the Array method table; native code receives the resolved result unchanged. |
 | Controlled Array input | None. The wrapper resolves only values the method consumes and leaves retained payloads exact, including Error and Promise values. |
 | `sort` or `toSorted` comparator | None. The callable remains outside the graph and receives logical element values under the trusted comparator contract. |
+| Registered-class receiver and arguments | Prepare every reached logical value; materialize only paths required for host representation or receiver isolation. |
 | Ordinary observation, including a String method | Resolve the receiver through its path; export and resolve every argument before invocation. |
 
 Controlled Array operations never export their logical receiver or elements merely to invoke an intrinsic. An ordinary selected method receives the resolved receiver directly as `this`; only its arguments cross `run`'s value-export boundary. A logical Array view is shallow-materialized first because its internal representation is not a native indexed receiver. Method lookup occurs before argument readiness.
@@ -58,7 +62,7 @@ Retained Array payloads keep their logical identity. This includes Error and Pro
 
 Call poisoning reaches only consumed inputs. A direct Error, or a Promise that must resolve and produces an Error, prevents invocation. One discovered Error is preserved; several are combined without flattening existing `.errors` payloads. Errors nested in uninspected Array elements or object properties remain data. For an ordinary trusted native observation, each argument export may return directly or as a Promise. If every argument is ready, invocation is synchronous. Otherwise `run` coordinates those prepared values through the Promise helpers.
 
-Array `toLocaleString` is deferred because it invokes executable element methods. A direct or settled method result is admitted before entering the graph: opaque and primitive values pass through, while traversable language-data objects receive normal ownership preparation and remain lazily ref-indexed. Controlled Array results are runtime-owned. A traversable result from any ordinary trusted method, including a String method or Array override, is imported because the call may return externally retained data. A returned method Promise preserves its fulfillment and rejection; fulfillment is admitted normally and rejection does not change the receiver.
+Array `toLocaleString` is deferred because it invokes executable element methods. A direct or settled method result is admitted before entering the graph: opaque and primitive values pass through, while traversable language-data objects receive normal ownership preparation and remain lazily ref-indexed. Controlled Array results are runtime-owned. A traversable result from any ordinary trusted method, including a String method or Array override, is imported because the call may return externally retained data. Such a host Promise preserves its fulfillment and rejection. Registered-class methods instead reject Promise-valued result data without waiting; a mutation returning `this` yields its published receiver, and every other traversable registered-class result is copied independently before admission.
 
 ## Cascada scalar conversion
 

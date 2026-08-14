@@ -512,7 +512,8 @@ function orderedIndexSearch(
 
     // Other Array observations capture every property version before returning.
     // An ordered search resumes scanning the receiver after a pending element.
-    const releaseLease = metadata.acquireReadLease(thisValue)
+    metadata.incrementReadLease(thisValue)
+    const releaseLease = () => metadata.decrementReadLease(thisValue)
     return resolution.observeResultPromise(result, releaseLease, releaseLease)
 
     function next() {

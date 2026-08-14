@@ -35,11 +35,10 @@ instead expose canonical Array-index strings and the special `length`
 property; other string properties are outside their language surface and
 cannot be assigned or deleted through Cascada.
 
-Registered data-class COW and exact prototype preservation are
-implemented support for class instances as data. Construction and mutating
-class-method execution remain outside the current runtime plan. Restricted
-read-only methods and standard Array/String operations are defined in
-[`run.md`](run.md).
+Registered data-class COW, exact prototype preservation, and synchronous
+observation and mutation methods are implemented. Construction remains outside
+the runtime. Invocation is defined in [`run.md`](run.md) and
+[`registered-class-invocation.md`](registered-class-invocation.md).
 
 ## Chain roots
 
@@ -117,12 +116,13 @@ The copy contains only language-visible keys:
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 
-`registerDataClass(Class)` stores a definition on the constructor's exact
-prototype in the external metadata map without modifying it. Registration must
+`registerDataClass(Class)` stores the constructor's exact prototype in a
+dedicated registry without modifying or admitting it. Registration must
 happen before instances enter Cascada, is not inherited, does not invoke a
 constructor or copying callback, and asserts that all required state is
 compatible with own enumerable string-key copying. The API requires a callable
-constructor with an identity prototype; invalid registration is fatal. First
+constructor with an identity prototype and rejects accessors on its class
+prototype chain before `Object.prototype`; invalid registration is fatal. First
 admission fixes an identity's type and class definition; later registration or
 prototype mutation does not reclassify it.
 The kernel does not attempt to detect private fields, required hidden state,
@@ -446,6 +446,14 @@ ordinary native call retains an exact traversable receiver through its returned
 Promise, and an ArrayView receiver is shallow-materialized. The method remains
 trusted read-only, non-retaining beyond that result, and free of external side
 effects.
+
+A registered-class call prepares every explicit argument and the complete receiver
+graph. An observation runs synchronously on its leased prepared receiver. A
+mutation isolates protected receiver identities, invokes once synchronously,
+validates and admits the completed receiver, and publishes it through the
+ordinary mutation transition. It returns the published receiver for `this` and
+an independent copy for every other traversable result. Promise-valued
+registered-class results are validation Errors and are never awaited.
 
 A `sort` or `toSorted` comparator is the second executable-control
 exception. A direct or Promise-resolved callable remains outside the graph and

@@ -84,7 +84,7 @@ The gate is the ordering channel. Every later traversal of the entered path regi
 
 No gate is installed. The callback receives a read-only Chain rooted at the captured value. The value retains its own import status without boundary state on the Chain.
 
-Every identity root increments its metadata `readEnterCount`, including one already protected by sharing or import. Primitives need neither a count nor metadata. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary mirror semantics.
+Every identity root increments its metadata `readLeaseCount`, including one already protected by sharing or import. Primitives need neither a count nor metadata. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary mirror semantics.
 
 The callback may wait before issuing commands because its returned Promise keeps the Chain active and its read count acquired. After it fulfills, read-only `enter` prevents new issuance and releases the exact value captured at acquisition exactly once. Already-issued commands remain valid through their captured mirrors. Completing one read entry cannot weaken another or any permanent protection; if no mutation or ownership escape occurred, completing the last read entry restores singly-owned write behavior.
 
@@ -112,7 +112,7 @@ Promise reactions cannot run until the synchronous gate transition returns. The 
 
 ### Promise-valued read-only target
 
-`walkObservationPath` handles a Promise-valued target like any other Promise-bearing path segment: it registers at the mirror's exact FIFO position and invokes its resolution callback with the logical value or converted rejection Error. The callback bypasses `onEntered` for an Error; otherwise, it captures the resolved identity's metadata and increments `readEnterCount` before invoking `onEntered`. Each overlapping read-only entry increments the resolved identity's counter independently. There is no gate or separate target mechanism.
+`walkObservationPath` handles a Promise-valued target like any other Promise-bearing path segment: it registers at the mirror's exact FIFO position and invokes its resolution callback with the logical value or converted rejection Error. The callback bypasses `onEntered` for an Error; otherwise, it captures the resolved identity's metadata and increments `readLeaseCount` before invoking `onEntered`. Each overlapping read-only entry increments the resolved identity's counter independently. There is no gate or separate target mechanism.
 
 ### Pending descendants
 
@@ -236,7 +236,7 @@ test/enter.test.js
 
 A Chain can issue operations while it owns one exact-Boolean `_mutates` capability. Ordinary Chains initialize it to `true`, and an entered Chain receives the value validated by `enter`. `walkObservationPath` accepts either Boolean; `walkMutationPath` requires `true`. Both reject a Chain without its own capability, which means it can no longer issue operations. Already-issued recursive continuations do not recheck. `walkMutationPath` accepts the Chain, performs this assertion, and derives `chain._state` internally so assignment, deletion, and mutating entry share one boundary.
 
-Read-only entry setup reuses observation-path capture. The captured value retains its direct import status when entry creates its Chain. Entry then acquires a read lease for an identity value; primitives need no metadata. Completion releases the same lease and deletes its counter at zero. `enter` and `run` share `metadata.acquireReadLease`, while each operation owns and releases only its own lease. The mutation walk's single `requiresCopyOnWrite` predicate combines permanent sharing with a positive `readEnterCount`. Completing the last read entry removes only the temporary COW condition and never clears permanent protection.
+Read-only entry setup reuses observation-path capture. The captured value retains its direct import status when entry creates its Chain. Entry then increments the identity's read lease; primitives need no metadata. Completion decrements the same value and deletes its counter at zero. `enter` and `run` share the symmetric metadata lease operations, while each operation balances only its own acquisitions. The mutation walk's single `requiresCopyOnWrite` predicate combines permanent sharing with a positive `readLeaseCount`. Completing the last read entry removes only the temporary COW condition and never clears permanent protection.
 
 ### Mutating entry setup
 

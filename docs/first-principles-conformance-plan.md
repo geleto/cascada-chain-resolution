@@ -27,7 +27,7 @@ Baseline: commit `3d5a47a` (2026-08-06), with 648 tests passing in each metadata
 - COW or materialization is required when representation reuse would change a protected logical value, when an operation needs owned storage for imported data, or when the current physical representation cannot perform an otherwise valid logical transition.
 - Host-call arguments are prepared from logical values. Result admission applies each receiver category's origin and ownership rule to identities deliberately supplied to or produced by host code.
 - Controlled runtime methods are the only methods that receive Cascada values directly. Every explicit argument resolves for Error propagation; the method otherwise resolves only nested data it consumes and reuses backing whenever the rules above permit it.
-- Registered instances and their state retain ordinary graph ownership. Registered invocation adds only the preparation and mutation isolation required before synchronous class code receives a receiver.
+- Registered instances and their state retain ordinary graph ownership. Registered-class invocation adds only the preparation and mutation isolation required before synchronous class code receives a receiver.
 - Graph poisoning and API failure are independent outputs. An observation failure affects only its result. A mutation poisoned before invocation or by a synchronous throw replaces its targeted receiver placement or root with the Error and exposes the same Error through the API. A Promise returned by invoked code keeps its own fulfillment and rejection outcome. No consumed Error is lost.
 - A fatal failure belongs to the runtime mechanism or its declared kernel or host contract, not to the requested language operation. Broken invariants and bookkeeping belong here. Whether a failure was thrown does not determine its class.
 
@@ -261,9 +261,11 @@ Phase 6 will replace.
 
 ## Phase 5: Invoke registered classes
 
+Complete.
+
 ### Problem
 
-Registered invocation is not implemented. Registered class code still receives its physical receiver without complete Promise preparation or protection against direct nested mutation. It must join the common invocation lifecycle rather than duplicate argument preparation, leasing, Error handling, publication, and result admission.
+Registered-class invocation must prepare complete logical inputs and isolate direct nested mutation through the common invocation lifecycle rather than duplicate argument preparation, leasing, Error handling, publication, and result admission.
 
 ### Design
 
@@ -273,28 +275,28 @@ Registered invocation is not implemented. Registered class code still receives i
 
 Complete.
 
-Consolidate record, Array, String, registered, and opaque invocation into one lifecycle before adding registered execution. Replace the internal Array-mutation Boolean with an observation-or-mutation request interpreted after receiver classification. The lifecycle coordinates category-owned method selection, selected input preparation, leases and opaque ordering, ordered Error collection, one invocation, mutation publication through `transformProperty`, result admission, and cleanup. Each receiver category defines its selection rules, capabilities, and consumed state. Preserve controlled Array methods' selective input preparation, and delete superseded invocation paths rather than adapting them.
+Consolidate record, Array, String, registered-class, and opaque invocation into one lifecycle before adding registered-class execution. Replace the internal Array-mutation Boolean with an observation-or-mutation request interpreted after receiver classification. The lifecycle coordinates category-owned method selection, selected input preparation, leases and opaque ordering, ordered Error collection, one invocation, mutation publication through `transformProperty`, result admission, and cleanup. Each receiver category defines its selection rules, capabilities, and consumed state. Preserve controlled Array methods' selective input preparation, and delete superseded invocation paths rather than adapting them.
 
 Before pending work can retain a source, lease every reached record, Array, and registered instance. Acquire further leases as required Promise resolution reveals identities, and release each lease after the operation's last access. Keep one category-protection point for the opaque ordering added in Phase 7; do not add a temporary opaque path. Host calls consume every explicit argument, while controlled methods consume only the branches selected by the method. Resolve and inspect every consumed input even after finding an Error, and preserve receiver-then-argument Error order independently of Promise settlement.
 
-#### 2. Prepare registered calls
+#### 2. Prepare registered-class calls
 
-Implement one registered receiver-category module following [`registered-class-invocation.md`](registered-class-invocation.md). Registration rejects prototype-chain accessors before recording the class. Method-behavior restrictions are trusted except for the receiver and result validation specified below; Phase 5 adds no snapshots, comparisons, or scheduling instrumentation to detect violations.
+Implement one registered-class receiver-category module following [`registered-class-invocation.md`](registered-class-invocation.md). Registration rejects prototype-chain accessors before recording the class. Method-behavior restrictions are trusted except for the receiver and result validation specified below; Phase 5 adds no snapshots, comparisons, or scheduling instrumentation to detect violations.
 
-Prepare every explicit argument and the complete receiver graph in one operation-local state through existing property-version continuations. Preserve aliases and cycles across materialized inputs and expose logical values without changing imported storage. Observations use leases without a gate; pending mutations use the ordinary receiver gate.
+After registered-class method selection succeeds, prepare every explicit argument and the complete receiver graph in one operation-local state through existing property-version continuations. Preserve aliases and cycles across materialized inputs and expose logical values without changing imported storage. Observations use leases without a gate; pending mutations use the ordinary receiver gate.
 
-#### 3. Isolate registered mutations
+#### 3. Isolate registered-class mutations
 
 Implement the [pre-call isolation and mutation lifecycle](registered-class-invocation.md#receiver-mutation) directly:
 
 1. During preparation, lease every traversable identity reachable through any argument; keep those leases through finalization and release receiver-only preparation leases.
-2. Isolate the prepared receiver once with one fresh copy map and a predicate composed from ordinary COW protection, bookkeeping invalidated by direct JavaScript mutation, and Array materialization.
-3. Remap copied receiver identities in argument roots and nested argument paths, skipping the scan when the map is empty.
+2. Isolate the prepared receiver once with one fresh copy map. Copy the receiver root when the ordinary mutation context must preserve it because an ancestor path was copied; otherwise use a predicate composed from ordinary identity COW protection, bookkeeping invalidated by direct JavaScript mutation, and Array materialization.
+3. Materialize arguments once for host representation, applying copied receiver identities to argument roots and nested paths during that same walk.
 4. Invoke once and synchronously.
 5. Walk the final receiver once: reject any Promise or Error, admit new identities as runtime-owned, and mark each actively leased traversable identity shared; every other identity remains exact. Allocate no finalization copy or separate source-identity collection.
 6. Return the final working receiver as `mutatedValue`; let `transformProperty` decide whether publication is required and release all argument leases after finalization.
 
-Use one metadata-free complete-graph copier for qualifying isolation subgraphs and, with a separate forced-root map, registered results. Preserve aliases, cycles, and registered prototypes while keeping opaque identities and Functions exact; materialize every logical Array as an unattached native Array with the same logical structure. Reconnect isolation copies through ordinary placement replacement. Preparation failure, final receiver failure, or a synchronous throw poisons the receiver through the common mutation transition.
+Use one metadata-free complete-graph copier for qualifying isolation subgraphs and, with a separate forced-root map, registered-class results. Preserve aliases, cycles, and registered-class prototypes while keeping opaque identities and Functions exact; materialize every logical Array as an unattached native Array with the same logical structure. Reconnect isolation copies through ordinary placement replacement. Preparation failure, final receiver failure, or a synchronous throw poisons the receiver through the common mutation transition.
 
 #### 4. Admit results and classify failures
 
@@ -302,7 +304,7 @@ Return the published receiver when a mutation returns `this`; otherwise copy and
 
 #### 5. Keep registered behavior at the invocation boundary
 
-Registered invocation adds no persistent state and no registered-specific graph behavior outside its boundary. Do not snapshot arguments or support registered accessors or asynchronous registered methods. Registered instances remain ordinary graph data outside invocation; assignment, deletion, lookup, import, `enter`, refcounting, Promise mirrors, and path COW gain no registered-specific path.
+Registered-class invocation adds no persistent state and no registered-class-specific graph behavior outside its boundary. Do not snapshot arguments or support registered-class accessors or asynchronous registered-class methods. Registered instances remain ordinary graph data outside invocation; assignment, deletion, lookup, import, `enter`, refcounting, Promise mirrors, and path COW gain no registered-class-specific path.
 
 ### Verification
 
@@ -313,25 +315,27 @@ Registered invocation adds no persistent state and no registered-specific graph 
 
 #### Registered preparation and calls
 
-- Ready registered calls invoke and return synchronously. Pending receiver and argument preparation preserves captured property versions and FIFO order.
+- Ready registered-class calls invoke and return synchronously. Pending receiver and argument preparation preserves captured property versions and FIFO order.
 - Nested registered state such as `Line3 { start: Vec3, end: Vec3 }` receives settled prototype-preserving values with aliases, cycles, Array holes, and logical property values intact. Imported Promise storage is not modified.
-- A registered observation cannot observe a later mutation while its preparation is pending. Its receiver lease provides COW protection without a snapshot or gate, but does not protect against a method violating the trusted read-only contract.
+- Several prepared input Errors are combined once with every distinct original at the top level in receiver-then-argument order.
+- A registered-class observation cannot observe a later mutation while its preparation is pending. Its receiver lease provides COW protection without a snapshot or gate, but does not protect against a method violating the trusted read-only contract.
 
 #### Mutation isolation
 
 - Every mutation uses the same selective isolation walk and preserves prior and imported owners without a first-mutation marker or registered refcounts.
-- A protected receiver root takes the complete-copy path. The pre-call walk allocates nothing exactly when no reached identity qualifies; cycles only expand a copy already required. No graph-size heuristic or separate copy-decision pass exists.
-- Mutation isolation remains correct for ready and pending argument identities. When the receiver and an argument overlap, an argument root or nested occurrence of a copied receiver identity is remapped to the same copy without copying unrelated argument data. An empty copy map leaves argument identities exact. Promise discovery and cycles back to a receiver ancestor also preserve correct isolation.
-- Every traversable identity reachable through an argument is leased once during preparation. Any such identity retained in the receiver remains exact and becomes shared before its lease ends; every other identity retains its ordinary admission and ownership state.
+- A receiver reached beneath a copied ancestor is copied before registered-class code runs, so direct class mutation cannot change the ancestor's preserved value.
+- A protected receiver root takes the complete-copy path. The pre-call walk allocates no receiver graph copy when no reached identity qualifies; cycles only expand a copy already required. No graph-size heuristic or separate copy-decision pass exists.
+- Mutation isolation remains correct for ready and pending argument identities. When the receiver and an argument overlap, an argument root or nested occurrence of a copied receiver identity is remapped to the same copy without copying unrelated argument data. An empty copy map adds no isolation copy; representation materialization remains independent. Promise discovery and cycles back to a receiver ancestor also preserve correct isolation.
+- Every argument lease acquisition is balanced after finalization. Any actively leased identity retained in the receiver remains exact and becomes shared before its lease ends; every other identity retains its ordinary admission and ownership state.
 - An isolation-created receiver-root replacement is published even when finalization leaves it unchanged. Finalization never makes the publication decision.
 - An Error anywhere in the prepared receiver graph poisons an observation result or the mutation's receiver placement. A Promise or Error left in the completed receiver, other preparation poison, and a synchronous throw follow the same common failure path without publishing invalid state. A Promise or other language failure confined to an independent result affects only that result and does not poison a valid mutated receiver.
 
 #### Class and result contracts
 
-- A conforming method may store an argument-only identity for mutation in a later registered call. A receiver-argument alias uses the isolated receiver copy without changing the original Cascada argument; no runtime mutation detector or argument snapshot enforces the trusted restriction.
-- Returning `this` yields the published receiver and marks its additional ownership. Every other traversable result is copied unconditionally into a graph independent from the receiver and arguments, preserving its own aliases, cycles, registered prototypes, and logical Arrays as unattached native Arrays.
+- A conforming method may store an argument-only identity for mutation in a later registered-class call. A receiver-argument alias uses the isolated receiver copy without changing the original Cascada argument; no runtime mutation detector or argument snapshot enforces the trusted restriction.
+- Returning `this` yields the published receiver and marks its additional ownership. Every other traversable result is copied unconditionally into a graph independent from the receiver and arguments, preserving its own aliases, cycles, registered-class prototypes, and logical Arrays as unattached native Arrays.
 - Registration rejects prototype accessors, and a Promise-valued result is rejected without being awaited. Trusted representation, external-state, reentry, and post-return restrictions add no runtime enforcement machinery; ordinary registered state access remains ordinary graph access.
-- No ordinary graph operation stores registered ownership-unit state or gains a registered-specific transition.
+- No ordinary graph operation stores a registered-class ownership unit or gains a registered-class-specific transition.
 
 Update [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the path-operation documentation.
 
@@ -382,7 +386,7 @@ Delete runtime-island detection, `hasOperationalMetadata`, `promoteRoot`, the se
 - Reads, presence checks, and enumeration agree on every live mirror placement; current physical keys determine order after reimport.
 - An unchanged Promise placement keeps one mirror and resolver; a changed placement gets a fresh version at the import position.
 - Indexed reconciliation reuses the existing cycle-cut state and stores no duplicate cut flag.
-- Registered instances and nested state are reconciled as ordinary traversable identities; import creates no registered ownership unit or special validation pass.
+- Registered instances and nested state are reconciled as ordinary traversable identities; import creates no registered-class ownership unit or special validation pass.
 - Import of an attached Array at any reached position moves every earlier view to runtime-owned backing without moving or merging its mirrors, using the shared family reference without per-access metadata lookup.
 - Imported Promise settlement remains mirror-only. Runtime-owned settlement also remains logical when physical writeback is unavailable.
 - Ordinary accessors and non-enumerable properties are ignored without invocation. Throwing Proxy reflection poisons import, while reconciliation invariants remain fatal.
@@ -451,10 +455,10 @@ Once the receiver version is available, method selection follows admitted type:
 - a logical Array first selects a supported standard method or an observation-only override;
 - a string selects a native observation on the primitive;
 - a record captures and resolves only the selected own language-property version; it never searches the prototype or exposes the record as callable state;
-- an instance of a registered class delegates to Phase 5's registered invocation; and
+- an instance of a registered class delegates to Phase 5's registered-class invocation; and
 - an opaque instance selects an observational or explicitly requested mutating method on its exact identity.
 
-An own enumerable data placement shadows a non-record method and is not executable. Ordinary record and Array accessors are non-placements and are never invoked or treated as overrides. Registered prototype accessors are forbidden. Capture method selection before preparing arguments. An opaque accessor may run only after preparation is clean; its failure becomes the call's language Error. Reflection, missing, shadowing, and non-callable failures enter the receiver position of the ordered Error list while argument preparation still completes.
+An own enumerable data placement shadows a non-record method and is not executable. Ordinary record and Array accessors are non-placements and are never invoked or treated as overrides. Registered-class prototype accessors are forbidden. Capture method selection before preparing arguments. An opaque accessor may run only after preparation is clean; its failure becomes the call's language Error. Reflection, missing, shadowing, and non-callable failures enter the receiver position of the ordered Error list while argument preparation still completes.
 
 Constructors remain unsupported. An opaque descriptor lookup or executable getter that throws becomes a language Error. An Error produced by resolving a record function property or returned by an executable getter propagates unchanged; another non-callable value, or an opaque accessor without a getter, produces the existing validation Error. Call preparation must not turn these outcomes into fatal runtime failures.
 
@@ -464,8 +468,8 @@ Prepare every call as one ordered transition:
 2. Once the receiver is available and non-Error, capture its category and method selection before that transition yields, without invoking an opaque getter. Then export one complete native Array for an override, delegate registered preparation to Phase 5, reserve the Phase 7 opaque-identity entry, lease another exact observational receiver when pending work will reread it, or retain the controlled runtime receiver.
 3. Start required argument preparation from left to right without short-circuiting after an Error. Capture each nested property version when reached, prepare logical host-visible values, lease every traversable source retained by pending work, and enter each exact opaque identity in the Phase 7 gate once. A mutating opaque receiver dominates its argument aliases. Controlled positions resolve only data the method consumes; retained payloads remain exact Errors or Promises.
 4. Once required preparation is ready, inspect prepared inputs synchronously in receiver-then-argument order, beginning with any receiver-selection Error, and append each distinct consumed Error once. If the list is non-empty, do not invoke executable host or controlled code. An observation returns the single original or ordered aggregate and leaves its receiver unchanged. A mutation replaces its targeted receiver placement or root with that poison and exposes the same poison through the API.
-5. Otherwise invoke the selected operation exactly once. Controlled runtime code follows its method-specific transition. Registered methods delegate preparation, synchronous invocation, validation, copying, and publication to Phase 5. Other host mutations poison their receiver on a synchronous throw; an observation throw affects only the result. A Promise returned by non-registered host code remains the API result, and an opaque Promise keeps its Phase 7 entry until settlement.
-6. Admit a direct result before returning it. For a permitted Promise result, register one internal FIFO observer that admits fulfillment and performs cleanup without replacing the result or changing rejection. Keep controlled results runtime-owned, apply Phase 5's registered result rule, import new host identities, and preserve exact identities already admitted. Release every lease and Phase 7 entry after the call's last use, fulfillment, rejection, or synchronous failure.
+5. Otherwise invoke the selected operation exactly once. Controlled runtime code follows its method-specific transition. Registered-class methods delegate preparation, synchronous invocation, validation, copying, and publication to Phase 5. Other host mutations poison their receiver on a synchronous throw; an observation throw affects only the result. A Promise returned by non-registered host code remains the API result, and an opaque Promise keeps its Phase 7 entry until settlement.
+6. Admit a direct result before returning it. For a permitted Promise result, register one internal FIFO observer that admits fulfillment and performs cleanup without replacing the result or changing rejection. Keep controlled results runtime-owned, apply Phase 5's registered-class result rule, import new host identities, and preserve exact identities already admitted. Release every lease and Phase 7 entry after the call's last use, fulfillment, rejection, or synchronous failure.
 
 The Phase 5 coordinator owns sequencing, preparation, result admission, and cleanup; category dispatch owns receiver policy and contributes the leases or opaque entries its boundary requires. Use one operation-local state for waits and idempotent resource release. Do not infer resource lifetime from a generic observation result or add a persistent coordinator, queue, or parallel preparation path.
 
@@ -475,7 +479,7 @@ Controlled receiver protection ends when controlled code no longer needs that re
 
 Reuse Phase 5's preparation, leasing, Error, and result mechanisms. Do not add another coordinator or graph copier. Public export remains an independent plain-data operation, and an Array override still receives its exported native Array receiver.
 
-Registered execution retains Phase 5's contracts. An opaque observation may read ordinary and hidden state but must not mutate its exact receiver; an explicit opaque mutation may change only that receiver and follows Phase 7 ordering. Host code may retain an exact input identity or Function only through its returned value or until its returned Promise settles. A record function is invoked without the record as its receiver; it may use explicit arguments and read-only host state, but cannot read or mutate its containing record or other Cascada graph state.
+Registered-class execution retains Phase 5's contracts. An opaque observation may read ordinary and hidden state but must not mutate its exact receiver; an explicit opaque mutation may change only that receiver and follows Phase 7 ordering. Host code may retain an exact input identity or Function only through its returned value or until its returned Promise settles. A record function is invoked without the record as its receiver; it may use explicit arguments and read-only host state, but cannot read or mutate its containing record or other Cascada graph state.
 
 Keep executable Function positions explicit. The current controlled callback position is the `sort`/`toSorted` comparator: it receives settled logical elements, is synchronous, read-only, and non-retaining, and a Promise result remains unsupported. Supported String native protocols and callbacks execute inside their host boundary. Passing a Function as ordinary data does not authorize another runtime path to invoke it.
 
@@ -504,7 +508,7 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - Retaining methods such as `push` store an Error or rejecting Promise as payload without poisoning the call; consuming methods such as `concat` propagate either as call poison. A retained rejection later poisons only its property version.
 - Array overrides receive complete exported native Arrays containing no ArrayView, unresolved language property, or original traversable graph identity.
 - Receiver and argument preparation uses one operation state, preserves aliases and cycles across positions, and cannot be changed by later Cascada mutation.
-- Public export remains independent plain data. Host preparation exposes logical values, preserves admitted registered prototypes in any required materialization, and protects every exact traversable input retained by pending work.
+- Public export remains independent plain data. Host preparation exposes logical values, preserves admitted registered-class prototypes in any required materialization, and protects every exact traversable input retained by pending work.
 - Controlled runtime results remain runtime-owned, while identities first produced by host code are imported.
 - Registered-class observations and mutations see only settled host-ready state and preserve imported or prior owners.
 - Imported and runtime-owned Promises inside registered state use the same captured mirror path; imported physical storage remains unchanged.
@@ -518,8 +522,8 @@ Preserve the host-call error boundary: a synchronous host-method, executable get
 - Record functions may observe read-only host state such as time, but cannot read or mutate their containing record or other Cascada graph state.
 - Own enumerable data state shadows non-record methods. Ordinary graph accessors remain absent and uninvoked; constructor, missing-getter, non-callable, and throwing supported descriptor/accessor cases retain their specified classification.
 - The receiver path and explicit argument values are captured at issue time with receiver registration first; the receiver placement and nested property versions are captured as preparation reaches them. A ready receiver's callable or accessor is captured before category-specific argument preparation, without invoking executable host code early.
-- An Array override returning `this` yields its imported exported receiver. A registered mutation returning `this` yields the published receiver; every other traversable registered result is copied independently before admission.
-- A registered result shares no record, Array, or registered instance with its receiver or arguments, while preserving its internal aliases and cycles and retaining opaque identities and Functions exactly.
+- An Array override returning `this` yields its imported exported receiver. A registered-class mutation returning `this` yields the published receiver; every other traversable registered-class result is copied independently before admission.
+- A registered-class result shares no record, Array, or registered instance with its receiver or arguments, while preserving its internal aliases and cycles and retaining opaque identities and Functions exactly.
 - An exact input identity or Function returned directly, through a permitted Promise, or inside another result retains its origin and accounts for any additional owner.
 - Other new direct and fulfilled results are imported immediately.
 - A synchronous observation throw returns an Error without changing its receiver. A synchronous mutating-function throw poisons its targeted receiver and returns the same Error; partial physical effects on an exact opaque identity remain visible through other aliases. A returned Promise preserves its fulfillment or rejection and does not retroactively poison the receiver.

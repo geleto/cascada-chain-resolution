@@ -212,7 +212,7 @@ describe("value admission", () => {
         expect(languageValues.typeOf(registered)).to.be(
             languageValues.TYPE_REGISTERED,
         )
-        importValue(registered, "changed registered prototype")
+        importValue(registered, "changed registered-class prototype")
         const registeredChain = new Chain(registered)
         assignPath(registeredChain, ["value"], 2)
         expect(Object.getPrototypeOf(registeredChain._state.value)).to.be(
@@ -353,8 +353,8 @@ describe("value admission", () => {
         expect(metadata.metaOf(value)).to.be(undefined)
         expect(lookupPath(chain, ["value"])).to.be(value)
         importValue(value, "opaque import")
-        const release = metadata.acquireReadLease(value)
-        release()
+        metadata.incrementReadLease(value)
+        metadata.decrementReadLease(value)
 
         expect(ownKeyReads).to.be(0)
         expect(metadata.metaOf(value).shared).to.be(true)

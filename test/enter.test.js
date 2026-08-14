@@ -2,7 +2,10 @@ import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
 import { Chain as InternalChain } from "../src/chain.js"
-import { acquireReadLease } from "../src/meta.js"
+import {
+    decrementReadLease,
+    incrementReadLease,
+} from "../src/meta.js"
 import {
     Chain,
     assignPath,
@@ -42,9 +45,9 @@ describe("enter", () => {
     it("rejects a read lease underflow", () => {
         const value = {}
         new Chain(value)
-        const release = acquireReadLease(value)
-        release()
-        const failure = thrownBy(release)
+        incrementReadLease(value)
+        decrementReadLease(value)
+        const failure = thrownBy(() => decrementReadLease(value))
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Read lease underflow")
@@ -120,7 +123,7 @@ describe("enter", () => {
             return completion.promise
         })
 
-        expect(metaOf(branch).readEnterCount).to.be(1)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
         expect(readPath(entered, ["value"])).to.be(1)
         expect(thrownBy(() => assignPath(entered, ["value"], 3)))
             .to.be.an(Error)
@@ -132,7 +135,7 @@ describe("enter", () => {
 
         completion.resolve("observed")
         expect(await result).to.be("observed")
-        expect(metaOf(branch).readEnterCount).to.be(undefined)
+        expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
     })
 
@@ -155,13 +158,13 @@ describe("enter", () => {
             () => second.promise,
         )
 
-        expect(metaOf(branch).readEnterCount).to.be(2)
+        expect(metaOf(branch).readLeaseCount).to.be(2)
         first.resolve("first")
         expect(await firstResult).to.be("first")
-        expect(metaOf(branch).readEnterCount).to.be(1)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
         second.resolve("second")
         expect(await secondResult).to.be("second")
-        expect(metaOf(branch).readEnterCount).to.be(undefined)
+        expect(metaOf(branch).readLeaseCount).to.be(undefined)
     })
 
     it("bypasses a read callback for direct and promised Errors", async () => {
@@ -450,11 +453,11 @@ describe("enter", () => {
         expect(readChain._state.value.value).to.be(1)
         expect(root.target).not.to.be(resolved)
         expect(root.target.value).to.be(2)
-        expect(metaOf(resolved).readEnterCount).to.be(1)
+        expect(metaOf(resolved).readLeaseCount).to.be(1)
 
         readCompletion.resolve("read")
         expect(await readResult).to.be("read")
-        expect(metaOf(resolved).readEnterCount).to.be(undefined)
+        expect(metaOf(resolved).readLeaseCount).to.be(undefined)
     })
 
     it("copies beneath a read-entered ancestor before mutating", async () => {
@@ -485,11 +488,11 @@ describe("enter", () => {
         expect(root.ancestor).not.to.be(ancestor)
         expect(root.ancestor.target).not.to.be(target)
         expect(root.ancestor.target.value).to.be(2)
-        expect(metaOf(ancestor).readEnterCount).to.be(1)
+        expect(metaOf(ancestor).readLeaseCount).to.be(1)
 
         completion.resolve("read")
         expect(await readResult).to.be("read")
-        expect(metaOf(ancestor).readEnterCount).to.be(undefined)
+        expect(metaOf(ancestor).readLeaseCount).to.be(undefined)
     })
 
     it("preserves permanent alias sharing after a read entry releases", async () => {
@@ -514,7 +517,7 @@ describe("enter", () => {
 
         completion.resolve("read")
         expect(await result).to.be("read")
-        expect(metaOf(shared).readEnterCount).to.be(undefined)
+        expect(metaOf(shared).readLeaseCount).to.be(undefined)
         expect(metaOf(shared).shared).to.be(true)
     })
 
@@ -623,7 +626,7 @@ describe("enter", () => {
             .to.be("read target")
         expect(metaOf(child).importBoundary.errorContext)
             .to.be("read target")
-        expect(metaOf(target).readEnterCount).to.be(undefined)
+        expect(metaOf(target).readLeaseCount).to.be(undefined)
     })
 
     it("preserves imported cycles through Promise-target transfer", async () => {
@@ -1016,7 +1019,7 @@ describe("enter", () => {
 
         expect(caught).to.be(failure)
         expect(reported).to.be(failure)
-        expect(metaOf(branch).readEnterCount).to.be(undefined)
+        expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
     })
 
@@ -1089,7 +1092,7 @@ describe("enter", () => {
 
         expect(caught).to.be(failure)
         expect(reported).to.be(failure)
-        expect(metaOf(branch).readEnterCount).to.be(undefined)
+        expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
     })
 

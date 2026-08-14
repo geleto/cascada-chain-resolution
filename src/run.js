@@ -3,6 +3,7 @@ import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
+import * as registeredClassInvocation from "./registered-class-invocation.js"
 import {
     transformProperty,
     walkMutationPath,
@@ -86,6 +87,19 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
             mutationContext,
         )
     }
+    if (type === languageValues.TYPE_REGISTERED) {
+        if (languageProperties.hasLanguageProperty(receiver, method)) {
+            return errorUtils.validationError(
+                `Language property shadows method: ${method}`,
+            )
+        }
+        return registeredClassInvocation.selectRegisteredClassCall(
+            receiver,
+            method,
+            mutation,
+            mutationContext,
+        )
+    }
     if (mutation) {
         return errorUtils.validationError(
             "run receiver does not support mutation",
@@ -99,10 +113,7 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
             undefined,
         )
     }
-    if (
-        type === languageValues.TYPE_RECORD ||
-        type === languageValues.TYPE_REGISTERED
-    ) {
+    if (type === languageValues.TYPE_RECORD) {
         if (languageProperties.hasLanguageProperty(
             receiver,
             method,

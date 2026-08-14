@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented. Registered JavaScript data-class instances participate in the language graph and retain their prototype across copy-on-write. Unregistered classes and native internal-slot objects are opaque leaves.
+Implemented. Registered JavaScript data-class instances participate in the language graph, retain their prototype across copy-on-write, and support synchronous observation and mutation methods through `run`. Unregistered classes and native internal-slot objects are opaque leaves.
 
 ## Admitted values
 
@@ -14,7 +14,7 @@ An Error is admitted terminal data. A Promise is resolved at its captured proper
 
 ## Registration
 
-The package exports `registerDataClass`. Registration stores the class definition on the constructor's exact prototype in the same external metadata map used for admitted identities, without modifying the prototype:
+The package exports `registerDataClass`. Registration records the constructor's exact prototype in a dedicated registry without modifying or admitting it:
 
 ```js
 registerDataClass(Vec2)
@@ -22,7 +22,7 @@ registerDataClass(Vec2)
 
 Registration is permanent, must happen before instances enter Cascada, and is not inherited; each participating subclass must be registered separately. It asserts that every state value needed by supported behavior is stored in own enumerable string-keyed data properties. A copied instance normalizes those properties to ordinary enumerable writable configurable data properties.
 
-Registration requires a callable constructor with an identity prototype. An invalid definition is a fatal host-contract failure.
+Registration requires a callable constructor with an identity prototype and rejects accessors on its prototype chain up to, but excluding, `Object.prototype`. An invalid definition is a fatal host-contract failure.
 
 The contract does not support required private fields, accessors, non-enumerable or Symbol-keyed state, closure state, hidden shared storage, or native internal slots. Registration is trusted; the runtime does not attempt to detect a false assertion. A callable `then` still makes the value a Promise.
 
@@ -42,6 +42,8 @@ Arrays, including cross-realm Arrays and subclasses, use the Array path and norm
 
 ## Methods and export
 
-`run` may invoke a trusted read-only method on a registered instance. Mutating class methods remain unsupported.
+`run` prepares the complete registered-class receiver graph and every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, invoke once synchronously, validate the completed receiver, and publish it through the ordinary mutation transition. Methods and results may not be asynchronous. See [`registered-class-invocation.md`](registered-class-invocation.md) for the class contract and invocation boundary.
+
+A mutation returning `this` returns the published receiver. Every other traversable registered-class result is copied independently from the receiver and arguments before admission.
 
 Registered-class instances export as plain data without prototypes, methods, registration, or metadata. Opaque values export unchanged as identity leaves.
