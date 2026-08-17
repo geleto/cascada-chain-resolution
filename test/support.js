@@ -58,12 +58,12 @@ export {
     getErrors,
     hasError,
     lookupPath,
-    readPath,
     registerDataClass,
     run,
 } from "../src/index.js"
 
-export { enter } from "../src/enter.js"
+export { enter } from "../src/index.js"
+export { readPath } from "../src/observations.js"
 
 export {
     reportFatalError,

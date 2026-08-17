@@ -46,12 +46,12 @@ describe("export", () => {
             "Chain",
             "assignPath",
             "deletePath",
+            "enter",
             "export",
             "getErrors",
             "hasError",
             "import",
             "lookupPath",
-            "readPath",
             "registerDataClass",
             "run",
         ])

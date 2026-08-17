@@ -26,9 +26,9 @@ export {
     getErrors,
     hasError,
     lookupPath,
-    readPath,
 } from "./observations.js"
 
+export { enter } from "./enter.js"
 export { import } from "./import.js"
 export { registerDataClass } from "./meta.js"
 export { run } from "./run.js"
