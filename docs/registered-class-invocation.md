@@ -2,7 +2,9 @@
 
 ## Principle
 
-Registered classes are ordinary synchronous JavaScript classes that know nothing about Cascada. Keep registered-class-specific handling at their invocation boundary and reuse the common invocation lifecycle everywhere else.
+Registered classes are ordinary JavaScript classes that know nothing about Cascada. Keep registered-class-specific handling at their invocation boundary and reuse the common invocation lifecycle everywhere else.
+
+[`managed-and-external-state.md`](managed-and-external-state.md) generalizes this boundary to managed class instances and managed record methods.
 
 ## Prerequisite: common invocation
 
@@ -22,9 +24,9 @@ All semantic state is exposed through own enumerable string-keyed data propertie
 
 Registered state may contain primitives, records, Arrays, registered instances, opaque identities, Functions, aliases, and cycles. Ordinary graph operations may leave Promises or Errors there between calls. Call preparation resolves Promises and treats an encountered Error as call poison; methods receive neither in the receiver or consumed arguments, and a mutator may leave neither in its completed receiver. Because the complete receiver graph is consumed, any reached Error poisons the call and a mutation poisons its receiver placement.
 
-Every method finishes synchronously and performs no work or input access after returning, including through a Promise, callback, or scheduled continuation. Its result cannot be or traversably contain a Promise. An observation does not mutate its receiver. No method may read or mutate externally mutable state, or retain an argument or receiver except through its receiver or result.
+An observation does not mutate its receiver. A method may access its prepared inputs and, for a mutation, change its isolated receiver until its direct result settles. Every asynchronous access or effect must belong to work represented by that Promise and complete before it settles; detached work is forbidden. No method may read or mutate externally mutable state, or retain an argument or receiver except through its receiver or result.
 
-Methods may mutate their receiver graph through ordinary synchronous JavaScript, including nested class calls. They must not change a traversable identity's prototype, property descriptors, or extensibility.
+Methods may mutate their receiver graph through ordinary JavaScript, including nested class calls, while their invocation is active. They must not change a traversable identity's prototype, property descriptors, or extensibility.
 
 Method-behavior restrictions are trusted class contracts except for the receiver and result validation specified below. Cascada does not snapshot descriptors, track later work, or add machinery solely to detect violations.
 
@@ -32,7 +34,7 @@ A mutation must not mutate an identity reached only from an argument at entry. I
 
 Opaque identities and Functions remain exact and may expose only immutable state. Registered-class methods must not mutate them or their ordinary, hidden, internal, or captured state; application code must not mutate that state after the identity enters registered state or a registered-class result.
 
-Cascada may copy any record, Array, or registered instance reached through an argument or receiver before or after invocation. Copies preserve registered-class prototypes, Array structure, and aliases and cycles within each copied subgraph. Traversable identity is stable only during the synchronous call. Records may be copied in full; use immutable non-registered class instances for large opaque data.
+Cascada may copy any record, Array, or registered instance reached through an argument or receiver before or after invocation. Copies preserve registered-class prototypes, Array structure, and aliases and cycles within each copied subgraph. Traversable identity is stable only while the invocation is active. Records may be copied in full; use immutable non-registered class instances for large opaque data.
 
 ## Call preparation
 
@@ -68,11 +70,11 @@ The mutation uses this sequence:
 
 3. Materialize the prepared arguments once for host representation, applying mapped receiver identities during the same walk. Replace a mapped argument root directly and copy only paths to nested remaps or representation mismatches. This preserves receiver-argument aliases and cycles without snapshotting unrelated argument data. An empty isolation map adds no isolation copy.
 
-4. Invoke the mutator once and synchronously, recording whether its raw result is the receiver.
+4. Invoke the mutator once. A synchronous result continues immediately. A direct Promise keeps the private mutation active behind its transition gate and continues with its fulfillment.
 
 5. With argument leases still active, walk the complete final receiver once. Reject any Promise or Error, admit new identities as runtime-owned, and mark each actively leased traversable identity shared; every other identity remains exact.
 
-6. Return the final working receiver to `transformProperty` as the mutated value, then release the argument leases. Let `transformProperty` compare it with the captured receiver and publish any replacement caused by isolation. Never publish before final validation.
+6. Return the final working receiver to `transformProperty` as the mutated value, then release the argument leases. Let `transformProperty` compare it with the captured receiver and publish any replacement caused by isolation. Never publish before final validation. A direct-Promise rejection poisons this receiver transition and releases its leases.
 
 ### Cost
 
@@ -80,19 +82,21 @@ Preparation, pre-call isolation, and finalization are three complete receiver tr
 
 The pre-call walk allocates no receiver graph copy when no reached identity satisfies the isolation predicate. A cycle does not qualify by itself, but a copied subgraph that reaches an ancestor expands the copy to that ancestor. Operational metadata is identity-local: a copy begins with none, but placement into an indexed parent indexes it before publication. The fast path therefore depends on current graph history and placement; do not assume either that qualification persists or that copying clears it.
 
-A non-`this` traversable result adds one complete result copy. No other copying is hidden in finalization.
+A synchronous non-`this` traversable result adds one complete result copy. No other copying is hidden in finalization.
 
 ## Results and failures
 
 ### Results
 
-When a mutation returns its receiver, return the published receiver and let common completion mark it shared because the placement and result are separate owners.
+When a mutation directly returns its receiver, return the published receiver and let common completion mark it shared because the placement and result are separate owners.
 
-Before common admission, pass every other traversable observation or mutation result through the complete-graph copier with a separate map. The registered-class result therefore shares no record, Array, or registered instance with the receiver or arguments. A newly retained traversable argument remains exact but shared in the receiver; returning that value or a receiver descendant produces an independent result graph. Only returning the mutation receiver itself avoids result copying. Copying is unconditional because selective reuse would require a separate result-provenance and ownership path.
+Run common origin-aware result import on every synchronous result before passing each non-`this` traversable result through the complete-graph copier with a separate map. The registered-class result therefore shares no record, Array, or registered instance with the receiver or arguments. A newly retained traversable argument remains exact but shared in the receiver; returning that value or a receiver descendant produces an independent result graph. Preserve nested Promise placements without waiting. Only directly returning the mutation receiver itself avoids result copying. Copying is unconditional because selective reuse would require a separate result-provenance and ownership path.
+
+A direct Promise keeps the call active and returns an operation Promise that applies normal result import and copying to fulfillment while preserving rejection. An observation leases every traversable receiver and argument identity until settlement while later mutations proceed through COW. A mutation retains its argument leases and keeps its isolated receiver private behind the ordinary transition gate; its receiver-source leases have already ended at isolation. On fulfillment, validate and publish the receiver, returning the published receiver when the fulfillment is the working receiver. A Promise nested in a synchronous result is instead imported and copied as ordinary result data without extending the call.
 
 ### Failures
 
-Reuse common failure handling. Combine prepared input Errors once, preserving every distinct original in receiver-then-argument order. Preparation rejection, a prepared input Error, or a synchronous throw affects only an observation result; a mutation publishes the Error at its receiver through `transformProperty`. A Promise or Error in the completed receiver is a validation failure and is never published. A result that is or traversably contains a Promise instead returns an independent validation Error while a valid mutation publishes; Cascada neither awaits nor retains that Promise. Any other language failure confined to result copying, validation, or admission likewise affects only the result. Runtime invariant failures and host-contract violations exposed at an existing boundary remain fatal; do not add detection solely for trusted restrictions. A deliberately returned Error remains an ordinary result.
+Reuse common failure handling. Combine prepared input Errors once, preserving every distinct original in receiver-then-argument order. Preparation rejection, a prepared input Error, or a synchronous throw affects only an observation result; a mutation publishes the Error at its receiver through `transformProperty`. A direct-Promise rejection has the same graph effect as a synchronous failure after invocation: an observation leaves its receiver unchanged, while a mutation poisons its receiver; both preserve the rejection as the operation outcome. A Promise or Error in the completed receiver is a validation failure and is never published. Failure confined to result copying or admission affects only the result. Runtime invariant failures and host-contract violations exposed at an existing boundary remain fatal; do not add detection solely for trusted restrictions. A deliberately returned Error remains an ordinary result.
 
 ## Scope
 

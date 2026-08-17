@@ -1,447 +1,213 @@
 # Cascada chain resolution
 
-Cascada is an implicitly asynchronous data language. A value may contain
-Promises at any depth, operations are issued without waiting for earlier
-Promises, and the result must still match sequential program order.
+## Introduction
 
-This repository is a sandbox for the runtime kernel that provides those
-semantics.
+Cascada is a runtime kernel for an implicitly asynchronous data language. A
+value may contain Promises at any depth, and operations can be issued without
+waiting for earlier Promises. The runtime preserves program order so the
+observable result is the same as if all values had been available and every
+operation had run sequentially.
 
-## Usage
+A `Chain` holds a logical root value. Path operations read and update its graph,
+Promise mirrors preserve the exact property versions captured by pending work,
+and copy-on-write keeps mutations isolated between owners. Imported host data is
+never modified. JavaScript `Error` objects are language values, so a rejected
+data Promise poisons the affected value without stopping unrelated work.
 
-The package is native ESM and runs directly in Node without compilation:
-
-```js
-import * as runtime from "cascada-chain-resolution"
-
-const chain = new runtime.Chain({ ready: true })
-const output = runtime.export(chain, [])
-```
-
-`new Chain(value, mutates = true)` stores the Chain's exact capability mode. `chain.close()` prevents new operations through that Chain without cancelling work already issued through it; closing is one-shot.
-
-Internal modules group value predicates under a namespace:
+The package is native ESM, requires Node.js 24 or newer, and needs no build
+step.
 
 ```js
-import * as languageValues from "./language-values.js"
+import * as cascada from "cascada-chain-resolution"
 
-if (languageValues.isError(value) || languageValues.isPromise(value)) {
-    // ...
-}
+const input = cascada.import(
+    { profile: Promise.resolve({ name: "Ada" }) },
+    "application input",
+)
+const chain = new cascada.Chain(input)
+
+cascada.assignPath(chain, ["profile", "active"], true)
+
+console.log(await cascada.export(chain, []))
+// { profile: { name: "Ada", active: true } }
 ```
 
-## Data class copy-on-write
-
-The kernel supports copying an explicitly registered JavaScript data-class
-instance without losing its prototype. This is completed support for class
-instances as data; the implemented runtime graph remains data-only. Restricted
-side-effect-free method invocation is defined in [`run.md`](docs/run.md), while
-general proxy-backed mutating class methods remain deferred in
-[`future/run.md`](docs/future/run.md).
-
-The COW support is limited to simple data classes.
-
-A supported instance must keep all meaningful state in ordinary public
-properties:
+## API reference
 
 ```js
-class Point {
-    constructor(x, y) {
-        this.x = x
-        this.y = y
-    }
-
-    length() {
-        return Math.hypot(this.x, this.y)
-    }
-}
-
-runtime.registerDataClass(Point)
+import {
+    Chain,
+    assignPath,
+    deletePath,
+    enter,
+    export as exportValue,
+    getErrors,
+    hasError,
+    import as importValue,
+    lookupPath,
+    registerDataClass,
+    run,
+} from "cascada-chain-resolution"
 ```
 
-Its state properties must be own, enumerable, string-keyed data properties.
-Inherited methods and class inheritance are preserved when copy-on-write makes
-a new instance. The constructor is not called during copying. Registration is
-permanent, applies only to the class's exact prototype, and must happen before
-its instances enter Cascada. Register each participating subclass separately.
-The registry does not modify the class or its prototype.
+### Common behavior
 
-External classes must not depend on:
+A path is an array of property keys. An empty path (`[]`) selects the Chain
+root. Records expose own enumerable string-keyed data properties; Arrays expose
+canonical indexes and `length`. Missing final properties are valid, while a
+missing or non-traversable intermediate property produces a language `Error`.
 
-- `#private` fields;
-- Symbol-keyed or non-enumerable state;
-- getters or setters used as instance state;
-- state hidden in closures;
-- hidden shared mutable storage; or
-- native internal slots such as those used by Map, Set, Date, RegExp, and typed
-  arrays.
+Operations do all available work synchronously. An observation or method call
+returns a Promise only when its result depends on pending data. Operations
+issued after it do not need to await that Promise: continuations are registered
+in issue order and observe all earlier effects.
 
-These restrictions are trusted. JavaScript reflection cannot reliably detect
-all hidden state. No standard internal-slot class is registered automatically;
-such types require dedicated support rather than `registerDataClass`.
+Records, Arrays, and registered-class instances are traversable. Primitives and
+Errors are terminal values. Unregistered class instances and objects with
+native internal slots are opaque identity values and cannot be traversed.
 
-Promise-valued properties are supported when they are ordinary own enumerable
-writable data properties. Assigning even the same Promise again creates a new
-property version.
+### `new Chain(initialValue, mutates = true)`
 
-Arrays, including array subclasses and cross-realm arrays, are copied as
-ordinary local arrays. Array-subclass prototypes and methods are not retained.
-Export also intentionally produces plain host data rather than preserving
-class prototypes or methods.
+Creates a Chain rooted at `initialValue`. `mutates` must be exactly `true` or
+`false`. A read-only Chain accepts observations but rejects mutation operations.
+Creating a Chain admits the value but does not mark external data as imported;
+pass external data through `import` first.
 
-An unregistered class or native internal-slot object remains an opaque identity
-leaf. It can be assigned, returned, and exported, but Cascada does not traverse,
-copy, index, or invoke methods on it. External mutation of an opaque value is
-outside Cascada's guarantees.
+#### `chain.close()`
 
-The complete implemented contract is documented in
-[`data-classes.md`](docs/data-classes.md).
+Permanently prevents new operations through the Chain. Work issued before the
+call continues at its captured position. Closing a Chain more than once, or
+using it after closure, is a fatal usage error.
 
-## Implemented `enter` and standard invocation
+### `import(value, errorContext)`
 
-The mutating `enter` primitive declares an asynchronous effect path before
-waiting:
+Admits externally owned data and returns its logical root. `errorContext` is a
+required truthy value used to attribute failures.
 
-```js
-return enter(player, ["pos"], true, entered => {
-  assignPath(entered, ["x"], 2)
-})
-```
+For an available root, the original root is returned synchronously after its
+reachable graph is classified. A Promise root returns a Promise for the
+admitted result. Nested Promises are registered without waiting for them.
+Imported identities are protected by copy-on-write, so Cascada mutations never
+modify their host representation. Application code must not mutate the imported
+graph after admission.
 
-For a mutating entry, `player.pos` becomes a gate Promise and mutating `enter` passes a
-private Chain rooted at the captured property version to its callback. `onEntered` may be
-synchronous or asynchronous: operations return either their direct result or a
-Promise defining the callback's complete lifetime. Mutating `enter` keeps the Chain active
-until that result fulfills, then prevents new operations through it and publishes
-the private value through the gate automatically. It forwards the operation
-result after closing the Chain without waiting for gate publication; the gate
-itself orders later graph operations. Direct
-entry setup invokes the callback synchronously. A pending path reuses the Promise
-returned by the existing path helper. Each walker invokes its callback within
-the existing path continuation; mutating setup does so after gate reconstruction.
-Later consumers of that path Promise then traverse the installed gate. No second
-same-source reaction, separate readiness Promise, pending state, source path, or
-command queue is added.
-If the callback throws or its Promise rejects, `enter` closes the Chain before
-fatal reporting, releases a read-only entry if one was acquired, and leaves a
-mutating gate unresolved.
-Later traversals through `player.pos` wait in normal
-mirror order while unrelated paths continue. A direct replacement of
-`player.pos` creates a newer version immediately. Callback completion starts or
-arranges publication of the private value. Publishing an Error uses an ordinary private-root assignment
-before returning. If owning-path COW leaves the target reachable from the source
-graph, a direct target is marked shared before the callback; a Promise target's
-transfer sampler marks its logical value before target-dependent private work. A
-Promise-valued target first replaces the public placement with its gate, which
-synchronously detaches the source mirror. It then installs the private-root
-transfer before invoking the callback. The source version's earlier resolver
-writes its mirror value, which the transfer samples without retaining the source
-parent or key. The callback starts immediately with
-the source Promise while
-target-independent work overlaps its resolution. Target-dependent commands
-register behind the transfer on the source's canonical FIFO queue and receive
-the logical value. If callback work leaves the
-private Chain's `state.value` holding a Promise, publication registers once
-through its captured property version. After the root mirror and earlier FIFO
-operations have advanced that version, the callback opens the gate with the
-current mirror value rather than letting the gate resolver assimilate the raw
-Promise. Another root Promise assignment would have occurred synchronously
-before completion and would therefore be the value registered instead.
-Gate installation and publication use ordinary atomic property transitions, so
-indexed counters and reverse-parent edges remain exact; the private Chain's
-host-state holder is not added to the language graph.
+### `assignPath(chain, path, value)`
 
-A read-only `enter(..., false, onEntered)` installs no gate and invokes its
-callback only after capturing a protected root. Every identity root increments
-its metadata `readLeaseCount`, including values already protected by sharing
-or import; primitives require no metadata.
-An imported target already carries its own import status; a runtime-owned
-target does not inherit it from its containing path.
-Overlapping readers increment independently. Live mutation then uses
-copy-on-write without permanently marking an otherwise singly-owned value
-shared. Earlier effects and Promise settlement remain part of the captured
-world, while commands use their normal mirror semantics. Observational native
-work uses an exported snapshot rather than the raw captured value;
-already-issued kernel continuations remain ordered by
-their captured mirror positions. Every Chain that can issue operations has an
-exact `mutates` capability: ordinary Chains use `true`, while an entered Chain
-uses the compiler's validated Boolean fact. Automatic completion removes it
-from the entered Chain to prevent new operations. Internal
-mutating/read-only paths and completion routines are neither exported nor called
-directly by other operations.
+Assigns `value` to the selected property, creating a missing final property when
+needed. An empty path replaces the root. Assignment uses copy-on-write whenever
+the current logical value must be preserved for another owner.
 
-The [`run`](docs/run.md) operation is restricted to
-standard String and Array operations and trusted read-only methods. Path
-Promises remain owned by the existing walkers; Array mutation installs an
-assigned-Promise gate only when receiver or required argument preparation must
-continue after the target is reached. Assignment-style element payloads remain
-logical values and do not create a wait. Controlled Array methods use logical
-algorithms and Promise-sensitive scalar conversion rather than exporting their
-receiver or inspected elements. Ready work stays synchronous.
-[`ArrayView`](docs/array-view.md) is its internal shared-range representation.
-Functions and executable descriptors remain outside the language graph.
-Trusted String protocols and callbacks and sort comparators are supported;
-other Array callbacks are deferred, and only the known Array mutators may have
-side effects.
+Successful issuance returns `undefined`, including when traversal must resume
+after a Promise. A failure found synchronously is published at the failed
+mutation location and returned as an `Error`; a failure found later is published
+to the graph.
 
-General class methods that mutate through ordinary JavaScript `this` remain
-separate future work. Their archived design combines `enter` with an
-operation-local recursive proxy:
+### `deletePath(chain, path)`
 
-- [`enter.md`](docs/enter.md) defines the implemented primitive.
-- [`run.md`](docs/run.md) defines the restricted standard operation.
-- [`array-view.md`](docs/array-view.md) defines its internal shared-range
-  representation.
-- [`future/run.md`](docs/future/run.md) records the deferred mutating-class
-  proxy design.
-- [`future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
-  retains the historical predecessor analysis.
+Deletes the selected property. A missing final property is a no-op, deleting an
+Array index preserves its length, and an empty path replaces the root with
+`null`.
 
-## Documentation
+Its return behavior matches `assignPath`: success and suspended issuance return
+`undefined`, while a synchronous failed mutation publishes and returns its
+`Error`.
 
-- [`docs/runtime-spec.md`](docs/runtime-spec.md) defines the current observable
-  behavior and compiler/host contracts.
-- [`docs/import-preparation.md`](docs/import-preparation.md) explains imported
-  identity classification and Promise continuations.
-- [`docs/counters-implementation.md`](docs/counters-implementation.md) explains
-  lazy subtree counters, Promise mirrors, and verification.
-- [`docs/cycles-as-data.md`](docs/cycles-as-data.md) defines cycle cuts and
-  cut-separated ref-index components.
-- [`docs/export-error-set.md`](docs/export-error-set.md) defines export's fused
-  copy-or-collect traversal and complete Error result.
-- [`docs/data-classes.md`](docs/data-classes.md) defines
-  registered data-class prototype preservation during copy-on-write.
-- [`docs/enter.md`](docs/enter.md) defines implemented asynchronous path
-  ownership and gate publication.
-- [`docs/run.md`](docs/run.md) defines the restricted standard method
-  operation.
-- [`docs/array-view.md`](docs/array-view.md) defines its internal shared-range
-  representation.
-- [`docs/plan.md`](docs/plan.md) tracks implemented, deferred, and pending
-  work.
+### `lookupPath(chain, path)`
 
-These documents describe implemented runtime behavior. `docs/plan.md` tracks
-completed, deferred, and pending work.
+Returns the value captured at `path`. A returned traversable identity gains an
+owner and is marked shared, ensuring later mutation through either owner is
+isolated by copy-on-write. The result is direct unless path traversal crosses a
+Promise.
 
-### Deferred designs
+### `enter(chain, path, mutates, onEntered)`
 
-- [`docs/future/run.md`](docs/future/run.md) records proxy-backed mutating
-  class methods beyond restricted `run`.
-- [`docs/future/keyed-containers.md`](docs/future/keyed-containers.md) records
-  deferred array-subclass, Map, Set, other built-in, and general
-  virtual-container ideas.
-- [`docs/future/run-draft-proxy-archive.md`](docs/future/run-draft-proxy-archive.md)
-  preserves the earlier proxy/draft analysis that predates callback-based
-  `enter`.
+Enters the value captured at `path` and passes a temporary Chain to
+`onEntered`. `mutates` must be exactly `true` or `false`, and `onEntered` must be
+a function. The temporary Chain is closed automatically when the callback's
+direct result or Promise completes.
 
-## Source layout
+With `mutates: false`, the callback receives a read-only Chain and the captured
+value is protected from concurrent Cascada mutation for the callback's complete
+lifetime. The public path is not gated, so unrelated operations continue
+normally.
 
-- `src/index.js` owns the public API and re-exports `Chain` from `src/chain.js`.
-- `src/mutations.js` owns assignment, deletion, mutation-path walking, and COW.
-- `src/language-values.js` owns value classification and the data-class
-  registry.
-- `src/invocation.js` owns shared reflection, native calls, and ordinary
-  exported-argument invocation, including String methods.
-- `src/observations.js` owns lookup, export, Error queries, and their
-  shared observational walkers.
-- `src/run.js` owns restricted method routing and common observation handling.
-- `src/array-view.js`, `src/array-invocation.js`, `src/array-methods.js`, and
-  `src/array-remap.js` own logical Array representation and method execution.
-- `src/import.js` owns the public import boundary; `src/import-preparation.js`
-  classifies imported identities and discovers their Promise frontier.
-- `src/property-versions.js` owns property origins, exact-version capture,
-  Promise mirrors, placement, publication, validated deletion, and Array-length
-  commits.
-- `src/refcounts.js` owns lazy subtree counters, parent edges, and atomic
-  accounting around indexed property transitions.
-- `src/raw-walk.js` owns metadata-free export copying and Error collection.
-- `src/language-properties.js` owns terminal-property classification,
-  descriptor validation, and logical and physical language-property access.
-- The remaining small source modules own metadata and fatal errors.
-  Refcount verification is test-only in `test/verify-refcounts.js`.
+With `mutates: true`, the callback receives a private mutable Chain. The target
+placement is replaced with a Promise gate before target-dependent callback work
+runs. Later operations on that placement wait while the callback issues its
+private operations. When the callback fulfills, its final private root is
+published through the gate; the callback's own result is returned from `enter`.
+A mutating entry requires a mutable parent Chain.
 
-## Runtime model
+If path resolution produces a language `Error`, the callback is not invoked and
+the Error is returned. A callback throw or rejected callback Promise is fatal,
+closes the temporary Chain, and does not publish its private state.
 
-Three rules shape the kernel:
+### `export(chain, path)`
 
-- **Values are implicitly asynchronous.** A Promise is used as the value it
-  will produce. A property may itself be a Promise.
-- **Errors are values.** A rejected data Promise becomes an Error value at the
-  property where its result belongs. Runtime failures are separate and fatal.
-- **Variables have value semantics.** Reusing a value behaves like copying it:
-  changing one owner must never change another.
+Returns a host-ready snapshot of the branch captured at the operation's issue
+position. Traversable data is deep-copied without runtime metadata while
+preserving Arrays, holes, property order, aliases, and cycles. Registered-class
+instances become plain records; opaque values retain their exact identities.
 
-Records, logical Arrays, and registered-class instances are traversable graph
-nodes. A node and everything reachable below it form a branch. Runtime
-operations work on a `Chain`, whose private
-`_state.value` slot is the mutable root location; other `Chain` fields are not
-language data.
+If the branch contains one `Error`, that Error is returned. If it contains
+several distinct Errors, export returns a new `Error` whose `errors` property
+contains them. The result is a Promise when the complete snapshot or Error set
+depends on pending data.
 
-## Owned and imported data
+### `hasError(chain, path)`
 
-Compiler-created data follows a single-owner contract. A new graph identity has
-one owner. When it escapes or receives another owner, the runtime marks it
-shared. A later mutation through a shared branch copies only the path being
-changed.
+Returns `true` when an `Error` is reachable from the captured path value and
+`false` otherwise. A broken required path counts as an Error. The result is
+direct when it can be decided immediately and otherwise a Promise for a
+Boolean.
 
-External JavaScript data has no such guarantees. It may contain repeated
-identities, cycles, non-extensible objects, and Promises at any depth. Every
-external value enters through `import(value, errorContext)`, which:
+### `getErrors(chain, path)`
 
-- marks each imported ownership identity shared;
-- retains the attribution context;
-- marks repeated identities shared;
-- registers imported Promise continuations in issue order;
-- stores newly needed metadata outside the host values; and
-- leaves subtree counters lazy until a branch query needs them.
+Returns each distinct reachable `Error` identity once. A broken required path
+contributes its path-access Error; a missing or primitive final value contributes
+nothing. The result is an Array when complete synchronously and otherwise a
+Promise for the Array.
 
-Language mutation never changes imported host objects; it copies the imported
-path first. Promise settlement also preserves an imported property: its mirror
-stores the logical result while the external Promise remains physically in
-place. Imported Promise properties must be own enumerable data properties, but
-need not be writable. Frozen data uses the same path.
+### `registerDataClass(DataClass)`
 
-Cycles are handled when a branch is ref-indexed, regardless of where its data
-came from. A cut is structural bookkeeping, not an Error: finite paths cross it
-normally, Error queries ignore it as data, and export reconstructs the original
-cyclic topology.
+Registers the constructor's exact prototype so its instances are traversable,
+retain that prototype during copy-on-write, and can use synchronous methods
+through `run`. Registration is permanent, must happen before an instance is
+first admitted, and is not inherited; register each participating subclass.
 
-Host code receives traversable Cascada data only through `export`, which returns a
-metadata-free deep copy with captured Promise-property values materialized.
-Internal code may use non-sharing lookup only when it does not expose the
-returned graph identity to mutable host code.
+All semantic instance state must live in own enumerable string-keyed data
+properties. Registered classes must not depend on private fields, accessors,
+Symbols, non-enumerable state, closure state, hidden shared mutable storage, or
+native internal slots. Prototype accessors are rejected during registration.
+Constructors are never called when the runtime copies an instance.
 
-## Commands and issue order
+### `run(chain, path, method, mutation, ...arguments)`
 
-The public operations are:
+Invokes a supported method on the receiver at `path`. `method` must be a string
+and `mutation` must be exactly `true` or `false`. Observation mode preserves the
+receiver. Mutation mode publishes the completed receiver through the normal
+copy-on-write mutation path and requires a mutable Chain.
 
-| Operation | Purpose |
-| --- | --- |
-| `assignPath(chain, path, value)` | Assign or replace a path value |
-| `deletePath(chain, path)` | Delete a path value |
-| `lookupPath(chain, path)` | Extract a path value |
-| `readPath(chain, path)` | Read without adding an owner |
-| `run(chain, path, method, mutateArray, ...arguments)` | Invoke a supported method |
-| `registerDataClass(Class)` | Register an exact class prototype as traversable data |
-| `import(value, errorContext)` | Admit external data |
-| `export(chain, path)` | Copy host-ready output or collect its Errors |
-| `hasError(chain, path)` | Test for a reachable Error |
-| `getErrors(chain, path)` | Collect distinct reachable Errors |
+Supported receivers are:
 
-Every operation runs its synchronous prefix immediately. If it reaches a
-Promise, it registers a continuation and returns; the next operation starts
-without waiting. Each callable thenable is canonicalized once to one native
-Promise, so every runtime registration for that value shares one FIFO queue.
+- Strings, for native observations.
+- Logical Arrays, for the controlled standard methods listed below and trusted
+  observation-only overrides.
+- Records, for trusted read-only host methods outside the language-property
+  surface.
+- Registered-class instances, for trusted synchronous observations and
+  mutations.
 
-JavaScript runs reactions registered on one Promise in registration order.
-Cascada issues operations and registers their reactions in program order, so
-operations blocked on the same Promise resume in that order. The runtime never
-uses `await` to enter a Promise-backed branch because doing so would move
-registration out of the operation's issue position.
+The controlled Array methods are `at`, `concat`, `copyWithin`, `fill`, `flat`,
+`includes`, `indexOf`, `join`, `lastIndexOf`, `pop`, `push`, `reverse`, `shift`,
+`slice`, `sort`, `splice`, `toReversed`, `toSorted`, `toSpliced`, `toString`,
+`unshift`, and `with`. Array callback methods such as `map`, `filter`, `reduce`,
+and `forEach` are not supported. `sort` and `toSorted` support synchronous
+comparators.
 
-Observations describe the branch captured at their own issue position. A later
-assignment or deletion may change the live `Chain`, but it cannot change what
-an earlier lookup, export, or Error query observes.
-
-## Promise mirrors
-
-Each Promise-backed property has a mirror identifying that exact property
-version. The mirror's single `value` field is always that version's authoritative
-logical value. Its first resolver captures the property's import boundary without
-storing it on the mirror, consumes fulfillment or converts rejection to Error,
-and publishes the logical value. A live runtime-owned version also writes through
-to its physical property; an imported version preserves the external Promise.
-Later resolvers use the Promise only as a readiness signal and read the latest
-mirror value left by earlier resolvers.
-
-Overwriting or deleting the property detaches its mirror by removing it from the
-owner's live map. The mirror keeps its value, so already-issued operations
-continue against that private state and cannot write into the replacement
-property. Reassigning even the same Promise creates a fresh mirror because it is
-a new property version.
-
-When copy-on-write copies a node containing a pending property, the copy gets
-its own mirror at the copy's issue position. Its FIFO resolver samples the
-source at that exact position and writes the result into the runtime-owned copy.
-If the source already has a logical result, COW copies that result immediately
-and creates no mirror. The two worlds include the same earlier operations and
-diverge independently afterward.
-
-## Copy-on-write
-
-A COW-managed graph identity starts owned. Shared lookup and import establish shared
-ownership. A shared node is never mutated in place.
-
-For a write such as:
-
-```js
-doc.body.title = "Final"
-```
-
-the runtime shallow-copies only `doc` and `body`, installs the new title, and
-reuses every off-path child. Reused traversable children are marked shared because
-both worlds can now reach them.
-
-The language-visible object-property surface is own enumerable string keys.
-Arrays expose only canonical indexes plus `length`; other string properties
-cannot be assigned or deleted through Cascada. Arrays preserve their length
-during copying. Runtime metadata is outside that surface and is reconstructed
-only where needed; it is never copied as language data.
-
-## Subtree counters
-
-`hasError` and `getErrors` ask questions about complete branches. Repeated full
-scans would be expensive, so the first Error query builds a lazy ref index for
-the reached branch. Export walks the raw branch directly because producing a
-successful copy already requires visiting all of it.
-
-Each indexed node stores:
-
-- `promiseCount`: pending Promise placements in its projected subtree;
-- `errorCount`: Error placements in its projected subtree;
-- `cycleCutCount`: cycle-cut placements in its projected subtree; and
-- reverse parent edges with exact structural multiplicity.
-
-Every committed property transition computes the old and new contribution,
-updates the reverse edge, and aggregates one delta over the indexed parent DAG.
-Unqueried branches pay no counter maintenance cost.
-
-Cycles cannot participate directly in the parent DAG. Initial
-indexing cuts DFS back edges; a later indexed publication cuts its edge when
-the reverse-parent graph shows that it would close a cycle. A cut contributes
-only to `cycleCutCount` and installs no reverse parent edge. Ref-indexing resumes
-at the target as an independent component, while export walks the raw graph
-without counters.
-
-## Branch observations
-
-**`hasError`** returns `true` immediately for a positive `errorCount`. A
-counter-fenced walk follows only subtrees whose Promise, Error, or cycle-cut
-count reports relevant work. At a cycle cut, its independently indexed target
-resumes the same fenced traversal. It reports only ordinary Errors and does not
-pin or mark the branch.
-
-**`getErrors`** returns each reachable Error identity once. Counters prune clean
-regions through the same fenced walk, including independently indexed cut
-targets. Cuts themselves add nothing. It waits for the complete Promise
-frontier captured and recursively exposed at its issue position.
-
-**`export`** performs one immediate raw copy-or-collect walk at its issue
-position. A successful result is a metadata-free deep copy preserving arrays,
-holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
-Promise-property values.
-The first Error stops further copy allocation, but traversal continues through
-the complete captured Promise frontier. Failure returns a fresh outer Error
-whose `.errors` array contains each reachable Error identity once. Export does
-not ref-index, mark, or pin the branch.
-
-## Metadata
-
-One external metadata record stores an object's fixed admitted type plus only
-the facts whose subsystems have become active: ownership, import, leases,
-Promise mirrors, cycle cuts, counters, and reverse parents. Pending thenable
-capture uses separate weak state, and class definitions use a dedicated
-prototype set. Bookkeeping therefore never modifies the object itself.
-
-The detailed invariants and transitions live in
-[`counters-implementation.md`](docs/counters-implementation.md).
+For an Array mutator, `mutation: true` updates the receiver and returns the
+corresponding native mutator result. With `mutation: false`, the receiver is
+unchanged and the transformed Array is returned. Registered-class methods must
+finish synchronously; observation methods must not mutate, and mutation methods
+may mutate only their receiver graph. A method result may be returned directly
+or as a Promise where that receiver category permits asynchronous host results.
