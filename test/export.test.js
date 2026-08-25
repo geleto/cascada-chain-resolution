@@ -48,11 +48,13 @@ describe("export", () => {
             "deletePath",
             "enter",
             "export",
+            "externalState",
             "getErrors",
             "hasError",
             "import",
             "lookupPath",
-            "registerDataClass",
+            "managedState",
+            "managedStateClass",
             "run",
         ])
         expect(packageExport).to.be(packageRuntime.export)
@@ -414,17 +416,17 @@ describe("export", () => {
     })
 
     it("returns direct values until a real wait is needed", () => {
-        const opaque = new Date()
+        const external = new Date()
         const root = {
-            branch: { x: 1, opaque },
-            opaque,
+            branch: { x: 1, external },
+            external,
             primitive: 2,
         }
         const pending = deferred()
 
         const branch = exportValue(new Chain(root), ["branch"])
         const primitive = exportValue(new Chain(root), ["primitive"])
-        const opaqueResult = exportValue(new Chain(root), ["opaque"])
+        const externalResult = exportValue(new Chain(root), ["external"])
         const missing = exportValue(new Chain(root), ["missing"])
         const broken = exportValue(new Chain(root), ["missing", "value"])
         const waiting = exportValue(new Chain({ branch: { pending: pending.promise } }), ["branch"])
@@ -432,8 +434,8 @@ describe("export", () => {
         expect(branch).to.eql(root.branch)
         expect(branch).not.to.be(root.branch)
         expect(primitive).to.be(2)
-        expect(opaqueResult).to.be(opaque)
-        expect(branch.opaque).to.be(opaque)
+        expect(externalResult).to.be(external)
+        expect(branch.external).to.be(external)
         expect(missing).to.be(undefined)
         expect(broken instanceof Error).to.be(true)
         expect(broken.message).to.be(
@@ -1155,8 +1157,7 @@ describe("export", () => {
         expect(getRefCounter(child).promiseCount).to.be(1)
         pending.resolve("done")
         expect(await exported).to.eql({ child: { pending: "done" } })
-        // Existing metadata makes child a trusted runtime island rather than a
-        // newly imported host holder.
+        // Existing admission keeps child runtime-owned rather than importing it.
         expect(child.pending).to.be("done")
         expect(readPath(new Chain(frozen), ["child", "pending"])).to.be("done")
         verifyRefCounts(child)

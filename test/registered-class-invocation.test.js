@@ -11,7 +11,7 @@ import {
     lookupPath,
     metaOf,
     readPath,
-    registerDataClass,
+    managedStateClass,
     run,
     setFatalErrorReporter,
     thrownBy,
@@ -26,11 +26,11 @@ describe("registered class invocation", () => {
             }
         }
         expect(
-            thrownBy(() => registerDataClass(WithAccessor)) instanceof TypeError,
+            managedStateClass(WithAccessor) instanceof TypeError,
         ).to.be(true)
 
         class Value {}
-        registerDataClass(Value)
+        managedStateClass(Value)
         expect(run(
             new Chain(new Value()),
             [],
@@ -46,7 +46,7 @@ describe("registered class invocation", () => {
             }
             ({ Foreign, value: Object.assign(new Foreign(), { value: 3 }) })
         `)
-        registerDataClass(Foreign)
+        managedStateClass(Foreign)
 
         expect(run(new Chain(value), [], "read", false)).to.be(3)
         expect(run(
@@ -59,7 +59,7 @@ describe("registered class invocation", () => {
 
     it("does not prepare receiver state after method selection fails", () => {
         class Value {}
-        registerDataClass(Value)
+        managedStateClass(Value)
         const pending = deferred()
         const value = new Value()
         value.pending = pending.promise
@@ -75,12 +75,13 @@ describe("registered class invocation", () => {
                 return 1
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.read = () => 2
 
         expect(run(new Chain(value), [], "read", false).message).to.be(
-            "Language property shadows method: read",
+            "Cannot call read because an own data property with that name " +
+            "hides the method",
         )
     })
 
@@ -91,7 +92,7 @@ describe("registered class invocation", () => {
                 return 1
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         Object.defineProperty(value, "read", {
             get() {
@@ -110,7 +111,7 @@ describe("registered class invocation", () => {
                 return 1
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         Object.defineProperty(Value.prototype, "read", {
             get() {
                 return () => 2
@@ -142,7 +143,7 @@ describe("registered class invocation", () => {
                 return readPath(observed, [])
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         let reported
         setFatalErrorReporter(error => {
             reported = error
@@ -168,7 +169,7 @@ describe("registered class invocation", () => {
                 return this.start.x + this.start.y
             }
         }
-        registerDataClass(Line)
+        managedStateClass(Line)
         const pending = deferred()
         const line = new Line()
         line.start = { x: pending.promise, y: 2 }
@@ -191,7 +192,7 @@ describe("registered class invocation", () => {
                 invoked = true
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.nested = { failure }
 
@@ -205,7 +206,7 @@ describe("registered class invocation", () => {
                 return this.x
             }
         }
-        registerDataClass(Vec)
+        managedStateClass(Vec)
         const pending = deferred()
         const source = new Vec()
         source.x = pending.promise
@@ -225,7 +226,7 @@ describe("registered class invocation", () => {
                 return this
             }
         }
-        registerDataClass(Vec)
+        managedStateClass(Vec)
         const source = new Vec()
         source.x = 1
         const chain = new Chain(source)
@@ -245,7 +246,7 @@ describe("registered class invocation", () => {
                 return this.x
             }
         }
-        registerDataClass(Vec)
+        managedStateClass(Vec)
         const source = importValue(new Vec(), "shared registered-class receiver")
         source.x = 1
         importValue(source, "shared registered-class receiver")
@@ -265,7 +266,7 @@ describe("registered class invocation", () => {
                 return this
             }
         }
-        registerDataClass(Vec)
+        managedStateClass(Vec)
         const source = new Vec()
         source.x = 1
         lookupPath(new Chain(source), [])
@@ -286,7 +287,7 @@ describe("registered class invocation", () => {
                 this.start.x++
             }
         }
-        registerDataClass(Line)
+        managedStateClass(Line)
         const start = { x: 1 }
         lookupPath(new Chain(start), [])
         const line = new Line()
@@ -307,7 +308,7 @@ describe("registered class invocation", () => {
                 return ++this.x
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.x = 1
         const source = { value }
@@ -328,7 +329,7 @@ describe("registered class invocation", () => {
                 this.start = options.point
             }
         }
-        registerDataClass(Line)
+        managedStateClass(Line)
         const point = { x: 1 }
         const options = { point }
         const line = new Line()
@@ -351,7 +352,7 @@ describe("registered class invocation", () => {
                 this.start.x++
             }
         }
-        registerDataClass(Line)
+        managedStateClass(Line)
         const start = { x: 1 }
         const line = new Line()
         const chain = new Chain(line)
@@ -370,7 +371,7 @@ describe("registered class invocation", () => {
                 this.value = value
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const pending = deferred()
         const argument = { value: pending.promise }
         importValue(argument, "registered-class argument")
@@ -393,7 +394,7 @@ describe("registered class invocation", () => {
                 this.start.x++
             }
         }
-        registerDataClass(Line)
+        managedStateClass(Line)
         const point = { x: 1 }
         const options = { point }
         const line = new Line()
@@ -419,7 +420,7 @@ describe("registered class invocation", () => {
                 this.changed = true
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const failure = new Error("nested failure")
         const source = new Value()
         source.child = { failure }
@@ -439,7 +440,7 @@ describe("registered class invocation", () => {
                 throw new Error("must not invoke")
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const receiverErrors = [
             new Error("receiver one"),
             new Error("receiver two"),
@@ -474,7 +475,7 @@ describe("registered class invocation", () => {
                 return Promise.resolve(this.value)
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
 
         const invalid = new Value()
         const invalidChain = new Chain(invalid)
@@ -507,7 +508,7 @@ describe("registered class invocation", () => {
                 return resultError
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.value = 1
         const chain = new Chain(value)
@@ -531,7 +532,7 @@ describe("registered class invocation", () => {
                 this.state.fail = true
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.state = state
         const chain = new Chain(value)
@@ -548,7 +549,7 @@ describe("registered class invocation", () => {
                 throw failure
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const source = new Value()
         const chain = new Chain(source)
 
@@ -569,8 +570,8 @@ describe("registered class invocation", () => {
                 return result
             }
         }
-        registerDataClass(Point)
-        registerDataClass(Holder)
+        managedStateClass(Point)
+        managedStateClass(Holder)
         const holder = new Holder()
         holder.point = new Point(1)
 
@@ -590,7 +591,7 @@ describe("registered class invocation", () => {
                 return this.point
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const holder = new Holder()
         holder.point = { x: 1 }
         const chain = new Chain(holder)
@@ -610,7 +611,7 @@ describe("registered class invocation", () => {
                 return { me: this }
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.x = 1
         const chain = new Chain(value)
@@ -633,7 +634,7 @@ describe("registered class invocation", () => {
                 return { opaque: this.opaque, fn: this.fn }
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const holder = new Holder()
         holder.opaque = opaque
         holder.fn = fn
@@ -657,7 +658,7 @@ describe("registered class invocation", () => {
                 return result
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const value = new Value()
         value.value = 1
         const chain = new Chain(value)
@@ -677,7 +678,7 @@ describe("registered class invocation", () => {
                 return { value: Promise.resolve(1) }
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const chain = new Chain(new Value())
 
         expect(run(chain, [], "direct", false) instanceof Error).to.be(true)
@@ -697,7 +698,7 @@ describe("registered class invocation", () => {
                 this.items.push(4)
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const holder = new Holder()
         holder.items = view
 
@@ -717,7 +718,7 @@ describe("registered class invocation", () => {
                 this.value++
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const source = new Value()
         source.value = 1
         source.child = { stable: true }
@@ -738,7 +739,7 @@ describe("registered class invocation", () => {
                 this.changed = true
             }
         }
-        registerDataClass(Value)
+        managedStateClass(Value)
         const pending = deferred()
         const source = new Value()
         source.pending = pending.promise
@@ -759,7 +760,7 @@ describe("registered class invocation", () => {
                 this.later.child.value++
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const child = { value: 1 }
         const later = { child }
         lookupPath(new Chain(later), [])
@@ -782,7 +783,7 @@ describe("registered class invocation", () => {
                 this.child.value++
             }
         }
-        registerDataClass(Holder)
+        managedStateClass(Holder)
         const holder = new Holder()
         const child = { value: 1, parent: holder }
         holder.child = child
@@ -805,7 +806,7 @@ describe("registered class invocation", () => {
                 this.value++
             }
         }
-        registerDataClass(Cyclic)
+        managedStateClass(Cyclic)
         const source = new Cyclic()
         source.value = 1
         source.self = source
@@ -829,7 +830,7 @@ describe("registered class invocation", () => {
                 return this.value
             }
         }
-        registerDataClass(Counter)
+        managedStateClass(Counter)
         const counter = new Counter()
         counter.value = 0
         const chain = new Chain(counter)

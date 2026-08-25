@@ -6,7 +6,7 @@ import {
     exportValue,
     lookupPath,
     readPath,
-    registerDataClass,
+    managedStateClass,
     importValue,
     deferred,
     flushMicrotasks,
@@ -312,7 +312,7 @@ describe("path assignment", () => {
             configurable: true,
         })
         class InheritedState {}
-        registerDataClass(InheritedState)
+        managedStateClass(InheritedState)
         const prototype = InheritedState.prototype
         Object.defineProperty(prototype, "locked", {
             value: 1,
@@ -489,7 +489,8 @@ describe("path assignment", () => {
             "Cannot delete length (imported at: intrinsic receiver)",
         )
         expect(mutation.message).to.be(
-            "run mutation receiver is not an ordinary property " +
+            "run cannot use an Array or String length property as a " +
+            "mutation receiver " +
             "(imported at: intrinsic receiver)",
         )
         expect(source).to.eql([1])

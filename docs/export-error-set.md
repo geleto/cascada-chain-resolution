@@ -52,7 +52,7 @@ Before an Error is found, the raw walk creates one plain-data output graph:
 
 - arrays retain length and sparse slots;
 - traversable non-array containers become plain objects;
-- opaque values retain their identity;
+- external values retain their identity;
 - aliases retain one output identity;
 - cycles point back into the output graph;
 - object own enumerable string keys and Array indexed elements are copied;

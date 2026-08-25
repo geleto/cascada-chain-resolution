@@ -108,19 +108,14 @@ function getOrCreatePromiseMirror(owner, key, promise) {
         )
     }
 
-    const importBoundary = meta?.importBoundary
-    if (importBoundary) {
-        languageProperties.assertPromisePropertyShape(owner, key)
-    } else {
-        languageProperties.assertCanSetLanguageProperty(owner, key)
+    if (meta?.importBoundary) {
+        errorUtils.reportFatalError(
+            new Error("Imported promise property has no mirror"),
+        )
     }
+    languageProperties.assertCanSetLanguageProperty(owner, key)
 
-    const mirror = createInitialPromiseMirror(
-        owner,
-        key,
-        promise,
-        importBoundary,
-    )
+    const mirror = createInitialPromiseMirror(owner, key, promise)
     installPromiseMirror(owner, key, mirror)
     return mirror
 }
@@ -152,16 +147,28 @@ function createInitialPromiseMirror(
     retained = false,
 ) {
     const mirror = { value: promise }
-    resolution.resolveInitialValueOrPoison(promise, value => {
-        publishPromiseValue(
-            owner,
-            key,
-            mirror,
-            value,
-            importBoundary,
-            retained,
+    const publish = value => publishPromiseValue(
+        owner,
+        key,
+        mirror,
+        value,
+        importBoundary,
+        retained,
+    )
+    if (importBoundary) {
+        // Import must process fulfillment before admission; the general
+        // initial-value resolver admits first.
+        languageValues.continuePromise(
+            promise,
+            value => errorUtils.runFatal(publish, value),
+            reason => errorUtils.runFatal(
+                publish,
+                errorUtils.toPoison(reason),
+            ),
         )
-    })
+    } else {
+        resolution.resolveInitialValueOrPoison(promise, publish)
+    }
     return mirror
 }
 
@@ -173,29 +180,12 @@ function placePromiseVersion(
     retained = false,
 ) {
     languageProperties.assertCanSetLanguageProperty(owner, key)
-    // Ordinary placements are runtime-owned; imported properties instead use
-    // same-parent promotion, which does not replace their physical edge.
+    // A derived placement is runtime-owned and may publish into its owner.
     const mirror = { value: promise }
     continuePromiseVersion(promise, sourceMirror, value => {
         publishPromiseValue(owner, key, mirror, value, undefined, retained)
     })
     replaceProperty(owner, key, mirror, promise)
-    return mirror
-}
-
-function promoteImportedPromiseVersion(owner, key, promise) {
-    const sourceMirror = getPromiseMirror(owner, key)
-    if (!sourceMirror) return getOrCreatePromiseMirror(owner, key, promise)
-
-    const importBoundary = metadata.importBoundaryOf(owner)
-    const mirror = { value: promise }
-    continuePromiseVersion(promise, sourceMirror, value => {
-        publishPromiseValue(owner, key, mirror, value, importBoundary)
-    })
-    // Promotion changes only the Promise version's publication policy. The
-    // imported property and its refcount edge remain physically and logically
-    // pending.
-    installPromiseMirror(owner, key, mirror)
     return mirror
 }
 
@@ -218,11 +208,12 @@ function publishPromiseValue(
                     new Error("A Promise requires a fresh property version"),
                 )
             }
-            languageValues.admitReadyValue(value)
-            if (retained) metadata.markShared(value)
             if (importBoundary) {
-                prepareImportedResult(value, importBoundary)
+                value = prepareImportedValue(value, importBoundary)
+            } else {
+                languageValues.admitReadyValue(value)
             }
+            if (retained) metadata.markShared(value)
             return value
         },
         admitFailure,
@@ -378,22 +369,22 @@ function indexValueIfSourceIndexed(source, value) {
     )
 }
 
-function prepareImportedRoot(value, importBoundary) {
-    prepareImportedData(value, importBoundary, true)
-}
-
-function prepareImportedResult(value, importBoundary) {
-    prepareImportedData(value, importBoundary, false)
-}
-
-function prepareImportedData(value, importBoundary, explicitImport) {
-    importPreparation.prepareImportedData(
+function prepareImportedValue(value, importBoundary) {
+    return importPreparation.prepareImportedData(
         value,
         importBoundary,
-        explicitImport,
-        promoteImportedPromiseVersion,
-        getOrCreatePromiseMirror,
+        installImportedPromise,
     )
+}
+
+function installImportedPromise(owner, key, promise, importBoundary) {
+    const mirror = createInitialPromiseMirror(
+        owner,
+        key,
+        promise,
+        importBoundary,
+    )
+    installPromiseMirror(owner, key, mirror)
 }
 
 function prepareRetainedArrayProperties(
@@ -440,7 +431,7 @@ export {
     indexValueIfSourceIndexed,
     isPropertyOrigin,
     placePromiseVersion,
-    prepareImportedRoot,
+    prepareImportedValue,
     prepareRetainedArrayProperties,
     resolvePropertyValue,
     resolvePropertyValueAtKey,

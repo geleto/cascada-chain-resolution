@@ -388,7 +388,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(detachedRoot.value).to.be("replacement")
     })
 
-    it("publishes uninspectable settled values as opaque", async () => {
+    it("publishes uninspectable settled values as external", async () => {
         const pending = deferred()
         const failure = new Error("settled value reflection failed")
         const settled = failsClassification(failure)
@@ -918,9 +918,7 @@ describe("promise mirrors and lookupPath", () => {
         deferredBranch.reject("fork boom")
         await flushMicrotasks()
 
-        // Import promotes root's current property version. Earlier operations
-        // retain the old version, while the borrowed property stays untouched.
-        expect(root.branch).to.be(deferredBranch.promise)
+        expect(root.branch instanceof Error).to.be(true)
         const rootError = readPath(new Chain(root), ["branch"])
         expect(rootError instanceof Error).to.be(true)
         expect(rootError.message).to.be("fork boom")

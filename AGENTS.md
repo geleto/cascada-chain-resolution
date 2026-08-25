@@ -43,9 +43,9 @@ The contracts, type capabilities, execution boundaries, and Error/fatal classifi
 
 Any graph root or placement may contain a Promise. Pending and ready values use the same logical path: an operation uses an available value or registers at its captured version and continues with the resolved value. Promise means asynchronous availability, not a separate admitted category.
 
-Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admission. Acquisition or invocation failure is that captured Promise's rejection unless already fatal. Classification preserves Error and Function semantics first. An identity obtained as live state of an external property remains external, including a record or Array. An explicit external identity declaration may likewise make a record, Array, or class instance external. Otherwise logical Arrays retain Array semantics, an explicit managed identity declaration controls a record or class instance, records default to managed, and class instances follow the managed-class registry or the external default. Promise subclasses keep Promise semantics. An uninspectable object is admitted unchanged as external.
+Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admission. Acquisition or invocation failure is that captured Promise's rejection unless already fatal. Classification preserves Error and Function semantics first. An identity obtained as live state of an external property remains external, including a record or Array. An explicit external identity declaration may likewise make a record, Array, or class instance external. Otherwise logical Arrays retain Array semantics, records default to managed, and a class instance follows its explicit managed declaration, the managed-class registry, or the external default. Promise subclasses keep Promise semantics. An uninspectable object is admitted unchanged as external.
 
-Declarations do not modify or admit an identity. An external identity declaration overrides the managed record or Array default and any class rule; a managed identity declaration overrides record and class defaults. Admission fixes the category and prototype permanently, and a managed copy inherits those admitted facts without inheriting a declaration.
+Declarations do not modify or admit an identity and are relevant only until its first admission. Sampling a declaration input captures its thenability once; this availability fact is not category admission. A matching declaration request for admitted state returns it without another walk; a conflicting one fails. An external identity declaration overrides the managed record or Array default and any class rule; a managed identity declaration overrides the external class default. Records and Arrays passed to `managedState` are traversal roots and receive no redundant declaration. Nested declared or admitted external identities and uninspectable identities stop its walk; requesting managed state for one as the root fails. An identity declaration does not bind a prototype; admission records the prototype then present and fixes it with the category. Passing an Error to an identity-declaration API preserves and returns that exact Error without declaring it; an Error reached during a managed declaration walk ends only that branch. A managed copy inherits the admitted category and prototype without inheriting a declaration.
 
 A controlled method consumes logical Cascada values. A host call crosses argument-export and result-admission boundaries. An external identity remains exact and is not graph-traversed.
 
@@ -86,7 +86,7 @@ An owner is a placement or retained result that can independently preserve a log
 - Multiple paths from one owner to the same identity, including cycles, do not create another owner.
 - Protection belongs to an identity; permission to replace a placement belongs to its container. A path mutation considers both.
 - Ordinary COW shallow-copies each level from the first protected container to the changed placement and reuses off-path values. Reused children keep their identity facts and become shared when both owners retain them.
-- Each copied path node starts runtime-owned, unshared, and unleased. Populate it from logical values, not physical slots, and copy no source metadata except the admitted category and managed-class prototype.
+- Each copied path node starts runtime-owned, unshared, and unleased. Populate it from logical values, not physical slots, and copy no source metadata except the admitted category and prototype.
 - Assignment captures its right-hand value before mutating the left. In `x.self = x`, lookup retains the old `x`, so assignment copies `x` and stores the old value: `newX.self === oldX`, not `newX.self === newX`. Ordinary assignment links captured versions rather than creating graph cycles; cycles may enter through imported or managed host mutation.
 - A copied Promise placement gets a fresh mirror at the copier's program position.
 
@@ -96,7 +96,7 @@ A logical value is what Cascada observes; its representation is the storage used
 
 - Writability, configurability, and extensibility constrain storage, not the graph. If a valid transition cannot use its current representation, materialize normal runtime-owned storage and retry. Omit non-placements and never invoke or redefine a blocker.
 - Copy outward along a path as needed to publish materialized storage.
-- Shallow COW preserves a managed class's admitted prototype. Managed mutation copies preserve aliases and cycles inside each copied subgraph. Publication may sever an alias to another placement, which keeps its original identity and value.
+- Shallow COW preserves a record's or managed class's admitted prototype. Managed mutation copies preserve aliases and cycles inside each copied subgraph. Publication may sever an alias to another placement, which keeps its original identity and value.
 - Array backing may grow physically while fixed ArrayView bounds preserve existing values. Copy or materialize only when reuse would change a protected value.
 - Imported storage never serves as mutable ArrayView backing.
 
@@ -179,10 +179,12 @@ Import admits host-originated data and records its origin without becoming the o
 
 Import is used for:
 
-- each host-provided root, including the context root;
+- a host root explicitly passed to public import, including each context root as a whole;
 - managed, native, override, and external host-call results;
 - values read from external properties;
 - values revealed when any of those Promises fulfill.
+
+Promise fulfillment continues its original import boundary; it is not another boundary case.
 
 Chain construction from an existing Cascada value, assignment, lookup, and internal transfer do not cross the boundary and therefore do not import; they preserve admission and origin.
 
@@ -298,7 +300,7 @@ Guard poison is an Error stored in the external identity's metadata phase state,
 ## Managed Methods
 
 - Declare a managed class before admitting its instances. Declaration is not retroactive; classification is fixed at first admission.
-- Resolve a managed record's captured own enumerable method placement before testing callability, then invoke it with the prepared record as receiver. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Class declaration rejects accessors on that chain, which application code must not later change.
+- Resolve a managed record's captured own enumerable method placement before testing callability, then invoke it with the prepared record as receiver. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Its prototype chain must satisfy the accessor-free managed-class contract when admitted, and application code must not change it afterward.
 - Managed classes expose semantic state only through own enumerable string-keyed data properties. Every managed method keeps mutable semantic state in `this` and receives other state through explicit arguments; it must not depend on mutable parent, closure, module, private-field, Symbol, non-enumerable, accessor, or internal-slot state.
 - Managed state may contain primitives, records, logical Arrays, managed classes, external identities, Functions, aliases, cycles, Promises, and Errors.
 - After method selection, preparation consumes the complete receiver graph and exports every explicit argument. It resolves every receiver Promise through captured versions and provides no Promise or Error in the receiver. Exported arguments contain no unresolved language Promise; the host-input Error policy still applies. Imported receiver storage keeps its physical Promise.

@@ -21,7 +21,7 @@ function selectArrayCall(receiver, method, mutation, mutationContext) {
     if (mutation || mutator) {
         if (!mutator) {
             return errorUtils.validationError(
-                "Array mutation supports only Array mutators",
+                `Array method ${method} cannot be used as a mutation`,
             )
         }
         return getControlledCallDescription(
@@ -33,7 +33,8 @@ function selectArrayCall(receiver, method, mutation, mutationContext) {
     }
     if (languageProperties.hasLanguageProperty(receiver, method)) {
         return errorUtils.validationError(
-            `Language property shadows method: ${method}`,
+            `Cannot call ${method} because an own data property ` +
+            "with that name hides the method",
         )
     }
 

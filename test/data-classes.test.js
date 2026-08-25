@@ -11,7 +11,7 @@ import {
     importValue,
     lookupPath,
     readPath,
-    registerDataClass,
+    managedStateClass,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -26,7 +26,7 @@ describe("data class copy-on-write", () => {
         class Child extends Base {}
         const keys = Reflect.ownKeys(Base.prototype)
 
-        registerDataClass(Base)
+        managedStateClass(Base)
 
         expect(Reflect.ownKeys(Base.prototype)).to.eql(keys)
         const base = importValue(new Base(), "registered base")
@@ -73,9 +73,9 @@ describe("data class copy-on-write", () => {
                 return this.x * this.y * this.z
             }
         }
-        registerDataClass(Vec2)
-        registerDataClass(Vec3)
-        registerDataClass(FVec3)
+        managedStateClass(Vec2)
+        managedStateClass(Vec3)
+        managedStateClass(FVec3)
         const source = importValue(new FVec3(2, 3, 4), "fvec import")
         const chain = new Chain(source)
 
@@ -101,7 +101,7 @@ describe("data class copy-on-write", () => {
                 this.y = y
             }
         }
-        registerDataClass(Point)
+        managedStateClass(Point)
         const point = new Point(1, 2)
         const sibling = { stable: true }
         const root = importValue({ point, sibling }, "nested class")
@@ -124,7 +124,7 @@ describe("data class copy-on-write", () => {
                 this.x = x
             }
         }
-        registerDataClass(Point)
+        managedStateClass(Point)
         const source = importValue(new Point(1), "repeated class")
         const chain = new Chain(source)
 
@@ -148,7 +148,7 @@ describe("data class copy-on-write", () => {
                 this.x = 1
             }
         }
-        registerDataClass(PendingPoint)
+        managedStateClass(PendingPoint)
         const pending = deferred()
         const source = importValue(
             new PendingPoint(pending.promise),
@@ -184,7 +184,7 @@ describe("data class copy-on-write", () => {
                 this.x = 1
             }
         }
-        registerDataClass(PendingPoint)
+        managedStateClass(PendingPoint)
         const pending = deferred()
         const source = importValue(
             new PendingPoint(pending.promise),
@@ -226,7 +226,7 @@ describe("data class copy-on-write", () => {
                 this.value = 1
             }
         }
-        registerDataClass(Result)
+        managedStateClass(Result)
         const source = importValue(new Result(), "class Error")
         buildRefIndex(source)
         const chain = new Chain(source)
@@ -248,7 +248,7 @@ describe("data class copy-on-write", () => {
                 this.self = this
             }
         }
-        registerDataClass(Cyclic)
+        managedStateClass(Cyclic)
         const source = importValue(new Cyclic(), "class cycle")
         const chain = new Chain(source)
 
@@ -268,7 +268,7 @@ describe("data class copy-on-write", () => {
                 this.x = x
             }
         }
-        registerDataClass(Point)
+        managedStateClass(Point)
         const point = new Point(1)
         const root = importValue(
             { left: point, right: point },
@@ -301,7 +301,7 @@ describe("data class copy-on-write", () => {
                 this.value = 1
             }
         }
-        registerDataClass(SpecialFields)
+        managedStateClass(SpecialFields)
         const source = importValue(
             new SpecialFields(),
             "special fields",
@@ -353,8 +353,9 @@ describe("data class copy-on-write", () => {
         expect(copy[1].value).to.be(2)
     })
 
-    it("preserves cross-realm plain-object and base-array support", () => {
+    it("preserves cross-realm record prototypes and base-array support", () => {
         const foreignObject = runInNewContext("({ value: 1 })")
+        const foreignPrototype = Object.getPrototypeOf(foreignObject)
         const objectChain = new Chain(importValue(
             foreignObject,
             "foreign object",
@@ -363,6 +364,9 @@ describe("data class copy-on-write", () => {
         assignPath(objectChain, ["value"], 2)
 
         expect(objectChain._state.value).to.eql({ value: 2 })
+        expect(Object.getPrototypeOf(objectChain._state.value)).to.be(
+            foreignPrototype,
+        )
         expect(foreignObject.value).to.be(1)
 
         const foreignArray = runInNewContext("[{ value: 1 }]")
@@ -457,7 +461,7 @@ describe("data class copy-on-write", () => {
 
     it("does not detect falsely registered internal slots", () => {
         class FalseDate extends Date {}
-        registerDataClass(FalseDate)
+        managedStateClass(FalseDate)
         const source = new FalseDate(0)
         source.value = 1
         const chain = new Chain(importValue(
@@ -478,7 +482,7 @@ describe("data class copy-on-write", () => {
     it("normalizes registered and unregistered array subclasses", () => {
         class UnregisteredList extends Array {}
         class RegisteredList extends Array {}
-        registerDataClass(RegisteredList)
+        managedStateClass(RegisteredList)
 
         for (const List of [UnregisteredList, RegisteredList]) {
             const source = importValue(

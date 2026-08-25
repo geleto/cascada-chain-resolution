@@ -6,7 +6,7 @@ import {
     getRefCounter,
     getRefCounts,
     metaOf,
-    registerDataClass,
+    managedStateClass,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -355,7 +355,7 @@ describe("subtree counters", () => {
     it("does not inherit metadata through object prototypes", () => {
         const pending = deferred()
         class Data {}
-        registerDataClass(Data)
+        managedStateClass(Data)
         const prototype = Data.prototype
         const child = new Data()
         child.pending = pending.promise

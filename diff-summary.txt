@@ -1,0 +1,23 @@
+Diff summary for `src`
+Date: 2026-08-25
+Command: git --no-pager diff --no-color --numstat HEAD -- src
+
+Per-file net changes (largest first):
+- src/state-declarations.js: +171 (171 added, 0 removed)
+- src/import-preparation.js: -24 (48 added, 72 removed)
+- src/import.js: +12 (19 added, 7 removed)
+- src/property-versions.js: -9 (45 added, 54 removed)
+- src/meta.js: +7 (60 added, 53 removed)
+- src/invocation.js: -5 (10 added, 15 removed)
+- src/index.js: +4 (5 added, 1 removed)
+- src/language-values.js: +2 (15 added, 13 removed)
+- src/chain.js: +1 (1 added, 0 removed)
+- src/language-properties.js: +1 (1 added, 0 removed)
+- src/language-conversion.js: 0 (1 added, 1 removed)
+- src/mutations.js: 0 (6 added, 6 removed)
+- src/run.js: 0 (1 added, 1 removed)
+
+Totals for `src`:
+- Added: 383
+- Removed: 223
+- Net: +160

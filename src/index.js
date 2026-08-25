@@ -17,18 +17,16 @@
 export { Chain } from "./chain.js"
 
 export {
-    assignPath,
-    deletePath,
+    assignPath, deletePath,
 } from "./mutations.js"
 
 export {
-    exportPath as export,
-    getErrors,
-    hasError,
-    lookupPath,
+    exportPath as export, getErrors, hasError, lookupPath,
 } from "./observations.js"
 
 export { enter } from "./enter.js"
 export { import } from "./import.js"
-export { registerDataClass } from "./meta.js"
 export { run } from "./run.js"
+export {
+    externalState, managedState, managedStateClass,
+} from "./state-declarations.js"

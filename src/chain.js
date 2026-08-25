@@ -15,6 +15,7 @@ class Chain {
         languageValues.admitReadyValue(
             state,
             languageValues.TYPE_RECORD,
+            Object.prototype,
         )
         this._state = state
         this._mutates = mutates

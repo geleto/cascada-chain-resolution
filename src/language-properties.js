@@ -246,6 +246,7 @@ export {
     deleteLanguageProperty,
     enumerableLanguageKeys,
     getLanguagePropertyDescriptor,
+    getLanguagePlacementDescriptor,
     hasLanguageProperty,
     propertyMutationRequiresCopy,
     propertyValidationError,

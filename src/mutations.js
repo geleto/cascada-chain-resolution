@@ -52,7 +52,7 @@ function createEmptyContainerCopy(source) {
         destination = new Array(arrayViews.logicalArrayLength(source))
     } else if (
         type === languageValues.TYPE_RECORD ||
-        type === languageValues.TYPE_REGISTERED
+        type === languageValues.TYPE_MANAGED_CLASS
     ) {
         destination = Object.create(sourceMeta.prototype)
     } else {
@@ -60,11 +60,11 @@ function createEmptyContainerCopy(source) {
             new TypeError("Cannot copy a non-container value"),
         )
     }
-    languageValues.admitReadyValue(destination, type)
-    const destinationMeta = metadata.requireMeta(destination)
-    if (type !== languageValues.TYPE_ARRAY) {
-        destinationMeta.prototype = sourceMeta.prototype
-    }
+    languageValues.admitReadyValue(
+        destination,
+        type,
+        sourceMeta.prototype,
+    )
     return destination
 }
 

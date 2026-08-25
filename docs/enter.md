@@ -144,7 +144,7 @@ Capturing a singly owned value transfers ownership from the source placement to 
 
 If COW above the entered placement leaves the target reachable from the source graph, both graphs retain it. A direct target is marked shared before `onEntered`; for a Promise target, the transfer callback marks the logical value before later private consumers run. The retention condition comes directly from `attachmentRoot`, without a separate Boolean.
 
-Entering a shared or imported path, or one with active read entries, uses the normal mutation walk and copies as required. Imported host data is never mutated in place. Imported identities carry direct import status, while COW copies and runtime-owned islands carry none. Entered Chains therefore need no sticky boundary field: imported values retain attribution, while the runtime-owned transfer mirror does not. Replacing a private root drops old attribution unless the new value is itself imported.
+Entering a shared or imported path, or one with active read entries, uses the normal mutation walk and copies as required. Imported host data is never mutated in place. Imported identities carry direct origin, while COW copies and already admitted runtime-owned identities do not acquire it. Entered Chains therefore need no sticky boundary field: imported values retain attribution, while the runtime-owned transfer mirror does not. Replacing a private root drops old attribution unless the new value is itself imported.
 
 When the owning walk has copied a path, assigning the pending gate marks its first copied root shared. Later mutations therefore preserve the issue-time world while the gate can still publish into it. Repeated sequential entries on such a path may COW that owning path again.
 

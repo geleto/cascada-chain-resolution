@@ -9,7 +9,7 @@ import {
     expect,
     importValue,
     lookupPath,
-    registerDataClass,
+    managedStateClass,
     setFatalErrorReporter,
     thrownBy,
 } from "./support.js"
@@ -23,17 +23,17 @@ describe("value admission", () => {
             languageValues.TYPE_STRING,
             languageValues.TYPE_PRIMITIVE,
             languageValues.TYPE_RECORD,
-            languageValues.TYPE_REGISTERED,
-            languageValues.TYPE_OPAQUE,
+            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE_EXTERNAL,
         ]
         expect(types.every(Number.isInteger)).to.be(true)
         expect(new Set(types).size).to.be(types.length)
     })
 
     it("classifies every available value category", () => {
-        class Registered {}
-        class Opaque {}
-        registerDataClass(Registered)
+        class Managed {}
+        class External {}
+        managedStateClass(Managed)
 
         const cases = [
             [new Error("error"), languageValues.TYPE_ERROR],
@@ -42,8 +42,8 @@ describe("value admission", () => {
             [() => {}, languageValues.TYPE_FUNCTION],
             [{ push() {} }, languageValues.TYPE_RECORD],
             [Object.create(null), languageValues.TYPE_RECORD],
-            [new Registered(), languageValues.TYPE_REGISTERED],
-            [new Opaque(), languageValues.TYPE_OPAQUE],
+            [new Managed(), languageValues.TYPE_MANAGED_CLASS],
+            [new External(), languageValues.TYPE_EXTERNAL],
         ]
         for (const [value, type] of cases) {
             new Chain(value)
@@ -60,9 +60,9 @@ describe("value admission", () => {
     })
 
     it("resolves Promise subclasses before admitting their values", async () => {
-        class RegisteredPromise extends Promise {}
-        registerDataClass(RegisteredPromise)
-        const promise = RegisteredPromise.resolve([1, 2])
+        class ManagedPromise extends Promise {}
+        managedStateClass(ManagedPromise)
+        const promise = ManagedPromise.resolve([1, 2])
         const chain = new Chain(promise)
 
         const value = await lookupPath(chain, [])
@@ -172,10 +172,10 @@ describe("value admission", () => {
         expect(protectedBranch.next).to.be(undefined)
     })
 
-    it("gives Array semantics precedence over registration", () => {
-        class RegisteredArray extends Array {}
-        registerDataClass(RegisteredArray)
-        const value = new RegisteredArray(1, 2)
+    it("gives Array semantics precedence over class declaration", () => {
+        class ManagedArray extends Array {}
+        managedStateClass(ManagedArray)
+        const value = new ManagedArray(1, 2)
 
         new Chain(value)
 
@@ -184,48 +184,48 @@ describe("value admission", () => {
 
     it("keeps type and class definition fixed after admission", () => {
         class Early {}
-        class Registered {
+        class Managed {
             constructor() {
                 this.value = 1
             }
         }
-        registerDataClass(Registered)
+        managedStateClass(Managed)
         const error = new Error("fixed")
         const early = new Early()
-        const registered = new Registered()
+        const managed = new Managed()
         new Chain(error)
         new Chain(early)
-        new Chain(registered)
+        new Chain(managed)
 
-        registerDataClass(Early)
+        managedStateClass(Early)
         Object.setPrototypeOf(error, null)
-        Object.setPrototypeOf(early, Registered.prototype)
-        Object.setPrototypeOf(registered, null)
+        Object.setPrototypeOf(early, Managed.prototype)
+        Object.setPrototypeOf(managed, null)
         error.then = () => {}
         early.then = () => {}
 
         expect(languageValues.isError(error)).to.be(true)
         expect(languageValues.isPromise(error)).to.be(false)
         expect(languageValues.typeOf(error)).to.be(languageValues.TYPE_ERROR)
-        expect(languageValues.typeOf(early)).to.be(languageValues.TYPE_OPAQUE)
+        expect(languageValues.typeOf(early)).to.be(languageValues.TYPE_EXTERNAL)
         expect(languageValues.isPromise(early)).to.be(false)
-        expect(languageValues.typeOf(registered)).to.be(
-            languageValues.TYPE_REGISTERED,
+        expect(languageValues.typeOf(managed)).to.be(
+            languageValues.TYPE_MANAGED_CLASS,
         )
-        importValue(registered, "changed registered-class prototype")
-        const registeredChain = new Chain(registered)
-        assignPath(registeredChain, ["value"], 2)
-        expect(Object.getPrototypeOf(registeredChain._state.value)).to.be(
-            Registered.prototype,
+        importValue(managed, "changed managed-class prototype")
+        const managedChain = new Chain(managed)
+        assignPath(managedChain, ["value"], 2)
+        expect(Object.getPrototypeOf(managedChain._state.value)).to.be(
+            Managed.prototype,
         )
         const late = new Chain(new Early())._state.value
-        expect(languageValues.typeOf(late)).to.be(languageValues.TYPE_REGISTERED)
+        expect(languageValues.typeOf(late)).to.be(languageValues.TYPE_MANAGED_CLASS)
     })
 
     it("does not reflect again after admission", () => {
-        class Opaque {}
+        class External {}
         let prototypeReads = 0
-        const target = new Opaque()
+        const target = new External()
         const value = new Proxy(target, {
             getPrototypeOf() {
                 prototypeReads++
@@ -236,12 +236,12 @@ describe("value admission", () => {
         const readsAtAdmission = prototypeReads
 
         Object.setPrototypeOf(target, Object.prototype)
-        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE_OPAQUE)
+        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE_EXTERNAL)
         expect(languageValues.isTraversable(value)).to.be(false)
         expect(prototypeReads).to.be(readsAtAdmission)
     })
 
-    it("admits a value with uninspectable type as opaque", () => {
+    it("admits a value with uninspectable type as external", () => {
         const value = new Proxy({}, {
             getPrototypeOf() {
                 throw new Error("classification failed")
@@ -252,7 +252,7 @@ describe("value admission", () => {
 
         expect(chain._state.value).to.be(value)
         expect(languageValues.typeOf(value)).to.be(
-            languageValues.TYPE_OPAQUE,
+            languageValues.TYPE_EXTERNAL,
         )
     })
 
@@ -291,32 +291,32 @@ describe("value admission", () => {
         expect(metadata.metaOf(value)).to.be(undefined)
     })
 
-    it("registers a class without admitting its prototype", () => {
-        class Registered {}
-        registerDataClass(Registered)
+    it("declares a class without admitting its prototype", () => {
+        class Managed {}
+        managedStateClass(Managed)
 
-        expect(metadata.metaOf(Registered.prototype)).to.be(undefined)
+        expect(metadata.metaOf(Managed.prototype)).to.be(undefined)
 
-        new Chain(Registered.prototype)
-        expect(metadata.metaOf(Registered.prototype).type).to.be(
+        new Chain(Managed.prototype)
+        expect(metadata.metaOf(Managed.prototype).type).to.be(
             languageValues.TYPE_RECORD,
         )
     })
 
-    it("keeps an admitted subclass prototype registered as a definition", () => {
+    it("keeps an admitted subclass prototype as a managed-class definition", () => {
         class Base {}
         class Child extends Base {
             childMethod() {
                 return true
             }
         }
-        registerDataClass(Base)
-        registerDataClass(Child)
+        managedStateClass(Base)
+        managedStateClass(Child)
         new Chain(Child.prototype)
 
         const source = importValue(
             Object.assign(new Child(), { value: 1 }),
-            "registered child",
+            "managed child",
         )
         const chain = new Chain(source)
         assignPath(chain, ["value"], 2)
@@ -327,39 +327,37 @@ describe("value admission", () => {
         expect(copy.childMethod()).to.be(true)
     })
 
-    it("reports invalid class registration as fatal", () => {
+    it("returns invalid managed-class declaration as an Error", () => {
         let reported
         setFatalErrorReporter(error => {
             reported = error
         })
 
-        const failure = thrownBy(() => registerDataClass(() => {}))
+        const failure = managedStateClass(() => {})
 
         expect(failure).to.be.a(TypeError)
-        expect(reported).to.be(failure)
+        expect(reported).to.be(undefined)
     })
 
-    it("records opaque facts without traversing opaque state", () => {
-        class Opaque {}
+    it("records external facts without traversing external state", () => {
+        class External {}
         let ownKeyReads = 0
-        const value = new Proxy(new Opaque(), {
+        const value = new Proxy(new External(), {
             ownKeys() {
                 ownKeyReads++
-                throw new Error("opaque state was traversed")
+                throw new Error("external state was traversed")
             },
         })
 
         const chain = new Chain({ value })
         expect(metadata.metaOf(value)).to.be(undefined)
         expect(lookupPath(chain, ["value"])).to.be(value)
-        importValue(value, "opaque import")
+        importValue(value, "external import")
         metadata.incrementReadLease(value)
         metadata.decrementReadLease(value)
 
         expect(ownKeyReads).to.be(0)
-        expect(metadata.metaOf(value).shared).to.be(true)
-        expect(metadata.importBoundaryOf(value).errorContext).to.be(
-            "opaque import",
-        )
+        expect(metadata.metaOf(value).shared).to.be(undefined)
+        expect(metadata.importBoundaryOf(value)).to.be(undefined)
     })
 })

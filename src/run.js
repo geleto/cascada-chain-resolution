@@ -46,7 +46,8 @@ function runMutation(chain, path, invokeReceiver) {
             ) {
                 const error = languageProperties.propertyValidationError(
                     target.receiver,
-                    "run mutation receiver is not an ordinary property",
+                    "run cannot use an Array or String length property " +
+                    "as a mutation receiver",
                 )
                 target.replaceReceiver(error)
                 return error
@@ -87,10 +88,11 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
             mutationContext,
         )
     }
-    if (type === languageValues.TYPE_REGISTERED) {
+    if (type === languageValues.TYPE_MANAGED_CLASS) {
         if (languageProperties.hasLanguageProperty(receiver, method)) {
             return errorUtils.validationError(
-                `Language property shadows method: ${method}`,
+                `Cannot call ${method} because an own data property ` +
+                "with that name hides the method",
             )
         }
         return registeredClassInvocation.selectRegisteredClassCall(
@@ -119,7 +121,8 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
             method,
         )) {
             return errorUtils.validationError(
-                `Language property shadows method: ${method}`,
+                `Cannot call ${method} because an own data property ` +
+                "with that name hides the method",
             )
         }
         return invocation.getHostCallDescription(

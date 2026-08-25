@@ -4,12 +4,13 @@ import * as metadata from "./meta.js"
 const {
     TYPE_ARRAY,
     TYPE_ERROR,
+    TYPE_EXTERNAL,
     TYPE_FUNCTION,
-    TYPE_OPAQUE,
+    TYPE_MANAGED_CLASS,
     TYPE_PRIMITIVE,
     TYPE_RECORD,
-    TYPE_REGISTERED,
     TYPE_STRING,
+    isTraversableType,
 } = metadata
 
 const CAPTURED_THENABLES = new WeakMap()
@@ -25,9 +26,8 @@ function capturedThenableOf(value) {
     if (!metadata.isObjectLike(value)) return undefined
     if (metadata.metaOf(value)) return undefined
 
-    let captured = CAPTURED_THENABLES.get(value)
-    if (captured) return captured
-    captured = errorUtils.catchUserCodeFailure(
+    if (CAPTURED_THENABLES.has(value)) return CAPTURED_THENABLES.get(value)
+    const captured = errorUtils.catchUserCodeFailure(
         () => {
             const then = errorUtils.runUserCode(() => value.then)
             return typeof then === "function" ? { then } : undefined
@@ -36,7 +36,6 @@ function capturedThenableOf(value) {
             then: (_resolve, reject) => reject(rejection),
         }),
     )
-    if (!captured) return undefined
     CAPTURED_THENABLES.set(value, captured)
     return captured
 }
@@ -93,9 +92,13 @@ function admitValue(value) {
 
 // Thenability has already been sampled at this program position. Ready-value
 // admission always preserves the value and creates complete typed metadata.
-function admitReadyValue(value, knownType = undefined) {
+function admitReadyValue(
+    value,
+    knownType = undefined,
+    knownPrototype = undefined,
+) {
     if (metadata.isObjectLike(value)) {
-        metadata.getOrCreateMeta(value, knownType)
+        metadata.getOrCreateMeta(value, knownType, knownPrototype)
     }
 }
 
@@ -113,19 +116,17 @@ function typeOf(value) {
 
 function isTraversable(value) {
     const type = metadata.metaOf(value)?.type
-    return type === TYPE_ARRAY ||
-        type === TYPE_RECORD ||
-        type === TYPE_REGISTERED
+    return isTraversableType(type)
 }
 
 export {
     TYPE_ARRAY,
     TYPE_ERROR,
+    TYPE_EXTERNAL,
     TYPE_FUNCTION,
-    TYPE_OPAQUE,
+    TYPE_MANAGED_CLASS,
     TYPE_PRIMITIVE,
     TYPE_RECORD,
-    TYPE_REGISTERED,
     TYPE_STRING,
     admitReadyValue,
     admitValue,
@@ -133,5 +134,6 @@ export {
     isError,
     isPromise,
     isTraversable,
+    isTraversableType,
     typeOf,
 }

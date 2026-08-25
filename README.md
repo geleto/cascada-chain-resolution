@@ -40,12 +40,14 @@ import {
     assignPath,
     deletePath,
     enter,
+    externalState,
     export as exportValue,
     getErrors,
     hasError,
     import as importValue,
     lookupPath,
-    registerDataClass,
+    managedState,
+    managedStateClass,
     run,
 } from "cascada-chain-resolution"
 ```
@@ -62,16 +64,16 @@ returns a Promise only when its result depends on pending data. Operations
 issued after it do not need to await that Promise: continuations are registered
 in issue order and observe all earlier effects.
 
-Records, Arrays, and registered-class instances are traversable. Primitives and
-Errors are terminal values. Unregistered class instances and objects with
-native internal slots are opaque identity values and cannot be traversed.
+Managed records, Arrays, and class instances are traversable. Primitives,
+Functions, Errors, and external identities are terminal values. Records and
+Arrays default to managed; class instances default to external.
 
 ### `new Chain(initialValue, mutates = true)`
 
 Creates a Chain rooted at `initialValue`. `mutates` must be exactly `true` or
 `false`. A read-only Chain accepts observations but rejects mutation operations.
-Creating a Chain admits the value but does not mark external data as imported;
-pass external data through `import` first.
+Creating a Chain admits the value but does not mark host data as imported; pass
+host-provided roots through `import` first.
 
 #### `chain.close()`
 
@@ -146,8 +148,8 @@ closes the temporary Chain, and does not publish its private state.
 
 Returns a host-ready snapshot of the branch captured at the operation's issue
 position. Traversable data is deep-copied without runtime metadata while
-preserving Arrays, holes, property order, aliases, and cycles. Registered-class
-instances become plain records; opaque values retain their exact identities.
+preserving Arrays, holes, property order, aliases, and cycles. Managed class
+instances become plain records; external values retain their exact identities.
 
 If the branch contains one `Error`, that Error is returned. If it contains
 several distinct Errors, export returns a new `Error` whose `errors` property
@@ -168,18 +170,24 @@ contributes its path-access Error; a missing or primitive final value contribute
 nothing. The result is an Array when complete synchronously and otherwise a
 Promise for the Array.
 
-### `registerDataClass(DataClass)`
+### State declarations
 
-Registers the constructor's exact prototype so its instances are traversable,
-retain that prototype during copy-on-write, and can use synchronous methods
-through `run`. Registration is permanent, must happen before an instance is
-first admitted, and is not inherited; register each participating subclass.
+`externalState(value)` declares one exact record, Array, or class instance
+external and returns it. The declaration is shallow.
 
-All semantic instance state must live in own enumerable string-keyed data
-properties. Registered classes must not depend on private fields, accessors,
-Symbols, non-enumerable state, closure state, hidden shared mutable storage, or
-native internal slots. Prototype accessors are rejected during registration.
-Constructors are never called when the runtime copies an instance.
+`managedState(value)` declares a class instance managed and returns it. Given
+unadmitted managed state, it also declares every currently reachable class
+instance while preserving aliases and cycles.
+
+`managedStateClass(...classes)` declares each exact class prototype managed for
+instances admitted later and returns `undefined`. Class declarations are not
+inherited, and an exact `externalState` declaration takes precedence.
+
+Declarations must precede admission and never wait. A matching request for
+admitted state returns it without another walk; invalid or conflicting input
+returns a validation `Error`. Managed classes keep semantic state in own
+enumerable string-keyed data properties and cannot require prototype accessors,
+private fields, Symbols, hidden mutable state, or native internal slots.
 
 ### `run(chain, path, method, mutation, ...arguments)`
 
@@ -195,7 +203,7 @@ Supported receivers are:
   observation-only overrides.
 - Records, for trusted read-only host methods outside the language-property
   surface.
-- Registered-class instances, for trusted synchronous observations and
+- Managed class instances, for trusted synchronous observations and
   mutations.
 
 The controlled Array methods are `at`, `concat`, `copyWithin`, `fill`, `flat`,
@@ -207,7 +215,7 @@ comparators.
 
 For an Array mutator, `mutation: true` updates the receiver and returns the
 corresponding native mutator result. With `mutation: false`, the receiver is
-unchanged and the transformed Array is returned. Registered-class methods must
+unchanged and the transformed Array is returned. Managed-class methods must
 finish synchronously; observation methods must not mutate, and mutation methods
 may mutate only their receiver graph. A method result may be returned directly
 or as a Promise where that receiver category permits asynchronous host results.

@@ -47,7 +47,7 @@ describe("import", () => {
         }
     })
 
-    it("marks external roots as shared", () => {
+    it("protects imported managed roots", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos
         const oldDelta = root.delta
@@ -112,7 +112,7 @@ describe("import", () => {
         expect(readPath(new Chain(child), ["pending"])).to.be(resolved)
     })
 
-    it("keeps runtime metadata external when its owner is imported", async () => {
+    it("does not re-import an already admitted root", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const root = { pending: pending.promise }
@@ -122,10 +122,11 @@ describe("import", () => {
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
 
-        importValue(root, "promoted runtime owner")
+        importValue(root, "already admitted root")
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
-        expect(metaOf(root).importBoundary).not.to.be(undefined)
+        expect(metaOf(root).importBoundary).to.be(undefined)
+        expect(metaOf(root).shared).to.be(true)
         expect(registrations()).to.be(1)
 
         const resolved = { done: true }
@@ -133,7 +134,7 @@ describe("import", () => {
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
 
-        expect(root.pending).to.be(pending.promise)
+        expect(root.pending).to.be(resolved)
         expect(readPath(new Chain(root), ["pending"])).to.be(resolved)
     })
 
@@ -205,23 +206,24 @@ describe("import", () => {
         verifyRefCounts(external)
     })
 
-    it("writes through Promise properties of runtime islands", async () => {
+    it("does not scan an admitted identity inside a host root", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         lookupPath(new Chain(child), [])
 
-        importValue({ child }, "runtime island")
+        importValue({ child }, "admitted child")
         expect(metaOf(child).importBoundary).to.be(undefined)
 
         const resolved = { done: true }
         pending.resolve(resolved)
         await flushMicrotasks()
 
-        expect(child.pending).to.be(resolved)
+        expect(child.pending).to.be(pending.promise)
         expect(metaOf(resolved)?.importBoundary).to.be(undefined)
+        expect(await readPath(new Chain(child), ["pending"])).to.be(resolved)
     })
 
-    it("scans overlapping runtime islands once per import", () => {
+    it("does not scan overlapping admitted identities", () => {
         let scans = 0
         const nested = new Proxy({}, {
             ownKeys(target) {
@@ -234,27 +236,27 @@ describe("import", () => {
         lookupPath(new Chain(nested), [])
 
         importValue({ outer, nested }, "overlapping islands")
-        expect(scans).to.be(1)
+        expect(scans).to.be(0)
 
         const pending = deferred()
         nested.pending = pending.promise
         importValue({ outer, nested }, "later frontier")
 
-        expect(scans).to.be(2)
-        expect(metaOf(nested).mirrors.pending.value).to.be(pending.promise)
+        expect(scans).to.be(0)
+        expect(metaOf(nested).mirrors).to.be(undefined)
     })
 
-    it("imports a direct alias regardless of runtime-island scan order", async () => {
-        for (const runtimeFirst of [true, false]) {
+    it("imports a new direct alias regardless of property order", async () => {
+        for (const admittedFirst of [true, false]) {
             const pending = deferred()
             const child = { pending: pending.promise }
             const runtimeOwned = { child }
             lookupPath(new Chain(runtimeOwned), [])
-            const external = runtimeFirst
+            const external = admittedFirst
                 ? { runtimeOwned, direct: child }
                 : { direct: child, runtimeOwned }
-            const errorContext = runtimeFirst
-                ? "runtime island first"
+            const errorContext = admittedFirst
+                ? "admitted alias first"
                 : "direct alias first"
 
             importValue(external, errorContext)
@@ -477,55 +479,6 @@ describe("import", () => {
 
         expect(metaOf(resolved).shared).to.be(true)
         expect(metaOf(resolved.nested).shared).to.be(true)
-    })
-
-    it("keeps import classification with the original Promise version", async () => {
-        const pending = deferred()
-        const root = { branch: pending.promise }
-        const chain = new Chain(root)
-
-        importValue(root, "same promise import")
-        const firstMirror = metaOf(root).mirrors.branch
-        const firstRead = lookupPath(chain, ["branch"])
-
-        assignPath(chain, ["branch"], pending.promise)
-        const next = chain._state.value
-        const secondMirror = metaOf(next).mirrors.branch
-        assignPath(chain, ["branch", "x"], 1)
-
-        expect(secondMirror).not.to.be(firstMirror)
-
-        pending.resolve({})
-        const firstValue = await firstRead
-        await flushMicrotasks()
-
-        expect(firstValue).to.eql({})
-        expect(readPath(chain, ["branch"])).to.eql({ x: 1 })
-        expect(readPath(chain, ["branch"])).not.to.be(firstValue)
-    })
-
-    it("classifies a settled value before a later FIFO mutation", async () => {
-        const pending = deferred()
-        const root = { value: pending.promise }
-        const chain = new Chain(root)
-
-        importValue(root, "FIFO import continuation")
-        assignPath(chain, ["value", "added"], true)
-        buildRefIndex(root)
-
-        pending.resolve({ clean: true })
-        await flushMicrotasks()
-
-        expect(root.value).to.be(pending.promise)
-        expect(readPath(new Chain(root), ["value"])).to.eql({
-            clean: true,
-        })
-        expect(chain._state.value.value).to.eql({ clean: true, added: true })
-        expect(metaOf(chain._state.value.value)?.importBoundary).to.be(undefined)
-        expect(metaOf(root).mirrors.value).not.to.be(undefined)
-        expect(hasCycleCut(root, "value")).to.be(false)
-        expectCounts(root, 0, 0)
-        verifyRefCounts(root)
     })
 
     it("indexes a Promise result that closes a cycle through an alias", async () => {
@@ -857,9 +810,11 @@ describe("import", () => {
         expect(registrations()).to.be(1)
 
         pending.resolve(destination)
+        await imported
         await flushMicrotasks()
 
         buildRefIndex(destination)
+        await flushMicrotasks()
         expectCounts(destination, 0, 0, 1)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
@@ -1623,7 +1578,7 @@ describe("import", () => {
         const pending = deferred()
         const root = { pending: pending.promise, sibling: 0 }
 
-        importValue(root, "promoted Promise path")
+        importValue(root, "imported Promise path")
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
 
@@ -1886,11 +1841,12 @@ describe("import", () => {
         assignPath(chain, ["self"], importedPromise)
         const next = chain._state.value
         deferredValue.resolve(next)
+        await importedPromise
         await flushMicrotasks()
 
         buildRefIndex(next)
         expect(hasCycleCut(next, "self")).to.be(true)
-        expect(next.self).to.be(importedPromise)
+        expect(next.self).to.be(next)
         expect(readPath(chain, ["self"])).to.be(next)
         expect(hasError(chain, [])).to.be(false)
         expect(getErrors(chain, [])).to.eql([])
@@ -2102,15 +2058,34 @@ describe("import", () => {
         verifyRefCounts(sealed)
     })
 
-    it("turns an imported rejecting promise into an Error", async () => {
+    it("preserves an imported Promise rejection", async () => {
         const deferredValue = deferred()
         const imported = importValue(deferredValue.promise)
 
         deferredValue.reject("external boom")
-        const value = await imported
+        let rejection
+        try {
+            await imported
+        } catch (error) {
+            rejection = error
+        }
+        expect(rejection).to.be("external boom")
+    })
 
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("external boom")
+    it("completes direct-Promise admission before fulfillment", async () => {
+        const pending = deferred()
+        const failure = new Error("root ownKeys failed")
+        const value = new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        })
+        const imported = importValue(pending.promise, "promised root")
+
+        pending.resolve(value)
+
+        expect(await imported).to.be(failure)
+        expect(metaOf(value)).to.be(undefined)
     })
 
     it("publishes reflection failure when an imported Promise resolves", async () => {
@@ -2149,6 +2124,8 @@ describe("import", () => {
         const root = { child }
 
         expect(importValue(root, "failed import")).to.be(failure)
+        expect(metaOf(root)).to.be(undefined)
+        expect(metaOf(child)).to.be(undefined)
         expect(importValue(root, "retried import")).to.be(root)
         expect(ownKeysCalls).to.be(2)
 
@@ -2160,12 +2137,13 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("turns an already-rejected imported promise into an Error", async () => {
-        const value = await importValue(
-            Promise.reject("already external boom"),
-        )
-
-        expect(value instanceof Error).to.be(true)
-        expect(value.message).to.be("already external boom")
+    it("preserves an already-rejected imported Promise", async () => {
+        let rejection
+        try {
+            await importValue(Promise.reject("already external boom"))
+        } catch (error) {
+            rejection = error
+        }
+        expect(rejection).to.be("already external boom")
     })
 })

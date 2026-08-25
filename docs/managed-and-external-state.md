@@ -2,7 +2,7 @@
 
 ## Model
 
-Cascada manages records and Arrays by default. A class instance is external by default unless its identity or exact class is declared managed. An explicit identity declaration takes precedence over its class default, and admission fixes one classification for the identity.
+Cascada manages records and Arrays by default, so `externalState` opts an exact record or Array out of management. Class instances are external by default, so `managedState` opts in an instance and `managedStateClass` changes the default for subsequently admitted instances of an exact class. `externalState(instance)` overrides that class rule. Admission then fixes one classification for the identity.
 
 Managed state is traversed, Promise-aware, copy-on-write, and replaceable. External state remains exact host state and is observation-only by default. Phase 9 allows mutation only after actual use through one compiler-static path of one context Chain.
 
@@ -15,21 +15,27 @@ managedStateClass(...classes)
 import(value, errorContext)
 ```
 
-Declarations return their original argument without wrapping, modifying, or admitting it. Repeating the same declaration is harmless. A contradictory declaration or one contradicting an admitted classification returns a validation Error without changing the established mode.
+`externalState` and `managedState` return their original value without wrapping, modifying, or admitting it. An Error value is returned unchanged and receives no declaration. `managedStateClass` returns `undefined` on success. Repeating the same declaration is harmless. A matching request for admitted state returns it without another walk; a contradictory request returns a validation Error without changing the established mode.
 
-`externalState` applies shallowly to records, Arrays, and class instances. Functions, Errors, Promises, callable thenables, and primitives reject it. `managedState` declares its argument and every class instance currently reachable through managed record, Array, and class data. It preserves aliases and cycles, stops at explicitly external identities, and does not register encountered classes. Arrays remain managed unless explicitly declared external. Validate the complete walk and every managed-class prototype before recording anything.
+`externalState` applies shallowly to records, Arrays, and class instances. A Function, Promise, callable thenable, or primitive returns a validation Error. `managedState` declares a class instance, or every class instance currently reachable through unadmitted managed state. It preserves aliases and cycles and does not register encountered classes. Nested declared or admitted external identities, uninspectable identities, admitted managed identities, Errors, and Functions stop the walk; passing an external or uninspectable identity as the root returns a validation Error. Arrays remain managed unless explicitly declared external. Validate the complete walk and every managed-class prototype before recording anything.
 
-A class instance added later follows its own identity or class declaration. `managedStateClass` affects only subsequently admitted instances of the supplied exact prototypes and validates every prototype before changing the registry. Declarations never resolve a Promise or callable thenable: `externalState` rejects one as its argument, and `managedState` rejects one anywhere in its walk.
+A class instance added later follows its own identity declaration or exact class rule. `managedStateClass` affects only subsequently admitted instances of the supplied exact prototypes. It validates every supplied class and prototype before changing the registry and returns a validation Error if any is invalid. Declarations never resolve a Promise or callable thenable: `externalState` returns a validation Error for one as its argument, and `managedState` does so for one anywhere in its walk. Sampling during validation permanently captures thenability without admitting a category.
 
 ## Classification
 
-Keep identity declarations outside application objects and managed class prototypes in one registry. Resolve callable thenables before admission. Preserve Error and Function semantics first. An identity obtained as live state of an external property remains external, including a record or Array. An explicit external declaration likewise makes a record, Array, or class instance external. Otherwise Arrays retain intrinsic semantics, an explicit managed declaration controls a record or class instance, records default to managed, and class instances use the exact managed-class registry or external default.
+Keep identity declarations outside application objects and managed class prototypes in one registry. Resolve callable thenables before admission. Preserve Error and Function semantics first. An identity obtained as live state of an external property remains external, including a record or Array. An explicit external declaration likewise makes a record, Array, or class instance external. Otherwise Arrays retain intrinsic semantics, records default to managed, and a class instance follows its explicit managed declaration, the exact managed-class registry, or the external default. Records and Arrays passed to `managedState` are traversal roots and receive no redundant declaration.
 
-Store the admitted category and prototype in identity metadata. Later declarations and registry changes never reclassify it. A managed copy receives fresh metadata with the source category and prototype but no declaration entry. External identities are never copied.
+An identity declaration selects a category but does not bind a prototype. Admission stores the category and prototype then present and discards any consumed identity declaration. A managed prototype present at admission must satisfy the managed-class contract. Later declarations, registry changes, and prototype changes never alter those admitted facts. A managed copy receives fresh metadata with the source category and prototype but no declaration entry. External identities are never copied.
 
 ## Import
 
-`import` is the sole inbound data boundary. It handles every host-provided root, including context roots, and is reused internally for native JavaScript call results, external-property reads, and values later fulfilled by Promises from those boundaries. Assignment, lookup, Chain transfer, and other movement within Cascada preserve admission and origin without importing again.
+`import` is the sole inbound data boundary. It is used only for:
+
+- a host root explicitly passed to the public `import` API, including each context root as a whole;
+- every native JavaScript call result; and
+- every external-property read result.
+
+A Promise fulfilled from one of these boundaries continues that same import; it is not another boundary case. Assignment, managed lookup, Chain transfer, and other movement within Cascada preserve admission and origin without importing again.
 
 One importer applies the boundary's ownership policy. A synchronous segment validates its complete reached shape before committing origin, sharing, or Promise mirrors. It traverses each new managed identity once while preserving aliases and cycles and stops at Functions, Errors, and external identities. A new host-produced managed identity becomes imported and shared. Existing identity metadata identifies an admitted result: retain it without traversing it again, preserve its origin, and mark it shared when the result adds an owner. This permits another Cascada execution to return unexported managed data without a redundant import walk.
 

@@ -14,7 +14,7 @@ function createRawWalkState(
 ) {
     const state = {
         copies: new WeakMap(),
-        errors: new Set(),
+        errors: preserveErrors ? undefined : new Set(),
         retainSource,
         visited: new WeakSet(),
         foundError(error) {

@@ -60,7 +60,7 @@ function toPrimitiveValue(value, ancestry) {
                     ? conversionError()
                     : "[object Object]"
             }
-            return type === languageValues.TYPE_REGISTERED
+            return type === languageValues.TYPE_MANAGED_CLASS
                 ? "[object Object]"
                 : conversionError()
         },

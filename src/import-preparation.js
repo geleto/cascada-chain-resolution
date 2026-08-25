@@ -1,90 +1,66 @@
+import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-// Classify one imported graph while exposing its Promise placements to the
-// property-version protocol. Runtime-owned islands keep their ownership but
-// still expose their currently available Promise frontier.
-function prepareImportedData(
-    root,
-    importBoundary,
-    explicitImport,
-    prepareImportedPromise,
-    getOrCreatePromise,
-) {
-    if (!canHaveImportBoundary(root)) return
-    const importVisited = new Set()
-    const runtimeScanned = new Set()
-    const metadataBeforeRuntimeScan = new Set()
-    walkImported(root, explicitImport)
+function prepareImportedData(root, importBoundary, installPromise) {
+    if (!metadata.isObjectLike(root)) return root
 
-    function walkImported(value, promote = false) {
-        if (!canHaveImportBoundary(value)) return
-        if (importVisited.has(value)) {
-            metadata.markShared(value)
-            return
-        }
-        importVisited.add(value)
+    const admitted = new Map()
+    const retained = new Set()
+    const promises = []
+    const failure = errorUtils.catchUserCodeFailure(
+        () => walk(root),
+        error => error,
+    )
+    if (failure) {
+        languageValues.admitReadyValue(failure)
+        return failure
+    }
 
-        const hasExistingWorld = runtimeScanned.has(value)
-            ? metadataBeforeRuntimeScan.has(value)
-            : metadata.hasOperationalMetadata(value)
-        const alreadyImported = metadata.importBoundaryOf(value) !== undefined
-        if (
-            !promote &&
-            hasExistingWorld &&
-            (!alreadyImported || !explicitImport)
-        ) {
-            metadata.markShared(value)
-            walkRuntime(value)
-            return
-        }
-
-        // Explicit import revisits imported identities so interrupted admission
-        // can resume. A prior runtime scan does not block this imported pass.
-        runtimeScanned.add(value)
+    for (const [value, facts] of admitted) {
+        metadata.getOrCreateMeta(value, facts.type, facts.prototype)
         metadata.markImported(value, importBoundary)
-        if (!languageValues.isTraversable(value)) return
-        for (const key of languageProperties.enumerableLanguageKeys(value)) {
-            const child = languageProperties.readLanguageProperty(value, key)
-            if (languageValues.isPromise(child)) {
-                const preparePromise = alreadyImported
-                    ? getOrCreatePromise
-                    : prepareImportedPromise
-                preparePromise(value, key, child)
-            } else {
-                walkImported(child)
-            }
-        }
     }
-
-    function canHaveImportBoundary(value) {
-        const type = languageValues.typeOf(value)
-        return type !== languageValues.TYPE_PRIMITIVE &&
-            type !== languageValues.TYPE_STRING &&
-            type !== languageValues.TYPE_ERROR
+    for (const value of retained) metadata.markShared(value)
+    for (const { owner, key, promise } of promises) {
+        installPromise(owner, key, promise, importBoundary)
     }
+    return root
 
-    function walkRuntime(value) {
-        if (
-            !languageValues.isTraversable(value) ||
-            runtimeScanned.has(value)
-        ) return
-        // Promise discovery can add metadata. Remember whether the identity
-        // already had a world so new metadata cannot hide a later direct path
-        // from the imported graph.
-        if (metadata.hasOperationalMetadata(value)) {
-            metadataBeforeRuntimeScan.add(value)
+    function walk(value) {
+        if (!metadata.isObjectLike(value)) return undefined
+        if (languageValues.isPromise(value)) {
+            return errorUtils.validationError(
+                "A Promise must occupy a captured import boundary",
+                importBoundary.errorContext,
+            )
         }
-        runtimeScanned.add(value)
+        if (admitted.has(value) || retained.has(value)) return undefined
+
+        const existing = metadata.metaOf(value)
+        if (existing) {
+            retained.add(value)
+            return undefined
+        }
+
+        const facts = metadata.inspectMetaFacts(value)
+        admitted.set(value, facts)
+        if (!languageValues.isTraversableType(facts.type)) return undefined
+
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
-            const child = languageProperties.readLanguageProperty(value, key)
+            const descriptor = languageProperties
+                .getLanguagePlacementDescriptor(value, key)
+            if (!descriptor) continue
+            const child = descriptor.value
             if (languageValues.isPromise(child)) {
-                getOrCreatePromise(value, key, child)
-            } else {
-                walkRuntime(child)
+                promises.push({ owner: value, key, promise: child })
+                continue
             }
+            const childFailure = walk(child)
+            if (childFailure) return childFailure
         }
+        return undefined
     }
 }
 

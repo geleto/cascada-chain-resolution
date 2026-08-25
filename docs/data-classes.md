@@ -1,49 +1,41 @@
-# Data Classes
+# Managed and external state
 
 ## Status
 
-Implemented. Registered JavaScript data-class instances participate in the language graph, retain their prototype across copy-on-write, and support synchronous observation and mutation methods through `run`. Unregistered classes and native internal-slot objects are opaque leaves.
+Implemented. Admission permanently classifies each identity as managed or external. Records and Arrays default to managed; class instances default to external. Managed class instances participate in the graph, preserve their prototype during copy-on-write, and support the synchronous methods described in [`registered-class-invocation.md`](registered-class-invocation.md).
 
-## Admitted values
+## Declarations
 
-The runtime records a fixed type when an available identity first enters Cascada. Arrays, plain objects, null-prototype records, registered data-class instances, and the internal `ArrayView` are traversable. Objects and registered instances expose own enumerable string keys. Arrays expose canonical indexes plus `length`; other string properties are not Array data.
-
-Other objects, including `Date`, `Map`, `Set`, RegExp, typed arrays, and unregistered class instances, remain opaque values. Their metadata records identity facts such as import, sharing, and leases, but the runtime does not traverse, index, or copy their state. They may be assigned, returned, and exported, but a path cannot enter them and `run` cannot yet use them as receivers.
-
-An Error is admitted terminal data. A Promise is resolved at its captured property version, and its available result is admitted instead.
-
-## Registration
-
-The package exports `registerDataClass`. Registration records the constructor's exact prototype in a dedicated registry without modifying or admitting it:
+Declarations affect later admission without admitting or modifying their input:
 
 ```js
-registerDataClass(Vec2)
+externalState(recordOrArray)
+managedState(new Vec2(1, 2))
+managedStateClass(Vec2, Line2)
 ```
 
-Registration is permanent, must happen before instances enter Cascada, and is not inherited; each participating subclass must be registered separately. It asserts that every state value needed by supported behavior is stored in own enumerable string-keyed data properties. A copied instance normalizes those properties to ordinary enumerable writable configurable data properties.
+- `externalState(value)` declares one exact record, Array, or class instance external. It is shallow and overrides a managed-class declaration for that identity.
+- `managedState(value)` declares a class instance managed. Given unadmitted managed state, it also declares every currently reachable class instance while preserving aliases and cycles. Nested declared or admitted external identities, uninspectable identities, admitted managed identities, Errors, and Functions stop the walk; an external or uninspectable root fails.
+- `managedStateClass(...classes)` declares each exact prototype managed for instances admitted later. It is not inherited.
 
-Registration requires a callable constructor with an identity prototype and rejects accessors on its prototype chain up to, but excluding, `Object.prototype`. An invalid definition is a fatal host-contract failure.
+`externalState` and `managedState` return the exact value on success and return an Error argument unchanged. `managedStateClass` returns `undefined`. Invalid or conflicting declarations return a validation Error. Each new declaration validates its complete synchronous input before recording anything; none waits for Promises. A matching request for admitted managed or external state returns the value without rescanning it. Admission is permanent, so a conflicting request cannot reclassify an identity.
 
-The contract does not support required private fields, accessors, non-enumerable or Symbol-keyed state, closure state, hidden shared storage, or native internal slots. Registration is trusted; the runtime does not attempt to detect a false assertion. A callable `then` still makes the value a Promise.
+Managed class prototypes may contain data methods but no accessors before `Object.prototype`. All semantic instance state must use own enumerable string-keyed data properties. Managed classes must not require private fields, Symbols, non-enumerable or accessor state, mutable closure or module state, hidden shared mutable storage, or native internal slots. Constructors never run during copying.
 
-No standard internal-slot class is registered automatically. Such types require dedicated support rather than `registerDataClass`.
+## Admission
+
+The first available use records one fixed category and, for managed classes and records, the prototype then present. An earlier identity declaration selects the category without binding the prototype. Explicit identity declarations take precedence over class declarations. Arrays retain Array semantics; callable thenables retain Promise semantics.
+
+Managed records, Arrays, and classes are traversable. External identities, Functions, and Errors are leaves. External values retain their exact identity but currently cannot be path receivers or `run` receivers.
 
 ## Copy-on-write
 
-A copied registered instance is created from the prototype stored by its admitted class definition:
+A record or managed-class copy is created from its admitted prototype and populated through the ordinary property pipeline. The copy preserves aliases, cycles, ownership, Promise mirrors, and refcounts without invoking a constructor or copying descriptors or metadata.
 
-```js
-Object.create(definition.prototype)
-```
+Arrays, including cross-realm Arrays and subclasses, use the Array path and normalize to local ordinary Arrays. Records retain their admitted prototype, including cross-realm and null prototypes.
 
-The existing property pipeline then copies its language properties, including ownership, Promise mirrors, cycle placement, and refcounts. Constructors do not run, metadata and descriptors are not copied, and inherited methods remain available.
+## Current invocation and export
 
-Arrays, including cross-realm Arrays and subclasses, use the Array path and normalize to local ordinary Arrays. Plain objects normalize to local plain objects, while null-prototype records retain `null`.
+`run` prepares the complete managed-class receiver graph and every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, invoke once synchronously, validate the receiver, and publish it through the ordinary mutation transition.
 
-## Methods and export
-
-`run` prepares the complete registered-class receiver graph and every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, invoke once synchronously, validate the completed receiver, and publish it through the ordinary mutation transition. Methods and results may not be asynchronous. See [`registered-class-invocation.md`](registered-class-invocation.md) for the class contract and invocation boundary.
-
-A mutation returning `this` returns the published receiver. Every other traversable registered-class result is copied independently from the receiver and arguments before admission.
-
-Registered-class instances export as plain data without prototypes, methods, registration, or metadata. Opaque values export unchanged as identity leaves.
+A mutation returning `this` returns the published receiver. Other traversable results are copied independently from the receiver and arguments. Current public export emits managed-class instances as plain data without prototypes or methods and keeps external identities exact.

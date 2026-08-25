@@ -4,26 +4,25 @@ This document defines the observable contract of the Cascada chain-resolution ke
 
 ## Values
 
-The sandbox recognizes five value categories:
+The runtime recognizes these value categories:
 
 - **Primitive:** `null`, `undefined`, strings, numbers, booleans, symbols, and
   bigints.
 - **Promise:** any object or function with a callable `then` property.
 - **Error:** a JavaScript `Error`, used here as the stand-in for Cascada's
   language Error value.
-- **Tracked value:** an Array, plain object, null-prototype record, registered
-  data-class instance, or internal `ArrayView`.
-- **Opaque value:** any other non-null non-Promise object. It retains identity
-  but has no traversable language properties.
+- **Managed value:** an Array, record, managed class instance, or internal
+  `ArrayView`. Managed values have traversable language properties.
+- **External value:** any other non-null non-Promise object. It retains exact
+  identity but has no traversable language properties.
+- **Function:** stored as terminal data and executable only in a supported call
+  position.
 
 A language data object must not rely on a callable `then` property because the
 kernel and JavaScript Promise resolution both treat it as a Promise.
 
-An ordinary callable function that is not classified as a Promise is not a
-language value. Compiler and host integrations must keep callables and
-executable descriptors outside the graph. Prototype methods on registered class
-instances are likewise outside the language-property surface. The kernel does
-not promise proactive callable validation at every assignment boundary.
+Prototype methods on managed class instances are outside the language-property
+surface.
 
 Language-visible object properties are own enumerable string-keyed data
 properties. Own accessors, non-enumerables, inherited properties, Symbols,
@@ -32,9 +31,9 @@ instead expose canonical Array-index strings and the special `length`
 property; other string properties are outside their language surface and
 cannot be assigned or deleted through Cascada.
 
-Registered data-class COW, exact prototype preservation, and synchronous
-observation and mutation methods are implemented. Construction remains outside
-the runtime. Invocation is defined in [`run.md`](run.md) and
+Managed-class COW, exact prototype preservation, and synchronous observation
+and mutation methods are implemented. Construction remains outside the runtime.
+Invocation is defined in [`run.md`](run.md) and
 [`registered-class-invocation.md`](registered-class-invocation.md).
 
 ## Chain roots
@@ -91,8 +90,8 @@ the first language write.
 ownership is ceded. Imported values retain their existing import and sharing
 state in either case.
 
-Non-extensible language nodes are external and must enter through import. Their
-imported ownership, rather than their physical shape, causes copy-on-write.
+Non-extensible managed data must enter through import. Its imported ownership,
+rather than its physical shape, causes copy-on-write.
 
 ## Copy-on-write
 
@@ -105,42 +104,33 @@ The copy contains only language-visible keys:
 
 - arrays, including subclasses and cross-realm arrays, become local ordinary
   arrays with the same length and enumerable indexed keys;
-- plain objects, including cross-realm plain objects, become local plain
-  objects;
-- null-prototype records retain `null`;
-- registered data-class instances retain their exact
-  prototype;
+- records and managed class instances retain their admitted prototype,
+  including cross-realm and null prototypes;
 - holes in sparse arrays remain holes; and
 - runtime metadata is never copied as language data.
 
-`registerDataClass(Class)` stores the constructor's exact prototype in a
-dedicated registry without modifying or admitting it. Registration must
-happen before instances enter Cascada, is not inherited, does not invoke a
-constructor or copying callback, and asserts that all required state is
-compatible with own enumerable string-key copying. The API requires a callable
-constructor with an identity prototype and rejects accessors on its class
-prototype chain before `Object.prototype`; invalid registration is fatal. First
-admission fixes an identity's type and class definition; later registration or
-prototype mutation does not reclassify it.
-The kernel does not attempt to detect private fields, required hidden state,
-native internal slots, or other false assertions.
+Records and Arrays default to managed; class instances default to external.
+`externalState` and `managedState` declare identity overrides, while
+`managedStateClass` declares exact class prototypes for later admission.
+Declarations neither modify nor admit values. First admission fixes an
+identity's category and prototype permanently. See
+[`data-classes.md`](data-classes.md).
 
 All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
-Unregistered classes and native internal-slot objects are opaque identity
-leaves. They may carry external metadata for import, ownership, and leases, but
-the graph does not traverse, index, or copy their state. A path cannot enter an
-opaque value, and `run` cannot yet use one as a receiver. Registered class
-export remains plain data and does not preserve its prototype or methods.
+External classes and native internal-slot objects are identity leaves. The graph
+does not traverse, index, or copy their state. A path cannot enter an external
+value, and `run` cannot yet use one as a receiver. Current managed-class export
+remains plain data and does not preserve its prototype or methods.
 
-Imported attribution remains attached to retained external children. Newly
+Imported attribution remains attached to retained imported children. Newly
 copied path nodes are language-owned. If the copied source was already
 ref-indexed, the copy receives counters reconstructed from its own logical
 properties rather than cloned totals or parent links.
 
 ## Imported data
 
-Every external value must pass through:
+Every host-provided root must pass through:
 
 ```js
 runtime.import(value, errorContext)
@@ -149,32 +139,25 @@ runtime.import(value, errorContext)
 `errorContext` must be truthy. A missing or falsy context is a fatal
 integration error.
 
-For a non-Promise root, import returns the same value after synchronously
-classifying every currently reachable external identity and discovering its
-Promise frontier. For a Promise root, import returns a derived Promise that
-performs the same work on its settled value before exposing it.
+For a ready root, import returns its admitted logical value after one
+transactional synchronous walk. For a Promise root, one operation Promise
+performs the same work on fulfillment before exposing the result; rejection
+remains rejection.
 
-Import admission:
+Import:
 
-- gives each newly imported ownership identity direct access to one import
-  token and shared ownership;
-- stores the attribution context once in that token;
-- marks repeated identities shared;
+- records origin and marks newly imported managed identities shared;
+- retains already admitted identities without rescanning or changing origin;
 - registers continuations for nested Promises without awaiting them; and
 - does not build subtree counters.
 
-Newly reached host objects receive externally stored metadata recording their
-import status. Existing metadata identifies a previously imported or
-runtime-owned identity. Directly importing a runtime identity reuses that
-record and advances its pending properties to imported mirror versions at that
-FIFO position. Containment does not transfer import status: an imported
-identity remains external under a runtime-owned container, and a runtime-owned
-identity remains runtime-owned under an imported container. Language mutation
-copy-on-writes before changing imported data even when that identity is used as
-a root. A Promise property discovered on an imported identity is not replaced:
-its mirror keeps the logical value while the external property retains
-its Promise. Frozen imported data therefore follows the same path as writable
-imported data.
+Newly reached host objects receive external metadata recording their admitted
+category and origin. Import traverses only new managed identities and stops at
+external identities, Functions, and Errors. It commits no metadata or Promise
+mirror from a synchronous segment whose enumeration or descriptor lookup fails.
+A nested Promise property is not replaced: its mirror keeps the logical value
+while imported storage retains the Promise. Frozen imported managed data
+therefore follows the same path as writable imported managed data.
 
 External code must not mutate an imported graph after import. Native code must
 receive traversable Cascada data through `export`, not through a direct runtime
@@ -412,7 +395,7 @@ The complete implementation is specified in
 
 The compiler and host layer must:
 
-- wrap every external value with `import(value, errorContext)`;
+- wrap every host-provided root with `import(value, errorContext)`;
 - establish shared ownership whenever an existing graph identity gains another
   owner or escapes;
 - use non-sharing lookup only for internal inspection or proven final transfer;
@@ -444,13 +427,13 @@ Promise, and an ArrayView receiver is shallow-materialized. The method remains
 trusted read-only, non-retaining beyond that result, and free of external side
 effects.
 
-A registered-class call prepares every explicit argument and the complete receiver
+A managed-class call prepares every explicit argument and the complete receiver
 graph. An observation runs synchronously on its leased prepared receiver. A
 mutation isolates protected receiver identities, invokes once synchronously,
 validates and admits the completed receiver, and publishes it through the
 ordinary mutation transition. It returns the published receiver for `this` and
 an independent copy for every other traversable result. Promise-valued
-registered-class results are validation Errors and are never awaited.
+managed-class results are validation Errors and are never awaited.
 
 A `sort` or `toSorted` comparator is the second executable-control
 exception. A direct or Promise-resolved callable remains outside the graph and

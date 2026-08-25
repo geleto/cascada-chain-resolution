@@ -2,6 +2,7 @@ import { runInNewContext } from "node:vm"
 
 import * as propertyVersions from "../src/property-versions.js"
 import * as arrayViews from "../src/array-view.js"
+import * as languageValues from "../src/language-values.js"
 import {
     Chain,
     assignPath,
@@ -10,6 +11,7 @@ import {
     deferred,
     enter,
     expect,
+    externalState,
     exportValue,
     flushMicrotasks,
     getRefCounter,
@@ -18,7 +20,8 @@ import {
     lookupPath,
     readPath,
     metaOf,
-    registerDataClass,
+    managedState,
+    managedStateClass,
     run,
     setFatalErrorReporter,
     thrownBy,
@@ -358,7 +361,7 @@ describe("run", () => {
             "result",
             false,
         )
-        expect(ready).to.be(returned.promise)
+        expect(ready).not.to.be(returned.promise)
         expect(await ready).to.be(fulfilledError)
 
         const returnedData = deferred()
@@ -369,7 +372,7 @@ describe("run", () => {
             },
         })
         const dataResult = run(chain, [], "data", false)
-        expect(dataResult).to.be(returnedData.promise)
+        expect(dataResult).not.to.be(returnedData.promise)
         returnedData.resolve(hostValue)
         expect(await dataResult).to.be(hostValue)
         expect(metaOf(hostValue).importBoundary).not.to.be(undefined)
@@ -390,6 +393,27 @@ describe("run", () => {
         }
         expect(rejected).to.be(rejectedError)
         expect(chain._state.value).to.be(source)
+    })
+
+    it("honors declarations on ready and promised host results", async () => {
+        class Managed {}
+        const managed = managedState(new Managed())
+        const external = externalState({})
+        const source = {}
+        Object.defineProperties(source, {
+            managed: { value: () => managed },
+            external: { value: () => Promise.resolve(external) },
+        })
+        const chain = new Chain(source)
+
+        expect(run(chain, [], "managed", false)).to.be(managed)
+        expect(metaOf(managed).type).to.be(
+            languageValues.TYPE_MANAGED_CLASS,
+        )
+        expect(await run(chain, [], "external", false)).to.be(external)
+        expect(metaOf(external).type).to.be(
+            languageValues.TYPE_EXTERNAL,
+        )
     })
 
     it("leases a receiver through a pending host result", async () => {
@@ -435,7 +459,7 @@ describe("run", () => {
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
-    it("returns host result thenables unchanged", async () => {
+    it("adopts host result thenables into one operation Promise", async () => {
         const completion = deferred()
         const thenable = {
             then: completion.promise.then.bind(completion.promise),
@@ -451,7 +475,7 @@ describe("run", () => {
 
         const result = run(chain, [], "result", false)
 
-        expect(result).to.be(thenable)
+        expect(result).not.to.be(thenable)
         completion.resolve("done")
         expect(await result).to.be("done")
 
@@ -468,7 +492,7 @@ describe("run", () => {
             "result",
             false,
         )
-        expect(rejectedResult).to.be(rejectedThenable)
+        expect(rejectedResult).not.to.be(rejectedThenable)
         failed.reject(failure)
         let rejection
         try {
@@ -541,14 +565,15 @@ describe("run", () => {
 
         expect(result).to.be(root)
         expect(Reflect.ownKeys(root)).to.eql(languageKeys)
-        expect(metaOf(root).importBoundary).not.to.be(undefined)
+        expect(metaOf(root).importBoundary).to.be(undefined)
+        expect(metaOf(root).shared).to.be(true)
 
         const resolved = { done: true }
         pending.resolve(resolved)
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
 
-        expect(root.pending).to.be(pending.promise)
+        expect(root.pending).to.be(resolved)
         expect(readPath(new Chain(root), ["pending"])).to.be(resolved)
     })
 
@@ -1950,7 +1975,7 @@ describe("run", () => {
                 return "data"
             }
         }
-        registerDataClass(DataValue)
+        managedStateClass(DataValue)
 
         expect(run(
             new Chain([nested, record, new DataValue()]),
@@ -2121,18 +2146,18 @@ describe("run", () => {
         )).to.be(date)
     })
 
-    it("routes registered-class and opaque receivers through category dispatch", () => {
-        class RegisteredClassReceiver {
+    it("routes managed-class and external receivers through category dispatch", () => {
+        class ManagedClassReceiver {
             read(addend) {
                 return this.value + addend
             }
         }
-        registerDataClass(RegisteredClassReceiver)
-        const registered = new RegisteredClassReceiver()
-        registered.value = 1
+        managedStateClass(ManagedClassReceiver)
+        const managed = new ManagedClassReceiver()
+        managed.value = 1
 
         expect(run(
-            new Chain(registered),
+            new Chain(managed),
             [],
             "read",
             false,
@@ -2140,13 +2165,13 @@ describe("run", () => {
         )).to.be(3)
 
         let invoked = false
-        class OpaqueReceiver {
+        class ExternalReceiver {
             read() {
                 invoked = true
             }
         }
         expect(run(
-            new Chain(new OpaqueReceiver()),
+            new Chain(new ExternalReceiver()),
             [],
             "read",
             false,

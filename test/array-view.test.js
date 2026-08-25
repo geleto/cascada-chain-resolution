@@ -322,12 +322,6 @@ describe("ArrayView", () => {
         expect(arrayViews.projectionOf(source)).to.be(source)
         expect(Reflect.ownKeys(source)).to.eql(ownKeys)
 
-        const attached = [3]
-        arrayViews.ArrayView.tryAttachTo(attached)
-        importValue(attached, "attached view backing")
-        expect(arrayViews.ArrayView.tryAttachTo(attached)).to.be(undefined)
-        expect(run(new Chain(attached), [], "push", false, 4)).to.eql([3, 4])
-        expect(attached).to.eql([3])
     })
 
     it("preserves hidden indexes when materializing prepend", () => {

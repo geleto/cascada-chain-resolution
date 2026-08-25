@@ -143,6 +143,8 @@ All identity metadata lives in one `WeakMap`:
 
 Complete.
 
+Phase 6 renames this phase's registered classes to managed classes and opaque identities to external identities; this section retains the names used at its implemented phase boundary.
+
 ### Final design
 
 Every available value has one admitted category represented by a named numeric constant for Error, Array, Function, String, primitive, record, registered class, or opaque identity. The numeric values carry no meaning or ordering. A callable thenable is resolved at its captured property version before its available result is admitted; Promise therefore has no type constant. Error is available terminal data and has `TYPE_ERROR`.
@@ -257,69 +259,149 @@ The implemented behavior is documented in [`registered-class-invocation.md`](reg
 
 ---
 
+## Terms used by the remaining phases
+
+- **Declaration:** an explicit managed-or-external choice recorded before admission. Declaring an identity neither admits nor modifies it.
+- **Admission:** the first and permanent classification of an available identity.
+- **Origin:** whether an identity first entered from host data or was created within Cascada. Origin affects ownership but not admitted category.
+- **Import:** the inbound boundary that admits host data entering Cascada.
+- **Export:** the outbound boundary that produces host-ready data independent from managed storage.
+- **Direct Promise:** the Promise returned directly by a host call. It extends that operation until settlement, so Cascada returns one **operation Promise** representing boundary completion. A Promise nested inside a synchronous result is data and does not extend the operation.
+
+---
+
 ## Phase 6: Establish state modes and inbound admission
 
 ### Problem
 
-Class registration is too coarse for context data: records cannot be declared external, while managing one class instance requires registering its whole class. Import also infers origin from operational metadata and splits one boundary into imported and runtime walks.
+The current state controls are too coarse. Records and Arrays are always managed, while class instances are external unless their entire class is registered. Cascada needs identity-level overrides for both defaults. Import also infers origin from operational metadata and duplicates traversal for imported and runtime data.
 
 ### Design
 
-[`managed-and-external-state.md`](managed-and-external-state.md) is the detailed architecture.
+This phase implements the declaration, admission, and common-import foundations of [`managed-and-external-state.md`](managed-and-external-state.md). Later phases implement its export, managed-invocation, and external-operation sections.
 
-#### 1. Declare identity capabilities
+### 1. Add declarations
 
-Add `externalState(value)`, `managedState(value)`, and variadic `managedStateClass(...classes)`. A successful identity declaration returns its original argument. Replace `registerDataClass` and registered/opaque API terminology without adding compatibility aliases. Keep `import` as the sole public host-data entry point. Phase 10 adds execution for admitted external identities.
+Records and Arrays are managed by default; class instances are external by default. Add these overrides:
 
-Store explicit identity declarations in one external `WeakMap` and managed class prototypes in one `Set`. Do not modify declared objects or admit them merely by declaring them. Repeated matching declarations are idempotent. An explicit identity declaration overrides a class rule; a contradictory identity declaration or a declaration contradicting an admitted type returns a validation Error without changing the established mode.
+- `externalState(value)` declares one exact record, Array, or class instance external. It is shallow and overrides `managedStateClass` for that instance.
+- `managedState(value)` declares a class instance, or walks an unadmitted managed record, Array, or class instance once to declare every currently reachable class instance. It preserves aliases and cycles and does not register encountered classes. Nested declared or admitted external identities, uninspectable identities, Errors, Functions, and admitted managed identities stop the walk; an external or uninspectable root fails.
+- `managedStateClass(...classes)` declares each supplied exact class prototype managed for instances admitted later.
 
-`externalState` applies shallowly to records, Arrays, and class instances. Functions, Errors, Promises, callable thenables, and primitives reject it. `managedState` walks the currently reachable managed data once, declaring every reached class instance while preserving aliases and cycles and stopping at explicit external identities. Arrays remain managed unless explicitly declared external. The walk does not register encountered classes. Every managed class prototype must satisfy the existing registered-class contract. Validate the complete declaration, including prototypes and conflicts, before recording anything. `externalState` rejects a Promise or callable thenable argument, while `managedState` rejects one anywhere in its declaration walk. Neither waits for it.
+All declarations follow these rules:
 
-A class instance added later follows its own identity or class declaration. Do not infer a declaration from managed containment or add an encountered class to the class registry.
+- Successful `externalState` and `managedState` calls return the exact value. An Error value is returned unchanged without being declared.
+- `managedStateClass` returns `undefined` on success. It validates every supplied class before changing the registry and returns a validation Error if any class or prototype is invalid.
+- Declaration neither modifies nor admits an identity.
+- Sampling a declaration input captures its thenability once; this availability fact is not category admission.
+- Store identity declarations in one external `WeakMap` and managed class prototypes in one `Set`.
+- Repeating the same declaration is idempotent.
+- A matching request for admitted state returns the exact value without another walk; a conflicting request returns a validation Error.
+- An identity declaration overrides a class rule; in particular, `externalState(instance)` overrides `managedStateClass(instance.constructor)`.
+- A conflicting identity declaration, or one conflicting with an admitted category, returns a validation Error without changing existing state.
+- Validate the complete operation before recording anything, including nested class instances, aliases, cycles, prototypes, and conflicts.
+- Class instances added later follow their own identity declaration or exact class rule. Managed containment neither declares them nor registers their class.
+- Every managed class prototype satisfies Phase 5's registered-class prototype contract.
 
-`managedStateClass` validates every supplied exact prototype before committing any of them and affects only later admission. Reuse the existing registered-prototype validation and delete the superseded registration API and terminology.
+Declaration inputs are synchronous:
 
-#### 2. Make admission authoritative
+- `externalState` returns a validation Error for a Function, Promise, callable thenable, or primitive.
+- `managedState` returns a validation Error for a Promise or callable thenable anywhere in its declaration walk. An encountered Error is preserved and ends only that branch.
+- A declaration returns a validation Error for any other intrinsic category that the requested mode would have to change.
+- Neither API waits.
+- Arrays remain managed unless explicitly declared external.
 
-Resolve callable thenables before admission. Preserve Error and Function semantics first. An identity obtained as live external property state remains external, including a record or Array. An explicit external identity declaration likewise admits a record, Array, or class instance as external. Otherwise classify logical Arrays intrinsically, apply an explicit managed declaration to a record or class instance, default records to managed, and use the exact managed-prototype registry or external default for class instances. An explicit identity declaration therefore overrides the record default and any class rule.
+#### Renames and removals
 
-Admission resolves these inputs once and stores the final category and prototype in the existing identity metadata. Later runtime behavior reads only admitted metadata. A copy receives fresh metadata containing its source category and prototype; it receives no declaration or class-registry entry. Classification remains fixed after first admission.
+- Replace the registered/opaque state terminology with managed/external state.
+- Replace `registerDataClass` with `externalState`, `managedState`, and `managedStateClass`; add no compatibility alias.
+- Reuse registered-class prototype validation until Phase 8 renames registered-class invocation to managed invocation.
 
-Make import consume these categories without becoming the classification owner. An identity with established origin and classification retains them; import does not infer either from operational metadata.
+### 2. Make admission authoritative
 
-#### 3. Make import one-way
+Resolve callable thenables before admission, then classify in this order:
 
-Every host-provided root, including each context root, passes through the existing `import(value, errorContext)` boundary. Values transferred within Cascada retain their admission, origin, and ownership without importing again. External identities are observation-only by default. Phase 9 owns context construction, occurrence indexing, external mutation authority, and ordering without adding another inbound data boundary.
+```text
+Error or Function                         -> preserve its intrinsic semantics
+explicit external identity declaration   -> external
+logical Array                            -> managed Array
+explicit managed identity declaration    -> managed
+record                                   -> managed
+class in exact managed-prototype registry -> managed class
+other class instance                     -> external
+```
 
-Implement declarations and authoritative classification first, then replace import's imported/runtime split with the one-way walk below.
+Admission then:
 
-Use one importer for public host roots and supported host-call and external-property results. Honor `externalState` and `managedState` declarations returned by host code. A new managed identity becomes imported and shared. Existing identity metadata identifies an already admitted result, including unexported data returned by another Cascada execution. Retain it without another graph walk or origin change, and mark it shared when the result adds an owner. Phase 10 uses the same importer without adding another boundary implementation.
+- Stores the final category and prototype in existing identity metadata.
+- Uses the prototype present at admission; an earlier identity declaration does not bind it.
+- Consumes any identity declaration used for that admission.
+- Never changes that classification later.
+- Makes runtime behavior consult admitted metadata, not declaration registries.
+- Gives a managed copy fresh metadata containing the source category and prototype, but no identity declaration or class-registry entry.
+- Preserves an identity's established classification and origin.
 
-Pass the complete host result, ready or direct-Promise, to this boundary once. A ready result returns its admitted logical value. A direct Promise returns an operation Promise whose fulfillment is the admitted value or an admission Error and whose rejection is unchanged. Replace the current observer that discards asynchronous admission output; otherwise ready and Promise-backed host results are not sequentially equivalent.
+Import consumes admitted categories but does not own classification or infer classification or origin from operational metadata.
 
-For each synchronous import segment, capture and validate the complete reached shape before committing origin, sharing, or Promise mirrors. This prevents a reflection failure from leaving a partially imported graph. After validation, record new identity origins, mark managed traversable identities shared, and traverse records, Arrays, and managed class instances once while preserving aliases and cycles. Stop at Functions, Errors, and external identities.
+### 3. Rewrite import as one inbound walk
 
-At host-root and supported host-result boundaries, register every reached Promise placement through its captured property version. Promise fulfillment continues the same import boundary for newly reached values. Imported physical storage retains its Promise and publishes settlement only through the mirror; normal runtime-owned writeback remains unchanged.
+Keep the existing public `import(value, errorContext)` API and make its implementation the common inbound boundary. In this phase, use it for:
 
-Treat fallible enumeration and descriptor lookup at their existing user-code boundary. Ordinary accessors and non-enumerable properties remain outside the graph and are not invoked. Delete runtime-island detection, `hasOperationalMetadata`, `promoteRoot`, the separate runtime walk, `runtimeScanned`, `metadataBeforeRuntimeScan`, `discoverRuntimePromise`, and the root/result preparation split. Imported origin is explicit, so no host-change reconciliation or import-specific ArrayView machinery exists.
+- a host root explicitly passed to public `import`, including each context root as a whole;
+- call results already handled by common host invocation.
 
-Chain construction, assignment, and internal transfer do not imply import.
+A Promise fulfilled from either boundary continues that same import; it is not another boundary case. Phase 8 routes managed-method results through this importer. Phase 10 does the same for external calls and property reads. Neither phase adds another inbound walk.
 
-This phase implements declarations, authoritative admission, and one-way import. Phase 7 centralizes outbound export without reopening admission.
+Do not import Chain construction from existing Cascada data, assignment, return, or internal transfer. Those operations preserve admission, origin, and ownership. External identities remain observation-only until Phase 9 adds mutation authority and ordering.
+
+Implement declarations and authoritative admission before replacing the imported/runtime split with this lifecycle:
+
+1. Pass one complete ready or direct-Promise host result to import.
+2. For each synchronous segment, capture and validate its complete reached shape before committing metadata.
+3. After validation, record new origins, mark new managed identities imported and shared, and walk each new managed identity once.
+4. Preserve aliases and cycles; traverse records, Arrays, and managed class instances; stop at Functions, Errors, and external identities.
+5. Register each reached Promise placement through its captured property version. Fulfillment re-enters the same import boundary for newly reached values.
+
+The importer honors any `externalState` or `managedState` declarations carried by host results.
+
+Boundary outcomes are:
+
+- A ready result returns its admitted logical value.
+- A direct Promise returns one operation Promise. Fulfillment produces the imported value or an admission Error; rejection remains unchanged.
+- An already admitted identity, including unexported data returned by another Cascada execution, keeps its category and origin. Retain it without another graph walk and mark it shared only when the result adds an owner.
+- Imported physical storage keeps its Promise. The mirror publishes logical settlement without imported writeback; runtime-owned storage keeps ordinary writeback.
+
+Reflection and failure rules are:
+
+- Enumeration and descriptor lookup remain at their existing user-code boundary.
+- Do not invoke ordinary accessors or inspect non-enumerable properties.
+- An import-walk enumeration or descriptor failure commits no origin, sharing, or Promise mirror from that synchronous segment.
+- Boundary failures become language Errors; internal failures remain fatal.
+
+Delete the superseded imported/runtime split and its supporting machinery: runtime-island detection, `hasOperationalMetadata`, `promoteRoot`, the runtime walk, `runtimeScanned`, `metadataBeforeRuntimeScan`, `discoverRuntimePromise`, the root/result preparation split, host-change reconciliation, and import-specific ArrayView handling.
+
+Phase 7 adds the matching outbound boundary without reopening admission. Phase 10 reuses this importer for external operations.
 
 ### Verification
 
-- Records and Arrays admit as managed by default, except that `externalState` or live external property state makes their exact identities external. An undeclared class instance admits as external.
-- Identity declarations return their exact arguments, are atomic across nested classes, aliases, cycles, and prototype validation, and reject Promises or intrinsic categories they cannot change without waiting or partially committing.
-- `managedStateClass` affects later instances only. Explicit identity declarations override defaults and class rules, contradictions return an Error without reclassification, and `externalState` remains shallow and exact for records, Arrays, and class instances through every alias.
-- Public `import` accepts arbitrary host roots, honors existing declarations, and leaves external identities observation-only. Transfers from existing Cascada values do not import again.
-- Copies preserve admitted managed-class type and prototype without acquiring declaration entries.
-- One importer handles public host roots and supported host results, visits each new managed identity once, preserves aliases and cycles, and stops at external identities, Functions, and Errors. Existing identity metadata skips graph import for an admitted result, whose origin remains unchanged.
-- Ready and Promise-backed host results have the same admission outcome. A direct Promise fulfills with the imported value or admission Error, preserves rejection, and never publishes a raw fulfillment whose admission failed.
-- An admitted result, including unexported data returned by another Cascada execution, is recognized from identity metadata and retained without traversing it again.
-- Imported Promise settlement remains mirror-only and continues import for newly fulfilled data under the captured boundary. Runtime-owned Promise settlement keeps its existing writeback behavior.
-- Import invokes no ordinary accessor. A throwing enumeration or descriptor trap produces the boundary's language Error and commits no origin, sharing, or Promise mirror from that synchronous segment; internal failures remain fatal.
-- No runtime-island, separate runtime scan, compatibility registration, or registered/opaque category API remains. Host mutation of imported managed storage is unsupported.
+#### Declarations and admission
+
+- Records and Arrays default to managed. `externalState` makes the exact record or Array external. An undeclared class instance defaults to external.
+- Successful declarations return exact arguments, are atomic across nested classes, aliases, cycles, conflicts, and prototype validation, and never wait for Promises. An Error argument is returned unchanged; a nested Error ends only its `managedState` walk branch.
+- A matching declaration request for admitted state returns it without rescanning its graph.
+- `managedStateClass` affects only later instances. Identity declarations override defaults and class rules; conflicts return an Error without reclassification.
+- `externalState` stays shallow and exact through every alias.
+- Copies preserve admitted managed-class category and prototype without acquiring declaration entries.
+
+#### Import
+
+- Public import accepts arbitrary host roots, honors declarations, and leaves external identities observation-only. Existing Cascada values transferred internally are not imported again.
+- One importer handles host roots and supported host results, visits each new managed identity once, preserves aliases and cycles, and stops at external identities, Functions, and Errors.
+- Existing identity metadata recognizes an admitted result without another graph walk or origin change.
+- Ready and Promise-backed host results have the same admission outcome. Direct fulfillment cannot publish a raw value whose admission failed; rejection remains rejection.
+- Imported Promise fulfillment continues the captured import boundary and remains mirror-only. Runtime-owned Promise settlement keeps ordinary writeback.
+- Import invokes no ordinary accessor. A throwing enumeration or descriptor trap commits nothing from that synchronous segment and produces the boundary's language Error; internal failures remain fatal.
+- No runtime-island scan, compatibility registration, or registered/opaque category API remains. Host mutation of imported managed storage remains unsupported.
 
 Update [`AGENTS.md`](../AGENTS.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`data-classes.md`](data-classes.md), [`import-preparation.md`](import-preparation.md), [`array-view.md`](array-view.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
@@ -335,30 +417,98 @@ Export is scattered across host-call categories, including a shallow Array-overr
 
 [`managed-and-external-state.md`](managed-and-external-state.md) defines the complete inbound and outbound boundary architecture shared with Phase 6.
 
-Use one exporter and graph copier for every explicit argument passed to native JavaScript, every value assigned to an external property, and every public script result. This includes managed record and managed-class methods; runtime-controlled methods such as supported Array methods remain the exception and consume logical values directly. Export resolves required availability, removes runtime representations, and copies managed records, Arrays, and class instances into independent host data while preserving aliases, cycles, and admitted prototypes. Functions and external identities remain exact. Keep two named Error policies: host input preserves nested Errors while a consumed top-level Error prevents invocation or assignment; public result consumes every reached Error. Do not duplicate the walk or turn the difference into a general strategy layer.
+### 1. Use one export boundary
 
-Source leases protect managed data only while export may still read it. Release them when export finishes, before host invocation. A returned host Promise may retain exported copies and exact external identities but never prolongs leases on their managed sources. Phase 10 keeps any external identity phase independently through settlement.
+Use one exporter and one graph copier for:
 
-Make common host-input preparation export both receivers and explicit arguments required by the selected boundary. An Array override therefore receives one complete native Array containing no ArrayView, unresolved language Promise, or original managed traversable identity. Its result uses Phase 6's ordinary host-result import. Delete override-specific receiver selection through `requiresArrayMaterialization` and its receiver-lease inference; retain that predicate only for representation mutation and COW. Do not restrict valid ArrayView backing reuse, and never use imported Array storage as mutable backing.
+- every explicit argument passed to native JavaScript, including managed record and managed-class methods;
+- every receiver that its selected host boundary consumes;
+- every value assigned to an external property; and
+- every public script result.
 
-An own enumerable Function placement continues to shadow an Array standard method and remains observation-only. Reject mutation through an override and native Array mutation requested as observation. Preserve controlled method behavior, including eligible backing reuse by observations such as `concat`.
+Runtime-controlled methods, including supported Array methods, remain the exception: they consume logical Cascada values directly.
 
-Host results use Phase 6's common import, including its operation-Promise result for direct Promises, and public script results use the common export. No host category owns a second importer, exporter, graph copier, or availability resolver.
+The common export walk:
 
-Phase 10 adds external argument guards around this one exporter. Export itself grants no mutation authority and adds no guard-specific path.
+- Resolves every value the selected boundary consumes.
+- Removes runtime representations.
+- Copies managed records, Arrays, and class instances into independent host data.
+- Preserves aliases, cycles, and admitted prototypes.
+- Keeps Functions and external identities exact.
+- Produces no unresolved language Promise or internal representation.
+
+No host category may own another importer, exporter, graph copier, or availability resolver.
+
+### 2. Keep two Error policies
+
+Use the same copier with two named policies:
+
+- **Host-input export:** preserve nested Errors; a consumed top-level Error prevents invocation or assignment.
+- **Public-result export:** consume and combine every reached Error.
+
+Do not duplicate the walk or generalize these two concrete policies into a strategy layer.
+
+### 3. End source leases at export completion
+
+- Lease managed sources only while export may still read them.
+- Release every source lease when export finishes, before host invocation.
+- A returned host Promise may retain exported copies and exact external identities, but never extends leases on managed sources.
+- Phase 10 independently keeps required external identity phases through settlement.
+
+Export records no external use and grants no external mutation authority.
+
+### 4. Replace Array-override preparation
+
+Move Array overrides onto common host-input preparation:
+
+- Export the complete override receiver and every explicit argument required by the boundary.
+- Give the override one native Array containing no ArrayView, unresolved language Promise, or original managed traversable identity.
+- Import its result through Phase 6's host-result boundary. Returning the exported receiver therefore returns its imported host value, not the logical source receiver.
+- Delete override-specific receiver selection through `requiresArrayMaterialization` and its receiver-lease inference.
+- Retain `requiresArrayMaterialization` only for representation mutation and COW.
+- Preserve controlled Array behavior and eligible backing reuse, including observation methods such as `concat`.
+- Never use imported Array storage as mutable ArrayView backing.
+
+Method selection remains unchanged:
+
+- An own enumerable Function shadows a standard Array method.
+- An override is observation-only; reject mutation through it.
+- Reject a native Array mutation requested in observation mode.
+- Same-named managed methods and controlled Array methods retain their category semantics.
+
+### 5. Reuse the matching inbound boundary
+
+- Every host result uses Phase 6 import, including its operation Promise for a direct Promise.
+- Every public script result uses common export.
+- Phase 10 adds external argument guards around the exporter without adding a guard-specific export path.
+
+### Needs your decision
+
+The planned and implemented class-export contracts conflict:
+
+- This phase currently requires: "Export resolves required availability, removes runtime representations, and copies managed records, Arrays, and class instances into independent host data while preserving aliases, cycles, and admitted prototypes."
+- The implemented [`data-classes.md`](data-classes.md) contract says: "Registered-class instances export as plain data without prototypes, methods, registration, or metadata."
+
+Decide whether both host-input and public-result export preserve admitted class prototypes, both return plain data, or the two boundaries intentionally differ. Until then, retain the prototype-preserving requirement above and do not infer a resolution from the current implementation.
 
 ### Verification
 
-- Every native JavaScript argument, externally assigned value, and public script result uses the common export. Managed methods use it; runtime-controlled methods do not.
-- Host-input export preserves nested Errors and stops on a consumed top-level Error; public-result export consumes and combines all reached Errors through the same copier.
-- Exported managed data is independent, preserves admitted prototypes, and contains no unresolved language Promise or internal representation. Functions and external identities remain exact, while export records no use or mutation authority.
-- Managed source leases end when export finishes. A returned host Promise retains no lease on exported source data.
-- Common host-input preparation exports each boundary-consumed receiver and argument. An Array override receives one complete exported native Array, and returning it yields its imported host value rather than the logical receiver.
-- Array overrides remain observation-only; same-named managed methods and controlled Array methods keep their category semantics.
-- Removing override-specific materialization inference does not change controlled Array behavior or valid backing reuse.
-- Host results retain the Phase 6 importer, while no host category adds another importer, exporter, graph copier, or availability resolver.
+#### Boundary behavior
 
-Update [`AGENTS.md`](../AGENTS.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`array-view.md`](array-view.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
+- Every native JavaScript argument, external-property assignment, and public result uses common export. Managed methods use it; runtime-controlled methods do not.
+- Host-input export preserves nested Errors and stops on a consumed top-level Error. Public-result export consumes and combines every reached Error through the same copier.
+- Exported managed data is independent and contains no unresolved language Promise or internal representation. Functions and external identities remain exact; export records no use or authority.
+- Managed source leases end when export finishes. A returned host Promise retains no managed source lease.
+- Host results use Phase 6 import; no host category adds another boundary walk.
+
+#### Array overrides
+
+- Common preparation exports every consumed receiver and argument.
+- An Array override receives one complete native Array, and returning it produces its imported host value rather than the logical receiver.
+- Overrides remain observation-only; managed methods and controlled Array methods retain their category behavior.
+- Removing override-specific materialization inference changes neither controlled Array behavior nor valid backing reuse.
+
+Update [`AGENTS.md`](../AGENTS.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`data-classes.md`](data-classes.md), [`array-view.md`](array-view.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
 ---
 
@@ -370,47 +520,121 @@ Managed record functions cannot use their containing state as `this`, while regi
 
 ### Design
 
-#### Managed invocation
+Generalize Phase 5 instead of adding another invocation path.
 
-Rename registered-class invocation and its architecture document as managed invocation, and use it for managed records and managed class instances. Retain no compatibility module or document alias, and do not add a parallel record-method implementation.
+#### Rename
 
-Every own enumerable string-keyed data placement of a managed record is a possible method placement. Capture and prepare its logical property version before testing callability, so a Promise-backed placement is interchangeable with its resolved Function. Inherited properties, accessors, non-enumerables, and resolved non-Functions are unavailable as managed methods. Invoke a selected Function with the prepared record as `this`; outside a supported call position it remains data. Managed classes keep prototype method selection and their existing state contract.
+- Rename **registered-class invocation** to **managed invocation**.
+- Rename its module and architecture document at the same time.
+- Use managed invocation for managed records and managed class instances.
+- Keep no compatibility module or document alias, and add no record-specific invocation path.
 
-Both receiver forms use Phase 5's complete receiver preparation, leases, mutation isolation, validation, and publication. Phase 8 replaces registered argument preparation with Phase 7 export and replaces independent result copying with import and ordinary shared ownership. Ordinary graph operations may leave Promises or Errors in managed state between calls, but receiver preparation consumes them and a completed mutation receiver may contain neither. A nested call such as `this.increaseBy(1)` is ordinary JavaScript on that prepared receiver, not another invocation or protection layer.
+### 1. Select managed methods
 
-The complete receiver graph is the managed call's explicit work bound. Preparation, mutation isolation, and finalization may each traverse it; no call walk may escape into unrelated graph state.
+For a managed record:
 
-Export every explicit argument after required phases complete and before host method selection. The method receives independent managed copies with admitted prototypes, while Functions and external identities remain exact. It may mutate, retain, or return exported managed data without changing Cascada sources. Runtime-controlled methods keep their existing logical-input preparation.
+- Treat each own enumerable string-keyed data placement as a possible method placement.
+- Capture and prepare its logical property version before testing callability. A Promise-backed placement is therefore interchangeable with its resolved Function.
+- Invoke a selected Function with the prepared record as `this`.
+- Do not expose inherited properties, accessors, non-enumerables, or resolved non-Functions as methods.
+- Keep a Function as data outside a supported call position.
 
-An observation remains read-only with respect to its receiver. Managed code may access its exported inputs and, for a mutation, change its isolated receiver until its direct result settles. Every asynchronous access or effect must belong to work represented by that Promise and finish before it settles; detached work and Cascada reentry during the active invocation are forbidden trusted contracts, not reasons to add async-context tracking. A Promise nested in a result may not later access the receiver. External effects require the guards already entered for exact external arguments.
+Managed classes retain Phase 5 prototype method selection and the managed-class state contract.
 
-A direct Promise keeps a managed call active until settlement. A Promise nested in a synchronous result is independent data and does not extend the call. Return an operation Promise that applies normal result handling to fulfillment and preserves rejection.
+### 2. Share one invocation lifecycle
 
-For an observation, lease every traversable receiver identity until the direct Promise settles. Argument-source leases end when export finishes before invocation. Later mutation proceeds through COW without delaying the observation. On fulfillment, import the result and give retained managed identities ordinary shared ownership; on rejection, leave the receiver unchanged and preserve the rejection. Release receiver leases after either path's last access.
+Both receiver forms reuse Phase 5's receiver preparation, leases, mutation isolation, validation, publication, and cleanup. Change only the boundaries that later phases centralize:
 
-For a mutation, keep the isolated receiver private behind its ordinary transition gate; receiver-source preparation leases end when isolation begins and argument-source leases end when export finishes. On fulfillment, validate and publish the receiver, then import the result; fulfillment with the working receiver returns the published receiver. A validation failure poisons the receiver and becomes the fulfilled operation result. On rejection, poison the receiver as for a mutator throw while preserving the rejection outcome.
+- Replace registered argument preparation with Phase 7 export.
+- Replace independent result copying with Phase 6 import and ordinary shared ownership.
+- Keep runtime-controlled methods on their existing logical-input preparation.
 
-A synchronous managed mutation publishes immediately. Import its result and mark retained managed identities shared instead of copying them. Directly returning `this` returns the published receiver with ordinary result ownership. Nested Promise placements continue through import without waiting.
+The common pre-call lifecycle is:
+
+1. Select the managed method.
+2. Prepare the complete receiver graph and argument sources, resolving captured Promise versions and consuming receiver Errors.
+3. Complete required external phases.
+4. Complete the common pre-invocation work: export every explicit argument and isolate a mutating receiver.
+5. Invoke exactly once.
+
+The method receives independent managed argument copies with admitted prototypes. Functions and external identities remain exact. The method may mutate, retain, or return exported managed data without changing its Cascada sources. Exact external identities remain subject to their guards.
+
+Managed state may contain Promises or Errors between calls. The prepared receiver contains neither, and a completed mutation receiver may contain neither.
+
+The complete receiver graph is the call's explicit work bound. Preparation, mutation isolation, and finalization may each traverse it, but no call walk may enter unrelated graph state.
+
+### 3. Apply trusted method contracts
+
+- The caller's mode is authoritative: an observation method does not mutate its receiver; any method that may mutate it runs in mutation mode.
+- Managed code may access exported inputs and, for a mutation, its isolated receiver until the direct Promise settles.
+- Every asynchronous access or effect belongs to work represented by that direct Promise and finishes before settlement.
+- Detached work and Cascada reentry during an active invocation are forbidden. Do not add async-context tracking to enforce this contract.
+- A Promise nested in a synchronous result may not later access the receiver or inputs.
+- A nested call such as `this.increaseBy(1)` is ordinary JavaScript on the already prepared receiver, not another Cascada invocation.
+
+### 4. Complete observations
+
+For an observation:
+
+- Lease every traversable receiver identity through the direct Promise's settlement.
+- End argument-source leases when export finishes, before invocation.
+- Let later mutation proceed through COW without waiting; do not add a readers-writer phase.
+- On fulfillment, import the result and give retained managed identities ordinary shared ownership.
+- On rejection, preserve the rejection and leave the receiver unchanged.
+- Release receiver leases after the last access on every completion path.
+
+### 5. Complete mutations
+
+For a mutation:
+
+- Keep the isolated receiver private behind the ordinary transition gate.
+- End receiver-source preparation leases when isolation begins.
+- End argument-source leases when export finishes.
+- A synchronous result validates and publishes the receiver immediately, then imports the result.
+- A direct Promise keeps the receiver private. On fulfillment, validate and publish the receiver once, then import the result.
+- If the result is the working receiver, return the published receiver with ordinary result ownership.
+- A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
+- Rejection poisons the receiver as a mutator throw while preserving the rejection outcome.
+
+For every managed call:
+
+- Return one operation Promise for a direct Promise result.
+- Treat a Promise nested in a synchronous result as independent data. Return immediately and let its retained result placement continue import later.
+- Import all results and mark retained admitted identities shared rather than copying them.
 
 ### Verification
 
-- A ready or Promise-backed own enumerable Function placement receives its prepared record as `this`; inherited, accessor, non-enumerable, and resolved non-Function placements remain unavailable, and extracted Functions remain data.
-- `this.helper()` changes the already isolated receiver inside one managed invocation and publishes through its outer transition.
-- Managed records and managed classes share one receiver preparation, argument export, isolation, validation, result, and cleanup implementation.
-- The caller's operation mode must match the selected method's behavior. An observation method never mutates its receiver; a mutating method runs only in mutation mode.
-- A managed observation returning a direct Promise holds receiver leases through settlement but no readers-writer phase. Exported arguments retain no source lease, and later mutation proceeds through COW without waiting.
-- A managed mutation returning a direct Promise remains private behind a transition gate. Later operations wait, fulfillment validates and publishes once, and rejection poisons the receiver while preserving the rejection outcome.
-- A completed managed mutation receiver containing a Promise or Error fails validation. This does not reject a direct result Promise, which extends the invocation, or a Promise nested in an independent result.
-- Managed receiver and export-source leases are balanced after fulfillment, rejection, validation failure, and argument export.
-- Direct-Promise fulfillment uses common import and shared ownership in FIFO order.
-- A synchronous managed result containing a nested Promise returns immediately and imports its later fulfillment through the retained result placement.
-- Work represented by a direct Promise may use the prepared receiver and exported arguments until settlement but may not reenter Cascada; nested-result or other later work is a trusted contract violation rather than an instrumented restriction.
+#### Selection and reuse
+
+- Ready and Promise-backed own enumerable Function placements receive the prepared record as `this`. Inherited, accessor, non-enumerable, resolved non-Function, and extracted Function values remain unavailable as record methods.
+- `this.helper()` mutates the already isolated receiver and publishes only through the outer invocation.
+- Records and classes share one preparation, export, isolation, validation, result, and cleanup path.
+- The caller's mode matches method behavior.
+
+#### Promise lifetime and protection
+
+- A direct-Promise observation holds receiver leases but no readers-writer phase. Exported arguments retain no source lease, and later mutation uses COW without waiting.
+- A direct-Promise mutation remains private behind one gate. Later operations wait; fulfillment validates and publishes once; rejection poisons the receiver while preserving rejection.
+- A completed mutation receiver containing a Promise or Error fails validation. A direct result Promise extends the invocation; a nested result Promise does not.
+- Receiver and export-source leases balance after fulfillment, rejection, validation failure, and argument export.
+- Direct fulfillment uses common import and shared ownership in FIFO order.
+- A synchronous result containing a nested Promise returns immediately; its retained placement imports later fulfillment.
+- Direct-Promise work may use prepared receiver and arguments until settlement but may not reenter Cascada. Later detached or nested-result access remains a trusted-contract violation, not an instrumented restriction.
 
 Update [`AGENTS.md`](../AGENTS.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
 ---
 
 ## Phase 9: Establish context external ordering
+
+### Terms
+
+- **Context Chain:** a Chain holding a host-provided context root.
+- **Compiler-static path:** a path whose segments are all compiler-known Strings or Numbers. A computed or Promise-valued segment is dynamic even when ready.
+- **External occurrence index:** a per-context-Chain index from normalized paths to synchronously reached external identities. Indexing storage is not identity use.
+- **Actual use:** lookup, receiver access, property access, or argument use that reaches an external identity. Import, export, assignment, return, and storage are not uses.
+- **Fixed external location:** the one compiler-static `(context Chain, normalized path)` authorized by an external identity's first valid mutation.
+- **External phase:** readers-writer state attached to an exact external identity. Observations after a mutation wait for it and may overlap one another; the next mutation waits for those observations.
 
 ### Problem
 
@@ -420,45 +644,175 @@ Exact external identities need readers-writer ordering because managed COW, leas
 
 [`external-context-ordering.md`](external-context-ordering.md) is the detailed architecture.
 
-Implement one small readers-writer phase mechanism for external identities. It owns synchronous successor publication, predecessor waiting, observation grouping, nested child reservations, and completion. Keep graph publication and external poison at their natural owners; do not infer external ordering from managed graph state or add another command scheduler.
+### 1. Add one external phase mechanism
 
-Phase 9 owns context construction integration. It marks the Chain as context, passes its host root through Phase 6's common importer, indexes every synchronously reached external occurrence, and maintains the index when ordinary context graph transitions add, remove, or move one. This is placement bookkeeping only: import, indexing, assignment, return, and storage never record a use.
+Implement one readers-writer mechanism for exact external identities. It owns:
 
-Every operation carries a compiler-static-path fact independently of receiver classification. A path is compiler-static only when every segment to the reached identity is a compiler-known String or Number; a computed or Promise-valued segment remains dynamic even if ready.
+- synchronous successor publication;
+- predecessor waiting;
+- concurrent observation groups;
+- exclusive mutation and repair;
+- async-child reservations; and
+- completion, including direct-Promise boundary processing.
 
-Keep one execution-scoped WeakMap for external identity use: no entry, `{ usedInContextChain, usedAtPath, allUsesStatic, mutationAuthorized }`, `OUTSIDE_CONTEXT`, or `MULTIPLE_USE`. The object form names one exact context Chain and normalized path. Before mutation authority exists, a dynamic use at that location permanently clears `allUsesStatic`; another context Chain or path, or mixed context and non-context use, records `MULTIPLE_USE`. Lookup, receiver and property access, and argument use update this state before host access.
+Keep graph publication and poison at their natural owners. Do not infer external ordering from managed graph state or add another command scheduler.
 
-Mutation records its use first. It proceeds only from one recorded context Chain and path whose uses are all compiler-static. The first valid mutation sets `mutationAuthorized` before host access and fixes that location. Every later use must be compiler-static at the same Chain and path; an incompatible use returns a validation Error without host access and leaves the fixed state unchanged. A dynamic, `OUTSIDE_CONTEXT`, or `MULTIPLE_USE` mutation produces a validation Error, poisons the selected external phase, and invokes no host code.
+Use three external operation modes:
 
-Allow traversal and mutation below external identities. Record each external identity when reached, but never pre-scan external graphs or compare their descendants for aliases. The host must not expose one mutable resource through independently scheduled external roots. Hidden sharing is outside Cascada's guarantees because an identity discovered during host traversal cannot retroactively join an earlier operation phase.
+- `OBSERVE`: unmarked external access; joins a concurrent read phase.
+- `MUTATE`: `!`; waits exclusively and may mutate exact selected host state.
+- `REPAIR`: `!!`; waits exclusively, bypasses existing poison, and may clear it.
 
-Give every external identity one readers-writer phase state so duplicate selections join one phase. This does not redirect access through aliases or grant them authority. Exact operations select their reached identities directly. A context `!` prefix selects indexed external identities at or below that path. The index answers exact, longest-prefix, and descendant queries but stores no identity use or phase state. Managed operations retain ordinary COW, leases, and gates.
+Keep Boolean Chain and `enter` capabilities where they express only read versus write. Expose one bulk external phase-entry boundary to external commands, async control flow, `enter`, and Phase 10 operations.
 
-Classify before managed COW, transition gating, receiver preparation, or host reflection. An indexed external occurrence or exact external receiver selects external dispatch without COW or a transition gate. Managed work remains ordinary outside the selected external identities.
+### 2. Build and maintain the context index
 
-Register every selected receiver and argument identity phase when the operation enters the graph API. Publish all Chain and external successors before waiting. Consecutive observations share a read phase after the preceding mutation; the next mutation waits for the group. Entries created by one operation never wait on one another, duplicate identity entries merge at the strongest mode, and a direct Promise retains membership through boundary completion.
+Phase 9 integrates context construction with Phase 6 import:
 
-Each `!` source guards the exact external receiver or argument and the host state it encapsulates. Cascada does not enumerate that hidden state, so independently scheduled external roots must not overlap it. Ordering is execution-local; the host owns concurrency between separate executions.
+1. Mark the Chain as a context Chain.
+2. Import its host root through the common importer.
+3. During the synchronous import walk, index every reached external occurrence by normalized Chain path.
+4. Maintain the index when ordinary context graph transitions add, remove, or move an occurrence.
 
-Before async control flow or `enter` suspends, query affected context paths and reserve every external identity phase its child may use. Child operations enter child-local phase state rather than their own outer reservation, and the reservation closes after the child drains. Apply the same rule recursively; empty and unrelated children do not block other work.
+Use the smallest integration point that owns these four steps. Do not add a second importer or pin a public context-construction API in this plan.
 
-Store each poison Error in external identity metadata as part of its phase state, never in application data and never by replacing the external value. Existing poison contributes its Error at the selecting receiver or argument position and skips host code after required preparation. Observations do not poison. A failed, rejected, dynamic, outside-context, or multiple-use mutation records its combined Error on every selected mutation phase; completed host effects remain visible. `!!` enters phases normally, bypasses existing poison, and removes selected poison Errors on success without changing use history.
+The index:
 
-Use named `OBSERVE`, `MUTATE`, and `REPAIR` modes at the shared external operation and phase boundary. Keep Boolean Chain and `enter` capabilities where only read versus write exists. Expose one bulk phase-entry boundary for external commands, async control flow, `enter`, and Phase 10 operations. Delete every hidden sequence Chain and duplicate scheduler. Add no compiler external classification, second importer, external graph model, or second invocation coordinator.
+- Answers exact, longest-prefix, and descendant queries.
+- Stores occurrence paths only, never use, authority, ownership, or phase state.
+- Lets ready operations select external dispatch before managed COW.
+- Lets unresolved suffixes conservatively select every external identity they may reach.
+- Does not record actual use merely because an identity was imported, indexed, assigned, returned, exported, or stored.
+
+Several context Chains or paths may store the same external identity. Storage alone leaves it unused; actual use determines whether mutation remains possible.
+
+### 3. Record use and fix one mutation location
+
+Every operation supplies its Chain, normalized path, and compiler-static-path fact before graph work. The compiler supplies only generic path staticness; runtime admission still determines whether the reached identity is external.
+
+Use one execution-scoped `WeakMap` with these states:
+
+- no entry: unused;
+- `{ usedInContextChain, usedAtPath, allUsesStatic, mutationAuthorized }`: used only at one context location;
+- `OUTSIDE_CONTEXT`: used only outside context; or
+- `MULTIPLE_USE`: used at different context locations or both inside and outside context.
+
+The object state is **fixed** when `mutationAuthorized` is true. Once `allUsesStatic` becomes false, it never becomes true again.
+
+Record lookup, receiver access, property access, and argument use before host access. Apply this transition:
+
+```text
+recordUse(current, chain, path, isStatic):
+  if current is fixed:
+    same chain + same path + isStatic -> keep fixed state
+    otherwise                         -> return validation Error; keep fixed state
+
+  if current is unused:
+    context use     -> record chain, path, isStatic, mutationAuthorized = false
+    non-context use -> OUTSIDE_CONTEXT
+
+  if current is one unfixed context location:
+    same chain + same path -> allUsesStatic &= isStatic
+    another location       -> MULTIPLE_USE
+
+  if current is OUTSIDE_CONTEXT:
+    non-context use -> OUTSIDE_CONTEXT
+    context use     -> MULTIPLE_USE
+
+  if current is MULTIPLE_USE:
+    keep MULTIPLE_USE
+```
+
+A mutation records its use first, then validates authority:
+
+```text
+if state is one context location and allUsesStatic:
+  set mutationAuthorized before host access
+  this Chain and path become the fixed external location
+else:
+  return validation Error
+  poison the selected external phase
+  do not invoke host code
+```
+
+After the first valid mutation, every later use must be compiler-static at that exact Chain and path. A conflicting use returns a validation Error before host access and does not alter the fixed state. Phase and use state are local to one execution.
+
+Any mutation rejected by this state machine, including one attempted through a different location after fixation, poisons every selected mutation phase without host access. An incompatible observation returns its validation Error without poisoning.
+
+### 4. Select and enter phases before graph work
+
+- An exact external operation selects its reached identity directly.
+- A context `!` prefix selects indexed external identities at or below its path.
+- Give each exact identity one phase state. Duplicate selections join that phase but never redirect access or grant alias authority.
+- Classify external dispatch before managed COW, transition gating, receiver preparation, waiting, export, or host reflection.
+- Exact external dispatch uses neither managed COW nor a transition gate. Managed work outside selected external identities remains unchanged.
+- Register every selected receiver and argument phase when the operation enters the graph API.
+- Publish all Chain and external successors before waiting for any predecessor.
+- Let observations after one mutation share a read phase. The next mutation waits for that whole group.
+- Never make entries created by one operation wait on one another.
+- When duplicate selections differ only by `OBSERVE`, keep the exclusive `MUTATE` or `REPAIR` mode.
+- Keep a direct Promise in its phase through boundary completion; a nested result Promise does not extend it.
+
+### 5. Reserve phases across async children
+
+Before an async condition, loop, or `enter` suspends:
+
+1. Query every affected context path.
+2. Reserve each indexed external identity phase that the child may use.
+3. Let child operations enter child-local phase state so they do not wait on their own reservation.
+4. Release the reservation after the child drains.
+
+Apply this recursively. Empty and unrelated children do not block other work.
+
+### 6. Support deep external state without scanning it
+
+- Allow traversal and mutation below external identities.
+- Record an external identity only when an operation reaches it.
+- Never pre-scan an external graph or compare external descendants for aliases.
+- A `!` source guards the exact external receiver or argument and the hidden host state it encapsulates.
+- Independently scheduled external roots must not share mutable hidden state. A later-discovered alias cannot retroactively join an earlier phase.
+- Ordering is execution-local; the host owns concurrency between executions.
+
+### 7. Store poison and repair it in phase order
+
+- Store poison in the execution-local phase state associated with the exact identity's metadata, never in application data and never by replacing the identity.
+- Existing poison contributes its Error at the selecting receiver or argument position. Complete required preparation, then skip host code.
+- Observation failure does not poison.
+- Mutation failure or rejection records its combined Error on every selected mutation phase after predecessors finish. Preserve completed host effects.
+- Dynamic, `OUTSIDE_CONTEXT`, and `MULTIPLE_USE` mutation poison without host access.
+- `!!` enters phases normally in `REPAIR` mode, bypasses only existing poison, and clears selected poison on success.
+- Repair never changes use history or mutation eligibility.
+
+### 8. Remove superseded sequencing
+
+Delete every hidden sequence Chain and duplicate scheduler. Add no compiler external classification, special importer, external graph model, second invocation coordinator, or second phase algorithm.
+
+### Needs your decision
+
+- **Duplicate mode merge:** retain the requirement that "duplicate identity entries merge at the strongest mode." The precedence and poison behavior when one operation selects the same identity with both `MUTATE` and `REPAIR` are not specified. `OBSERVE` is shared; both `MUTATE` and `REPAIR` require exclusive entry.
 
 ### Verification
 
-- Context construction and later context placement transitions index external occurrences without recording use. Storing one identity at several paths or in several context Chains leaves it unused.
-- Before the first mutation, actual use transitions through unused, one exact context Chain/path with its sticky staticness fact, outside-context, and multiple-use states. Repeating one static context location is stable; a dynamic use makes it mutation-ineligible, while another context Chain or path or mixed context/non-context use becomes multiple use.
-- A mutation records its location first. Only one compiler-static context location reaches host code and becomes fixed. Every later use at another or dynamic location fails before host access without changing that binding; dynamic, outside-context, and multiple-use mutation poison the selected identity phase.
-- Each context Chain index answers exact, longest-prefix, and descendant queries but stores no identity use or phase state.
-- Duplicate selections of one external identity join one phase without granting alias access. Earlier observations wait after the previous mutation but overlap one another; the next mutation waits for the group even when later observation changes the use state.
-- Exact external work avoids managed COW and transition gates. Managed behavior remains unchanged outside selected external identities.
-- Every selected identity phase is registered at graph-operation entry without self-wait or acquisition-order deadlock. Separate executions share no use or phase state.
-- Async children and `enter` reserve indexed external identities before suspension and drain through child-local phases. Nested, empty, and unrelated children behave independently.
-- Existing poison prevents host invocation. Observation failure does not poison; mutation failure or rejection preserves completed effects and poisons every selected identity phase. Repair clears phase poison but not use history.
-- `OBSERVE`, `MUTATE`, and `REPAIR` are the only external operation modes; Boolean capabilities remain Boolean.
-- No hidden Chain, compiler external classification, second phase algorithm, special importer, or external graph model remains.
+#### Index and authority
+
+- Context construction and later context transitions index external occurrences without recording use. Storing one identity at several paths or in several context Chains leaves it unused.
+- Use follows the complete state transition above. Repeated use at one static location is stable; dynamic, outside-context, different-path, different-Chain, and mixed use have their specified sticky outcomes.
+- Only one compiler-static context location may reach host mutation. The first valid mutation fixes it; every incompatible later use fails before host access without changing the binding.
+- Each index answers exact, longest-prefix, and descendant queries without storing use or phase state.
+
+#### Ordering
+
+- Duplicate identity selections join one phase without granting alias access.
+- Observations wait for the previous mutation and overlap one another; the next mutation waits for the group even if one of those observations made the identity mutation-ineligible.
+- External phase entry occurs at graph-operation entry without self-wait or acquisition-order deadlock. Executions share no use or phase state.
+- Exact external work avoids managed COW and transition gates. Other managed behavior remains unchanged.
+- Async children and `enter` reserve indexed identities before suspension and use child-local phases. Nested, empty, and unrelated children remain independent.
+
+#### Failure and removal
+
+- Existing poison prevents host invocation. Observation failure does not poison. Mutation failure or rejection preserves completed effects and poisons every selected mutation phase. Repair clears phase poison but not use history.
+- `OBSERVE`, `MUTATE`, and `REPAIR` are the only external modes; Boolean read/write capabilities remain Boolean.
+- No hidden Chain, compiler external classification, special importer, external graph model, second invocation coordinator, or second phase algorithm remains.
 
 Update [`AGENTS.md`](../AGENTS.md), [`external-context-ordering.md`](external-context-ordering.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`enter.md`](enter.md), [`runtime-spec.md`](runtime-spec.md), the Chain operation API, compiler lowering, and path-operation documentation.
 
@@ -472,43 +826,128 @@ External state needs property and method observations plus explicit mutation of 
 
 ### Design
 
-Treat external state as exact host state. Do not graph-traverse, copy, or materialize it. Observation may occur anywhere. Mutation is valid only while actual use state identifies one compiler-static path of one context Chain. External identities reached through host properties remain external and record their own use history.
+Treat each external identity as one exact host resource:
 
-At graph-operation entry, use the reached identity or the context Chain's occurrence index to classify external versus managed dispatch and bulk-register every receiver and argument identity phase. Do this before COW, a transition gate, waiting, input export, or host inspection. Record each actual use and compiler-static-path fact before host access, then validate mutation eligibility after all required identities are known. A same-named managed, Array, or String operation keeps its category behavior.
+- Never graph-traverse, copy, or materialize external state.
+- Allow observation wherever Phase 9 use-state rules permit it.
+- Allow mutation only through the fixed external location.
+- Do not search for shared internals; hidden mutable sharing between independently scheduled roots remains a host-contract violation.
 
-Reuse Phase 5's common coordinator for ordered Error collection, host-member selection, invocation, result admission, category completion, and cleanup. Pass it the captured phase scope. Phase 10 adds no coordinator, graph copier, Error collector, queue, importer, exporter, or preparation path.
+### 1. Dispatch before managed graph work
 
-Use the common `OBSERVE`, `MUTATE`, and `REPAIR` modes. `!` selects `MUTATE`, `!!` selects `REPAIR`, and an unmarked external property read or method call selects `OBSERVE`. Ready computed paths remain valid for observation but are dynamic and cannot establish or use mutation authority. Phase 11 extends observation and poisoned mutation handling across Promise-valued segments.
+At graph-operation entry:
 
-A new identity obtained through external-property traversal remains external, including a record or Array. If traversal instead encounters identity metadata admitting the value as managed, return an Error and poison the external container's identity phase without replacing either value. Check only the property actually reached; never traverse external state to search for managed children. Continue through the existing external-property boundary under the operation's selected identity phases without adding a nested guard or path walker. A host-call result remains free to return separately admitted managed data through the ordinary import boundary.
+1. Use the reached identity or context Chain's occurrence index to classify external versus managed dispatch.
+2. Select all currently known receiver and argument identities.
+3. Record their actual locations and compiler-static-path facts.
+4. Bulk-register their external phases.
+5. Only then perform managed COW, transition gating, waiting, export, or host inspection.
 
-Property reads import their value. Property writes export any supported value before native assignment or setter execution. Managed structures and class instances become independent prototype-preserving copies; Functions and external identities remain exact. A top-level Error prevents the write. A setter must complete synchronously. Successful assignment returns the captured logical right-hand value, and deletion returns the native Boolean outcome.
+An indexed occurrence or exact external receiver selects external dispatch without COW or a transition gate. A same-named managed, Array, or String operation retains its category behavior.
 
-After phase predecessors finish, export every explicit argument and collect its Errors before inspecting host state. If preparation is clean, traverse the host suffix, record every newly reached external use, validate mutation eligibility, and perform descriptor or proxy reflection on the final receiver. Invoke a getter at most once and prepare its result as the call candidate by resolving readiness, propagating Error, and testing callability without importing it as data. Import only a property-read value or the selected method's result. Constructors remain unsupported.
+Select Phase 9 modes consistently:
 
-Every Chain source used by an explicit argument supplies its Chain, path, and optional `!`. Reaching an external identity records that actual source use. `!` is a mutation use and an unmarked source is an observation. Register all argument identity phases before export. Export keeps external identities exact but does not transfer authority. The same coverage rule applies before a runtime-controlled callback receives one.
+- Unmarked external property reads and method calls use `OBSERVE`.
+- `!` uses `MUTATE`.
+- `!!` uses `REPAIR`.
+- A ready computed path may observe, but is dynamic and cannot establish or use mutation authority.
+- Phase 11 applies the same rule after Promise-valued path segments settle.
 
-An external observation may read ordinary and hidden state but does not mutate it. Mutation may change only the phase-protected receiver and mutation-borrowed exact arguments. A direct Promise keeps identity phases active through fulfillment import or rejection; a nested result Promise does not. Host code may retain exported data but cannot independently mutate a resource while Cascada may use it. Host code may not reenter Cascada during the active direct invocation.
+### 2. Reuse the common invocation coordinator
 
-Treat each exact external identity as one host resource without searching for shared internals. `!!` repairs selected external identity phases but never changes actual-use history.
+Reuse Phase 5's coordinator for Error collection, member selection, invocation, result admission, category completion, and cleanup. Pass it the captured external phase scope. Add no external-specific coordinator, queue, Error collector, graph copier, importer, exporter, availability resolver, or preparation path.
+
+An external call follows this lifecycle:
+
+1. Register known receiver and argument phases at graph-operation entry.
+2. Wait for phase predecessors.
+3. Export every explicit argument and collect its Errors before inspecting host state.
+4. If preparation is clean, traverse the host suffix. Before further access to each newly reached external identity, record its use, enter its phase, retain previously selected phases, wait for its predecessor, and validate mutation eligibility.
+5. Perform descriptor or proxy reflection on the final receiver and invoke a getter at most once.
+6. Prepare a selected call candidate by resolving readiness, propagating Error, and testing callability. Do not import the Function as graph data.
+7. Invoke exactly once, then import the property-read or call result.
+8. Complete poison handling and release phases after boundary completion.
+
+If preparation fails, perform no host reflection and invoke no getter, setter, or method. Constructors remain unsupported.
+
+### 3. Keep external-property data external
+
+When property traversal reaches a new identity:
+
+- Keep it external, including a record or Array.
+- Record its own use history.
+- Continue under the selected external boundary without adding another path walker or nested guard.
+
+If the reached identity already has managed admission metadata:
+
+- Return an Error.
+- Poison the external container's phase without replacing either value.
+- Inspect only the property reached; never scan other external properties for managed identities.
+- Repair may clear the poison, but the same property poisons the container again when next reached.
+
+A host-call result is different: common import may admit separately declared, default-managed, or previously admitted managed data.
+
+### 4. Import reads and export writes
+
+Property operations use the common boundaries:
+
+- **Read:** access exact host state, then import the property value.
+- **Write:** export any supported value before native assignment or setter execution. A consumed top-level Error prevents the write.
+- **Delete:** perform native deletion and return its Boolean result.
+
+For writes:
+
+- Managed records, Arrays, and class instances become independent host copies under Phase 7's prototype decision.
+- Functions and external identities remain exact.
+- A native setter must complete synchronously.
+- Successful assignment returns the captured logical right-hand value, not a value reread from the host property.
+
+### 5. Guard external arguments
+
+Every explicit argument source supplies its Chain, normalized path, and optional `!`:
+
+- The source covers every external identity reached beneath its selected logical value, including inside an exported managed container.
+- Record each reached identity's complete source location as actual use.
+- An unmarked source enters `OBSERVE`; a `!` source enters `MUTATE` and may establish the fixed external location under Phase 9 rules.
+- Discover and register all argument phases before export.
+- Export keeps the exact external identity but transfers no mutation authority.
+- Apply the same source-coverage rule before passing an external identity to a runtime-controlled callback.
+
+### 6. Enforce host-call lifetime contracts
+
+- An external observation may read ordinary and hidden state but does not mutate it.
+- Mutation may change only its phase-protected exact receiver and mutation-borrowed exact arguments.
+- A direct Promise keeps every selected identity phase active through fulfillment import or rejection.
+- A nested result Promise does not extend the operation or retain later receiver or input access.
+- Host code may retain exported data but may not independently mutate an external resource while Cascada may use it.
+- Host code may not reenter Cascada during an active direct invocation.
+- `!!` repairs phase poison but never changes actual-use history or the fixed external location.
 
 ### Verification
 
-- Ready external property and method operations remain synchronous. Mutation reaches host code only after one compiler-static context-location use validation.
-- The first valid mutation fixes that location. A later dynamic or different-location observation or mutation returns a validation Error before host access.
-- Occurrence lookup, classification, and identity-phase registration happen at graph-operation entry before COW, gating, waiting, export, or host inspection; newly revealed exact identities record use before host access.
+#### Dispatch and authority
+
+- Ready external property and method operations remain synchronous.
+- Occurrence lookup, classification, use recording, and known phase registration precede COW, gating, waiting, export, and host inspection.
+- Mutation reaches host code only after validating the one compiler-static fixed location. A later dynamic or different-location use fails before host access.
 - Exact external access avoids managed COW and transition gates; disjoint managed behavior remains unchanged.
-- Every new external-property identity remains external. Encountering an admitted managed identity poisons its external container without replacing data, while untouched external properties are never scanned. Host-call results may retain already admitted managed data.
-- Repair removes the external container's metadata poison; if the invalid managed property remains, the next traversal poisons it again.
-- Every native JavaScript argument is exported. Managed structures and class instances are independent prototype-preserving copies; Functions and external identities remain exact under the selected guards.
-- Every supported exported value may be assigned to external state. A top-level Error prevents the write; successful assignment returns its logical right-hand value, deletion returns the native Boolean, and setters finish synchronously.
-- External-call and external-property results share Phase 6 import. Returning or storing an exact identity records no use.
-- Phase predecessors and argument export finish before receiver reflection or a getter. The call candidate is prepared without importing it as data, and poisoned preparation invokes no host code.
-- Receiver and argument identity phases register at graph-operation entry. Observations wait for the previous mutation but overlap one another; the next mutation waits for the group.
-- A direct Promise retains identity phases, but no managed source lease, through fulfillment import or rejection. Nested result Promises do not extend the operation.
-- Observation failure does not poison. Mutation failure and dynamic, outside-context, or multiple-use mutation poison every selected identity phase while preserving completed host effects; `!!` repairs phase state only.
-- Mutation requires actual use through one compiler-static path of one context Chain. Deep external mutation is supported without pre-scanning external graphs; hidden mutable sharing between independently scheduled roots remains a host-contract violation.
-- No new coordinator, Error collector, graph copier, queue, importer, exporter, or preparation path exists.
+
+#### Properties and calls
+
+- New external-property identities remain external. A reached admitted managed identity poisons only its external container; untouched properties are never scanned. Host-call results may contain admitted managed data through import.
+- Repair removes that container poison; reaching the invalid managed property again restores it.
+- Every native JavaScript argument and external-property write uses export. Functions and external identities remain exact under selected phases.
+- Every supported exported value may be assigned. A top-level Error prevents the write; assignment returns its captured logical right-hand value; deletion returns the native Boolean; setters are synchronous.
+- External-call and property-read results share Phase 6 import. Returning or storing an exact identity records no use.
+- Phase predecessors and argument export finish before receiver reflection or getter execution. A selected callable is prepared without importing it as data, and poisoned preparation invokes no host code.
+
+#### Lifetime and failure
+
+- Receiver and argument phases register together. Observations wait for the previous mutation and overlap one another; the next mutation waits for the group.
+- A direct Promise retains phases but no managed source lease through import or rejection. A nested result Promise does not extend the operation.
+- Observation failure does not poison. Failed, rejected, dynamic, outside-context, or multiple-use mutation poisons selected phases while preserving completed host effects. `!!` changes only phase poison.
+- Deep external mutation works without graph pre-scanning. Hidden shared mutable state across independently scheduled roots remains a host-contract violation.
+- No new coordinator, collector, copier, queue, importer, exporter, resolver, or preparation path exists.
 
 Update [`AGENTS.md`](../AGENTS.md), [`external-context-ordering.md`](external-context-ordering.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`import-preparation.md`](import-preparation.md), [`run.md`](run.md), [`runtime-spec.md`](runtime-spec.md), compiler lowering, the path-operation documentation, and the public API documentation.
 
@@ -524,29 +963,93 @@ Path walkers currently stringify each segment immediately. They support Promise-
 
 [`promise-path-segments.md`](promise-path-segments.md) is the detailed architecture.
 
-Treat path segments as String or Number operation inputs and normalize them only when ready. Any other resolved value produces a validation Error. Walk the ready leading prefix synchronously. If every segment is ready, use the existing path unchanged. Before waiting for the first pending segment, acquire one scope at the longest resolved prefix: an observation takes the ordinary read lease, while a mutation installs the ordinary transition gate and works on its private value.
+The **ready prefix** is the longest leading path whose segments and placements are available. The **protected prefix** is that same prefix after the operation acquires the one lease or gate needed to resume safely.
 
-Prepare each later segment through the common Promise and Error machinery only when traversal reaches it, then resume from the protected prefix. Release the lease or publish the gate through the ordinary completion path. Several pending segments share that one scope; do not wait for unused segments or nest one scope per segment.
+### 1. Consume path segments only when reached
 
-A segment skipped after a known prefix failure remains an unconsumed host input. Cascada neither waits for it nor attaches a rejection observer merely to suppress host-level unhandled-rejection reporting.
+Treat every segment as a String or Number operation input:
 
-Reuse the lease, COW, gate, mirror, and publication transitions already shared by path walking and `enter`. Factor a lower-level transition only when both callers need the identical lifecycle. Do not implement this by calling `enter`, constructing temporary Chains, or adding a key-resolution queue, scheduler, or operation-specific preparation path.
+- Normalize a ready segment only when traversal reaches it.
+- Resolve a pending segment through common Promise and Error preparation, then normalize its fulfillment.
+- Return a validation Error for any other ready value without invoking coercion hooks.
+- Never stringify a Promise object as a key.
+- Stop when the known prefix fails. Do not consume or wait for later segments.
 
-On a context Chain, query the ready prefix in its external-occurrence index before waiting. Register the appropriate phase for every indexed external identity the unresolved suffix may reach, together with the managed prefix lease or gate, before waiting on any predecessor. Candidate selection is not actual use. After resolution, record only the identity and normalized context path actually reached, with a dynamic-path fact. External observation proceeds normally; external mutation poisons without host access because mutation authority requires a compiler-static path.
+An unused segment Promise remains host-owned. Cascada does not wait for it or attach a rejection observer merely to suppress an unhandled rejection.
+
+### 2. Protect the first pending point once
+
+Walk the ready prefix synchronously. If the complete path is ready, use the existing path and allocation behavior unchanged.
+
+Before registering for the first pending segment:
+
+- An observation leases the longest resolved prefix.
+- A mutation installs the ordinary transition gate at that prefix and continues against its private working value.
+- Publish the selected external phases and managed lease or gate before waiting for any predecessor.
+
+Resume later segments from the same protected prefix:
+
+```text
+for each segment reached:
+  if ready:
+    normalize and continue
+  else:
+    register one FIFO continuation on its captured version
+    resume from the existing protected prefix
+```
+
+Several pending segments share this one scope. Do not nest a lease or gate per segment. Completion releases the observation lease or publishes the mutation gate through ordinary transitions.
+
+A rejected segment or invalid normalized value follows ordinary failure handling at the protected prefix: an observation returns its Error; a mutation applies the ordinary gated mutation failure.
+
+### 3. Reuse common path transitions
+
+Reuse the existing:
+
+- read-lease counter;
+- COW predicate;
+- transition-gate placement;
+- Promise mirrors and FIFO continuations;
+- publication transitions; and
+- lower-level path transitions already shared with `enter` where their lifecycles are identical.
+
+Do not implement Promise segments by:
+
+- calling `enter` from ordinary path operations;
+- constructing temporary Chains;
+- adding a key-resolution queue or scheduler;
+- adding an operation-specific path preparation flow; or
+- changing ready-path allocation or synchronous behavior.
+
+### 4. Protect possible external targets before waiting
+
+For a context Chain with an unresolved suffix:
+
+1. Query the ready prefix in its external occurrence index.
+2. Select every indexed external identity that the unresolved suffix may reach.
+3. Register each selected phase together with the managed prefix lease or gate before waiting on a predecessor.
+4. Treat this conservative selection only as protection, not actual use.
+5. After resolution, record only the exact identity and normalized path reached, with a dynamic-path fact.
+
+External observation then proceeds normally. External mutation returns the ordinary validation Error, poisons its selected phase, and invokes no host code because a computed or Promise-valued segment is never compiler-static.
 
 ### Verification
 
-- Ready String and Number segments retain their current synchronous behavior and allocation path; any other resolved segment produces a validation Error without invoking coercion hooks.
-- A Promise-valued segment is resolved and normalized instead of being stringified as a Promise object.
-- An observation with a pending segment leases the longest resolved prefix once; a later managed mutation uses COW and does not change the observation's captured result.
-- A mutation with a pending segment gates the longest resolved prefix before waiting, so later conflicting operations cannot overtake it while unrelated paths continue.
-- Several pending segments are consumed as traversal reaches them under one prefix lease or gate, preserving aliases, mirrors, FIFO continuation order, and Error identity without waiting for unused segments.
-- A broken ready prefix does not wait for unused segment inputs.
-- An unused segment Promise remains host-owned; Cascada registers no continuation solely to suppress a later rejection.
-- Segment rejection or invalid normalization follows ordinary observation and mutation Error publication at the protected prefix.
-- Promise-valued root, middle, and final segments work across lookup, assignment, deletion, invocation, export, Error queries, and `enter` paths through the common walkers rather than operation-specific adapters.
-- A ready compiler-known String or Number segment may participate in an external mutation path. A computed ready segment and every Promise-valued segment are dynamic even when they normalize to the same key.
-- A pending context suffix registers every indexed candidate external phase before waiting but records use only for the resolved identity and path. External observation remains valid; external mutation records dynamic use, poisons its selected phase, and invokes no host code.
-- No temporary Chain, direct `enter` call, new queue, or second path scheduler is introduced.
+#### Segment behavior
+
+- Ready String and Number segments retain current synchronous behavior and allocation. Other ready values produce validation Errors without coercion.
+- Promise-valued segments resolve and normalize instead of becoming `"[object Promise]"`.
+- Broken ready prefixes do not wait for unused inputs. Unused Promise segments remain host-owned and receive no suppression continuation.
+- Segment rejection and invalid normalization follow ordinary Error publication at the protected prefix.
+- Root, middle, and final Promise segments work through common walkers for lookup, assignment, deletion, invocation, export, Error queries, and `enter`.
+
+#### Protection and ordering
+
+- A pending observation leases the longest resolved prefix once. Later managed mutation uses COW and cannot change the captured result.
+- A pending mutation gates the longest resolved prefix before waiting. Conflicting work cannot overtake it; unrelated paths continue.
+- Several pending segments share one prefix scope while preserving aliases, mirrors, FIFO order, and Error identity.
+- A context suffix registers every candidate external phase before waiting but records use only for the resolved identity and path.
+- Compiler-known ready String or Number segments may participate in external mutation. Computed ready and Promise-valued segments remain dynamic even when they resolve to the same key; external mutation poisons without host access.
+- No temporary Chain, direct `enter` call, new queue, operation-specific preparation path, or second scheduler is introduced.
 
 Update [`AGENTS.md`](../AGENTS.md), [`promise-path-segments.md`](promise-path-segments.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`enter.md`](enter.md), and the public path-operation documentation.

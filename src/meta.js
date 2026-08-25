@@ -6,23 +6,31 @@ const TYPE_FUNCTION = 3
 const TYPE_STRING = 4
 const TYPE_PRIMITIVE = 5
 const TYPE_RECORD = 6
-const TYPE_REGISTERED = 7
-const TYPE_OPAQUE = 8
+const TYPE_MANAGED_CLASS = 7
+const TYPE_EXTERNAL = 8
+
+const DECLARATION_MANAGED = 1
+const DECLARATION_EXTERNAL = 2
 
 const META_MAP = new WeakMap()
-const REGISTERED_PROTOTYPES = new Set()
+const IDENTITY_DECLARATIONS = new WeakMap()
+const MANAGED_PROTOTYPES = new Set()
 
 function metaOf(value) {
     return META_MAP.get(value)
 }
 
-function getOrCreateMeta(value, type = undefined) {
+function getOrCreateMeta(value, type = undefined, prototype = undefined) {
     let meta = META_MAP.get(value)
     if (!meta) {
         meta = type === undefined
-            ? classifyMeta(value)
-            : { type }
+            ? inspectMetaFacts(value)
+            : prototype === undefined
+                ? { type }
+                : { type, prototype }
         META_MAP.set(value, meta)
+        // Admission consumes an identity-level classification override.
+        IDENTITY_DECLARATIONS.delete(value)
     } else if (type !== undefined && meta.type !== type) {
         errorUtils.reportFatalError(
             new TypeError("Admitted type cannot change"),
@@ -32,19 +40,22 @@ function getOrCreateMeta(value, type = undefined) {
 }
 
 // Classification is a capability probe whose reflection can invoke Proxy
-// traps. If it cannot identify a supported structure, preserving the exact
-// value as opaque is always safe.
-function classifyMeta(value) {
+// traps. If it cannot identify managed structure, preserving the exact value
+// as external is always safe.
+function inspectMetaFacts(value) {
     return errorUtils.catchUserCodeFailure(
         () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
-        () => ({ type: TYPE_OPAQUE }),
+        () => ({ type: TYPE_EXTERNAL }),
     )
 }
 
 function classifyTypeFacts(value) {
+    // This order is the admission-precedence contract.
     if (Error.isError(value)) return { type: TYPE_ERROR }
-    if (Array.isArray(value)) return { type: TYPE_ARRAY }
     if (typeof value === "function") return { type: TYPE_FUNCTION }
+    const declaration = IDENTITY_DECLARATIONS.get(value)
+    if (declaration === DECLARATION_EXTERNAL) return { type: TYPE_EXTERNAL }
+    if (Array.isArray(value)) return { type: TYPE_ARRAY }
 
     const prototype = Object.getPrototypeOf(value)
     if (
@@ -52,9 +63,10 @@ function classifyTypeFacts(value) {
         isPlainObjectPrototypeUnchecked(prototype)
     ) return { type: TYPE_RECORD, prototype }
 
-    return REGISTERED_PROTOTYPES.has(prototype)
-        ? { type: TYPE_REGISTERED, prototype }
-        : { type: TYPE_OPAQUE }
+    return declaration === DECLARATION_MANAGED ||
+        MANAGED_PROTOTYPES.has(prototype)
+        ? { type: TYPE_MANAGED_CLASS, prototype }
+        : { type: TYPE_EXTERNAL, prototype }
 }
 
 function isPlainObjectPrototype(prototype) {
@@ -79,27 +91,7 @@ function isPlainObjectPrototypeUnchecked(prototype) {
         )?.value === prototype
 }
 
-function registerDataClass(DataClass) {
-    return errorUtils.runFatal(() => {
-        if (typeof DataClass !== "function") {
-            throw new TypeError(
-                "registerDataClass requires a constructor",
-            )
-        }
-        const prototype = DataClass.prototype
-        if (!isObjectLike(prototype)) {
-            throw new TypeError(
-                "registerDataClass requires an object prototype",
-            )
-        }
-        validateRegisteredPrototype(prototype)
-        REGISTERED_PROTOTYPES.add(prototype)
-    })
-}
-
-function validateRegisteredPrototype(prototype) {
-    // Registration is a trusted host-contract boundary. Its outer runFatal
-    // deliberately makes reflection failure fatal rather than language data.
+function validateManagedPrototype(prototype) {
     for (
         let current = prototype;
         current !== null && !isPlainObjectPrototypeUnchecked(current);
@@ -109,11 +101,23 @@ function validateRegisteredPrototype(prototype) {
             const descriptor = Object.getOwnPropertyDescriptor(current, key)
             if (descriptor && !("value" in descriptor)) {
                 throw new TypeError(
-                    "Registered class prototypes cannot contain accessors",
+                    "Managed class prototypes cannot contain accessors",
                 )
             }
         }
     }
+}
+
+function identityDeclarationOf(value) {
+    return IDENTITY_DECLARATIONS.get(value)
+}
+
+function setIdentityDeclaration(value, declaration) {
+    IDENTITY_DECLARATIONS.set(value, declaration)
+}
+
+function addManagedPrototype(prototype) {
+    MANAGED_PROTOTYPES.add(prototype)
 }
 
 function isObjectLike(value) {
@@ -133,18 +137,14 @@ function requireMeta(value) {
     return meta
 }
 
-// Temporary runtime-island inference retained until import reconciliation is
-// unified. Type admission alone establishes no ownership.
-function hasOperationalMetadata(value) {
-    const meta = META_MAP.get(value)
-    return meta !== undefined && Object.keys(meta).some(key => {
-        return key !== "type" &&
-            key !== "prototype"
-    })
-}
-
 function requiresCopyOnWrite(value) {
     return metaOf(value)?.shared === true || hasReadLease(value)
+}
+
+function isTraversableType(type) {
+    return type === TYPE_ARRAY ||
+        type === TYPE_RECORD ||
+        type === TYPE_MANAGED_CLASS
 }
 
 function hasReadLease(value) {
@@ -170,15 +170,16 @@ function decrementReadLease(value) {
 
 function markShared(value) {
     if (!isObjectLike(value)) return value
-    requireMeta(value).shared = true
+    const meta = requireMeta(value)
+    if (isTraversableType(meta.type)) meta.shared = true
     return value
 }
 
-// Every object reached by one import shares its import boundary.
+// New identities admitted by one import share its origin token.
 function markImported(value, importBoundary) {
     const meta = requireMeta(value)
     meta.importBoundary ??= importBoundary
-    meta.shared = true
+    if (isTraversableType(meta.type)) meta.shared = true
 }
 
 function importBoundaryOf(value) {
@@ -188,24 +189,30 @@ function importBoundaryOf(value) {
 export {
     TYPE_ARRAY,
     TYPE_ERROR,
+    TYPE_EXTERNAL,
     TYPE_FUNCTION,
-    TYPE_OPAQUE,
+    TYPE_MANAGED_CLASS,
     TYPE_PRIMITIVE,
     TYPE_RECORD,
-    TYPE_REGISTERED,
     TYPE_STRING,
+    DECLARATION_EXTERNAL,
+    DECLARATION_MANAGED,
+    addManagedPrototype,
     decrementReadLease,
     getOrCreateMeta,
     hasReadLease,
-    hasOperationalMetadata,
     incrementReadLease,
     importBoundaryOf,
+    identityDeclarationOf,
+    inspectMetaFacts,
     isObjectLike,
     isPlainObjectPrototype,
+    isTraversableType,
     markImported,
     markShared,
     metaOf,
-    registerDataClass,
     requireMeta,
     requiresCopyOnWrite,
+    setIdentityDeclaration,
+    validateManagedPrototype,
 }

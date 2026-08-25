@@ -54,11 +54,13 @@ export {
     Chain,
     assignPath,
     deletePath,
+    externalState,
     export as exportValue,
     getErrors,
     hasError,
     lookupPath,
-    registerDataClass,
+    managedState,
+    managedStateClass,
     run,
 } from "../src/index.js"
 

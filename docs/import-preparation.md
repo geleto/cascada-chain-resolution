@@ -1,104 +1,36 @@
 # Imported data
 
-`import(value, errorContext)` is the boundary for external data. Imported data
-is borrowed: Cascada never changes its language properties or adds metadata to
-the host object.
+`import(value, errorContext)` is the inbound host-data boundary. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
 
-## Identity and ownership
+## Admission walk
 
-One token stores the import's attribution:
+Each available synchronous segment uses one transactional identity walk:
 
-```js
-{ errorContext }
-```
+1. Classify every newly reached identity from its declarations and defaults.
+2. Traverse new managed records, Arrays, and class instances once while preserving aliases and cycles.
+3. Stop at external identities, Functions, and Errors.
+4. Capture each reached Promise placement without awaiting it.
+5. Commit admission, origin, sharing, and Promise mirrors only after the complete segment validates.
 
-Every newly reached external identity directly references that token and is
-marked shared. The token belongs to identities, not paths: containment neither
-imports a runtime-owned identity nor declassifies an imported one. A shallow
-copy-on-write copy has no token and is runtime-owned.
+The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. Enumeration or descriptor failure returns a language Error and commits nothing from that synchronous segment.
 
-All identity metadata lives in one WeakMap. Directly importing an identity
-reuses its existing record.
+An already admitted identity keeps its category and origin and is not rescanned. When importing it adds another owner, an admitted managed identity is marked shared. Import builds no refcount index.
 
-## Synchronous admission
+## Promise boundaries
 
-Import walks currently available language properties immediately. It:
+A direct Promise root returns one operation Promise. Fulfillment completes the same import before exposing its value; rejection remains a rejection.
 
-- classifies previously unseen external identities;
-- marks repeated identities shared; and
-- installs the first resolver for each newly reached Promise property.
+A nested Promise belongs to its captured property version. Its fulfillment imports newly exposed data before publishing the logical value, while rejection publishes a language Error. Imported physical storage keeps the original Promise; the mirror stores its logical settlement without writeback. Runtime-owned Promise properties retain ordinary writeback.
 
-Import marks an identity before enumerating it. If enumeration or descriptor
-reflection fails, a later explicit import revisits that already-marked identity
-and resumes admission; partial metadata is not treated as a completed pass.
+## Ownership
 
-Only own enumerable string-keyed data properties are walked. Accessors and
-non-enumerable properties are absent and are never invoked. A throwing
-enumeration or descriptor trap returns its Error from import; adjacent runtime
-failures remain fatal.
+New imported managed identities are marked imported and shared, so mutation copy-on-writes before changing them. Copies are runtime-owned; reused imported children keep their origin. Frozen, sealed, and writable imported managed objects therefore have the same logical behavior.
 
-An identity that already has runtime metadata is an existing runtime-owned
-island. It remains runtime-owned and shared. Import discovers Promise
-placements in that island so their existing property versions continue through
-the ordinary mirror pipeline.
+Application code must not mutate managed data after passing it to Cascada. External identities remain exact leaves and are observation-only until external-operation support supplies explicit authority.
 
-Import does not build subtree counters or classify cycles. Any later
-ref-indexing accepts the raw graph and creates its own acyclic projection; see
-[`cycles-as-data.md`](cycles-as-data.md).
+## Modules
 
-## Promise properties
-
-The first resolver for an imported Promise property captures its import token
-in its registration closure. At settlement it:
-
-1. converts a rejection to a language Error;
-2. classifies newly exposed external identities, publishing a reflection
-   failure as the property's Error value; and
-3. publishes the logical value synchronously.
-
-The external property remains the original Promise. Its mirror's single `value`
-field holds the logical result whether the version is live or detached.
-
-The mirror stores no import token. Later operations use the same canonical
-Promise only as a FIFO readiness signal and read the latest live or detached
-mirror state after earlier resolvers finish.
-
-Directly importing a runtime-owned container advances each existing pending
-property to a new imported mirror version at that program position. Earlier
-operations retain the old version. Merely reaching a runtime-owned island
-through another imported object reuses its existing mirrors and adds no
-consumer.
-
-A Promise root is admitted by one derived Promise. Its fulfillment classifies
-the resolved root before exposing it; rejection follows the normal language
-Error rule.
-
-## Copy-on-write and attachment
-
-Mutation copies every imported container on the path before writing. Reused
-imported children keep their own import tokens; copied containers are owned.
-
-If a copied path publishes data with pending Promises, its first copied root is
-marked shared. This preserves the operation's issue-time world while those
-Promise continuations remain able to use it. Promise settlement itself still
-uses the ordinary mirror and property-transition rules.
-
-Frozen, sealed, and writable imported objects have the same semantics. Their
-only physical difference is which writes JavaScript would allow, but Cascada
-does not attempt any of them.
-
-## Language surface
-
-Only own enumerable string-keyed data properties participate. Canonical Array
-indexes are the Array data surface. An own enumerable `__proto__` is ordinary
-data; missing keys are defined as own properties so inherited setters never
-run.
-
-## Module boundary
-
-- `src/import.js` owns the public import boundary.
-- `src/import-preparation.js` owns external identity classification and
-  Promise-frontier discovery.
-- `src/meta.js` owns import tokens and identity metadata.
-- `src/property-versions.js` owns Promise-backed property versions and applies
-  settlement through ordinary logical publication.
+- `src/import.js` owns the public boundary and direct-Promise completion.
+- `src/import-preparation.js` owns the transactional admission walk.
+- `src/meta.js` owns declarations, admitted facts, and origin metadata.
+- `src/property-versions.js` owns captured Promise placements and settlement publication.

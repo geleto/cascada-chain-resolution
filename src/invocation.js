@@ -138,22 +138,17 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
 
                 const callResult = selected.invoke(readyInputs)
                 if (!selected.admitResult) return callResult
-                if (!languageValues.isPromise(callResult)) {
-                    return selected.admitResult(callResult)
+
+                const admittedResult = selected.admitResult(callResult)
+                if (languageValues.isPromise(admittedResult)) {
+                    resolution.observeResultPromise(
+                        admittedResult,
+                        releaseReceiverLeases,
+                        releaseReceiverLeases,
+                    )
+                    pendingHostResult = true
                 }
-                const observed = resolution.observeResultPromise(
-                    callResult,
-                    value => {
-                        try {
-                            selected.admitResult(value)
-                        } finally {
-                            releaseReceiverLeases()
-                        }
-                    },
-                    releaseReceiverLeases,
-                )
-                pendingHostResult = true
-                return observed
+                return admittedResult
             } finally {
                 releaseArgumentLeases()
                 if (!pendingHostResult) releaseReceiverLeases()

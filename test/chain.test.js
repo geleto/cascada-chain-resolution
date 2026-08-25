@@ -93,7 +93,7 @@ describe("Chain root state", () => {
         }
     })
 
-    it("treats an uninspectable mutation receiver as opaque", () => {
+    it("treats an uninspectable mutation receiver as external", () => {
         const value = new Proxy({}, {
             getPrototypeOf() {
                 throw new Error("prototype failed")
