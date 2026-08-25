@@ -2,219 +2,355 @@
 
 ## Core Contracts
 
-- **Sequential equivalence.** Operations on an asynchronously available graph produce the same observable results and effects as if every value were already available and the operations ran sequentially. Every transition includes all earlier effects and no later ones.
-- **Owner isolation.** Mutation through one owner never changes another owner's logical value. Explicit external mutation changes one context-exclusive host identity; other occurrences have no Cascada access authority.
+- **Sequential equivalence.** Operations on an asynchronously available graph produce the same observable results and effects as if every value were ready and the operations ran sequentially. Every transition includes all earlier effects and no later ones.
+- **Owner isolation.** Mutation through one owner never changes another owner's logical value. Explicit external mutation changes one exact host identity only after its actual use remains exclusive to one compiler-static path of one context Chain.
 - **Imported-data protection.** Imported data is never modified, except when an explicitly requested mutation operates on that exact external identity.
-- **Non-blocking issuance.** An operation processes available work and returns a value or Promise. A returned Promise need not settle before the next operation is issued.
+- **Non-blocking issuance.** An operation processes available work and returns a value or Promise. It need not settle before the next operation is issued.
 
 ## Design Method
 
-### Core mechanisms
+The mechanisms below preserve these contracts. Reuse them before adding state or another execution path:
 
-Four mechanisms preserve these contracts:
+- synchronous transitions make all available progress immediately;
+- FIFO continuations preserve program order across Promise settlement;
+- property versions and mirrors preserve captured logical values;
+- ownership and copy-on-write preserve values held elsewhere;
+- leases protect managed values without blocking later mutation;
+- transition gates order unfinished managed mutation;
+- readers-writer phases order observations and mutations;
+- boundary processing controls identities crossing between Cascada and host code.
 
-- **Synchronous progress** runs every available part of an operation immediately.
-- **FIFO Promise continuations** preserve program order when pending work resumes.
-- **Versioned mirrors** preserve the exact property version an operation captured.
-- **Copy-on-write ownership** preserves logical values held by other owners or active leases.
+The contracts, type capabilities, execution boundaries, and Error/fatal classification are fixed. Metadata layout, helper boundaries, refcount projections, and counter totals are implementation choices.
 
-Derive new graph behavior from these mechanisms before adding state or another path.
-
-### Implementation discipline
-
-The Core Contracts and the data-type capabilities, execution boundaries, and Error/fatal classification below are contracts. Metadata layout, helper boundaries, and valid refcount projections and counter totals are implementation choices. They may vary as long as every affected contract and invariant remains true.
-
-- Prefer one general transition over parallel paths, flags, adapters, or deferred cleanup when the cases share the same state change. Split only when their observable behavior or required invariants differ, and remove a superseded path in the same change.
-- Keep facts at their natural scope: identity facts on identities, property-version facts on mirrors, parent-key placement facts on placements, and operation facts within the operation.
-- Derive a fact where it is used. Persist it only when it cannot be recovered correctly or repeated derivation has a demonstrated material cost, and then at the narrowest scope that can keep it correct.
+- Prefer one general transition over parallel paths, flags, adapters, or deferred cleanup when cases share the same state change. Split only when behavior or invariants differ, and remove the superseded path in the same change.
+- Keep facts at their natural scope: identity facts on identities, property-version facts on mirrors, parent-key facts on placements, path facts on paths, and operation facts within the operation.
+- Derive a fact where it is used. Persist it only when it cannot be recovered correctly or repeated derivation has a demonstrated material cost, and then at the narrowest correct scope.
 
 ## Language Graph
 
-- **Inside the graph:** Root values and values reachable through property placements. A placement is a logical `(container, key)` location holding one property version; a JavaScript property is only its ordinary physical representation. Ordinary placements use own enumerable string-keyed data properties, while ArrayView placements may share projected backing storage.
-- **Array structure:** Present canonical indexes are placements. Logical length and holes affect Array behavior but are not placements; other properties are outside the language graph.
-- **Outside the graph:** Symbols, non-enumerable and inherited properties, and prototypes do not form property placements and are not traversed as graph data.
-- Creating a missing graph placement defines an own enumerable, writable, configurable data property; it never follows the prototype chain.
-- An own non-placement, such as a non-enumerable property or accessor, is logically absent. Ordinary graph access neither invokes nor redefines it.
-- A final read of an absent placement returns `undefined`. Traversing through an absent or `undefined` placement produces an Error, while reaching an Error propagates that same Error without replacing it.
-- Final assignment creates an absent placement, and final deletion of one is a no-op. A mutation that requires an absent receiver or intermediate placement poisons that first failed placement.
-- A path segment is a String or Number input; normalize it only after it is ready. Before waiting for a pending segment, an observation leases the longest resolved prefix and a mutation gates it, then consumes later segments only as traversal reaches them. Ready paths add neither protection. A mutation cannot gate a prefix containing a fixed external binding. Context-exclusive external state is exempt: its mutations use compiler-static paths, and ordered access never waits for an unknown segment.
-- The graph may be cyclic. Auxiliary bookkeeping must neither alter nor hide its topology.
-- Refcounting maintains an acyclic projection by cutting parent-key placements. Cuts affect bookkeeping only, not the graph or observable behavior. Their placement and resulting counter totals may depend on construction history and need not be canonical. Indexing is downward-closed: every traversable identity reached from an indexed identity is indexed, including through cuts, and a new traversable child is indexed before its edge is published. Direct host mutation must therefore never change an indexed identity in place; maintained index changes enter through ordinary property transitions or replacement with a fresh identity.
+- **Inside the graph:** Roots and values reachable through placements. A placement is a logical `(container, key)` location holding one property version; a JavaScript property is only its physical representation. Ordinary placements are own enumerable string-keyed data properties. ArrayView placements may project shared backing storage.
+- **Array structure:** Present canonical indexes are placements. Logical length and holes affect Array behavior but are not placements; other properties are outside the graph.
+- **Outside the graph:** Symbols, non-enumerables, inherited properties, and prototypes are not placements and are not traversed as graph data.
+- Creating a missing placement defines an own enumerable, writable, configurable data property and never follows the prototype chain.
+- An own accessor or non-enumerable property is logically absent. Ordinary graph access neither invokes nor redefines it.
+- A final read of an absent placement returns `undefined`. Traversing through an absent or `undefined` placement produces an Error. Reaching an Error propagates that same Error.
+- Final assignment creates an absent placement; final deletion of one is a no-op. A mutation requiring an absent receiver or intermediate placement poisons the first failed placement.
+- Path segments are String or Number operation inputs. Normalize and consume each only when traversal reaches it; any other ready value produces a validation Error without invoking coercion hooks. A failed known prefix does not wait for unused segments.
+- An unused segment Promise remains host-owned. Do not register a continuation merely to suppress its later rejection.
+- The graph may be cyclic. Bookkeeping must neither alter nor hide its topology.
 
-## Data Types and Capabilities
+## Data Categories
 
-Any Cascada value—and therefore any graph root or property—may be a Promise. Pending and resolved values use the same logical value path: an operation uses an available value immediately or registers at the captured version and continues with the resolved value. A Promise represents asynchronous availability, not a separate data category or a mechanism limited to transition gates.
+Any graph root or placement may contain a Promise. Pending and ready values use the same logical path: an operation uses an available value or registers at its captured version and continues with the resolved value. Promise means asynchronous availability, not a separate admitted category.
 
-Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admitting their values. A synchronous failure while acquiring or invoking `then` is that captured Promise's rejection unless it is already fatal. Preserve Error, logical Array, and Function semantics first. An explicit identity declaration then controls a record or class instance; otherwise records are managed, and class instances follow the managed-class registry or the external default. Primitives use their primitive category. Array and Promise subclasses retain their intrinsic semantics.
-An object that cannot be inspected for classification is admitted unchanged as external.
+Admission is the first classification of an available identity. Resolve callable thenables through their captured versions before admission. Acquisition or invocation failure is that captured Promise's rejection unless already fatal. Classification preserves Error and Function semantics first. An identity obtained as live state of an external property remains external, including a record or Array. An explicit external identity declaration may likewise make a record, Array, or class instance external. Otherwise logical Arrays retain Array semantics, an explicit managed identity declaration controls a record or class instance, records default to managed, and class instances follow the managed-class registry or the external default. Promise subclasses keep Promise semantics. An uninspectable object is admitted unchanged as external.
 
-A controlled method is runtime code that consumes logical Cascada values. A host call invokes native or user JavaScript across the preparation and result-admission boundary. An external identity is kept exact and not traversed.
+Declarations do not modify or admit an identity. An external identity declaration overrides the managed record or Array default and any class rule; a managed identity declaration overrides record and class defaults. Admission fixes the category and prototype permanently, and a managed copy inherits those admitted facts without inheriting a declaration.
+
+A controlled method consumes logical Cascada values. A host call crosses argument-export and result-admission boundaries. An external identity remains exact and is not graph-traversed.
 
 | Type | Supported execution | Boundary | Property writes |
 | --- | --- | --- | --- |
 | Managed record | Own function-valued properties as observational or mutating methods; no inherited methods | Managed call on a completely prepared receiver | Ordinary language writes; host mutation publishes through the receiver placement |
-| Logical Array | Supported standard methods reproduce native observable behavior in matching mode; overrides are observation-only | Standard methods are controlled; overrides receive an exported native Array | Ordinary language writes |
+| Logical Array | Supported standard methods reproduce native behavior in matching mode; overrides are observation-only | Standard methods are controlled; overrides receive an exported native Array | Ordinary language writes |
 | String | Native observations only | Host call on the primitive | Unsupported |
-| Managed class instance | Side-effect-free observations and receiver mutations through methods | Managed call on a completely prepared receiver; mutation isolates state at the invocation boundary | Ordinary language writes; host mutation publishes through the receiver placement |
-| External identity | Observations; explicit mutation only at a context-exclusive path or through its function borrow | Host call on the exact receiver | Host-ready write only under that authority |
-| Function | May be stored in a record; executable only in an explicitly supported function, method, or callback position | Defined by that executable position | Not a property container |
+| Managed class instance | Side-effect-free observations and receiver mutations through methods | Managed call on a completely prepared receiver; mutation isolates at invocation | Ordinary language writes; host mutation publishes through the receiver placement |
+| External identity | Observations; explicit mutation only after exclusive use through one compiler-static context path | Host call on the exact receiver | Host-ready write only under that authority |
+| Function | Stored as data; executable only in a supported function, method, or callback position | Defined by that position | Not a property container |
 | Number, Boolean, BigInt, Symbol, `null`, or `undefined` | None | Not applicable | Unsupported |
-| Promise | No direct execution; resolve its captured version, then use the result's capabilities | Determined by the resolved value | Determined by the resolved value |
+| Promise | No direct execution; use the resolved value's capabilities | Determined by the resolved value | Determined by the resolved value |
 | Error | None; see Errors | Not applicable | Not a property container |
+
+## Identity Traversal
+
+- An identity walk may inspect each reached identity once while preserving aliases and cycles.
+- Identity deduplication must not erase occurrence facts. Work defined by placements or paths reports every relevant occurrence even when the identity was already inspected. Cycle handling bounds the walk without hiding finite paths.
+
+Identity traversal is used by:
+
+- import, copying, and graph validation, which need identity inspection.
+
+## Refcount Indexing
+
+- Refcounting maintains an acyclic projection by cutting parent-key placements. Cuts affect bookkeeping only, not graph behavior. Their positions and counter totals may depend on construction history and need not be canonical.
+- Indexing is downward-closed: every traversable identity reached from an indexed identity is indexed, including through cuts, and a new traversable child is indexed before its edge is published.
+- Direct host mutation must never change an indexed identity in place. Incremental index changes enter through ordinary placement transitions or replacement with a fresh identity.
+- When counters cannot answer across a cycle cut, one operation may traverse the counter-selected cut region with one shared visited set. A separate pass may build a missing index.
 
 ## Ownership and Copy-on-Write
 
-An owner is a placement or retained result that can independently preserve a logical value. A value is **protected** when mutation must leave its current logical state available unchanged.
+An owner is a placement or retained result that can independently preserve a logical value. A managed value is protected while it is permanently shared or temporarily leased; otherwise it may be mutated in place. External mutation is an ordered effect on an exact identity, not COW.
 
-### Protection
-
-- An ordinary COW-managed value is protected exactly while it is shared permanently or leased temporarily; otherwise it may be mutated in place. Explicit external mutations are ordered effects on an exact identity, not COW.
-- Reading without retaining or exposing an identity adds no owner. Any transition that retains a COW-managed identity for another owner marks that identity shared; this includes import, lookup, COW reuse, and retained operation results. An ownership transfer instead ends the previous ownership.
+- Reading without retaining or exposing an identity adds no owner. Retaining a managed identity for another owner marks it shared; this includes import, lookup, COW reuse, and retained results. Ownership transfer ends the previous ownership instead.
 - Import adds no other COW condition.
-- Managed records, class instances, and their state use ordinary identity ownership. Direct managed mutation adds invocation-boundary isolation; ordinary graph operations do not.
+- Multiple paths from one owner to the same identity, including cycles, do not create another owner.
+- Protection belongs to an identity; permission to replace a placement belongs to its container. A path mutation considers both.
+- Ordinary COW shallow-copies each level from the first protected container to the changed placement and reuses off-path values. Reused children keep their identity facts and become shared when both owners retain them.
+- Each copied path node starts runtime-owned, unshared, and unleased. Populate it from logical values, not physical slots, and copy no source metadata except the admitted category and managed-class prototype.
+- Assignment captures its right-hand value before mutating the left. In `x.self = x`, lookup retains the old `x`, so assignment copies `x` and stores the old value: `newX.self === oldX`, not `newX.self === newX`. Ordinary assignment links captured versions rather than creating graph cycles; cycles may enter through imported or managed host mutation.
+- A copied Promise placement gets a fresh mirror at the copier's program position.
 
-### Copying and representation
+## Representation and Materialization
 
-A logical value is what Cascada operations observe; its physical representation is the storage used to realize it. COW leaves a protected logical value unchanged and gives the mutating owner a new version.
+A logical value is what Cascada observes; its representation is the storage used to realize it. Representation may change whenever every protected logical value remains unchanged.
 
-- For ordinary language data, protection belongs to the stored identity while permission to replace a placement belongs to its container. A path mutation considers both independently.
-- Ordinary COW builds the mutating owner's new value by shallow-copying each level from the first protected container down to the changed spot, applying the change there, and reusing every off-path value unchanged. It copies a path, not a graph.
-- Each new path node starts runtime-owned, unshared, and unleased. It is populated by reading each property's logical value, never its physical slot, and carries no source metadata. Reused children retain their identity facts and become shared when both owners retain them.
-- Writability, configurability, and extensibility constrain physical storage, not the logical graph. When an otherwise valid transition cannot use its current representation—including because an own non-placement occupies the key—materialize normal runtime-owned storage that omits non-placements and retry. Copy outward along the path as needed to publish it; never invoke or redefine the blocker.
-- Ordinary COW preserves the admitted prototype when it shallow-copies a managed class instance. Before host code directly mutates a managed receiver, Cascada isolates every reachable logical value whose existing state must remain observable. After invocation, it validates and admits the completed state and gives retained argument identities ordinary shared ownership before publication.
-- Managed mutation copies preserve aliases and cycles within each copied subgraph. Publication may sever an alias between receiver state and another graph placement: that placement retains its old identity and logical value while the receiver publishes its isolated value.
-- Runtime-owned representation may be reused or changed whenever every protected logical value remains unchanged. Array backing may therefore grow visibly through a raw host reference while fixed ArrayView bounds preserve every Cascada value. Copy or materialize only when reuse would change a protected value.
-- Multiple paths from one owner to the same identity, including cycles, do not by themselves add an owner or require copying.
-- Assignments capture the right-hand value before mutating the left-hand path. In `x.self = x`, the lookup retains the original `x` for the new placement and marks it shared; the assignment therefore copies `x` and stores the original in the copy: `newX.self === oldX`, not `newX.self === newX`. Ordinary Cascada assignments link to captured versions rather than create new graph cycles; new cycles may enter through imported host data or managed host mutation.
-- A copied Promise placement gets a fresh mirror at the copier's program position, so both property versions diverge there.
-
-## Import and Export Boundaries
-
-- Data leaving Cascada crosses through export. This includes arguments and assigned values passed to external, native, or override host code and public script results. Export resolves required availability, removes runtime representations, and copies managed traversable data into independent host data. Functions and exact external identities remain exact.
-- Managed source leases used by export end when export finishes, before host invocation. A returned host Promise may retain its exported values and keeps required external ordering active, but it does not prolong leases on copied managed sources.
-- New host-provided roots enter through `initialize`. Context initialization uses the same importer while fixing synchronously reached unique external paths; it is not another import boundary. No mutation-capable path is added or rebound later. Private import also handles host-code results and property values read from external identities. Promise settlement continues its originating boundary before dependent consumers resume.
-- Every new logical root not transferred from an existing Cascada value is initialized. Transfers retain existing admission, origin, and ownership.
-- Import is one-way. Application and host code must not mutate a managed identity after passing it to Cascada, and Cascada never rescans it for host changes. Mutable live host state must be external and accessed through ordered external operations.
-- Managed invocation operates on prepared and isolated managed state rather than exported inputs. Controlled methods remain inside the runtime. Results produced by host code still follow origin-aware result admission.
-- Chain construction from an existing value, assignment, and internal value transfer cross no host boundary and preserve existing admission and origin.
-- Import records external origin on each identity it first reaches. It traverses only managed state; containment alone neither grants nor removes origin, and an identity already known to Cascada retains its established origin and classification.
-- Imported physical storage is borrowed and never modified. Metadata and logical Promise settlement remain outside it. An explicitly requested external mutation is the sole exception: it intentionally changes that exact object.
-- Cascada never creates non-extensible managed data. Such data must enter through import. The imported no-write rule is sufficient; do not infer import from non-extensibility or add frozen-specific behavior.
+- Writability, configurability, and extensibility constrain storage, not the graph. If a valid transition cannot use its current representation, materialize normal runtime-owned storage and retry. Omit non-placements and never invoke or redefine a blocker.
+- Copy outward along a path as needed to publish materialized storage.
+- Shallow COW preserves a managed class's admitted prototype. Managed mutation copies preserve aliases and cycles inside each copied subgraph. Publication may sever an alias to another placement, which keeps its original identity and value.
+- Array backing may grow physically while fixed ArrayView bounds preserve existing values. Copy or materialize only when reuse would change a protected value.
 - Imported storage never serves as mutable ArrayView backing.
 
-## External Context Ordering
+## Read Leases
 
-- External values are observation-only by default. Context initialization makes a synchronously reached identity context-exclusive and mutation-capable only when exactly one context path reaches it; an alias or cycle providing another path leaves it observation-only. Managed `!` operations use ordinary managed mutation and no external guard.
-- A mutation-capable external identity is accessed only through its fixed context path or an active function borrow. The `!` segment selects the operation's guard scope independently of that path and must cover every host state dependency the operation may affect. Cascada cannot infer hidden sharing between sibling scopes.
-- A managed mutation whose target or receiver is a fixed external path or an ancestor returns a validation Error without changing or poisoning the context or guard. Sibling mutation and physical COW that preserve the logical binding remain valid.
-- Explicit external property writes and methods may mutate state inside their exact receiver under its guard. Native or application code must not mutate the imported managed context, replace a fixed external placement, or independently mutate a context-exclusive identity.
-- External mutation paths and their `!` scopes are compiler-static. A ready computed observation registers its resolved guard path before host access; an observation with an unresolved segment cannot access context-exclusive external state.
-- One context guard orders active external paths hierarchically in both directions; siblings remain independent. Keep operation state at selected scope nodes rather than writing their descendants.
-- An external observation waits for preceding mutations, joins the current observation group, and does not wait for another observation. A mutation waits for preceding mutations and observation groups.
-- Register every external scope of one operation together before waiting for predecessors or preparing inputs. Scopes owned by the same operation never wait on one another.
-- External context observations use the same runtime path guard. A direct operation Promise retains its entry through settlement.
-- External ordering is local to one context execution. A host that exposes the same mutable resource to concurrent executions owns their cross-execution concurrency and ordering.
-- A function may borrow a context-exclusive identity by reference while its context path is entered. The borrow may pass through nested calls but cannot escape the direct call lifetime or detached work.
-- Host code must expose one exact identity for one mutable resource and must not mutate it independently while Cascada can access it.
-- External guard poison is path state, never an application value. Observation failure does not poison; mutation failure does. A successful `!!` repair clears selected and descendant poison but not ancestor poison.
+A lease temporarily protects an exact managed identity that pending work may still read. It never delays later mutation; mutation uses COW instead. Release every lease after the operation's last access on success or failure, including identities revealed by required Promise resolution.
 
-## Pending Work: Leases and Transition Gates
+Leases are used for:
 
-Pending work either needs to keep observing a stable value while later mutation continues, or leaves a mutation unfinished so later access must wait. These require different mechanisms:
+- managed sources while a pending export still reads them, ending before host invocation;
+- managed receiver preparation and managed argument export;
+- a managed observation's complete prepared receiver through its direct Promise;
+- a managed mutation's receiver until isolation;
+- a controlled observation that resumes reading its receiver;
+- read-only `enter` for its captured value;
+- a path observation waiting for its first pending segment, at the longest resolved prefix; later segments reuse that lease.
 
-- A **lease** is temporary COW protection for an exact logical value still in use when later mutation may reuse its representation. It never delays later operations; a later mutation copies, and the lease ends when its operation completes or fails. Before an invocation leaves pending, it leases every source managed record, Array, or class instance a continuation can access and leases further identities revealed by required Promise resolution. A managed observation applies this rule to its complete receiver graph. Managed mutation preparation does the same until its receiver is ready, then uses isolation and the ordinary transition gate. Context-exclusive external identities use their guard instead.
-- A **transition gate** preserves ordering when a mutation cannot publish its final value synchronously. It does not preserve the old published value; it makes the placement's next version pending and keeps the captured or working value private. Install an ordinary Promise version there before leaving the transition. Later operations wait at that placement and resume through its normal mirror and FIFO continuations. A ready mutation needs no gate.
-- Ordinary pending mutation preparation gates only its final target while required values such as its receiver or arguments resolve. A mutating `enter` deliberately keeps the entered transition open, so its gate remains until the callback and its private commands finish.
-- A Promise that represents only an independent operation result is not a transition gate. Publish completed state immediately; lease it only if the pending result may still retain or observe it.
-- A managed transition gate orders one logical placement. External effects use their separate context guard so ordering survives native state changes without exposing guard state to host code.
+External identities use operation phases and, when needed, argument borrows instead of leases.
 
-## Synchronous and Promise Ordering
+## Transition Gates
 
-An operation is one issued command. A transition is one synchronous unit of work within an operation or Promise continuation. A program position locates a capture or registration in sequential operation order; an operation's Promise frontier contains the pending versions required by its selected work.
+A transition gate orders a managed mutation that cannot publish its final value synchronously. It publishes an ordinary Promise version at the protected placement, keeps the working value private, and makes later access wait through the normal mirror and FIFO continuation rules. It does not preserve the old value; COW and leases do that.
 
-- Process all available work synchronously and in program order.
-- Register on a pending property only when, and exactly where, the operation depends on it. Structural discovery alone does not make the operation a consumer.
-- Canonicalize a thenable only when Cascada needs FIFO ordering among continuations on that source: to advance or consume a captured version, resume or finish a transition, or run settlement bookkeeping before later Cascada use. Route every such registration through the Promise helpers; raw `.then` belongs only inside them. Returning a Promise or thenable alone never canonicalizes or replaces it.
-- Registrations made before settlement form one FIFO batch. Each continuation completes its transition synchronously; never split one with `await`, another `.then`, `queueMicrotask`, or lazy registration.
+Gates are used for:
 
-If three operations reach one pending property, the first resolver publishes `V`, the second observes `V` and may leave `V'`, and the third observes `V'`. Each sees every earlier effect and no later one.
+- ordinary pending mutation at its final target while required values resolve;
+- a managed mutation whose direct Promise keeps its receiver private;
+- mutating `enter` until its callback and private commands finish;
+- a path mutation waiting for its first pending segment, at the longest resolved prefix; later segments reuse that gate.
 
-## Promise Mirrors and Versions
+A ready mutation needs no gate. Path availability adds neither a lease nor gate when every segment is ready. A mutation waiting below a context prefix registers every indexed candidate external phase before installing the managed prefix gate; the gate orders the unknown managed target and the phases order exact external effects. A Promise representing only an independent result is not a gate: publish completed state immediately and protect retained inputs only while the result may access them.
+
+## External Operation Phases
+
+A readers-writer phase orders access to an exact external identity, whose state cannot be protected by managed COW or transition gates. Consecutive observations share a read phase after the preceding mutation; the next mutation waits for the whole read phase and then runs exclusively.
+
+- Append or join every phase synchronously when the operation is issued. Publish all of one operation's successor dependencies before waiting on any predecessor. Scopes created by one operation never wait on one another.
+- Existing waiters keep their captured predecessor when a successor becomes current. A completed read phase is not reused.
+- A direct operation Promise keeps its phase active through its final boundary processing. A nested result Promise does not.
+
+External phases are selected directly or through a context path. Async conditions, loops, and `enter` reserve selected phases before suspension and release them after the child drains; child-local phases prevent self-wait, while empty and unrelated children do not block other work. Ordinary Chain scheduling belongs to the containing Cascada runtime. Managed values use leases and gates in this repository rather than external phases.
+
+Phases, leases, and gates solve different problems: phases order operations, leases preserve values without waiting, and gates publish unfinished managed transitions.
+
+## Promise Continuations
+
+An operation is one issued command. A transition is one synchronous unit within an operation or continuation. A program position locates a capture or registration in sequential order; an operation's Promise frontier contains the pending versions required by its selected work.
+
+- Process every available part synchronously and in program order.
+- Register on a pending placement only where the operation depends on it. Structural discovery alone does not make the operation a consumer.
+- Registrations made before settlement form one FIFO batch. Each continuation completes its transition synchronously; never split it with `await`, another `.then`, `queueMicrotask`, or lazy registration.
+
+Use the common FIFO thenable mechanism only to:
+
+- advance or consume a captured version;
+- resume or complete a transition;
+- complete settlement bookkeeping before later Cascada use.
+
+All ordering-sensitive registration goes through this mechanism; raw `.then` must not create a parallel continuation path. Returning a Promise or thenable alone neither canonicalizes nor replaces it.
+
+If three operations reach one pending placement, the first resolver publishes `V`, the second observes `V` and may leave `V'`, and the third observes `V'`.
+
+## Property Versions and Mirrors
 
 A property version is the exact logical state captured at one placement. A mirror tracks a Promise-backed version as it changes or resolves.
 
-- Every Promise placement creates a new mirror, even for the same Promise; distinct properties and versions never share one, even when they share physical storage.
-- A live mirror determines logical presence and value. Physical writeback may keep a live runtime-owned property current, but correctness never depends on it. Imported and detached versions remain mirror-only; an imported property retains its external Promise while its resolved logical value lives in the mirror.
-- Replacing or deleting a property detaches its mirror. The mirror then keeps that version's latest value for operations that already captured it.
-- Settlement alone changes no language state. The first resolver advances the version within its transition; later resolvers ignore the settlement payload and continue from the state earlier resolvers left.
+- Every Promise placement creates a new mirror. Different placements and versions never share one, even when they contain the same Promise.
+- A live mirror determines logical presence and value. Physical writeback may keep runtime-owned storage current, but correctness never depends on it.
+- Imported storage retains its physical Promise while the mirror holds the resolved logical value.
+- Replacing or deleting a placement detaches its mirror. The mirror continues serving operations that captured that version.
+- Settlement alone changes no language state. The first resolver advances the captured version; later resolvers ignore the payload and continue from the value earlier resolvers left.
 
-## Errors
+## External Boundary
 
-Cascada distinguishes two kinds of failure:
+Data entering Cascada from host JavaScript passes through import. Data leaving Cascada for host JavaScript passes through export. This boundary is the only place that translates ownership and representation between the two domains. A managed method's prepared receiver is its invocation-owned working state rather than an exported input; every explicit argument is exported.
 
-- **Error poisoning.** An Error is language data. Invalid logical inputs or transitions and synchronous failures from supported user code produce it. An Error assigned to a placement or returned as a logical result becomes that value; a rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it, while unrelated work continues.
-- **Fatal failure.** An unexpected failure in a runtime mechanism is normally a runtime bug; a violated internal or host contract is also fatal. It goes through `reportFatalError`, which reports and rethrows.
+### Import and origin
 
-- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there; entering it through `run` does not make adjacent runtime code user-controlled. A physical representation limitation is not itself a failure: materialize and retry, and treat failure of that required handling as fatal. Never convert between poisoning and fatal failure.
-- A poisoned observation affects only the operation outcome. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and is also the operation outcome.
-- For a mutating call, that value is the receiver placement or root; poisoned preparation or a synchronous mutator throw poisons it. Poison confined to an independent result does not affect a successfully mutated receiver.
-- Return the produced result unchanged: a value or Error directly, and a Promise or thenable with its original fulfillment or rejection. If producing the result was already pending, the existing operation Promise adopts it. An operation whose contract consumes Errors instead produces its normal result; result rejection does not poison the graph.
-- No consumed Error is lost: one propagates unchanged; several produce an Error whose `errors` array contains every distinct original. Call errors follow receiver-then-argument order, independent of settlement; errors within one composite input are unordered.
-- Poisoning an external mutation poisons its context guard but cannot undo effects already made to the exact external identity.
-- Rejecting a managed mutation because it would replace a fixed external context binding changes neither the binding nor its guard; the validation Error is only the operation result.
+Import admits host-originated data and records its origin without becoming the owner of type classification. It never rescans managed data for later host changes.
+
+Import is used for:
+
+- each host-provided root, including the context root;
+- managed, native, override, and external host-call results;
+- values read from external properties;
+- values revealed when any of those Promises fulfill.
+
+Chain construction from an existing Cascada value, assignment, lookup, and internal transfer do not cross the boundary and therefore do not import; they preserve admission and origin.
+
+- Validate each reached synchronous import segment before committing origin, sharing, or Promise mirrors. A boundary failure commits none of that segment.
+- Traverse managed state once while preserving aliases and cycles; stop at Errors, Functions, and external identities. Containment neither grants nor removes origin.
+- Existing identity metadata identifies an already admitted value. Import retains such a managed result without traversing it again and marks it shared when the result adds an owner. This includes unexported data returned by another Cascada execution. A new host-produced managed identity becomes imported and shared.
+- A new identity read from an external property remains external, even when it is a record or Array. External state may contain only external state. If property traversal encounters an already admitted managed identity, poison that external container without replacing either value. Do not scan external state to search for this violation. A host call may instead return admitted managed data because its result crosses a separate import boundary rather than remaining external property state.
+- Application and host code must not mutate managed data after passing it to Cascada. Imported storage is borrowed and never modified; metadata and logical Promise settlement remain outside it.
+- Mutable live host state must be external and accessed through ordered external operations.
+- Cascada never creates non-extensible managed data. Such data must enter through import; do not infer import from non-extensibility or add frozen-specific behavior.
+
+### Export
+
+Export produces host-ready data independent from managed storage. It resolves required availability, removes runtime representations, copies managed records, Arrays, and class instances while preserving aliases, cycles, and admitted prototypes, and keeps Functions and external identities exact.
+
+Export is used for:
+
+- explicit arguments passed to any native JavaScript method, including managed methods, external methods, native methods, and overrides;
+- values assigned to external properties;
+- an Array override's native receiver;
+- public script results.
+
+Host-input and public-result export share copying semantics and differ only in Error handling:
+
+- **Host input:** preserve nested Errors, but a consumed top-level Error prevents invocation or assignment.
+- **Public result:** consume and combine every reached Error.
+
+Source leases end when export finishes, before host code runs. Host code may retain exported copies, exact Functions, and external identities, but not their managed sources. Export never transfers external mutation authority, and independently retained host mutation remains outside Cascada's ordering guarantees.
+
+## Boundary Completion
+
+An operation crossing a boundary is complete only after required admission, validation, copying, and publication. Ready and Promise-backed results follow the same completion rule.
+
+- A ready result completes its import, validation, copying, and publication synchronously.
+- A direct Promise is adopted by the operation's one result Promise. Its fulfillment first completes the same processing and becomes the logical value or boundary Error; rejection remains rejection. Never detach or discard that processing.
+- A Promise nested inside a synchronous independent result is result data. It does not extend the invocation, leases, or phases, though its placement continues its own import and mirror rules.
+
+Boundary completion applies to:
+
+- imported Promise roots;
+- host-call results;
+- external-property reads;
+- managed direct-Promise results.
+
+Managed receiver finalization and external phases remain active until completion.
+
+## External Authority
+
+External identities are observation-only by default. Import and storage do not restrict them. Actual Cascada use records one of four identity states: unused, one exact compiler-static `(context Chain, normalized path)`, outside context, or mutation-ineligible use. Mutation-ineligible use means a different context Chain or path, a dynamic path, or mixed context and non-context use.
+
+- A context Chain records that category on the Chain itself. Several context Chains may exist in one execution.
+- Every operation carries a compiler-static-path fact before graph work begins. A path is static only when every segment to the identity is a compiler-known String or Number; a computed or Promise-valued segment is dynamic even when already resolved.
+- Lookup, receiver and property access, and argument use record the actual location and static-path fact before host access. Repeating one static context Chain and path changes nothing; any incompatible or dynamic use makes the identity permanently mutation-ineligible.
+- Mutation records its use first. It is valid only through the one recorded compiler-static context Chain and path, which the first valid mutation fixes as the identity's access location. Every later use requires that same static location; an incompatible use returns a validation Error without host access. Outside-context and mutation-ineligible mutation poison without invoking host code.
+- Import, assignment, return, export, and storage alone never count as use or transfer authority.
+- External traversal may mutate deeply reached host state. Cascada records identities only when an operation reaches them and never scans external graphs for aliases or shared descendants.
+- Host code must not expose the same mutable resource through independently scheduled external roots. Cascada cannot detect hidden sharing between different identities or retroactively order an identity first discovered during host traversal.
+
+Phase 9 context construction marks a Chain as context, indexes every synchronously reached external occurrence, and thereafter maintains that index through context graph transitions. The index supports exact, longest-prefix, and descendant queries before COW, gating, or waiting. It is placement bookkeeping only; identity use and phase state remain shared identity facts.
+
+## Argument Borrows
+
+An argument borrow gives one native JavaScript call ordered access to external identities selected from Chain sources. It is neither ownership nor a lease.
+
+- A source covers external identities beneath it, including inside exported managed containers. Record each source location as an actual use before host access.
+- Register its guard with receiver guards before exporting any input. An unmarked source observes; `!` mutates.
+- Export keeps external identities exact. Retention or return does not transfer authority; later Cascada access records its own location.
+
+The same source-use validation applies whenever an external identity reaches:
+
+- an explicit host-call argument;
+- a managed-call argument;
+- a controlled callback input.
+
+## External Guards
+
+An external guard applies readers-writer phases to exact host state that COW and transition gates cannot protect. Phase state belongs to the external identity so duplicate selections join one phase. This never redirects access through an alias: mutation authority still requires one fixed compiler-static context location.
+
+- `!` selects mutation mode. Unmarked external access joins the identity's observation phase even before its first mutation.
+- An exact operation selects its receiver identity directly. A context path selects indexed external identities at or below the path. Managed `!` operations retain ordinary managed behavior.
+- Enter every selected identity phase when the operation is issued and before inspecting host state. Wait for predecessors before reading a getter, descriptor, proxy, property, or method.
+- Explicit external mutation may change only its exact guarded receiver and mutation-borrowed arguments. Native or application code must not mutate it independently.
+
+External guards are used by:
+
+- external receiver and property operations;
+- context-prefix operations over indexed external descendants;
+- argument borrows;
+- async child buffers that may access the scope.
+
+## Guard Poison and Repair
+
+Guard poison is an Error stored in the external identity's metadata phase state, not application data. Poison never replaces the exact external value.
+
+- Existing poison contributes an Error at the selecting receiver or argument position. Required preparation continues and host code is skipped.
+- Observation failure releases its phase without poisoning.
+- Mutation failure or rejection records its combined Error on every selected mutation phase in phase order, so already-issued successors observe it. Dynamic, outside-context, and multiple-use mutation poison without host access; completed host effects remain visible.
+- `!!` enters the selected external identity phases normally, bypasses only their existing poison, and removes the stored poison Error on success. It does not change use history, so an outside-context or mutation-ineligible identity remains ineligible for mutation.
 
 ## Execution Boundaries
 
-- Prepare each call input only to the extent its selected boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors participate only when required preparation or behavior reaches them.
-- Host calls consume every explicit argument. A controlled method resolves only the data it consumes; a payload it merely retains stays unchanged, including an Error or Promise. A rejected retained Promise poisons its eventual placement, not the call that retained it. Controlled methods may return internal representations such as ArrayViews.
-- A controlled callback receives only the logical values its method declares and must be synchronous, read-only, and non-retaining.
-- Invoke an own managed-record method with its prepared record as receiver. Inherited record methods are unavailable; an extracted Function remains data.
-- Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit and preserve every logical value.
-- Inputs and results that cross the host boundary use the import and export rules above. Managed invocation instead uses prepared logical inputs and invocation isolation; controlled results and published managed-mutation receivers remain runtime-owned.
-- A host observation must not mutate an exact receiver or external argument. A host mutation may mutate only the state designated by its receiver category; exact source argument identities remain read-only.
-- Every use of context-exclusive external state participates in its guard. Passing it by reference requires an active function borrow.
-- Host code may retain an exact external identity or Function only through its result or until its returned Promise settles. Mutation after that interval is a host contract violation. Independently retained references must not mutate an external identity while Cascada can use it; such effects cannot participate in Cascada's ordering.
-- Host calls, controlled callbacks, and reflection hooks must not issue Cascada operations before returning; synchronous reentry is a host contract violation. Trusted runtime control-flow callbacks such as `enter` follow their own transition contracts instead.
-
-If mutation `M1` is pending, following observations `O1` and `O2` wait for `M1` and may then overlap; following mutation `M2` waits for both observations. The same order holds through every alias.
+- Prepare each input only to the extent its selected boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors matter only when required preparation reaches them.
+- A value selected for invocation is prepared and validated as an executable, not imported as graph data. Import applies to a property-read result or invocation result that enters the graph.
+- After required operation phases complete, finish explicit input preparation before proxy reflection, descriptor access, a getter, or other host method-selection code. If preparation prevents invocation, execute none of that host code; order collected failures by their logical receiver and argument positions.
+- Native JavaScript calls export every explicit argument. Runtime-controlled methods resolve only declared logical inputs; retained payload remains unchanged, including an Error or Promise. A rejected retained Promise poisons its eventual placement, not the retaining call. Controlled methods may return internal representations such as ArrayViews.
+- A controlled callback receives only declared logical values and must be synchronous, read-only, and non-retaining.
+- Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit while preserving every logical value.
+- Host observations must not mutate an exact receiver or exact external argument. Exported managed argument copies may be mutated or retained without changing Cascada source data. Host mutation may change only its designated external receiver and external arguments covered by mutation borrows.
+- External writes complete host-input export before native assignment or setter execution; a top-level Error prevents the write. A native setter must finish synchronously.
+- Host code may retain exported copies, Functions, and external identities. It receives no mutation authority beyond active external phases, and later independent mutation is a host-contract violation while Cascada may use the resource.
+- Host calls, controlled callbacks, and reflection hooks must not issue Cascada operations while active, including work represented by a direct Promise. Nested result Promises must not later access receivers or inputs. Trusted runtime control-flow callbacks such as `enter` follow their own contracts.
 
 ## Managed Methods
 
-- Declare a managed class before admitting its instances. Declaration is not retroactive, and classification is fixed at first admission.
-- A managed record selects an own enumerable Function placement. A managed class selects from the prototype captured at admission and its inherited class chain up to, but excluding, `Object.prototype`. Class declaration rejects accessors on that chain, and application code must not later change the chain or its descriptors.
-- A managed class exposes all semantic state through own enumerable string-keyed data properties. Its methods must not depend on own accessors, Symbols, non-enumerables, private fields, internal slots, or closure state.
-- Managed state may contain primitives, records, logical Arrays, managed class instances, external identities, Functions, aliases, cycles, and Promises between calls.
-- After method selection, the call consumes all explicit arguments and the complete receiver graph. Common preparation recursively resolves every Promise revealed in those inputs through captured property versions and provides no Promise or Error to the method. Imported physical storage retains its Promise unchanged.
-- Managed identities retain ordinary per-identity ownership. Assignment, extraction, import, indexing, `enter`, and path COW use the normal graph rules; shallow COW preserves an admitted managed-class prototype.
-- A method may finish synchronously or keep its invocation active through one direct Promise. All later work and input access must belong to that Promise and finish before it settles; detached work is forbidden.
-- An observation must not mutate its receiver. A mutation may change only its isolated receiver and must not mutate an identity reached only from an argument at entry. It may retain an argument in its receiver and mutate it in a later managed call after isolation. If an argument already aliases receiver state, the method may mutate the isolated alias without changing the original Cascada argument.
-- Nested method calls are ordinary JavaScript on the already prepared receiver and do not start another Cascada invocation. Methods must not change a traversable identity's prototype, descriptors, or extensibility.
-- External identities and Functions remain exact. Managed methods may retain or return them but must not invoke external operations or inspect or mutate context-exclusive state outside an active borrow.
-- Cascada may copy any managed record, Array, or class instance reached through an argument or receiver before or after invocation. Copies preserve managed-class prototypes, Array structure, and aliases and cycles within each copied subgraph. Code may rely on identities only while its invocation is active.
-- A managed observation leases its prepared receiver and arguments through a direct Promise without a transition gate. A managed mutation isolates its receiver, retains argument leases, and uses the ordinary transition gate while a direct Promise is pending.
-- After a mutation, validate and admit the completed state, mark retained source arguments shared, and publish it through the ordinary mutation transition. Preparation poison, receiver validation failure, or method failure poisons the receiver placement; an observation or independent-result failure affects only its result.
-- If a mutation returns its receiver, return the published receiver with ordinary result ownership. Independently copy every other traversable result so it shares no managed record, Array, or class instance with the receiver or arguments. Preserve internal aliases, cycles, class prototypes, Arrays, Promise placements, exact external identities, and Functions. An explicitly returned Error remains an ordinary result.
+- Declare a managed class before admitting its instances. Declaration is not retroactive; classification is fixed at first admission.
+- Resolve a managed record's captured own enumerable method placement before testing callability, then invoke it with the prepared record as receiver. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Class declaration rejects accessors on that chain, which application code must not later change.
+- Managed classes expose semantic state only through own enumerable string-keyed data properties. Every managed method keeps mutable semantic state in `this` and receives other state through explicit arguments; it must not depend on mutable parent, closure, module, private-field, Symbol, non-enumerable, accessor, or internal-slot state.
+- Managed state may contain primitives, records, logical Arrays, managed classes, external identities, Functions, aliases, cycles, Promises, and Errors.
+- After method selection, preparation consumes the complete receiver graph and exports every explicit argument. It resolves every receiver Promise through captured versions and provides no Promise or Error in the receiver. Exported arguments contain no unresolved language Promise; the host-input Error policy still applies. Imported receiver storage keeps its physical Promise.
+- A method may finish synchronously or remain active through one direct Promise. All later work and input access must belong to that Promise and finish before settlement; detached work is forbidden.
+- The caller's observation-or-mutation mode is a trusted assertion about the selected method. An observation method does not mutate its receiver; a mutating method changes only its isolated receiver. Managed argument data is an independent exported copy and may be mutated, retained, or returned without changing its Cascada source; exact external identities retain their guard restrictions.
+- Nested method calls are ordinary JavaScript on the prepared receiver, not another Cascada invocation. Methods do not change a traversable identity's prototype, descriptors, or extensibility.
+- Cascada may copy managed receiver state for isolation. Argument export always copies managed records, Arrays, and class instances while preserving prototypes, Array structure, aliases, and cycles. Code relies on managed identity only while its invocation is active.
+- After mutation, validate and admit the receiver and publish through the ordinary transition. A completed receiver contains neither Promise nor Error.
+- Preparation poison, receiver validation failure, or method failure poisons a mutation receiver. Observation and independent-result failure affect only their result. A direct-Promise rejection preserves the rejection outcome after applying the corresponding graph effect.
+- Import every managed-method result. Returning the mutation receiver returns its published identity; every other result keeps its admitted identities and gains ordinary shared ownership instead of being copied.
+
+## Errors
+
+Cascada distinguishes:
+
+- **Error poisoning:** an Error is language data. Invalid logical input or supported user-code failure produces it. An Error assigned or explicitly returned remains an ordinary value and poisons neither a managed receiver nor an external guard. A rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it while unrelated work continues.
+- **Fatal failure:** an unexpected runtime failure or violated internal or host contract is reported and rethrown.
+
+- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there. Entering it through `run` does not make adjacent runtime code user-controlled.
+- Preserve a produced value or Error unless its boundary consumes it. Required boundary processing may transform Promise fulfillment into the operation's logical result; rejection remains rejection. Never convert between poisoning and fatal failure.
+- A representation limitation is not a logical failure. Materialize and retry; failure of required internal handling is fatal.
+- A poisoned observation changes only its outcome. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and returns the same Error.
+- For a mutating call, preparation or method failure poisons the receiver placement or root. Failure confined to an independent result does not affect a successfully mutated receiver.
+- One consumed Error propagates unchanged. Several produce one Error whose `errors` array contains every distinct original. Call order is receiver then arguments; order inside one composite input is unspecified.
+- Rejecting managed work because it conflicts with indexed external state changes neither the index nor its phase.
+- Poisoning external mutation changes guard state but cannot undo completed effects on the exact host identity.
 
 ## Work Bounds
 
-These constrain implementation cost, not observable semantics. Exceeding them is a defect; a mechanism that inherently exceeds them should be replaced.
+These constrain implementation cost. A mechanism that inherently exceeds them should be replaced.
 
-- Bound graph-dependent work and allocation to data selected by an operation's explicit input or path, its produced output, its captured Promise frontier, and the dependencies it must maintain. Do not process unrelated graph data.
-- Build an index when a component first needs one, then maintain it incrementally as the graph changes. Never rescan indexed data to rediscover a maintained fact.
-- Import traverses an identity only when it first crosses inward and visits it at most once during that import. Never rescan imported managed data for host changes.
-- Cascada does not expect unusually large or deep graphs. Keep recursive walks and Number arithmetic; do not introduce explicit stacks or BigInt.
-
-Cycle cuts are a bounded exception because they stop counter propagation. When counters cannot answer a query, an operation may traverse the counter-selected cut region; all such walks within that operation share one visited set and visit each identity at most once. A separate pass may build a missing index.
+- Bound graph work and allocation to explicit inputs or paths, produced output, captured Promise frontier, and maintained dependencies. Do not process unrelated data.
+- Build an index when first needed and maintain it incrementally. Never rescan indexed data to rediscover a maintained fact.
+- Import visits a managed identity only when it first crosses inward and at most once during that import. Never rescan imported data for host changes.
+- Occurrence-sensitive work may report several placements of one inspected identity but must still bound cycles and unrelated traversal.
+- A managed call deliberately consumes its complete receiver graph. Bound its preparation, isolation, and finalization walks to that receiver and its explicit inputs.
+- Cascada does not expect unusually large or deep graphs. Keep recursive walks and Number arithmetic; do not add explicit stacks or BigInt.
 
 ## Verification
 
-- Prefer integration tests through public operations, covering observable sequential behavior and owner isolation across meaningful synchronous and Promise interleavings. Cover external context ordering across ancestor, descendant, and sibling paths, overlapping observations, function borrows, and both Promise fulfillment and rejection.
-- Derive failure tests from boundary contracts, not existing catches. List every JavaScript action that can invoke user code, group call sites by where failure must return or publish an Error, and cover each distinct preparation and commit path through public operations.
-- Use focused unit tests only when integration tests cannot precisely verify a load-bearing invariant. Never pin an interchangeable representation; that turns accidental structure into a contract and obstructs simplification.
+- Prefer integration tests through public operations across meaningful synchronous and Promise interleavings.
+- Cover sequential equivalence and owner isolation; lease and gate lifetimes; overlapping observations and mutation barriers; external ancestor, descendant, and sibling guards; mixed-mode nested argument borrows; and Promise fulfillment and rejection.
+- Verify that ready and Promise-backed boundary results have identical admission outcomes, including admission Errors.
+- Verify that importing an already admitted result skips graph traversal, including unexported data returned by another Cascada execution.
+- Verify that external-property traversal poisons the external container when it encounters admitted managed data, leaves both identities intact, and never inspects unrelated external properties.
+- Verify unused, one-static-context-path, dynamic-path, outside-context, different-path, different-context-Chain, and mixed external use. Only the single compiler-static context path may mutate host code.
+- Derive failure tests from boundary contracts, not existing catches. Cover each JavaScript action that can invoke user code and every distinct preparation and commit path.
+- Use focused unit tests only for invariants that integration tests cannot observe. Never pin an interchangeable representation.
 
 ## Maintaining This Document
 
-- Keep only cross-cutting contracts, load-bearing invariants, and stable mechanisms needed to understand multiple parts of the source. Put operation-specific mechanics in source comments and tests.
-- Use source terminology and the most concrete rule that explains all affected code. Generalize only when that makes both the rule and implementation easier to understand; state a cross-cutting exception directly when clearer.
-- Describe the accepted contract and end-state architecture, not migration phases, audit history, or rejected alternatives; plans hold those.
-- Compare every revision with the previous version. Remove superseded or contradictory text, verify that no constraint was lost unintentionally, and keep the result concise.
+- Keep only cross-cutting contracts, load-bearing invariants, and stable mechanisms used by multiple source areas. Put operation mechanics in source comments and tests.
+- Use source terminology and the most concrete rule that explains all affected code. Generalize only when it simplifies both rule and implementation.
+- Describe accepted end-state behavior, not migration phases, audit history, or rejected alternatives; plans hold those.
+- Compare every revision with the previous version. Remove superseded or contradictory text, verify that no constraint was lost, and keep the result concise.

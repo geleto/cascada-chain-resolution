@@ -4,13 +4,15 @@
 
 Registered classes are ordinary JavaScript classes that know nothing about Cascada. Keep registered-class-specific handling at their invocation boundary and reuse the common invocation lifecycle everywhere else.
 
-[`managed-and-external-state.md`](managed-and-external-state.md) generalizes this boundary to managed class instances and managed record methods.
+The caller's observation-or-mutation mode is a trusted assertion about the selected method. An observation method must not mutate its receiver; any method that may do so must be invoked in mutation mode.
+
+[`managed-and-external-state.md`](managed-and-external-state.md) generalizes this boundary to managed class instances and managed record methods. That later architecture retains the receiver-isolation rules below but replaces registered argument handling with export and independent result copying with import and shared ownership.
 
 ## Prerequisite: common invocation
 
 Before adding registered-class invocation, consolidate record, Array, String, registered-class, and opaque calls into one lifecycle. It owns method selection, input readiness and protection, invocation, ordered Error handling, mutation publication, result admission, and cleanup. The lifecycle also orders selection and failures. Each receiver category supplies its method-selection rules and rejects an unsupported mode with a validation Error. Replace `run`'s Array-specific mutation Boolean with a category-neutral observation-or-mutation request interpreted after receiver classification. Route every supported mutation through `transformProperty` and remove superseded paths.
 
-Each invocation prepares only the inputs its category consumes. Before returning pending, lease every source record, Array, and registered instance retained by a continuation, adding leases as Promise resolution reveals identities. Release each lease after the last access. Exported host inputs release their source leases when export finishes; a managed direct Promise retains the prepared sources its method may still access. Primitives need no lease; opaque identities use common ordering. Host calls consume every explicit argument, while controlled Array methods keep their per-method input selection.
+Each invocation prepares only the inputs its category consumes. Before returning pending, lease every source record, Array, and registered instance retained by a continuation, adding leases as Promise resolution reveals identities. Release each lease after the last access. Exported host inputs release their source leases when export finishes; a managed direct Promise retains the prepared sources its method may still access. Primitives need no lease. External identities remain exact and require the identity phases and source-use validation supplied by the call boundary. Host calls consume every explicit argument, while controlled Array methods keep their per-method input selection.
 
 After registered-class method selection succeeds, the call consumes its complete receiver graph. A pending observation holds its receiver-source leases through result copying and admission; mutation preparation holds the same sources until receiver isolation begins. An Array observation leases its receiver only when a pending continuation will reread it. A String receiver is a primitive.
 
@@ -38,7 +40,7 @@ Cascada may copy any record, Array, or registered instance reached through an ar
 
 ## Call preparation
 
-Prepare every explicit argument and the complete receiver graph in one operation-local state, preserving aliases and cycles across all materialized inputs. Recursively capture and resolve every Promise through existing property-version continuations, including Promises revealed by resolution. Invoke only after preparation succeeds, reusing common protection and opaque ordering.
+Prepare every explicit argument and the complete receiver graph in one operation-local state, preserving aliases and cycles across all materialized inputs. Recursively capture and resolve every Promise through existing property-version continuations, including Promises revealed by resolution. Invoke only after preparation succeeds, reusing common protection and any selected external identity phases.
 
 For a mutation, lease every traversable identity reachable through any argument, including ready ones, through final receiver processing. Acquire these leases during the existing preparation walk. They protect pending inputs and are the only marker finalization needs: mark each retained actively leased identity shared before releasing the leases, using the same ownership rule as ordinary assignment. Do not collect argument identities separately or copy a value merely because it was an argument.
 
@@ -92,7 +94,7 @@ When a mutation directly returns its receiver, return the published receiver and
 
 Run common origin-aware result import on every synchronous result before passing each non-`this` traversable result through the complete-graph copier with a separate map. The registered-class result therefore shares no record, Array, or registered instance with the receiver or arguments. A newly retained traversable argument remains exact but shared in the receiver; returning that value or a receiver descendant produces an independent result graph. Preserve nested Promise placements without waiting. Only directly returning the mutation receiver itself avoids result copying. Copying is unconditional because selective reuse would require a separate result-provenance and ownership path.
 
-A direct Promise keeps the call active and returns an operation Promise that applies normal result import and copying to fulfillment while preserving rejection. An observation leases every traversable receiver and argument identity until settlement while later mutations proceed through COW. A mutation retains its argument leases and keeps its isolated receiver private behind the ordinary transition gate; its receiver-source leases have already ended at isolation. On fulfillment, validate and publish the receiver, returning the published receiver when the fulfillment is the working receiver. A Promise nested in a synchronous result is instead imported and copied as ordinary result data without extending the call.
+A direct Promise keeps the call active and returns an operation Promise that applies normal result import and copying to fulfillment while preserving rejection. An observation leases every traversable receiver and argument identity until settlement, allowing mutation through another owner to proceed through COW. A mutation retains its argument leases and keeps its isolated receiver private behind the ordinary transition gate; its receiver-source leases have already ended at isolation. On fulfillment, validate and publish the receiver, returning the published receiver when the fulfillment is the working receiver. A Promise nested in a synchronous result is instead imported and copied as ordinary result data without extending the call.
 
 ### Failures
 
@@ -100,4 +102,4 @@ Reuse common failure handling. Combine prepared input Errors once, preserving ev
 
 ## Scope
 
-Do not persist mutation or identity history or add defensive argument snapshots, registered-class-specific ownership state, or registered-class refcount rules. Reuse ordinary COW, readiness and protection, refcounting, Promise mirrors, import, opaque ordering, result admission, and mutation publication. After the prerequisite, registered-class-specific code is limited to common dispatch into one module for receiver and result preparation, copying, and validation.
+Do not persist registered-class mutation or identity history or add defensive argument snapshots, registered-class-specific ownership state, or registered-class refcount rules. Reuse ordinary COW, readiness and protection, refcounting, Promise mirrors, import, external identity phases, result admission, and mutation publication. After the prerequisite, registered-class-specific code is limited to common dispatch into one module for receiver and result preparation, copying, and validation.

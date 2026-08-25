@@ -1,9 +1,6 @@
 # Runtime contract
 
-This document defines the observable contract of the Cascada chain-resolution
-kernel. Implementation details live in
-[`import-preparation.md`](import-preparation.md) and
-[`counters-implementation.md`](counters-implementation.md).
+This document defines the observable contract of the Cascada chain-resolution kernel. Implementation details live in [`import-preparation.md`](import-preparation.md), [`counters-implementation.md`](counters-implementation.md), and [`work-bounds.md`](work-bounds.md).
 
 ## Values
 
