@@ -20,14 +20,26 @@ function metaOf(value) {
     return META_MAP.get(value)
 }
 
-function getOrCreateMeta(value, type = undefined, prototype = undefined) {
+function getOrCreateMeta(
+    value,
+    type = undefined,
+    admittedPrototype = undefined,
+) {
     let meta = META_MAP.get(value)
     if (!meta) {
         meta = type === undefined
             ? inspectMetaFacts(value)
-            : prototype === undefined
+            : admittedPrototype === undefined
                 ? { type }
-                : { type, prototype }
+                : { type, admittedPrototype }
+        if (
+            (meta.type === TYPE_RECORD || meta.type === TYPE_MANAGED_CLASS) &&
+            meta.admittedPrototype === undefined
+        ) {
+            errorUtils.reportFatalError(
+                new TypeError("Managed container admission requires a prototype"),
+            )
+        }
         META_MAP.set(value, meta)
         // Admission consumes an identity-level classification override.
         IDENTITY_DECLARATIONS.delete(value)
@@ -57,16 +69,16 @@ function classifyTypeFacts(value) {
     if (declaration === DECLARATION_EXTERNAL) return { type: TYPE_EXTERNAL }
     if (Array.isArray(value)) return { type: TYPE_ARRAY }
 
-    const prototype = Object.getPrototypeOf(value)
+    const admittedPrototype = Object.getPrototypeOf(value)
     if (
-        prototype === null ||
-        isPlainObjectPrototypeUnchecked(prototype)
-    ) return { type: TYPE_RECORD, prototype }
+        admittedPrototype === null ||
+        isPlainObjectPrototypeUnchecked(admittedPrototype)
+    ) return { type: TYPE_RECORD, admittedPrototype }
 
     return declaration === DECLARATION_MANAGED ||
-        MANAGED_PROTOTYPES.has(prototype)
-        ? { type: TYPE_MANAGED_CLASS, prototype }
-        : { type: TYPE_EXTERNAL, prototype }
+        MANAGED_PROTOTYPES.has(admittedPrototype)
+        ? { type: TYPE_MANAGED_CLASS, admittedPrototype }
+        : { type: TYPE_EXTERNAL, admittedPrototype }
 }
 
 function isPlainObjectPrototype(prototype) {
@@ -152,9 +164,11 @@ function hasReadLease(value) {
 }
 
 function incrementReadLease(value) {
-    if (!isObjectLike(value)) return
+    if (!isObjectLike(value)) return false
     const meta = requireMeta(value)
+    if (!isTraversableType(meta.type)) return false
     meta.readLeaseCount = (meta.readLeaseCount ?? 0) + 1
+    return true
 }
 
 function decrementReadLease(value) {

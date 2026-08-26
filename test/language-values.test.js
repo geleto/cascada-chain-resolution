@@ -353,8 +353,7 @@ describe("value admission", () => {
         expect(metadata.metaOf(value)).to.be(undefined)
         expect(lookupPath(chain, ["value"])).to.be(value)
         importValue(value, "external import")
-        metadata.incrementReadLease(value)
-        metadata.decrementReadLease(value)
+        expect(metadata.incrementReadLease(value)).to.be(false)
 
         expect(ownKeyReads).to.be(0)
         expect(metadata.metaOf(value).shared).to.be(undefined)

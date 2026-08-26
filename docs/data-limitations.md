@@ -137,7 +137,7 @@ One external identity that Cascada may mutate must be used through one compiler-
 
 ### Repair
 
-External mutation failure poisons ordering metadata rather than replacing the external value. Cascada's `!!` syntax lowers to one of two runtime operations:
+External mutation failure poisons its selected ordering scope rather than replacing the external value. An invalid mutation with no authorized context scope returns an Error but creates no repairable path state. Cascada's `!!` syntax lowers to one of two runtime operations:
 
 - `apis.db!!` issues an exclusive repair-only operation. It clears poison for the selected external scope, performs no host access, has logical result `undefined`, and is harmless when the scope is already clear.
 - `apis.db!!.close()` issues one exclusive repair-and-mutate operation. It bypasses old poison and calls `close()`; success leaves the scope clear, while failure stores the new Error as poison.
@@ -151,10 +151,10 @@ A ready repair produces `undefined` directly; one waiting for earlier external w
 Host data entering Cascada's language graph is imported. Data leaving the graph for host JavaScript is exported. A synchronous scalar callback result used only to control its operation is validated by that callback's contract instead of entering the graph.
 
 - Import is used for host roots, supported host-call and callback results that enter the graph, external-property reads, and later Promise fulfillment from those boundaries.
-- Export is used for native-call arguments, controlled callback inputs, external-property writes, and public script results.
+- Export is used for native-call arguments, controlled callback inputs, external-property writes, and script results.
 - Exported managed records, Arrays, and class instances are independent host data. Class copies preserve their admitted prototypes without running constructors. Host code may mutate or retain the copies without changing their Cascada sources.
 - Functions and external identities cross exactly. Host code must treat them as read-only unless the exact external identity is the separately authorized mutation receiver.
-- Host-input export preserves nested Errors, but a consumed top-level Error prevents the host call or property write.
+- Export consumes Errors at any depth. If any argument or assigned value contains an Error, host code is not called and no Error crosses the boundary.
 - Host code may retain exported copies. It must not retain access to an unexported managed receiver or source.
 - Host methods, accessors, callbacks, and reflection hooks must not issue Cascada operations while active.
 - A direct result Promise may keep using its receiver and exported inputs until it settles. A nested result Promise does not extend that permission.

@@ -54,7 +54,7 @@ function createEmptyContainerCopy(source) {
         type === languageValues.TYPE_RECORD ||
         type === languageValues.TYPE_MANAGED_CLASS
     ) {
-        destination = Object.create(sourceMeta.prototype)
+        destination = Object.create(sourceMeta.admittedPrototype)
     } else {
         errorUtils.reportFatalError(
             new TypeError("Cannot copy a non-container value"),
@@ -63,7 +63,7 @@ function createEmptyContainerCopy(source) {
     languageValues.admitReadyValue(
         destination,
         type,
-        sourceMeta.prototype,
+        sourceMeta.admittedPrototype,
     )
     return destination
 }

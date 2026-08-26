@@ -94,4 +94,4 @@ and acyclicity of the projected parent graph.
 - `src/property-versions.js` publishes property, cut, and counter changes
   atomically.
 - `src/observations.js` follows counter frontiers.
-- `src/raw-walk.js` traverses the unprojected graph.
+- `src/export.js` traverses the unprojected graph for outbound copying.

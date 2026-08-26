@@ -95,10 +95,14 @@ function admitValue(value) {
 function admitReadyValue(
     value,
     knownType = undefined,
-    knownPrototype = undefined,
+    knownAdmittedPrototype = undefined,
 ) {
     if (metadata.isObjectLike(value)) {
-        metadata.getOrCreateMeta(value, knownType, knownPrototype)
+        metadata.getOrCreateMeta(
+            value,
+            knownType,
+            knownAdmittedPrototype,
+        )
     }
 }
 

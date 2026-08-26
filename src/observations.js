@@ -1,10 +1,10 @@
 import * as errorUtils from "./error.js"
+import { exportValue } from "./export.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
-import * as rawWalk from "./raw-walk.js"
 import * as resolution from "./resolution.js"
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
@@ -27,49 +27,8 @@ function readPath(chain, path) {
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path) {
     return errorUtils.runFatal(() => {
-        return walkObservationPath(chain, path, exportBranch)
+        return walkObservationPath(chain, path, exportValue)
     })
-}
-
-// Native argument export preserves nested Errors. A top-level Error remains
-// available for the caller's shallow argument poisoning.
-function exportArgument(value, retainSource = undefined) {
-    return resolution.resolveInitialValueOrPoison(value, resolved => {
-        return languageValues.isError(resolved)
-            ? resolved
-            : exportTrackedValue(resolved, true, retainSource)
-    })
-}
-
-function exportBranch(value) {
-    return exportTrackedValue(value, false)
-}
-
-function exportTrackedValue(value, preserveErrors, retainSource = undefined) {
-    if (languageValues.isError(value)) {
-        return preserveErrors ? value : combineExportErrors([value])
-    }
-    if (!languageValues.isTraversable(value)) return value
-
-    let output
-    const state = rawWalk.createRawWalkState(() => {
-        output = undefined
-    }, preserveErrors, retainSource)
-    const readiness = rawWalk.walkRawBranch(value, state)
-    if (state.copies) output = state.copies.get(value)
-    const finish = () => !preserveErrors && state.errors.size > 0
-        ? combineExportErrors(state.errors)
-        : output
-    return readiness
-        ? resolution.continueInternalPromiseOrFatal(readiness, finish)
-        : finish()
-}
-
-function combineExportErrors(errors) {
-    return errorUtils.combineErrors(
-        errors,
-        "export: branch contains errors",
-    )
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
@@ -258,7 +217,6 @@ function walkObservationPath(chain, path, onResolved) {
 }
 
 export {
-    exportArgument,
     exportPath,
     getErrors,
     hasError,

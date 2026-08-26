@@ -132,7 +132,9 @@ describe("state declarations", () => {
         expect(metadata.metaOf(value).type).to.be(
             languageValues.TYPE_MANAGED_CLASS,
         )
-        expect(metadata.metaOf(value).prototype).to.be(Replacement.prototype)
+        expect(metadata.metaOf(value).admittedPrototype).to.be(
+            Replacement.prototype,
+        )
     })
 
     it("makes import honor declarations and stop at external state", () => {

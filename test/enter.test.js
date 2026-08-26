@@ -629,6 +629,20 @@ describe("enter", () => {
         expect(metaOf(target).readLeaseCount).to.be(undefined)
     })
 
+    it("does not lease Function or external read-only targets", () => {
+        class External {}
+        const values = [() => {}, new External()]
+
+        for (const value of values) {
+            expect(enter(new Chain(value), [], false, entered => {
+                expect(readPath(entered, [])).to.be(value)
+                expect(metaOf(value).readLeaseCount).to.be(undefined)
+                return "done"
+            })).to.be("done")
+            expect(metaOf(value).readLeaseCount).to.be(undefined)
+        }
+    })
+
     it("preserves imported cycles through Promise-target transfer", async () => {
         const pending = deferred()
         const external = { target: pending.promise }

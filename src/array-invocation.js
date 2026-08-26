@@ -1,11 +1,11 @@
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
+import { exportValue } from "./export.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import { ARRAY_METHODS, RECEIVER_RESULT } from "./array-methods.js"
-import { exportArgument } from "./observations.js"
 import * as resolution from "./resolution.js"
 
 function isArrayMutator(method) {
@@ -127,7 +127,7 @@ function prepareArrayMethodArguments(method, args, retainSource) {
             if (mask[index]) {
                 results.push(
                     resolution.continuePreparedValueUnlessPoison(
-                        exportArgument(args[index], retainSource),
+                        exportValue(args[index]),
                         value => {
                             prepared[index] = value
                         },

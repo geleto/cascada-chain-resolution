@@ -19,7 +19,11 @@ function prepareImportedData(root, importBoundary, installPromise) {
     }
 
     for (const [value, facts] of admitted) {
-        metadata.getOrCreateMeta(value, facts.type, facts.prototype)
+        metadata.getOrCreateMeta(
+            value,
+            facts.type,
+            facts.admittedPrototype,
+        )
         metadata.markImported(value, importBoundary)
     }
     for (const value of retained) metadata.markShared(value)

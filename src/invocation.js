@@ -1,8 +1,8 @@
 import * as errorUtils from "./error.js"
+import { exportManyValues } from "./export.js"
 import * as imports from "./import.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import { exportArgument } from "./observations.js"
 import * as resolution from "./resolution.js"
 
 function invokeDataFunction(callable, thisValue, args) {
@@ -26,13 +26,6 @@ function findPropertyDescriptor(object, key) {
     return undefined
 }
 
-function prepareHostArguments(args, retainSource) {
-    return resolution.continuePreparedValuesUnlessPoison(
-        args.map(value => exportArgument(value, retainSource)),
-        values => values,
-    )
-}
-
 function getHostCallDescription(
     methodTarget,
     method,
@@ -52,76 +45,60 @@ function getHostCallDescription(
         admitResult: value => imports.import(value, "run method result"),
         invoke: args => invokeDataFunction(callable, thisValue, args),
         leaseReceiver,
-        prepareInputs: prepareHostArguments,
+        prepareInputs: exportManyValues,
     }
 }
 
 // Selection supplies category behavior; this owns the shared call transition
-// and its input and receiver leases.
+// and its argument and receiver leases.
 function invokeCall(method, mutation, args, select, reachReceiver) {
-    const argumentLeaseValues = []
-    const receiverLeaseValues = []
-    const releaseArgumentLeases = () => releaseLeases(argumentLeaseValues)
-    const releaseReceiverLeases = () => releaseLeases(receiverLeaseValues)
+    const selectionArgumentLeases = createLeaseLedger()
+    const callArgumentLeases = createLeaseLedger()
+    const receiverLeases = createLeaseLedger()
     let receiverReached = false
     let result
     try {
         result = reachReceiver(invokeReceiver)
     } catch (error) {
-        releaseArgumentLeases()
-        releaseReceiverLeases()
+        closeLeases()
         throw error
     }
 
     if (!languageValues.isPromise(result)) {
-        releaseArgumentLeases()
-        releaseReceiverLeases()
+        closeLeases()
         return result
     }
     if (!receiverReached) {
-        for (const value of args) retainInput(value)
+        for (const value of args) selectionArgumentLeases.retain(value)
     }
-    if (argumentLeaseValues.length > 0) {
-        resolution.observeResultPromise(
-            result,
-            releaseArgumentLeases,
-            releaseArgumentLeases,
-        )
-    }
+    resolution.observeResultPromise(result, closeLeases)
     return result
 
     function invokeReceiver(receiver, present, context) {
         receiverReached = true
-        const selected = errorUtils.catchUserCodeFailure(
-            () => select(receiver, method, mutation, present, context),
-            failure => failure,
-        )
-        const selectionError = languageValues.isError(selected)
-            ? selected
-            : undefined
-        // Every category receives input retention. Categories that prepare a
-        // receiver graph may also use its retention and early-release hooks.
-        const preparedInputs = selectionError
-            ? resolution.continuePreparedValuesUnlessPoison(
-                [
-                    selectionError,
-                    ...args.map(value => exportArgument(value, retainInput)),
-                ],
-                () => undefined,
+        let selected
+        let preparedInputs
+        try {
+            selected = errorUtils.catchUserCodeFailure(
+                () => select(receiver, method, mutation, present, context),
+                failure => failure,
             )
-            : selected.prepareInputs(
-                args,
-                retainInput,
-                retainReceiver,
-                releaseReceiverLeases,
-            )
-        if (!selectionError) retainReceiver(selected.leaseReceiver)
-        if (languageValues.isPromise(preparedInputs)) {
-            resolution.observeResultPromise(
-                preparedInputs,
-                () => {},
-                releaseReceiverLeases,
-            )
+            const selectionError = languageValues.isError(selected)
+                ? selected
+                : undefined
+            preparedInputs = selectionError
+                ? exportManyValues([selectionError, ...args])
+                : selected.prepareInputs(
+                    args,
+                    callArgumentLeases.retain,
+                    receiverLeases.retain,
+                    receiverLeases.release,
+                )
+            if (!selectionError) {
+                receiverLeases.retain(selected.leaseReceiver)
+            }
+        } finally {
+            selectionArgumentLeases.release()
         }
 
         return resolution.continueInternalPromiseOrFatal(
@@ -141,42 +118,43 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
 
                 const admittedResult = selected.admitResult(callResult)
                 if (languageValues.isPromise(admittedResult)) {
-                    resolution.observeResultPromise(
-                        admittedResult,
-                        releaseReceiverLeases,
-                        releaseReceiverLeases,
-                    )
                     pendingHostResult = true
                 }
                 return admittedResult
             } finally {
-                releaseArgumentLeases()
-                if (!pendingHostResult) releaseReceiverLeases()
+                callArgumentLeases.release()
+                if (!pendingHostResult) receiverLeases.release()
             }
         }
     }
 
-    function retainInput(value) {
-        return retain(value, argumentLeaseValues, languageValues.isTraversable)
+    function closeLeases() {
+        selectionArgumentLeases.release()
+        callArgumentLeases.release()
+        receiverLeases.release()
     }
+}
 
-    function retainReceiver(value) {
-        return retain(value, receiverLeaseValues, metadata.isObjectLike)
-    }
+function createLeaseLedger() {
+    const values = new Set()
+    let closed = false
+    return { retain, release }
 
-    function retain(value, leases, shouldLease) {
+    function retain(value) {
+        if (closed || values.has(value)) return value
         languageValues.admitValue(value)
-        if (shouldLease(value)) {
+        if (
+            !languageValues.isPromise(value) &&
             metadata.incrementReadLease(value)
-            leases.push(value)
-        }
+        ) values.add(value)
         return value
     }
 
-    function releaseLeases(leases) {
-        while (leases.length > 0) {
-            metadata.decrementReadLease(leases.pop())
-        }
+    function release() {
+        if (closed) return
+        closed = true
+        for (const value of values) metadata.decrementReadLease(value)
+        values.clear()
     }
 }
 

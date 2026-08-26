@@ -56,7 +56,7 @@ function toPrimitiveValue(value, ancestry) {
             ) return resolved
             const type = languageValues.typeOf(resolved)
             if (type === languageValues.TYPE_RECORD) {
-                return metadata.requireMeta(resolved).prototype === null
+                return metadata.requireMeta(resolved).admittedPrototype === null
                     ? conversionError()
                     : "[object Object]"
             }

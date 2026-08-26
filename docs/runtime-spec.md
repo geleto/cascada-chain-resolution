@@ -120,8 +120,9 @@ All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
 External classes and native internal-slot objects are identity leaves. The graph
 does not traverse, index, or copy their state. A path cannot enter an external
-value, and `run` cannot yet use one as a receiver. Current managed-class export
-remains plain data and does not preserve its prototype or methods.
+value, and `run` cannot yet use one as a receiver. Managed-class export creates
+an independent metadata-free object with the admitted prototype without
+invoking its constructor.
 
 Imported attribution remains attached to retained imported children. Newly
 copied path nodes are language-owned. If the copied source was already
@@ -326,9 +327,9 @@ Returns host-ready data for the branch captured at its issue position.
 - Primitive and missing terminals return directly.
 - One Error returns unchanged.
 - A successful result is always a metadata-free deep copy preserving arrays,
-  holes, own-key order, aliases, cycles, enumerable `__proto__`, and captured
-  Promise-property values.
-- A traversable branch starts one raw identity-aware copy-or-collect walk
+  holes, own-key order, aliases, cycles, admitted prototypes, enumerable
+  `__proto__`, and captured Promise-property values.
+- A traversable branch starts one identity-aware boundary copy-or-collect walk
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
@@ -415,10 +416,11 @@ mirrors, and bookkeeping. Standard scalar conversion is performed against
 logical Cascada values before native invocation; locale methods likewise
 construct only the small native input their intrinsic inspects. An ordinary
 native observation receives its path-resolved receiver directly. `run` exports
-each native-bound argument after dispatch; controlled logical payloads retain
-their identity. Pending preparation leases each exact traversable source that
-its continuations retain, including sources revealed by required Promise
-resolution, and releases those leases after their last access. Pending
+native-bound arguments as one batch after dispatch; controlled logical payloads
+retain their identity. Export captures available state synchronously and uses
+exact Promise mirrors without source leases. Other pending preparation leases
+each traversable source its continuations must later read and releases those
+leases after their last access. Pending
 controlled argument preparation leases its captured receiver only until
 invocation. A controlled method owns any lease required by later receiver
 reads, while an independent result Promise adds none. An

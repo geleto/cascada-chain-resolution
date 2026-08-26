@@ -16,16 +16,13 @@ import {
     readPath,
     exportValue,
     importValue,
+    managedStateClass,
     deferred,
     flushMicrotasks,
 } from "./support.js"
 import * as packageRuntime from "cascada-chain-resolution"
 import { export as packageExport } from "cascada-chain-resolution"
 import { hasCycleCut } from "../src/refcounts.js"
-import {
-    createRawWalkState,
-    walkRawBranch,
-} from "../src/raw-walk.js"
 
 function expectExportErrors(outcome, expected) {
     expect(outcome instanceof Error).to.be(true)
@@ -74,81 +71,6 @@ describe("export", () => {
         expectExportErrors(outcome, [repeated, distinct])
         expect(outcome.then).to.be(undefined)
         expect(exportValue(new Chain([1, 2]), [])).to.eql([1, 2])
-    })
-
-    it("switches the raw export walker to collection-only mode", () => {
-        const error = new Error("stop copying")
-        const later = { value: 1 }
-        const root = { error, later }
-        new Chain(root)
-        const state = createRawWalkState()
-
-        const readiness = walkRawBranch(root, state)
-
-        expect(readiness).to.be(undefined)
-        expect(state.copies).to.be(undefined)
-        expect(state.visited.has(root)).to.be(true)
-        expect(state.visited.has(later)).to.be(true)
-        expect([...state.errors]).to.eql([error])
-    })
-
-    it("keeps later Promise continuations in collection-only mode", async () => {
-        const first = deferred()
-        const second = deferred()
-        const root = {
-            first: first.promise,
-            second: second.promise,
-        }
-        new Chain(root)
-        let output
-        const state = createRawWalkState(() => {
-            output = undefined
-        })
-        const readiness = walkRawBranch(root, state)
-        output = state.copies.get(root)
-        const abandonedCopy = output
-        const error = new Error("stop async copying")
-
-        first.resolve(error)
-        await flushMicrotasks()
-
-        expect(state.copies).to.be(undefined)
-        expect(output).to.be(undefined)
-
-        const later = { value: 1 }
-        second.resolve(later)
-        await readiness
-
-        expect(state.visited.has(later)).to.be(true)
-        expect([...state.errors]).to.eql([error])
-        expect(Object.keys(abandonedCopy)).to.eql(["first", "second"])
-        expect(abandonedCopy.first).to.be(undefined)
-        expect(abandonedCopy.second).to.be(undefined)
-    })
-
-    it("abandons earlier output when the last key is an Error", async () => {
-        const pending = deferred()
-        const error = new Error("last key")
-        const root = {
-            copied: { value: 1 },
-            pending: pending.promise,
-            error,
-        }
-        new Chain(root)
-        let output
-        const state = createRawWalkState(() => {
-            output = undefined
-        })
-        const readiness = walkRawBranch(root, state)
-
-        expect(state.copies).to.be(undefined)
-        expect(output).to.be(undefined)
-
-        pending.resolve({ late: true })
-        await readiness
-
-        expect(state.copies).to.be(undefined)
-        expect([...state.errors]).to.eql([error])
     })
 
     it("reuses one output identity across synchronous and promised aliases", async () => {
@@ -376,6 +298,102 @@ describe("export", () => {
         verifyRefCounts(root, branch)
     })
 
+    it("keeps captured waits after a synchronous reflection Error", async () => {
+        const pending = deferred()
+        const reflection = new Error("reflection failed")
+        const hidden = new Error("revealed later")
+        const broken = new Proxy({}, {
+            ownKeys() {
+                throw reflection
+            },
+        })
+
+        const result = exportValue(new Chain({
+            pending: pending.promise,
+            broken,
+        }), [])
+
+        expect(result instanceof Promise).to.be(true)
+        pending.resolve({ hidden })
+        expectExportErrors(await result, [reflection, hidden])
+    })
+
+    it("keeps nested waits after a delayed reflection Error", async () => {
+        const outer = deferred()
+        const inner = deferred()
+        const reflection = new Error("delayed reflection failed")
+        const hidden = new Error("nested later")
+        const broken = new Proxy({}, {
+            ownKeys() {
+                throw reflection
+            },
+        })
+        const result = exportValue(
+            new Chain({ branch: outer.promise }),
+            [],
+        )
+
+        outer.resolve({ inner: inner.promise, broken })
+        await flushMicrotasks()
+        inner.resolve({ hidden })
+
+        expectExportErrors(await result, [reflection, hidden])
+    })
+
+    it("continues the Error scan when output allocation fails", () => {
+        const reflection = new Error("Array length failed")
+        const nested = new Error("inside Array")
+        let lengthReads = 0
+        const array = new Proxy([nested], {
+            get(target, key, receiver) {
+                if (key === "length" && lengthReads++ === 0) {
+                    throw reflection
+                }
+                return Reflect.get(target, key, receiver)
+            },
+        })
+
+        expectExportErrors(
+            exportValue(new Chain({ array }), []),
+            [reflection, nested],
+        )
+    })
+
+    it("continues the Error scan after a property-read failure", () => {
+        const reflection = new Error("property read failed")
+        const nested = new Error("later property")
+        let reads = 0
+        const branch = new Proxy({ broken: 1, nested }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "broken" && reads++ === 1) throw reflection
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+
+        expectExportErrors(
+            exportValue(new Chain({ branch }), []),
+            [reflection, nested],
+        )
+    })
+
+    it("continues the Error scan after Promise capture fails", () => {
+        const pending = deferred()
+        const reflection = new Error("Promise capture failed")
+        const nested = new Error("after Promise")
+        let reads = 0
+        const branch = new Proxy({ pending: pending.promise, nested }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "pending" && reads++ === 2) throw reflection
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+
+        expectExportErrors(
+            exportValue(new Chain({ branch }), []),
+            [reflection, nested],
+        )
+    })
+
     it("agrees with Error queries on stable sync and promised data", async () => {
         const pending = deferred()
         const known = new Error("known")
@@ -528,6 +546,32 @@ describe("export", () => {
         expect(child.x).to.be(1)
         expect(metaOf(copy)).to.be(undefined)
         expect(metaOf(copy.left)).to.be(undefined)
+    })
+
+    it("preserves managed class prototypes without running constructors", () => {
+        let constructions = 0
+        class Point {
+            constructor(x, y) {
+                constructions++
+                this.x = x
+                this.y = y
+            }
+
+            sum() {
+                return this.x + this.y
+            }
+        }
+        managedStateClass(Point)
+        const source = new Point(2, 3)
+        constructions = 0
+
+        const copy = exportValue(new Chain(source), [])
+
+        expect(copy).not.to.be(source)
+        expect(Object.getPrototypeOf(copy)).to.be(Point.prototype)
+        expect(copy.sum()).to.be(5)
+        expect(constructions).to.be(0)
+        expect(metaOf(copy)).to.be(undefined)
     })
 
     it("reimports native-mutated output as fresh external data", () => {

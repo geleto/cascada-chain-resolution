@@ -19,6 +19,7 @@ import {
     importValue,
     lookupPath,
     readPath,
+    reportFatalError,
     metaOf,
     managedState,
     managedStateClass,
@@ -896,7 +897,7 @@ describe("run", () => {
         verifyRefCounts(copied._state.value)
     })
 
-    it("retains Error values nested in Array and object data", async () => {
+    it("does not export Error values nested in host inputs", async () => {
         const direct = new Error("direct")
         const nested = deferred()
         const flat = run(new Chain([direct]), [], "flat", false)
@@ -921,9 +922,64 @@ describe("run", () => {
         expect(flat).to.eql([direct])
         expect(inspected instanceof Promise).to.be(true)
         nested.reject(direct)
-        expect(await inspected).to.be(true)
-        expect(received).not.to.be(argument)
-        expect(received.error).to.be(direct)
+        expect(await inspected).to.be(direct)
+        expect(received).to.be(undefined)
+    })
+
+    it("combines every Error within each failed host argument", () => {
+        const first = new Error("first")
+        const second = new Error("second")
+        const third = new Error("third")
+        let invoked = false
+        const target = {}
+        Object.defineProperty(target, "inspect", {
+            enumerable: false,
+            value() {
+                invoked = true
+            },
+        })
+
+        const result = run(
+            new Chain(target),
+            [],
+            "inspect",
+            false,
+            { first, nested: { second } },
+            { third },
+        )
+
+        expect(invoked).to.be(false)
+        expect(result.errors.length).to.be(2)
+        expect(result.errors[0].errors).to.eql([first, second])
+        expect(result.errors[1]).to.be(third)
+    })
+
+    it("keeps shared failed inputs as separate argument roots", () => {
+        const first = new Error("first")
+        const second = new Error("second")
+        const shared = { first, second }
+        let invoked = false
+        const target = {}
+        Object.defineProperty(target, "inspect", {
+            enumerable: false,
+            value() {
+                invoked = true
+            },
+        })
+
+        const result = run(
+            new Chain(target),
+            [],
+            "inspect",
+            false,
+            shared,
+            shared,
+        )
+
+        expect(invoked).to.be(false)
+        expect(result.errors.length).to.be(2)
+        expect(result.errors[0].errors).to.eql([first, second])
+        expect(result.errors[1].errors).to.eql([first, second])
     })
 
     it("poisons only arguments consumed by an Array method", async () => {
@@ -1031,7 +1087,7 @@ describe("run", () => {
         expect(delayedMutation._state.value).to.be(rejected)
     })
 
-    it("combines distinct argument Errors in argument order", async () => {
+    it("combines argument Errors without flattening compounds", async () => {
         const firstPending = deferred()
         const secondPending = deferred()
         const first = new Error("first")
@@ -1054,6 +1110,7 @@ describe("run", () => {
         const combined = await delayed
         expect(combined.errors).to.eql([first, second])
         expect(combined.errors.includes(nested)).to.be(false)
+        expect(combined.errors[1].errors).to.eql([nested])
 
         const ready = run(
             new Chain([1, 2]),
@@ -1592,7 +1649,7 @@ describe("run", () => {
         expect(await exportValue(chain, [])).to.eql([2])
     })
 
-    it("leases captured arguments while the receiver is pending", async () => {
+    it("leases each captured identity once while the receiver is pending", async () => {
         const receiver = deferred()
         const payload = { value: 1 }
         const payloadChain = new Chain(payload)
@@ -1606,6 +1663,7 @@ describe("run", () => {
             1,
             0,
             payload,
+            payload,
         )
         expect(metaOf(payload).readLeaseCount).to.be(1)
 
@@ -1616,6 +1674,7 @@ describe("run", () => {
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
         expect(chain._state.value[1]).to.be(payload)
+        expect(chain._state.value[2]).to.be(payload)
         expect(metaOf(payload).readLeaseCount).to.be(undefined)
     })
 
@@ -2204,14 +2263,48 @@ describe("run", () => {
         expect(chain._state.value.value).to.be(2)
     })
 
-    it("leases host argument sources retained by pending export", async () => {
+    it("releases selection leases after host export captures inputs", async () => {
+        const receiver = deferred()
+        const pending = deferred()
+        const argument = { value: 1, pending: pending.promise }
+        const argumentChain = new Chain(argument)
+        const methodReceiver = {}
+        Object.defineProperty(methodReceiver, "read", {
+            value(value) {
+                return value.value
+            },
+        })
+
+        const result = run(
+            new Chain(receiver.promise),
+            [],
+            "read",
+            false,
+            argument,
+        )
+        expect(metaOf(argument).readLeaseCount).to.be(1)
+
+        receiver.resolve(methodReceiver)
+        await flushMicrotasks()
+        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+
+        assignPath(argumentChain, ["value"], 2)
+        expect(argument.value).to.be(2)
+        pending.resolve("ready")
+        expect(await result).to.be(1)
+    })
+
+    it("exports aliased host arguments without leasing their source", async () => {
         const pending = deferred()
         const argument = { pending: pending.promise, value: 1 }
         const argumentChain = new Chain(argument)
         const receiver = {}
         Object.defineProperty(receiver, "read", {
             value(first, second) {
-                return first.value + second.value
+                return {
+                    aliased: first === second,
+                    sum: first.value + second.value,
+                }
             },
         })
 
@@ -2223,18 +2316,119 @@ describe("run", () => {
             argument,
             argument,
         )
-        expect(metaOf(argument).readLeaseCount).to.be(2)
+        expect(metaOf(argument).readLeaseCount).to.be(undefined)
 
         assignPath(argumentChain, ["value"], 2)
         pending.resolve("ready")
 
-        expect(await result).to.be(2)
-        expect(argument.value).to.be(1)
+        expect(await result).to.eql({ aliased: true, sum: 2 })
+        expect(argument.value).to.be(2)
         expect(argumentChain._state.value.value).to.be(2)
         expect(metaOf(argument).readLeaseCount).to.be(undefined)
     })
 
-    it("releases input leases after synchronous preparation failure", () => {
+    it("preserves topology shared across host argument roots", async () => {
+        const pending = deferred()
+        const shared = { value: 1 }
+        const first = { pending: pending.promise }
+        const second = { direct: shared, first }
+        first.second = second
+        let received
+        const receiver = {}
+        Object.defineProperty(receiver, "inspect", {
+            value(...values) {
+                received = values
+                return true
+            },
+        })
+
+        const result = run(
+            new Chain(receiver),
+            [],
+            "inspect",
+            false,
+            first,
+            second,
+        )
+        pending.resolve(shared)
+
+        expect(await result).to.be(true)
+        expect(received[0]).not.to.be(first)
+        expect(received[0].second).to.be(received[1])
+        expect(received[1].first).to.be(received[0])
+        expect(received[0].pending).to.be(received[1].direct)
+        expect(received[0].pending).not.to.be(shared)
+    })
+
+    it("keeps exported arguments independent through a host result Promise", async () => {
+        const completion = deferred()
+        const argument = { value: 1 }
+        const argumentChain = new Chain(argument)
+        let received
+        const receiver = {}
+        Object.defineProperty(receiver, "read", {
+            value(value) {
+                received = value
+                return completion.promise.then(() => value.value)
+            },
+        })
+
+        const result = run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            argument,
+        )
+
+        expect(received).not.to.be(argument)
+        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+        assignPath(argumentChain, ["value"], 2)
+        completion.resolve()
+
+        expect(await result).to.be(1)
+        expect(argument.value).to.be(2)
+        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+    })
+
+    it("preserves admitted prototypes in host arguments", () => {
+        let constructions = 0
+        class Point {
+            constructor(value) {
+                constructions++
+                this.value = value
+            }
+
+            read() {
+                return this.value
+            }
+        }
+        managedStateClass(Point)
+        const point = new Point(3)
+        constructions = 0
+        let received
+        const receiver = {}
+        Object.defineProperty(receiver, "inspect", {
+            value(value) {
+                received = value
+                return value.read()
+            },
+        })
+
+        expect(run(
+            new Chain(receiver),
+            [],
+            "inspect",
+            false,
+            point,
+        )).to.be(3)
+        expect(received).not.to.be(point)
+        expect(Object.getPrototypeOf(received)).to.be(Point.prototype)
+        expect(constructions).to.be(0)
+        expect(metaOf(received)).to.be(undefined)
+    })
+
+    it("leaves no source lease while completing Error collection", async () => {
         const pending = deferred()
         const retained = { pending: pending.promise }
         const failure = new Error("argument reflection failed")
@@ -2248,14 +2442,112 @@ describe("run", () => {
             value() {},
         })
 
-        expect(run(
+        const result = run(
             new Chain(receiver),
             [],
             "read",
             false,
             { retained, broken },
-        )).to.be(failure)
+        )
+        expect(result instanceof Promise).to.be(true)
         expect(metaOf(retained).readLeaseCount).to.be(undefined)
+
+        pending.resolve("done")
+        expect(await result).to.be(failure)
+    })
+
+    it("continues Error collection after preparation fails", async () => {
+        const pending = deferred()
+        const failure = new Error("argument reflection failed")
+        let reflected = false
+        const broken = new Proxy({}, {
+            ownKeys() {
+                throw failure
+            },
+        })
+        const receiver = {}
+        Object.defineProperty(receiver, "read", { value() {} })
+
+        const result = run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            { pending: pending.promise, broken },
+        )
+        expect(result instanceof Promise).to.be(true)
+
+        const late = new Proxy({}, {
+            ownKeys() {
+                reflected = true
+                return []
+            },
+        })
+        pending.resolve(late)
+        expect(await result).to.be(failure)
+
+        expect(reflected).to.be(true)
+        expect(metaOf(late).readLeaseCount).to.be(undefined)
+    })
+
+    it("does not admit a top-level input after fatal export closure", async () => {
+        const pending = deferred()
+        const failure = new Error("fatal argument preparation")
+        const broken = {
+            then() {
+                reportFatalError(failure)
+            },
+        }
+        const receiver = {}
+        Object.defineProperty(receiver, "read", { value() {} })
+
+        expect(thrownBy(() => run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            pending.promise,
+            broken,
+        ))).to.be(failure)
+
+        let reflected = false
+        const late = new Proxy({}, {
+            getPrototypeOf(target) {
+                reflected = true
+                return Reflect.getPrototypeOf(target)
+            },
+        })
+        pending.resolve(late)
+        await flushMicrotasks()
+
+        expect(reflected).to.be(false)
+        expect(metaOf(late)).to.be(undefined)
+    })
+
+    it("refuses late call leases after preparation fails", async () => {
+        const pending = deferred()
+        const failure = new Error("concat preparation failed")
+        const broken = {
+            then() {
+                reportFatalError(failure)
+            },
+        }
+
+        expect(thrownBy(() => run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            pending.promise,
+            broken,
+        ))).to.be(failure)
+
+        const late = { value: 1 }
+        new Chain(late)
+        pending.resolve(late)
+        await flushMicrotasks()
+
+        expect(metaOf(late).readLeaseCount).to.be(undefined)
     })
 
     it("balances nested entry and method-argument read leases", async () => {

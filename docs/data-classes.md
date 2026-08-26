@@ -40,4 +40,4 @@ Arrays, including cross-realm Arrays and subclasses, use the Array path and norm
 
 `run` prepares the complete managed-class receiver graph and every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, invoke once synchronously, validate the receiver, and publish it through the ordinary mutation transition.
 
-A mutation returning `this` returns the published receiver. Other traversable results are copied independently from the receiver and arguments. Current public export emits managed-class instances as plain data without prototypes or methods and keeps external identities exact.
+A mutation returning `this` returns the published receiver. Other traversable results are copied independently from the receiver and arguments. Public export creates independent metadata-free managed-class copies with their admitted prototypes and keeps external identities exact.

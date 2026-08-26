@@ -52,7 +52,7 @@ function continueInternalPromiseOrFatal(
 // Registering here ensures this work precedes later Cascada consumers of the
 // same thenable. The observer is internal, so consume any Fatal it has already
 // reported.
-function observeResultPromise(promise, onFulfilled, onRejected) {
+function observeResultPromise(promise, onFulfilled, onRejected = onFulfilled) {
     const observer = languageValues.continuePromise(
         promise,
         value => errorUtils.runFatal(onFulfilled, value),

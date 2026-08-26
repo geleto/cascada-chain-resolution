@@ -151,7 +151,8 @@ closes the temporary Chain, and does not publish its private state.
 Returns a host-ready snapshot of the branch captured at the operation's issue
 position. Traversable data is deep-copied without runtime metadata while
 preserving Arrays, holes, property order, aliases, and cycles. Managed class
-instances become plain records; external values retain their exact identities.
+instances preserve their admitted prototypes without running constructors;
+external values retain their exact identities.
 
 If the branch contains one `Error`, that Error is returned. If it contains
 several distinct Errors, export returns a new `Error` whose `errors` property

@@ -82,7 +82,7 @@ function managedState(value) {
 
             const facts = metadata.inspectMetaFacts(identity)
             if (facts.type === languageValues.TYPE_EXTERNAL) {
-                if (!facts.prototype) {
+                if (!facts.admittedPrototype) {
                     return root
                         ? errorUtils.validationError(
                             "managedState cannot declare this value managed " +
@@ -90,10 +90,10 @@ function managedState(value) {
                         )
                         : undefined
                 }
-                prototypes.add(facts.prototype)
+                prototypes.add(facts.admittedPrototype)
                 declarations.add(identity)
             } else if (facts.type === languageValues.TYPE_MANAGED_CLASS) {
-                prototypes.add(facts.prototype)
+                prototypes.add(facts.admittedPrototype)
                 declarations.add(identity)
             } else if (
                 facts.type !== languageValues.TYPE_RECORD &&

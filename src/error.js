@@ -85,6 +85,8 @@ function pathAccessError() {
 }
 
 function combineErrors(errors, message) {
+    // A compound Error is one supplied Error. Keep it intact so combining
+    // input outcomes preserves their grouping and context.
     const distinct = [...new Set(errors)]
     if (distinct.length < 2) return distinct[0]
 

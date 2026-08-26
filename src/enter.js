@@ -51,10 +51,10 @@ function enterReadOnly(chain, path, onEntered) {
         if (languageValues.isError(value)) return value
 
         const entered = new Chain(value, false)
-        metadata.incrementReadLease(value)
+        const leased = metadata.incrementReadLease(value)
         const close = () => {
             entered.close()
-            metadata.decrementReadLease(value)
+            if (leased) metadata.decrementReadLease(value)
         }
         return runEnteredCallback(
             onEntered,

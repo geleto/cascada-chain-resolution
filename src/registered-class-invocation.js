@@ -46,7 +46,7 @@ function selectRegisteredClassCall(
 }
 
 function findRegisteredClassMethod(receiver, method) {
-    let prototype = metadata.requireMeta(receiver).prototype
+    let prototype = metadata.requireMeta(receiver).admittedPrototype
     while (
         prototype !== null &&
         !metadata.isPlainObjectPrototype(prototype)
