@@ -164,11 +164,12 @@ If three operations reach one pending placement, the first resolver publishes `V
 
 ## Operation Work Lifetimes
 
-Shared settlement advances Promise mirrors, property versions, and required bookkeeping. Operation work exists only to finish one issued operation. A terminal result closes that operation's work without cancelling shared settlement.
+Shared settlement advances Promise mirrors, property versions, and required bookkeeping. Operation work exists only to finish one issued operation. The synchronous transition that determines the final outcome closes operation work before exposing that outcome, without cancelling shared settlement. An unfinished component is abandoned when another component closes their operation; abandonment is not a separate event or cancellation mechanism.
 
-- Close operation work after its required success, terminal Error, rejection, fatal failure, or abandonment. A direct Promise closes only after its boundary processing; independent nested result Promises are not operation work.
-- A registered continuation completes shared settlement first. If its operation is closed, it performs no further operation-specific reflection, allocation, lease or phase acquisition, invocation, or publication.
-- Components prepared concurrently by one operation share its lifetime. A terminal failure in one closes operation work in the others, while resources with earlier or later last-access points retain their own release rules.
+- An outcome is final only after its required Error handling, boundary processing, and publication. A reached data Error does not itself close work: `hasError` may turn it into a final `true`, while `getErrors` and export must finish their required Error collection. A graph-Promise rejection first becomes data Error; an internal rejection remains fatal. A direct Promise closes only after boundary completion, while an independent nested result Promise is not operation work.
+- A registered continuation completes shared settlement first, including index maintenance required to publish into an already indexed graph. Index construction or traversal requested only by the operation is operation work. If the operation is closed, none of that work continues.
+- Failure of query-only managed-graph traversal or indexing is fatal. It is not language Error data and is never collected by an Error query. A supported failure during shared property publication follows that publication boundary instead.
+- Components prepared concurrently by one operation share its lifetime. Closing abandons unfinished siblings, while resources with earlier or later last-access points retain their own release rules. Release operation-only strong state that no unfinished result can use.
 - Do not build a task-cancellation system. Keep the open/closed fact at operation scope and reuse an existing lifecycle owner where one exists.
 - Export Error collection remains open until its required scan finishes even after output copying is discarded.
 

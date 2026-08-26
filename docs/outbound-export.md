@@ -38,7 +38,7 @@ Export captures only the selected path and the Promise frontier recursively expo
 
 ## Output lifetime
 
-The output lifetime is export's application of the common operation-work lifetime. Fatal failure or abandoned preparation closes it and releases partial copies and identity maps. An already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication.
+The output lifetime is export's application of the common operation-work lifetime. Fatal failure or closure by the owning operation closes it and releases partial copies and identity maps. An already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication.
 
 The result is synchronous when its captured frontier is ready. Otherwise one operation Promise fulfills with the completed copy or language Error. Unexpected internal readiness failure remains fatal.
 

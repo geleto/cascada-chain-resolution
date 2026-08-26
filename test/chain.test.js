@@ -67,8 +67,6 @@ describe("Chain root state", () => {
             value => importValue(value, "fatal import"),
             value => lookupPath(new Chain(value), ["key"]),
             value => exportValue(new Chain(value), []),
-            value => hasError(new Chain(value), []),
-            value => getErrors(new Chain(value), []),
             value => assignPath(new Chain(value), ["key"], 1),
             value => deletePath(new Chain(value), ["key"]),
         ]

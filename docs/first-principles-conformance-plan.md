@@ -524,7 +524,7 @@ Export has an open output lifetime. Fatal failure or abandonment closes it and r
 - One export batch preserves aliases across ordered roots. Each root consumes every reached distinct Error; failed roots are combined in position order, and no Error is exported.
 - Exported managed data is independent and contains no unresolved language Promise, ArrayView, mirror, or metadata. Managed-class copies preserve their admitted prototypes without invoking constructors. Functions and external identities remain exact; export records no use or authority.
 - Export acquires no managed source lease, including while captured Promise properties remain pending. A returned host Promise therefore extends none.
-- Fatal or abandoned export closes its output lifetime. Later registered continuations perform no output allocation, reflection, or publication; required Error collection still completes.
+- A reached language Error discards export output while its required Error scan completes. Fatal failure or closure by the owning operation closes the output lifetime, and later registered continuations perform no output allocation, reflection, or publication.
 - Results from every existing host call use Phase 6 import.
 
 #### Lease lifetime
@@ -545,7 +545,7 @@ Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md)
 
 ### Problem
 
-Promise settlement may outlive the operation that registered it. Shared mirror, property-version, and refcount settlement must continue, but an abandoned continuation must not perform more operation-specific reflection, allocation, protection, invocation, or publication. Export already enforces this distinction; Error queries and later preparation rewrites need the same rule.
+Promise settlement may outlive the operation that registered it. Shared mirror, property-version, and refcount settlement must continue, but an abandoned continuation must not perform more operation-specific reflection, allocation, protection, invocation, or publication. Export already enforces this distinction by closing at every asynchronous layer before a fatal rejection reaches an aggregate. Error queries and later preparation rewrites need the same rule.
 
 ### Design
 
@@ -554,22 +554,29 @@ Use the **Operation Work Lifetimes** contract in [`AGENTS.md`](../AGENTS.md). Un
 ### 1. Close operation work once
 
 - Keep one open/closed fact at the natural operation scope.
-- Close it after required success, terminal language Error, rejection, fatal failure, or abandonment. A direct Promise closes after boundary completion.
-- A continuation first completes shared Promise-mirror, property-version, and required refcount settlement. It then stops if the operation is closed.
+- Close it synchronously in the transition that determines the final operation outcome, before returning, resolving, or propagating that outcome. An unfinished sibling is then abandoned; add no separate abandonment signal. A direct Promise becomes final only after boundary completion.
+- A reached data Error is not necessarily final. A graph-Promise rejection first becomes data Error: `hasError` may finish with `true`, while `getErrors` and export continue their required Error collection. Failure of operation-specific query traversal or indexing is fatal and never becomes collected Error data; a supported failure during shared property publication follows that publication boundary.
+- A continuation first completes shared Promise-mirror and property-version settlement, including index maintenance required to publish into an already indexed graph. It then stops if the operation is closed. Index construction or traversal requested only by the query is operation work and does not continue.
 - Concurrent preparation components share the operation lifetime, while leases, gates, phases, and output state retain their own last-access and publication rules.
-- Use the existing lifecycle coordinator where one exists. Add no cancellation framework, task registry, adapter, raw-Promise path, or generic cleanup abstraction.
+- Release operation-only strong state when closing if no unfinished result can use it. Late continuations retain only what they need to observe the closed fact after shared settlement.
+- Reuse an operation owner where one already exists. Error queries use local state; Phase 7B adds no shared lifetime module. Add no cancellation framework, task registry, adapter, raw-Promise path, or generic cleanup abstraction.
 - Keep Phase 7A export's current lifetime unless replacing its storage measurably simplifies the code.
 
 ### 2. Close Error queries
 
-Give each `hasError` and `getErrors` branch query one operation lifetime:
+Give each public `hasError` and `getErrors` call one operation lifetime around path resolution and branch search. The public query owns the lifetime around `walkObservationPath`; shared path-resolution and property-version APIs receive no query state.
 
-- A successful synchronous result closes immediately. A pending result closes after its complete query transition.
-- A reflection or internal failure that terminates the query closes it before returning or propagating the failure.
-- Later settlement still updates the captured mirror, property version, and refcount index, then performs no query traversal or reflection.
-- Finding one Error completes `hasError`; collecting an Error as query data does not prematurely close `getErrors`.
+- A successful synchronous result closes immediately. A pending result closes in the transition that produces its complete outcome, before fulfillment.
+- A fatal operation-specific query or index failure closes the query before it escapes. It never becomes `true`, `false`, or part of an Error list.
+- Later settlement still updates the captured mirror, property version, and any index required by shared publication, then performs no query-specific indexing, traversal, or reflection.
+- Finding one Error completes `hasError`. `getErrors` remains open until it has collected every Error in the complete captured branch, including Errors revealed through its captured Promise frontier.
+- Keep query state operation-local so concurrent queries over the same Promise frontier remain independent. Mirrors, property versions, and the refcount index remain shared.
 
-Do not cancel shared settlement, detach mirrors, suppress host Promise rejection, or add another Error-search algorithm.
+Keep the lazily created visited set, optional Error collection, and pending `hasError` resolver in the operation-local query state. The Error collection's presence distinguishes complete collection from first-Error search; no separate strategy or mode is needed. The open fact is the sole stop condition and replaces `hasError`'s former separate `found` state. A counter proof may complete `hasError` without an Error identity; `getErrors` records only reached identities.
+
+Observe each captured property wait and the public path/query result so a fatal rejection closes at its originating asynchronous layer before aggregate propagation. Create the collected-wait `Promise.all` only if the synchronous walk remains open; its observed inputs make another aggregate observer unnecessary. Keep abandoned readiness observed so a later fatal rejection cannot become unhandled, but perform no query work after closure. Clear the visited set, pending resolver, and accumulated Errors on close so a never-settling sibling retains only the closed query fact.
+
+Do not cancel shared settlement, detach mirrors, suppress source Promise rejection, or add another Error-search algorithm.
 
 ### 3. Reuse the rule in later phases
 
@@ -580,11 +587,15 @@ Do not cancel shared settlement, detach mirrors, suppress host Promise rejection
 
 ### Verification
 
-- After `hasError` or `getErrors` terminates on reflection failure, resolving an earlier captured Promise performs required mirror and refcount settlement but invokes no query-specific reflection.
-- Early synchronous `hasError === true` leaves no active query work.
-- A pending successful query remains active through its last required branch and closes on fulfillment or rejection.
+- Ready and delayed failures of operation-specific query traversal or indexing are fatal and never become query results or collected Errors. A shared publication failure that has already produced graph Error data follows ordinary Error-query behavior.
+- After `hasError` completes early or either query fails fatally, resolving an earlier captured Promise performs required mirror and refcount settlement but invokes no query-specific reflection.
+- Early synchronous `hasError === true` leaves no active query work and no unobserved abandoned readiness rejection.
+- A pending successful query remains active through its last required branch and closes in its final fulfillment transition. Fatal failure closes before its rejection propagates.
+- A rejected graph Promise becomes Error data: it completes `hasError` with `true`, while `getErrors` collects it without abandoning other required branches.
+- Concurrent queries over one Promise frontier keep independent query state when one closes early or fails while sharing settlement and index state.
+- Closing releases accumulated query-only Error state even when an abandoned sibling never settles.
 - Closing is idempotent and creates no lease, gate, phase, or output-lifetime behavior of its own.
-- Export retains its captured-frontier and complete Error-scan behavior.
+- Export retains its captured-frontier and complete Error-scan behavior. Export and Error queries agree on graph Error data; fatal query or index failures are outside that data.
 
 Update [`AGENTS.md`](../AGENTS.md), [`runtime-spec.md`](runtime-spec.md), [`counters-implementation.md`](counters-implementation.md), and [`cycles-as-data.md`](cycles-as-data.md).
 

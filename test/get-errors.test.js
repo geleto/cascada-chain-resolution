@@ -15,6 +15,7 @@ import {
     readPath,
     metaOf,
     exportValue,
+    setFatalErrorReporter,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -28,6 +29,186 @@ function expectErrors(actual, expected) {
 }
 
 describe("getErrors", () => {
+    it("treats shared publication failures as graph Errors", async () => {
+        for (const query of [hasError, getErrors]) {
+            const pending = deferred()
+            const failure = new Error("Promise writeback failed")
+            let failWrite = false
+            const value = new Proxy({ pending: pending.promise }, {
+                set(target, key, nextValue, receiver) {
+                    if (failWrite && key === "pending") throw failure
+                    return Reflect.set(target, key, nextValue, receiver)
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            const result = query(new Chain(value), [])
+            failWrite = true
+            pending.resolve({ clean: true })
+            const answer = await result
+
+            if (query === hasError) expect(answer).to.be(true)
+            else expectErrors(answer, [failure])
+            expect(reported).to.be(undefined)
+            expect(readPath(new Chain(value), ["pending"])).to.be(failure)
+            verifyRefCounts(value)
+        }
+    })
+
+    it("treats query-only reflection failures as fatal", () => {
+        for (const query of [hasError, getErrors]) {
+            const failure = new Error("query reflection failed")
+            const value = new Proxy({}, {
+                ownKeys() {
+                    throw failure
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            expect(thrownBy(() => query(new Chain(value), []))).to.be(failure)
+            expect(reported).to.be(failure)
+        }
+    })
+
+    it("closes before a delayed query-only reflection failure escapes", async () => {
+        for (const query of [hasError, getErrors]) {
+            const outer = deferred()
+            const inner = deferred()
+            const failure = new Error("delayed query reflection failed")
+            const target = { inner: inner.promise }
+            let scans = 0
+            const value = new Proxy(target, {
+                ownKeys(target) {
+                    scans++
+                    if (scans === 2) throw failure
+                    return Reflect.ownKeys(target)
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            const result = query(new Chain({ outer: outer.promise }), [])
+            outer.resolve(value)
+
+            let rejected
+            try {
+                await result
+            } catch (error) {
+                rejected = error
+            }
+            expect(rejected).to.be(failure)
+            expect(reported).to.be(failure)
+            expect(scans).to.be(2)
+
+            inner.resolve({ ready: true })
+            await flushMicrotasks()
+
+            expect(scans).to.be(2)
+            expect(readPath(new Chain(value), ["inner"])).to.eql({
+                ready: true,
+            })
+        }
+    })
+
+    it("closes on delayed path-reflection failure", async () => {
+        for (const query of [hasError, getErrors]) {
+            const pending = deferred()
+            const failure = new Error("query path reflection failed")
+            const value = new Proxy({}, {
+                getOwnPropertyDescriptor() {
+                    throw failure
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            const result = query(
+                new Chain({ pending: pending.promise }),
+                ["pending", "value"],
+            )
+            pending.resolve(value)
+
+            let rejected
+            try {
+                await result
+            } catch (error) {
+                rejected = error
+            }
+            expect(rejected).to.be(failure)
+            expect(reported).to.be(failure)
+        }
+    })
+
+    it("closes on reflection failure after several pending path segments", async () => {
+        for (const query of [hasError, getErrors]) {
+            const first = deferred()
+            const second = deferred()
+            const failure = new Error("deep query path reflection failed")
+            const value = new Proxy({}, {
+                getOwnPropertyDescriptor() {
+                    throw failure
+                },
+            })
+            let reported
+            setFatalErrorReporter(error => {
+                reported = error
+            })
+
+            const result = query(
+                new Chain({ first: first.promise }),
+                ["first", "second", "value"],
+            )
+            first.resolve({ second: second.promise })
+            await flushMicrotasks()
+            second.resolve(value)
+
+            let rejected
+            try {
+                await result
+            } catch (error) {
+                rejected = error
+            }
+            expect(rejected).to.be(failure)
+            expect(reported).to.be(failure)
+        }
+    })
+
+    it("keeps concurrent query lifetimes independent", async () => {
+        const first = deferred()
+        const second = deferred()
+        const firstError = new Error("first")
+        const secondError = new Error("second")
+        const chain = new Chain({
+            first: first.promise,
+            second: second.promise,
+        })
+
+        const found = hasError(chain, [])
+        const collected = getErrors(chain, [])
+        let collectionFinished = false
+        collected.then(() => {
+            collectionFinished = true
+        })
+
+        first.resolve(firstError)
+        expect(await found).to.be(true)
+        await flushMicrotasks()
+        expect(collectionFinished).to.be(false)
+
+        second.resolve(secondError)
+        expectErrors(await collected, [firstError, secondError])
+    })
+
     it("reports a missing indexed promise mirror as fatal", () => {
         for (const query of [hasError, getErrors]) {
             const pending = deferred()

@@ -359,6 +359,8 @@ Returns whether an Error is reachable in the issue-time branch.
 
 The operation never marks or pins the branch.
 
+`hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared mirror, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
+
 ### `getErrors(chain, path)`
 
 Returns an array containing each reachable Error identity once.
@@ -373,6 +375,8 @@ Returns an array containing each reachable Error identity once.
 
 The operation never marks or pins the branch. It returns the array directly
 when no wait is required and otherwise returns a Promise for that array.
+
+`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Failure of query-only traversal or indexing is fatal and closes that query. It is never returned as a Boolean or collected Error.
 
 ## Ref-index contract
 

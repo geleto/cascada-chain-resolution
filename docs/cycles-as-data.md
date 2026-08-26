@@ -79,6 +79,8 @@ A cut stops count propagation only across its property. Its target has an
 independent index. Error queries use `cycleCutCount` to find cut placements and
 continue from their targets with one operation-local visited set.
 
+Closing one Error query stops its further cut traversal without affecting another query or shared Promise publication. `hasError` closes on its first proved Error; `getErrors` keeps its visited set until the complete captured frontier has been searched.
+
 Export does not use the refcount projection. Its raw identity-aware walk
 reconstructs the actual graph.
 

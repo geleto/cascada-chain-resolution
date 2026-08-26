@@ -15,6 +15,7 @@ import {
     countPromiseRegistrations,
     deferred,
     flushMicrotasks,
+    setFatalErrorReporter,
 } from "./support.js"
 
 describe("hasError", () => {
@@ -99,6 +100,55 @@ describe("hasError", () => {
         pending.resolve("done")
         await flushMicrotasks()
         verifyRefCounts(root)
+    })
+
+    it("creates no abandoned aggregate after a synchronous Error proof", async () => {
+        const pending = deferred()
+        const failure = new Error("late query continuation failure")
+        const ancestor = { bad: new Error("found") }
+        const branch = { pending: pending.promise, back: ancestor }
+        ancestor.branch = branch
+        importValue(ancestor, "abandoned Error query")
+        buildRefIndex(ancestor)
+
+        const counter = getRefCounter(branch)
+        expect(counter.errorCount).to.be(0)
+        expect(counter.promiseCount).to.be(1)
+        expect(counter.cycleCutCount).to.be(1)
+
+        const mirror = metaOf(branch).mirrors.pending
+        let mirrorValue = mirror.value
+        // Fault after shared publication but before the query continuation.
+        pending.promise.then(() => {
+            mirrorValue = mirror.value
+            Object.defineProperty(mirror, "value", {
+                enumerable: true,
+                configurable: true,
+                get() {
+                    throw failure
+                },
+                set(value) {
+                    mirrorValue = value
+                },
+            })
+        })
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        expect(hasError(new Chain(branch), [])).to.be(true)
+        pending.resolve({ clean: true })
+        await flushMicrotasks()
+
+        expect(reported).to.be(failure)
+        Object.defineProperty(mirror, "value", {
+            value: mirrorValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+        })
+        verifyRefCounts(ancestor)
     })
 
     it("indexes non-extensible branches uniformly", async () => {
@@ -257,6 +307,39 @@ describe("hasError", () => {
 
         expect(await result).to.be(true)
         verifyRefCounts(root)
+    })
+
+    it("does no query walk when another pending branch settles after true", async () => {
+        const bad = deferred()
+        const later = deferred()
+        const nested = deferred()
+        const target = { nested: nested.promise }
+        let scans = 0
+        const value = new Proxy(target, {
+            ownKeys(target) {
+                scans++
+                return Reflect.ownKeys(target)
+            },
+        })
+        const root = {
+            bad: bad.promise,
+            later: later.promise,
+        }
+        const result = hasError(new Chain(root), [])
+
+        bad.resolve(new Error("found"))
+        expect(await result).to.be(true)
+
+        later.resolve(value)
+        await flushMicrotasks()
+
+        // Shared publication indexes the value once. The closed query does
+        // not enumerate it again.
+        expect(scans).to.be(1)
+
+        nested.resolve("done")
+        await flushMicrotasks()
+        expect(readPath(new Chain(value), ["nested"])).to.be("done")
     })
 
     it("fully indexes resolved promise branches before answering true", async () => {
