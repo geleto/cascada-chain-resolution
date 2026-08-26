@@ -1,5 +1,7 @@
 # Managed and external state
 
+Developer-facing restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document records the implemented classification and copying behavior.
+
 ## Status
 
 Implemented. Admission permanently classifies each identity as managed or external. Records and Arrays default to managed; class instances default to external. Managed class instances participate in the graph, preserve their prototype during copy-on-write, and support the synchronous methods described in [`registered-class-invocation.md`](registered-class-invocation.md).

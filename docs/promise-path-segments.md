@@ -1,5 +1,7 @@
 # Promise-Valued Path Segments Architecture
 
+Developer-facing path restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document defines their runtime architecture.
+
 ## Model
 
 A path segment is a String or Number operation input. Normalize it only after it is ready. Any other resolved value produces a validation Error, and a Promise-valued segment must never be stringified as a Promise object.
@@ -25,9 +27,9 @@ Prefix-wide mutation ordering is unavoidable. For `value[pendingKey]`, no descen
 
 ## External state
 
-Before waiting for a segment on a context Chain, query the ready prefix in its external-occurrence index. Register observation or mutation phases for every indexed external identity the unresolved suffix may reach. This selection is protection, not actual use; record use only after the resolved path reaches an identity.
+Before waiting for a segment on a context Chain, query the ready prefix in its external-occurrence index. Register observation or mutation phases for every indexed external identity the unresolved suffix may reach. This selection is protection, not actual use; record use only after the resolved path reaches an identity. Freeze the selected phase set before waiting.
 
-The managed prefix lease or gate and all selected external phases are published before waiting on any predecessor. After resolution, continue with the exact normalized path, discard no already selected phase, and record the actual context Chain and path as dynamic before host access. External observation remains valid. External mutation poisons its selected phase without host access because mutation requires one compiler-static path.
+The managed prefix lease or gate and all selected external phases are published before waiting on any predecessor. After resolution, continue with the exact normalized path, discard no selected phase, and acquire no new one. Record the actual context Chain and path as dynamic before host access. An external observation proceeds only when a selected boundary covers the reached identity; otherwise it returns a validation Error before host access. External mutation never reaches host code because mutation requires one compiler-static path; it poisons a selected covering phase or follows the managed prefix's gated failure when none covers it.
 
 ## Scope
 

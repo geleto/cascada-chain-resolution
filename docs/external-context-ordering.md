@@ -1,10 +1,14 @@
 # External Context Ordering Architecture
 
+Developer-facing restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document defines the ordering and authority architecture behind them.
+
 ## Model
 
 External values are exact host identities and are observation-only by default. Mutation is allowed only when every actual Cascada use of the identity has occurred through one compiler-static path of one context Chain. Import and storage are not uses.
 
 Managed state uses COW, leases, and transition gates. External state cannot use those protections, so every external identity has one readers-writer phase shared by all occurrences. External mutation changes the exact host identity in place.
+
+A selected external boundary is the first external identity whose phase was synchronously selected on an operation path. Its phase guards host traversal below that identity for that operation.
 
 A new identity obtained from an external property remains external, including a record or Array. Managed state may contain external identities, but external state may contain no admitted managed identity. Detect this only if property traversal reaches one; poison the external container without replacing either identity and do not scan external state for violations. A host method may instead return separately declared, default-managed, or already admitted managed data through its separate result import.
 
@@ -49,17 +53,19 @@ A mutation records its use before validation. It is allowed only with one record
 
 Every external identity owns one readers-writer phase state, so duplicate selections join one phase. This does not make aliases interchangeable: mutation is unavailable after incompatible prior use, and the first mutation fixes the only compiler-static location later operations may use.
 
-Register every selected receiver and argument phase synchronously when the operation is issued, before waiting on a Chain, Promise, or predecessor. Consecutive observations share a read phase after the preceding mutation; the next mutation waits for the group. Publish all phase successors before waiting, merge duplicate identity entries at the strongest mode, and never let entries created by one operation wait on one another.
+Mutation-capable graph APIs receive `mutation` and `repair` as required positional Booleans, with `repair` immediately after `mutation`. Invocation becomes `run(chain, path, method, mutation, repair, args)`, where `args` is the required native Array of explicit argument values and `[]` means no arguments. The Array is operation control data, not one language argument; its elements remain separate ordered argument roots. Observation is `(false, false)`, mutation is `(true, false)`, and repair-and-mutate is `(true, true)`; `(false, true)` is invalid for an operation that would access host state. An inherently mutating API needs only a positional `repair` Boolean. A dedicated repair-only path operation performs the fourth behavior without a dummy method or callback. Cascada syntax is only one caller of these APIs.
 
-An exact external operation selects its identity directly. A context `!` prefix selects the external identities indexed at or below that path. The shared boundary uses `OBSERVE`, `MUTATE`, and `REPAIR`: unmarked external use observes, `!` mutates, and `!!` repairs. Managed operations continue to use ordinary COW, leases, and gates. One direct operation Promise keeps its phases until boundary completion; a nested result Promise does not.
+Register every selected receiver and argument phase synchronously when the operation is issued, before waiting on a Chain, Promise, or predecessor. Freeze that phase set before the first wait; an operation never retains one phase while acquiring another. Consecutive observations share a read phase after the preceding exclusive operation; the next exclusive operation waits for the group. Publish all phase successors before waiting, merge duplicate identity entries by making the entry exclusive if any selection is exclusive and repairing if any explicit repair selection covers it, and never let entries created by one operation wait on one another.
 
-Enter phases for identities as the operation reaches them, while retaining every phase already selected for the operation. This protects direct access from that point forward but cannot retroactively order hidden aliases reached through another external root. The host must keep independently scheduled roots free of shared mutable state. Identity and phase state are local to one execution.
+An exact external operation selects its identity directly. A marked context prefix selects the external identities indexed at or below that path. Phase access is shared observation or exclusive work. Mutation and repair remain independent after positional argument validation. Cascada lowers unmarked access to observation, `!` to mutation, bare `!!` to repair-only, and `!!` attached to a mutation to repair-and-mutate; this project receives only the resulting facts or repair-only call. Managed operations continue to use ordinary COW, leases, and gates. One direct operation Promise keeps its phases until boundary completion; a nested result Promise does not.
+
+The first selected external identity on a path guards the complete host suffix traversed through it. Deeper identities record their own use before further access but add no phase to the active operation. An external identity revealed after waiting must be covered by an already selected boundary; otherwise the operation returns a validation Error before accessing or passing it to host code. The host must keep independently scheduled roots free of shared mutable state. Identity and phase state are local to one execution.
 
 ## Exported arguments
 
 Every native JavaScript method receives exported explicit arguments, including managed record and managed-class methods. Runtime-controlled methods such as supported Array methods consume logical Cascada values directly.
 
-Export copies managed records, Arrays, and managed class instances while preserving aliases, cycles, and admitted prototypes. Functions and external identities remain exact. Each exact external argument records the location of its Chain source and enters its identity phase before export. An unmarked source observes; `!` mutates. Passing or returning an identity never transfers mutation authority.
+Export copies managed records, Arrays, and managed class instances while preserving aliases, cycles, and admitted prototypes. Host code may mutate or retain those copies without changing their Cascada sources. Functions and external identities remain exact and read-only as arguments. Discover synchronously available external argument identities and enter their observation phases with the receiver phases before waiting or export. If required resolution later reveals an identity outside that coverage, preparation returns a validation Error before host code receives it. Passing, retaining, storing, or returning an exact identity never transfers mutation authority; later mutation requires a separate operation selecting that identity as its authorized receiver.
 
 ## Async control flow
 
@@ -67,11 +73,13 @@ Before an async condition, loop, or `enter` scope suspends, query each affected 
 
 ## Poison and repair
 
-External poison is an Error stored in the identity's metadata phase state, not application data. It never replaces the external identity or one of its properties. Existing poison contributes that Error at the selecting receiver or argument position, required preparation continues, and host code is skipped.
+External poison is an Error stored in the execution's phase entry for the exact identity, not in global identity metadata or application data. It never replaces the external identity or one of its properties. Existing poison contributes that Error at the selecting receiver or argument position unless that exact scope is explicitly repaired; required preparation continues, and unrepaired poison skips host code.
 
-Observation failure does not poison. A failed or rejected mutation records its combined Error on every selected mutation phase after predecessors finish; completed host effects remain visible. Dynamic, outside-context, and multiple-use mutations poison without host access.
+Ordinary observation failure does not poison. Reaching admitted managed data inside external property state is an external-containment violation and poisons that external container. A failed or rejected mutation records its combined Error on every selected mutation phase after predecessors finish; completed host effects remain visible. Dynamic, outside-context, and multiple-use mutations poison without host access.
 
-`!!` repairs selected external identity phases only. It enters them in `REPAIR` mode, waits normally, bypasses their existing poison, and removes the poison Error on success. Repair never changes use history, so a dynamic, outside-context, or multiple-use identity remains ineligible for mutation.
+A repair-only request enters its explicitly selected external phases exclusively, waits normally, bypasses and clears their existing poison, performs no host access, and has logical result `undefined`. It is idempotent. A repair-and-mutate request is one exclusive operation: it bypasses old poison, performs the mutation, and leaves the selected scopes clear on success or stores only the new mutation poison on failure.
+
+Repair requires a compiler-static context path and records ordinary use without establishing mutation authority. It does not clear application Errors, ancestor or unrelated poison, use history, or mutation eligibility. The runtime supports repair-only and repair-and-mutate requests but no combined repair-and-observe request; Cascada issues repair-only followed by an ordinary observation when required.
 
 ## Host boundary
 
@@ -82,9 +90,11 @@ An external operation follows this order:
 1. Select possible external identities from the reached receiver and any context-path indexes.
 2. Record actual locations and static-path facts available at issuance and register all selected identity phases.
 3. Wait for captured predecessors.
-4. Finish input preparation, recording identities revealed by required resolution before host access.
-5. Validate mutation authority, then perform host reflection and invoke once.
-6. Import the result, update poison, and release the phases.
+4. Bypass old poison only for explicitly repaired scopes. Other poison remains an input Error.
+5. For repair-only, clear selected poison and complete with logical result `undefined` without host access.
+6. Otherwise finish input preparation. Record identities revealed by required resolution, but reject any that lack an already selected external boundary.
+7. Validate mutation authority when requested, then perform host reflection and invoke once.
+8. Import the result, store any new mutation poison, and release the phases.
 
 A direct Promise keeps the phases until fulfillment import or rejection. Ready operations remain synchronous. Host code may not issue Cascada operations while its direct invocation remains active. A nested result Promise neither extends the phases nor receives later receiver or input access.
 

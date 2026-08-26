@@ -17,6 +17,8 @@ data Promise poisons the affected value without stopping unrelated work.
 The package is native ESM, requires Node.js 24 or newer, and needs no build
 step.
 
+See [`docs/data-limitations.md`](docs/data-limitations.md) before passing application data or host APIs to Cascada. It consolidates the supported graph shape, managed-method restrictions, Array limitations, and external-state ownership rules.
+
 ```js
 import * as cascada from "cascada-chain-resolution"
 
@@ -199,8 +201,8 @@ copy-on-write mutation path and requires a mutable Chain.
 Supported receivers are:
 
 - Strings, for native observations.
-- Logical Arrays, for the controlled standard methods listed below and trusted
-  observation-only overrides.
+- Logical Arrays, for the controlled standard methods listed below. Custom
+  Array methods are unsupported.
 - Records, for trusted read-only host methods outside the language-property
   surface.
 - Managed class instances, for trusted synchronous observations and

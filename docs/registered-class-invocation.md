@@ -1,5 +1,7 @@
 # Registered-Class Invocation Architecture
 
+Developer-facing restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document records the Phase 5 invocation architecture that later managed invocation generalizes.
+
 ## Principle
 
 Registered classes are ordinary JavaScript classes that know nothing about Cascada. Keep registered-class-specific handling at their invocation boundary and reuse the common invocation lifecycle everywhere else.
