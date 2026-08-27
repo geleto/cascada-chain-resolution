@@ -98,27 +98,23 @@ function invokeDataFunction(callable, thisValue, args) {
     )
 }
 
-function getHostCallDescription(
-    methodTarget,
-    method,
+function getHostMethodCallDescription(
+    getMethod,
     thisValue,
     leaseReceiver,
 ) {
-    const callable = errorUtils.runUserCode(
-        () => methodTarget[method],
-    )
-    if (languageValues.isError(callable)) return callable
-    if (typeof callable !== "function") {
-        return errorUtils.validationError(
-            `Method is not callable: ${method}`,
-        )
-    }
     return {
         admitResult: value => imports.import(value, "run method result"),
-        invoke: args => invokeDataFunction(callable, thisValue, args),
+        invoke: (args, _invocation, callable) =>
+            invokeDataFunction(callable, thisValue, args),
         leaseReceiver,
         prepareInputs: exportManyValues,
+        getMethod,
     }
+}
+
+function methodNotCallableError(method) {
+    return errorUtils.validationError(`Method is not callable: ${method}`)
 }
 
 // Selection supplies category behavior; this owns the shared call transition
@@ -145,19 +141,10 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
         let selected
         let preparedInputs
         try {
-            selected = errorUtils.catchUserCodeFailure(
-                () => select(receiver, method, mutation, present, context),
-                failure => failure,
-            )
-            const selectionError = languageValues.isError(selected)
-                ? selected
-                : undefined
-            preparedInputs = selectionError
-                ? exportManyValues([selectionError, ...args])
-                : selected.prepareInputs(args, invocation)
-            if (!selectionError) {
-                invocation.retainReceiver(selected.leaseReceiver)
-            }
+            selected = select(receiver, method, mutation, present, context)
+            if (languageValues.isError(selected)) return selected
+            preparedInputs = selected.prepareInputs(args, invocation)
+            invocation.retainReceiver(selected.leaseReceiver)
         } finally {
             invocation.markReceiverReached()
         }
@@ -175,7 +162,21 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
                     return readyInputs
                 }
 
-                const callResult = selected.invoke(readyInputs, invocation)
+                // Application reflection belongs after clean input preparation
+                // and before category-specific isolation inside invoke.
+                const callable = selected.getMethod
+                    ? errorUtils.catchUserCodeFailure(
+                        selected.getMethod,
+                        failure => failure,
+                    )
+                    : undefined
+                if (languageValues.isError(callable)) return callable
+
+                const callResult = selected.invoke(
+                    readyInputs,
+                    invocation,
+                    callable,
+                )
                 if (
                     selected.leaseReceiverThroughResult &&
                     languageValues.isPromise(callResult)
@@ -221,7 +222,8 @@ function createLeaseLedger() {
 }
 
 export {
-    getHostCallDescription,
+    getHostMethodCallDescription,
     invokeCall,
     invokeDataFunction,
+    methodNotCallableError,
 }

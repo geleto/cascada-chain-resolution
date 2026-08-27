@@ -209,6 +209,11 @@ Supported receivers are:
 - Managed class instances, for trusted synchronous observations and
   mutations.
 
+Controlled Array and native String dispatch rejects unsupported calls before
+preparing arguments. Record and managed-class members are resolved only after
+their required inputs are clean, so poisoned inputs invoke no application
+getter, Proxy trap, or managed-prototype reflection.
+
 The controlled Array methods are `at`, `concat`, `copyWithin`, `fill`, `flat`,
 `includes`, `indexOf`, `join`, `lastIndexOf`, `pop`, `push`, `reverse`, `shift`,
 `slice`, `sort`, `splice`, `toReversed`, `toSorted`, `toSpliced`, `toString`,

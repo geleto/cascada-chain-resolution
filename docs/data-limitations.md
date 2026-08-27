@@ -29,6 +29,7 @@ Do not place semantic managed state outside graph-visible properties. Cascada ma
 - Strings support documented native observations only.
 - Number, Boolean, BigInt, Symbol, `null`, and `undefined` have no methods or property writes.
 - A Promise has no direct operations; the resolved value determines its capabilities.
+- A Promise input that an operation does not consume remains host-owned. This includes an unused path segment or an argument rejected before a callable boundary is selected; application code remains responsible for handling its rejection.
 - An Error has no operations and propagates as language data when consumed.
 
 ## Classification and declarations

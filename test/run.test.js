@@ -31,10 +31,30 @@ import {
 
 describe("run", () => {
     it("validates call syntax before dispatch and mode by category", () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const before = registrations()
         const mutation = new Chain([1])
-        const mutationError = run(mutation, [], "map", true)
+        const mutationError = run(
+            mutation,
+            [],
+            "map",
+            true,
+            pending.promise,
+        )
         expect(mutationError instanceof Error).to.be(true)
         expect(mutation._state.value).to.be(mutationError)
+
+        const unsupportedMode = new Chain([1])
+        const unsupportedModeError = run(
+            unsupportedMode,
+            [],
+            "slice",
+            true,
+            pending.promise,
+        )
+        expect(unsupportedModeError instanceof Error).to.be(true)
+        expect(unsupportedMode._state.value).to.be(unsupportedModeError)
 
         const observation = new Chain([1])
         expect(run(
@@ -42,6 +62,7 @@ describe("run", () => {
             [],
             "constructor",
             false,
+            pending.promise,
         ) instanceof Error).to.be(true)
         expect(observation._state.value).to.eql([1])
 
@@ -51,8 +72,11 @@ describe("run", () => {
             [],
             "push",
             "yes",
+            pending.promise,
         ) instanceof Error).to.be(true)
         expect(invalidMode._state.value).to.eql([1])
+        expect(registrations()).to.be(before)
+        pending.resolve(1)
     })
 
     it("uses native String calls and logical Array conversion", async () => {
@@ -1172,27 +1196,86 @@ describe("run", () => {
         expect(concatCombined.errors.includes(nested)).to.be(false)
     })
 
-    it("orders selection failure before every argument Error", async () => {
-        const first = new Error("first argument")
-        const second = new Error("second argument")
-        const pending = deferred()
+    it("skips dynamic member lookup when argument export fails", () => {
+        const failure = new Error("invalid argument")
+        let reflections = 0
+        const receiver = new Proxy({}, {
+            get(target, key, current) {
+                if (key === "missing") reflections++
+                return Reflect.get(target, key, current)
+            },
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "missing") reflections++
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new Chain(receiver)
+        reflections = 0
 
         const result = run(
-            new Chain({}),
+            chain,
             [],
             "missing",
             false,
-            first,
+            failure,
+        )
+
+        expect(result).to.be(failure)
+        expect(reflections).to.be(0)
+    })
+
+    it("resolves a dynamic member once after clean argument export", async () => {
+        const pending = deferred()
+        let lookups = 0
+        const receiver = {}
+        Object.defineProperty(receiver, "missing", {
+            get() {
+                lookups++
+                return undefined
+            },
+        })
+
+        const result = run(
+            new Chain(receiver),
+            [],
+            "missing",
+            false,
             pending.promise,
         )
-        pending.reject(second)
-        const combined = await result
 
-        expect(combined.errors.length).to.be(3)
-        expect(combined.errors[0].message).to.be(
-            "Method is not callable: missing",
+        expect(lookups).to.be(0)
+        pending.resolve(3)
+        expect((await result).message).to.be("Method is not callable: missing")
+        expect(lookups).to.be(1)
+    })
+
+    it("rejects unsupported String members without exporting arguments", async () => {
+        const pending = deferred()
+        const registrations = countPromiseRegistrations(pending.promise)
+        const before = registrations()
+
+        const missing = run(
+            new Chain("value"),
+            [],
+            "missing",
+            false,
+            pending.promise,
         )
-        expect(combined.errors.slice(1)).to.eql([first, second])
+        const accessor = run(
+            new Chain("value"),
+            [],
+            "__proto__",
+            false,
+            pending.promise,
+        )
+
+        expect(missing.message).to.be("Method is not callable: missing")
+        expect(accessor.message).to.be("Method is not callable: __proto__")
+        expect(registrations()).to.be(before)
+        const failure = new Error("unused argument rejected")
+        const handled = pending.promise.catch(error => error)
+        pending.reject(failure)
+        expect(await handled).to.be(failure)
     })
 
     it("prepares flat candidates concurrently without resolving retained values", async () => {

@@ -417,6 +417,10 @@ intrinsics receive property-origin remaps, prepared scalars, or exact retained
 payload in positions that store without inspection. The wrapper owns
 classification, ownership, Promise mirrors, and bookkeeping. It never exposes
 ArrayView backing or dispatches through custom Array properties or prototypes.
+Controlled Array table lookup and trusted native String data-method lookup occur
+during internal dispatch and invoke no application hook. Unsupported names and
+modes therefore fail without preparing arguments. Record and managed-class
+member reflection instead occurs once after their required inputs are clean.
 Ordinary native calls instead export explicit arguments as one batch. Export
 captures available state synchronously through exact Promise mirrors and uses
 no source lease. Other pending preparation leases only identities it must read
@@ -424,12 +428,13 @@ again. One common invocation lifetime stops abandoned Array work after a final
 result or fatal failure without cancelling shared settlement.
 
 A managed-class call prepares every explicit argument and the complete receiver
-graph. An observation runs synchronously on its leased prepared receiver. A
-mutation isolates protected receiver identities, invokes once synchronously,
-validates and admits the completed receiver, and publishes it through the
-ordinary mutation transition. It returns the published receiver for `this` and
-an independent copy for every other traversable result. Promise-valued
-managed-class results are validation Errors and are never awaited.
+graph, resolves its method once from the prepared receiver, and only then
+isolates a mutation receiver. An observation runs synchronously on its leased
+prepared receiver. A mutation invokes once synchronously, validates and admits
+the completed receiver, and publishes it through the ordinary mutation
+transition. It returns the published receiver for `this` and an independent
+copy for every other traversable result. Promise-valued managed-class results
+are validation Errors and are never awaited.
 
 A `sort` or `toSorted` comparator remains executable control outside the graph.
 When comparison is possible, the wrapper exports every sortable value as one

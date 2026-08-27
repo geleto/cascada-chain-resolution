@@ -38,7 +38,6 @@ Core contracts, type capabilities, execution boundaries, and Error/fatal classif
 - A final read of an absent placement returns `undefined`. Traversing through an absent or `undefined` placement produces an Error. Reaching an Error propagates that same Error.
 - Final assignment creates an absent placement; final deletion of one is a no-op. A mutation requiring an absent receiver or intermediate placement poisons the first failed placement.
 - Path segments are String or Number operation inputs. Normalize and consume each only when traversal reaches it; any other ready value produces a validation Error without invoking coercion hooks. A failed known prefix does not wait for unused segments.
-- An unused segment Promise remains host-owned. Do not register a continuation merely to suppress its later rejection.
 - The graph may be cyclic. Bookkeeping must neither alter nor hide its topology.
 
 ## Data Categories
@@ -325,6 +324,7 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 ## Execution Boundaries
 
 - Select the operation boundary first from runtime-controlled facts such as admitted category, method name, and mode. This internal dispatch invokes no host code. Prepare each input only to the extent that boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors matter only when required preparation reaches them.
+- An operation input that the selected boundary never consumes, including an unused path segment or an argument rejected before boundary selection, remains host-owned. Do not wait for it or attach a rejection observer merely to suppress host reporting.
 - If internal dispatch rejects a constructor, controlled name, or mode before selecting an executable boundary, perform no boundary-specific receiver or argument preparation and return only that validation Error.
 - A value selected for invocation is prepared and validated as an executable, not imported as graph data. Import applies to a property-read result or invocation result that enters the graph.
 - After required operation phases complete, finish the selected boundary's explicit input preparation before proxy reflection, descriptor access on application-controlled objects, a getter, or other host method-selection code. If preparation prevents invocation, execute none of that host code; order collected failures by their logical receiver and argument positions. Do not confuse this host reflection with the earlier internal dispatch.

@@ -19,26 +19,38 @@ function selectRegisteredClassCall(
     mutation,
     mutationContext,
 ) {
-    const callable = findRegisteredClassMethod(receiver, method)
-    if (languageValues.isError(callable)) return callable
-
     // Registered-class invocation prepares and admits its result here,
     // so it deliberately supplies no common admitResult hook.
     return {
-        prepareInputs: (args, invocation) => prepareCall(
-            receiver,
-            args,
-            mutation,
-            invocation,
-            mutationContext?.mustPreserveValue === true,
-        ),
-        invoke: prepared => mutation
-            ? invokeMutation(callable, prepared)
-            : invokeObservation(callable, prepared),
+        prepareInputs: (args, invocation) =>
+            prepareReceiverAndArgsForMethodLookup(
+                receiver,
+                args,
+                invocation,
+            ),
+        getMethod: () => getRegisteredClassMethod(receiver, method),
+        invoke(receiverAndArgs, operation, callable) {
+            const prepared = prepareReceiverAndArgsBeforeCall(
+                receiverAndArgs,
+                mutation,
+                operation,
+                mutationContext?.mustPreserveValue === true,
+            )
+            if (languageValues.isError(prepared)) return prepared
+            return mutation
+                ? invokeMutation(callable, prepared)
+                : invokeObservation(callable, prepared)
+        },
     }
 }
 
-function findRegisteredClassMethod(receiver, method) {
+function getRegisteredClassMethod(receiver, method) {
+    if (languageProperties.hasLanguageProperty(receiver, method)) {
+        return errorUtils.validationError(
+            `Cannot call ${method} because an own data property ` +
+            "with that name hides the method",
+        )
+    }
     let prototype = metadata.requireMeta(receiver).admittedPrototype
     while (
         prototype !== null &&
@@ -57,38 +69,34 @@ function findRegisteredClassMethod(receiver, method) {
             }
             return typeof descriptor.value === "function"
                 ? descriptor.value
-                : errorUtils.validationError(
-                    `Method is not callable: ${method}`,
-                )
+                : invocation.methodNotCallableError(method)
         }
         prototype = errorUtils.runUserCode(
             () => Object.getPrototypeOf(prototype),
         )
     }
-    return errorUtils.validationError(`Method is not callable: ${method}`)
+    return invocation.methodNotCallableError(method)
 }
 
-function prepareCall(
+function prepareReceiverAndArgsForMethodLookup(
     receiver,
     args,
-    mutation,
     invocation,
-    preserveReceiver,
 ) {
     return resolution.continueInternalPromisesOrFatal(
         [
-            prepareRoot(receiver, invocation.retainReceiver),
-            ...args.map(root => prepareRoot(
-                root,
+            prepareInput(receiver, invocation.retainReceiver),
+            ...args.map(value => prepareInput(
+                value,
                 invocation.retainArgument,
             )),
         ],
         finish,
     )
 
-    function finish(preparedRoots) {
+    function finish(preparedReceiverAndArgs) {
         const errors = new Set()
-        for (const prepared of preparedRoots) {
+        for (const prepared of preparedReceiverAndArgs) {
             for (const error of prepared.errors) errors.add(error)
         }
         if (errors.size > 0) {
@@ -97,19 +105,30 @@ function prepareCall(
                 "Registered class call received multiple Errors",
             )
         }
-        const roots = preparedRoots.map(prepared => prepared.value)
-        return errorUtils.catchUserCodeFailure(
-            () => finishPrepared(roots),
-            failure => {
-                languageValues.admitReadyValue(failure)
-                return failure
-            },
-        )
+        return preparedReceiverAndArgs.map(prepared => prepared.value)
     }
+}
 
-    function finishPrepared(roots) {
+function prepareReceiverAndArgsBeforeCall(
+    receiverAndArgs,
+    mutation,
+    invocation,
+    preserveReceiver,
+) {
+    return errorUtils.catchUserCodeFailure(
+        prepare,
+        failure => {
+            languageValues.admitReadyValue(failure)
+            return failure
+        },
+    )
+
+    function prepare() {
         if (!mutation) {
-            const values = materializeAndRemapInputs(roots, new Map())
+            const values = materializeAndRemapInputs(
+                receiverAndArgs,
+                new Map(),
+            )
             return {
                 receiver: values[0],
                 args: values.slice(1),
@@ -117,32 +136,34 @@ function prepareCall(
         }
 
         invocation.releaseReceivers()
-        const isolated = isolateReceiver(roots[0], preserveReceiver)
-        const preparedArgs = materializeAndRemapInputs(
-            roots.slice(1),
-            isolated.copies,
+        const isolated = isolateReceiver(
+            receiverAndArgs[0],
+            preserveReceiver,
         )
         return {
             receiver: isolated.value,
-            args: preparedArgs,
+            args: materializeAndRemapInputs(
+                receiverAndArgs.slice(1),
+                isolated.copies,
+            ),
         }
     }
 }
 
-function prepareRoot(root, retain) {
+function prepareInput(input, retain) {
     const visited = new Set()
     const errors = new Set()
-    let value
+    let preparedValue
     const readiness = resolution.resolveInitialValueOrPoison(
-        root,
+        input,
         resolved => {
-            value = resolved
+            preparedValue = resolved
             return visit(resolved)
         },
     )
     return resolution.continueInternalPromiseOrFatal(
         readiness,
-        () => ({ value, errors }),
+        () => ({ value: preparedValue, errors }),
     )
 
     function visit(current) {
@@ -342,9 +363,9 @@ function requiresIsolation(value) {
         arrayViews.requiresArrayMaterialization(value)
 }
 
-function copyCompleteGraph(root, copies) {
+function copyCompleteGraph(source, copies) {
     let promiseFound = false
-    const value = copy(root)
+    const value = copy(source)
     return { value, promiseFound }
 
     function copy(source) {

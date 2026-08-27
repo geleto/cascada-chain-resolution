@@ -89,12 +89,6 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
         )
     }
     if (type === languageValues.TYPE_MANAGED_CLASS) {
-        if (languageProperties.hasLanguageProperty(receiver, method)) {
-            return errorUtils.validationError(
-                `Cannot call ${method} because an own data property ` +
-                "with that name hides the method",
-            )
-        }
         return registeredClassInvocation.selectRegisteredClassCall(
             receiver,
             method,
@@ -108,26 +102,17 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
         )
     }
     if (type === languageValues.TYPE_STRING) {
-        return invocation.getHostCallDescription(
-            receiver,
-            method,
+        const callable = getStringMethod(method)
+        if (languageValues.isError(callable)) return callable
+        return invocation.getHostMethodCallDescription(
+            () => callable,
             receiver,
             undefined,
         )
     }
     if (type === languageValues.TYPE_RECORD) {
-        if (languageProperties.hasLanguageProperty(
-            receiver,
-            method,
-        )) {
-            return errorUtils.validationError(
-                `Cannot call ${method} because an own data property ` +
-                "with that name hides the method",
-            )
-        }
-        return invocation.getHostCallDescription(
-            receiver,
-            method,
+        return invocation.getHostMethodCallDescription(
+            () => getRecordMethod(receiver, method),
             receiver,
             receiver,
         )
@@ -135,6 +120,32 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
     return errorUtils.validationError(
         "run receiver does not support methods",
     )
+}
+
+function getStringMethod(method) {
+    const descriptor = Object.getOwnPropertyDescriptor(
+        String.prototype,
+        method,
+    ) ?? Object.getOwnPropertyDescriptor(Object.prototype, method)
+    return descriptor &&
+        "value" in descriptor &&
+        typeof descriptor.value === "function"
+        ? descriptor.value
+        : invocation.methodNotCallableError(method)
+}
+
+function getRecordMethod(receiver, method) {
+    if (languageProperties.hasLanguageProperty(receiver, method)) {
+        return errorUtils.validationError(
+            `Cannot call ${method} because an own data property ` +
+            "with that name hides the method",
+        )
+    }
+    const callable = errorUtils.runUserCode(() => receiver[method])
+    if (languageValues.isError(callable)) return callable
+    return typeof callable === "function"
+        ? callable
+        : invocation.methodNotCallableError(method)
 }
 
 export { run }

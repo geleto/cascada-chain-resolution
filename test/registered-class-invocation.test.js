@@ -57,7 +57,7 @@ describe("registered class invocation", () => {
         ) instanceof Error).to.be(true)
     })
 
-    it("does not prepare receiver state after method selection fails", () => {
+    it("prepares receiver state before reporting a missing method", async () => {
         class Value {}
         managedStateClass(Value)
         const pending = deferred()
@@ -66,7 +66,9 @@ describe("registered class invocation", () => {
 
         const result = run(new Chain(value), [], "missing", false)
 
-        expect(result.message).to.be("Method is not callable: missing")
+        expect(result instanceof Promise).to.be(true)
+        pending.resolve(1)
+        expect((await result).message).to.be("Method is not callable: missing")
     })
 
     it("rejects a language property that shadows a registered-class method", () => {
@@ -103,6 +105,62 @@ describe("registered class invocation", () => {
 
         expect(run(new Chain(value), [], "read", false)).to.be(1)
         expect(accessed).to.be(false)
+    })
+
+    it("resolves a method only after clean preparation and before isolation", () => {
+        const reflections = []
+        const prototype = new Proxy({
+            change() {
+                this.value++
+            },
+        }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "change") reflections.push("method")
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        function Value() {
+            this.value = 1
+        }
+        Value.prototype = prototype
+        managedStateClass(Value)
+
+        const failure = new Error("invalid argument")
+        const failed = new Chain(new Value())
+        reflections.length = 0
+        expect(run(
+            failed,
+            [],
+            "change",
+            true,
+            failure,
+        )).to.be(failure)
+        expect(reflections).to.eql([])
+
+        const receiverFailure = new Error("invalid receiver")
+        const invalid = new Value()
+        invalid.failure = receiverFailure
+        const invalidChain = new Chain(invalid)
+        reflections.length = 0
+        expect(run(invalidChain, [], "change", true)).to.be(receiverFailure)
+        expect(reflections).to.eql([])
+
+        const value = new Proxy(new Value(), {
+            ownKeys(target) {
+                reflections.push("receiver")
+                return Reflect.ownKeys(target)
+            },
+        })
+        const chain = new Chain(value)
+        lookupPath(chain, [])
+        reflections.length = 0
+
+        run(chain, [], "change", true)
+
+        expect(reflections).to.eql(["receiver", "method", "receiver"])
+        expect(chain._state.value).not.to.be(value)
+        expect(chain._state.value.value).to.be(2)
+        expect(value.value).to.be(1)
     })
 
     it("reports a prototype accessor added after registration fatally", () => {
