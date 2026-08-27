@@ -24,9 +24,15 @@ Array work is bounded by three shared mechanisms:
 
 1. Ranged key enumeration scans a strict selected range, including its holes, but enumerates present keys when the selection spans the complete physical backing so sparse full-range work remains proportional to present properties.
 2. Retained-property preparation represents contiguous movement as one source range and destination offset.
-3. Range remapping handles both complete remaps and selected `slice` results. Fallback `slice` converts each argument once and remaps only the normalized range.
+3. Range remapping handles both complete remaps and selected `slice` results. `slice` converts each consumed bound once and remaps only the normalized range when view reuse is unavailable.
 
 All three use the common Promise-origin and placement transitions, preserving holes, ownership, mirrors, and inherited-setter safety without operation-specific paths.
+
+## Controlled Array work
+
+One invocation lifetime covers controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. A final result or fatal failure closes that work. Late continuations still finish shared Promise settlement and bookkeeping, but perform no further Array-specific traversal, conversion, reflection, callback, protection, or result work.
+
+`concat` bounds later work by synchronously capturing each resolved logical Array as a sparse property-origin remap. Sort resolves each present top-level origin once. Default sorting converts each sortable occurrence once; comparator sorting exports one dense snapshot and reuses it for every comparison.
 
 ## Detached results
 

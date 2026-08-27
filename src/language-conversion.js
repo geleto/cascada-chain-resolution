@@ -8,10 +8,12 @@ import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 const stringConcat = String.prototype.concat
+const arrayJoin = Array.prototype.join
 
-function toStringValue(value, ancestry = undefined) {
-    return resolution.continuePreparedValueUnlessPoison(
-        toPrimitiveValue(value, ancestry),
+function toStringValue(value, ancestry = undefined, operation = undefined) {
+    return continueConversion(
+        toPrimitiveValue(value, ancestry, operation),
+        operation,
         primitive => invocation.invokeDataFunction(
             stringConcat,
             "",
@@ -20,9 +22,10 @@ function toStringValue(value, ancestry = undefined) {
     )
 }
 
-function toNumberValue(value) {
-    return resolution.continuePreparedValueUnlessPoison(
-        toPrimitiveValue(value),
+function toNumberValue(value, operation = undefined) {
+    return continueConversion(
+        toPrimitiveValue(value, undefined, operation),
+        operation,
         primitive => {
             try {
                 return +primitive
@@ -33,10 +36,11 @@ function toNumberValue(value) {
     )
 }
 
-function toPrimitiveValue(value, ancestry) {
-    return resolution.continueInitialValueUnlessPoison(
+function toPrimitiveValue(value, ancestry, operation) {
+    const continuation = resolution.continueInitialValueUnlessPoison(
         value,
         resolved => {
+            if (operation?.open === false) return undefined
             if (arrayViews.isLogicalArray(resolved)) {
                 if (arrayViews.hasArrayAncestor(ancestry, resolved)) {
                     return ""
@@ -45,6 +49,7 @@ function toPrimitiveValue(value, ancestry) {
                     resolved,
                     ",",
                     { array: resolved, parent: ancestry },
+                    operation,
                 )
             }
             if (
@@ -65,11 +70,13 @@ function toPrimitiveValue(value, ancestry) {
                 : conversionError()
         },
     )
+    return operation?.watch(continuation) ?? continuation
 }
 
-function toIntegerOrInfinity(value) {
-    return resolution.continuePreparedValueUnlessPoison(
-        toNumberValue(value),
+function toIntegerOrInfinity(value, operation = undefined) {
+    return continueConversion(
+        toNumberValue(value, operation),
+        operation,
         number => {
             if (Number.isNaN(number) || number === 0) return 0
             if (!Number.isFinite(number)) return number
@@ -88,6 +95,7 @@ function joinLogicalArray(
     array,
     separator = ",",
     ancestry = undefined,
+    operation = undefined,
 ) {
     ancestry ??= { array, parent: undefined }
     const length = arrayViews.logicalArrayLength(array)
@@ -99,22 +107,34 @@ function joinLogicalArray(
             conversions[index] = ""
             continue
         }
-        conversions[index] = resolution.continuePreparedValueUnlessPoison(
+        conversions[index] = continueConversion(
             propertyVersions.resolvePropertyValueAtKey(array, key),
+            operation,
             value => {
                 if (value === undefined || value === null) return ""
-                return toStringValue(value, ancestry)
+                return toStringValue(value, ancestry, operation)
             },
         )
     }
-    return resolution.continuePreparedValuesUnlessPoison(
+    const continuation = resolution.continuePreparedValuesUnlessPoison(
         conversions,
-        values => invocation.invokeDataFunction(
-            Array.prototype.join,
-            values,
-            [separator],
-        ),
+        values => operation?.open === false
+            ? undefined
+            : invocation.invokeDataFunction(
+                arrayJoin,
+                values,
+                [separator],
+            ),
     )
+    return operation?.watch(continuation) ?? continuation
+}
+
+function continueConversion(result, operation, onReady) {
+    const continuation = resolution.continuePreparedValueUnlessPoison(
+        result,
+        value => operation?.open === false ? undefined : onReady(value),
+    )
+    return operation?.watch(continuation) ?? continuation
 }
 
 export {

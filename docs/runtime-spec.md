@@ -412,26 +412,16 @@ The compiler and host layer must:
 The kernel relies on these rules instead of validating trusted data for aliases
 or cycles.
 
-`run` keeps two narrow executable-boundary exceptions. First, a
-runtime-controlled structural Array intrinsic may receive Cascada values when
-retaining or relocating those exact identities is the defined language
-operation. Its wrapper owns slot classification, entering ownership, Promise
-mirrors, and bookkeeping. Standard scalar conversion is performed against
-logical Cascada values before native invocation; locale methods likewise
-construct only the small native input their intrinsic inspects. An ordinary
-native observation receives its path-resolved receiver directly. `run` exports
-native-bound arguments as one batch after dispatch; controlled logical payloads
-retain their identity. Export captures available state synchronously and uses
-exact Promise mirrors without source leases. Other pending preparation leases
-each traversable source its continuations must later read and releases those
-leases after their last access. Pending
-controlled argument preparation leases its captured receiver only until
-invocation. A controlled method owns any lease required by later receiver
-reads, while an independent result Promise adds none. An
-ordinary native call retains an exact traversable receiver through its returned
-Promise, and an ArrayView receiver is shallow-materialized. The method remains
-trusted read-only, non-retaining beyond that result, and free of external side
-effects.
+Controlled Array methods consume only their declared logical inputs. Captured
+intrinsics receive property-origin remaps, prepared scalars, or exact retained
+payload in positions that store without inspection. The wrapper owns
+classification, ownership, Promise mirrors, and bookkeeping. It never exposes
+ArrayView backing or dispatches through custom Array properties or prototypes.
+Ordinary native calls instead export explicit arguments as one batch. Export
+captures available state synchronously through exact Promise mirrors and uses
+no source lease. Other pending preparation leases only identities it must read
+again. One common invocation lifetime stops abandoned Array work after a final
+result or fatal failure without cancelling shared settlement.
 
 A managed-class call prepares every explicit argument and the complete receiver
 graph. An observation runs synchronously on its leased prepared receiver. A
@@ -441,9 +431,9 @@ ordinary mutation transition. It returns the published receiver for `this` and
 an independent copy for every other traversable result. Promise-valued
 managed-class results are validation Errors and are never awaited.
 
-A `sort` or `toSorted` comparator is the second executable-control
-exception. A direct or Promise-resolved callable remains outside the graph and
-receives resolved logical elements under a trusted read-only, side-effect-free,
-non-retaining contract. Its result and Cascada numeric conversion must complete
-synchronously before native stable sorting can continue; this does not
-authorize other callbacks or native access to runtime-managed identities.
+A `sort` or `toSorted` comparator remains executable control outside the graph.
+When comparison is possible, the wrapper exports every sortable value as one
+dense snapshot, preserving aliases and cycles across calls, then sorts internal
+origin records. The comparator may mutate or retain exported managed copies but
+must treat exact Functions and external identities as read-only. It must return
+a synchronous Number; an Error, Promise, or other result aborts sorting.

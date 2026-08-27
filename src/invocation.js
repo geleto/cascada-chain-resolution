@@ -5,25 +5,97 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as resolution from "./resolution.js"
 
+class InvocationContext {
+    #selectionArgumentLeases = createLeaseLedger()
+    #argumentLeases = createLeaseLedger()
+    #receiverLeases = createLeaseLedger()
+    open = true
+    retainArgument = this.#argumentLeases.retain
+    retainReceiver = this.#receiverLeases.retain
+    releaseArguments = this.#argumentLeases.release
+    releaseReceivers = this.#receiverLeases.release
+
+    retainArgumentsUntilReceiver(args) {
+        for (const value of args) this.#selectionArgumentLeases.retain(value)
+    }
+
+    markReceiverReached() {
+        this.#selectionArgumentLeases.release()
+    }
+
+    close() {
+        if (!this.open) return
+        this.open = false
+        this.#selectionArgumentLeases.release()
+        this.releaseArguments()
+        this.releaseReceivers()
+    }
+
+    continueInitial(result, onReady) {
+        return this.watch(resolution.continueInitialValueUnlessPoison(
+            result,
+            onReady,
+            () => this.open,
+        ))
+    }
+
+    continueInternal(result, onReady) {
+        return this.#continueWhileOpen(
+            result,
+            onReady,
+            resolution.continueInternalPromiseOrFatal,
+        )
+    }
+
+    continueInternalAll(result, onReady) {
+        return this.#continueWhileOpen(
+            result,
+            onReady,
+            resolution.continueInternalPromisesOrFatal,
+        )
+    }
+
+    continuePrepared(result, onReady) {
+        return this.#continueWhileOpen(
+            result,
+            onReady,
+            resolution.continuePreparedValueUnlessPoison,
+        )
+    }
+
+    continuePreparedAll(result, onReady) {
+        return this.#continueWhileOpen(
+            result,
+            onReady,
+            resolution.continuePreparedValuesUnlessPoison,
+        )
+    }
+
+    watch(result) {
+        if (languageValues.isPromise(result)) {
+            // Close at the originating async layer, before a fatal rejection
+            // reaches aggregates that may still have runnable siblings.
+            resolution.observeResultPromise(
+                result,
+                () => {},
+                () => this.close(),
+            )
+        }
+        return result
+    }
+
+    #continueWhileOpen(result, onReady, continueResult) {
+        return this.watch(continueResult(
+            result,
+            value => this.open ? onReady(value) : undefined,
+        ))
+    }
+}
+
 function invokeDataFunction(callable, thisValue, args) {
     return errorUtils.runUserCode(
         () => Reflect.apply(callable, thisValue, args),
     )
-}
-
-function findPropertyDescriptor(object, key) {
-    // Walking a host prototype chain can invoke Proxy reflection traps.
-    let owner = object
-    while (owner !== null) {
-        const descriptor = errorUtils.runUserCode(
-            () => Object.getOwnPropertyDescriptor(owner, key),
-        )
-        if (descriptor) return { descriptor, owner }
-        owner = errorUtils.runUserCode(
-            () => Object.getPrototypeOf(owner),
-        )
-    }
-    return undefined
 }
 
 function getHostCallDescription(
@@ -52,30 +124,24 @@ function getHostCallDescription(
 // Selection supplies category behavior; this owns the shared call transition
 // and its argument and receiver leases.
 function invokeCall(method, mutation, args, select, reachReceiver) {
-    const selectionArgumentLeases = createLeaseLedger()
-    const callArgumentLeases = createLeaseLedger()
-    const receiverLeases = createLeaseLedger()
-    let receiverReached = false
+    const invocation = new InvocationContext()
     let result
     try {
         result = reachReceiver(invokeReceiver)
     } catch (error) {
-        closeLeases()
+        invocation.close()
         throw error
     }
 
     if (!languageValues.isPromise(result)) {
-        closeLeases()
+        invocation.close()
         return result
     }
-    if (!receiverReached) {
-        for (const value of args) selectionArgumentLeases.retain(value)
-    }
-    resolution.observeResultPromise(result, closeLeases)
+    invocation.retainArgumentsUntilReceiver(args)
+    resolution.observeResultPromise(result, () => invocation.close())
     return result
 
     function invokeReceiver(receiver, present, context) {
-        receiverReached = true
         let selected
         let preparedInputs
         try {
@@ -88,17 +154,12 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
                 : undefined
             preparedInputs = selectionError
                 ? exportManyValues([selectionError, ...args])
-                : selected.prepareInputs(
-                    args,
-                    callArgumentLeases.retain,
-                    receiverLeases.retain,
-                    receiverLeases.release,
-                )
+                : selected.prepareInputs(args, invocation)
             if (!selectionError) {
-                receiverLeases.retain(selected.leaseReceiver)
+                invocation.retainReceiver(selected.leaseReceiver)
             }
         } finally {
-            selectionArgumentLeases.release()
+            invocation.markReceiverReached()
         }
 
         return resolution.continueInternalPromiseOrFatal(
@@ -107,31 +168,32 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
         )
 
         function invokePrepared(readyInputs) {
-            let pendingHostResult = false
+            let receiverLeaseContinues = false
             try {
+                if (!invocation.open) return undefined
                 if (languageValues.isError(readyInputs)) {
                     return readyInputs
                 }
 
-                const callResult = selected.invoke(readyInputs)
+                const callResult = selected.invoke(readyInputs, invocation)
+                if (
+                    selected.leaseReceiverThroughResult &&
+                    languageValues.isPromise(callResult)
+                ) {
+                    receiverLeaseContinues = true
+                }
                 if (!selected.admitResult) return callResult
 
                 const admittedResult = selected.admitResult(callResult)
                 if (languageValues.isPromise(admittedResult)) {
-                    pendingHostResult = true
+                    receiverLeaseContinues = true
                 }
                 return admittedResult
             } finally {
-                callArgumentLeases.release()
-                if (!pendingHostResult) receiverLeases.release()
+                invocation.releaseArguments()
+                if (!receiverLeaseContinues) invocation.releaseReceivers()
             }
         }
-    }
-
-    function closeLeases() {
-        selectionArgumentLeases.release()
-        callArgumentLeases.release()
-        receiverLeases.release()
     }
 }
 
@@ -159,7 +221,6 @@ function createLeaseLedger() {
 }
 
 export {
-    findPropertyDescriptor,
     getHostCallDescription,
     invokeCall,
     invokeDataFunction,

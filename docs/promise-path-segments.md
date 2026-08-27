@@ -25,6 +25,16 @@ An unused segment Promise remains host-owned. Cascada does not wait for it or at
 
 Prefix-wide mutation ordering is unavoidable. For `value[pendingKey]`, no descendant is known until the key resolves, so a later operation anywhere beneath `value` may conflict.
 
+## Operation lifetime
+
+Promise-valued path work uses the owning operation's common lifetime. A path component receives its containing operation's owner; a standalone walker carries a lazy owner slot. Every pending segment continuation, external predecessor wait, and other asynchronous registration goes through the common guarded helpers. The helper reuses the containing owner or materializes the standalone owner before registering, so a pending registration can never be unowned while a completely ready path allocates none. This is generic operation state, not query state, and property-version APIs remain unaware of it. A registered continuation first completes shared mirror, property-version, refcount, and required settlement bookkeeping. If the operation has closed, it performs no later key normalization, traversal, lease or gate acquisition, external-phase work, host access, publication, or result production.
+
+Observe every pending walker continuation at its originating layer even when a non-blocking mutation API does not return that Promise.
+
+Publication required to finish an observation or gated mutation happens before that operation closes. Closing operation work does not cancel an installed gate, release an external phase early, or replace their completion rules. A standalone observation closes when its final result or fatal failure is determined. A pending mutation closes only after its gate publishes success or failure; its immediate non-blocking API return is not completion. When path resolution is one component of invocation, export, or an Error query, only that larger owner determines the final outcome and the path creates no independent lifetime.
+
+`hasError` and `getErrors` reuse their query owner, path export reuses its export owner and separate output lifetime, and `run` and `enter` reuse their containing owner. Standalone lookup and ordinary path operations use the lazy owner. This changes lifetime plumbing only; their completion, Error, cleanup, and ready-path behavior stays unchanged.
+
 ## External state
 
 Before waiting for a segment on a context Chain, query the ready prefix in its external-occurrence index. Register observation or mutation phases for every indexed external identity the unresolved suffix may reach. This selection is protection, not actual use; record use only after the resolved path reaches an identity. Freeze the selected phase set before waiting.

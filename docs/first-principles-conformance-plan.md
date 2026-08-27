@@ -564,7 +564,7 @@ Use the **Operation Work Lifetimes** contract in [`AGENTS.md`](../AGENTS.md). Un
 
 ### 2. Close Error queries
 
-Give each public `hasError` and `getErrors` call one operation lifetime around path resolution and branch search. The public query owns the lifetime around `walkObservationPath`; shared path-resolution and property-version APIs receive no query state.
+Give each public `hasError` and `getErrors` call one operation lifetime around path resolution and branch search. Phase 7B deliberately keeps that lifetime around `walkObservationPath` because the current shared walker has no operation owner, and passes no query-specific state into shared path-resolution or property-version APIs. Phase 11 supersedes only this plumbing: shared path walkers receive the common owner used by every caller, while property-version APIs remain unaware of it.
 
 - A successful synchronous result closes immediately. A pending result closes in the transition that produces its complete outcome, before fulfillment.
 - A fatal operation-specific query or index failure closes the query before it escapes. It never becomes `true`, `false`, or part of an Error list.
@@ -580,8 +580,10 @@ Do not cancel shared settlement, detach mirrors, suppress source Promise rejecti
 
 ### 3. Reuse the rule in later phases
 
-- Phase 7C applies it to controlled Array preparation, conversion, and callback snapshots.
-- Phase 8 shares one lifetime between managed receiver preparation and argument export.
+- Phase 7C applies it to all controlled Array operation work.
+- Phase 7D orders internal dispatch, preparation, member resolution, isolation, and invocation.
+- Phase 7E unifies the lifetime mechanism, applies it to registered preparation and Promise-aware scalar conversion outside invocation, and makes nested components share their operation's owner.
+- Phase 8 extends the shared lifetime across managed receiver preparation and argument export.
 - Phases 9 and 10 keep external boundary preparation inside the selected operation lifetime while preserving phase completion rules.
 - Phase 11 applies it while Promise-valued path segments resume from their protected prefix.
 
@@ -605,83 +607,230 @@ Update [`AGENTS.md`](../AGENTS.md), [`runtime-spec.md`](runtime-spec.md), [`coun
 
 ### Problem
 
-Controlled Array preparation uses a generic `exportArgs` mask even though most inputs need logical conversion or retention rather than host export. Custom Array overrides expose managed receivers, native `concat` reflects on retained values, and supplied sort comparators receive exact managed elements.
+Controlled Array preparation uses a generic `exportArgs` mask even though most inputs need logical conversion or retention rather than host export. Working own and inherited Array overrides expose managed receivers and are intentionally removed. Native `concat` reflects on retained values, and supplied sort comparators receive exact managed elements.
 
 ### Design
 
-Use Phase 7A's exporter only for the one actual host callback boundary. Keep all other controlled Array work on logical values and internal remaps. Apply Phase 7B's operation lifetime to every pending preparation branch.
+Use Phase 7A's exporter only for the sort comparator's inputs. Keep every other controlled Array operation on logical values and internal remaps. Give the common invocation one Phase 7B operation lifetime covering all controlled Array work.
 
-### 1. Remove Array overrides
+### 1. Use controlled dispatch only
 
 Logical Arrays support only Cascada's controlled method table:
 
 1. A table name selects that controlled operation without inspecting the host method surface. Validate its supported observation or mutation mode.
 2. Every other name is unsupported. Do not inspect custom Array properties, prototypes, accessors, or proxies to find a callable.
 
-Delete Array-override selection, receiver export, result admission, and receiver-lease inference. Retain `requiresArrayMaterialization` only for representation mutation and COW. Preserve controlled Array behavior and eligible backing reuse, including observation methods such as `concat`. Never use imported Array storage as mutable ArrayView backing. External Arrays follow Phase 10's exact external-operation path instead.
+Store each generic fallback's native intrinsic in the controlled method table. A specialized producer captures any intrinsic it needs beside its implementation. Never read `Array.prototype` during selection or invocation. This removes dynamic host-property reads from the call path; it is not a defense against primordial tampering. Controlled intrinsics receive only runtime-owned working data, prepared scalar values, or retained payload in positions that store it without inspection. Cascada assumes the global `Array`, `Array[Symbol.species]`, the standard Array intrinsics, and `Array.prototype` remain unmodified; document this trusted runtime requirement rather than adding protocol-defense machinery to every internal Array.
 
-This deliberately removes custom methods from managed Arrays. Declared-external Arrays already have no call path after Phase 6 and remain unsupported until Phase 10 adds exact external operations.
+Delete Array-override selection, receiver export, result import, override-specific receiver-lease inference, and the Array own-language-property shadow check. The latter can only produce a misleading error for an index-shaped unsupported method name. Retain `requiresArrayMaterialization` only for representation mutation and COW. Preserve controlled behavior and eligible backing reuse. Imported Array storage never becomes mutable ArrayView backing. External Arrays remain unsupported until Phase 10 adds exact external operations.
 
-### 2. Keep controlled Array boundaries narrow
+Keep the generic native-equivalence path: a definition without a specialized producer runs its captured same-named intrinsic against the internal remap. Keep `view`, direct observation, remap production, and native fallback as distinct load-bearing cases. Document their observation and mutation precedence in the table header rather than replacing them with a result union or hand-written method implementations.
 
-Using a native intrinsic inside a controlled method creates no host-data boundary only when every value it receives is internal or used without host reflection. It may receive internal remaps and origin records, prepared scalar inputs, and retained values only in positions whose specified algorithm stores them without inspection. It never receives a managed receiver or payload in a position that may inspect arbitrary host state.
+### 2. Prepare only consumed inputs
 
-Replace `exportArgs`, which confuses logical input preparation with outbound export. The method table may describe preparation declaratively, but it must name the controlled algorithm's actual consumption:
+Replace `exportArgs` with the controlled algorithm's actual input consumption:
 
-- indexes and bounds use logical numeric conversion;
-- separators use logical string conversion;
-- stored payload is retained exactly;
-- a comparator is prepared as an executable;
-- `concat` resolves only enough to classify each argument as a logical Array or retained value.
+| Methods and positions | Preparation |
+| --- | --- |
+| `at(0)`, `copyWithin(0..2)`, `fill(1..2)`, `flat(0)`, search `fromIndex`, `slice(0..1)`, `splice(0..1)`, `toSpliced(0..1)`, `with(0)` | Logical numeric conversion |
+| `join(0)` | Logical string conversion |
+| `fill(0)`, every `push`/`unshift` value, `splice(2...)`, `toSpliced(2...)`, `with(1)` | Retain exact payload |
+| Search value | Resolve its top-level availability; an Error or rejection poisons, otherwise compare only identity or primitive value |
+| Every `concat` item | Resolve only enough to classify it as a logical Array or non-Array value |
+| `sort`/`toSorted` comparator | Resolve and validate an executable Function or `undefined` |
 
-`concat` needs no host boundary. Its native intrinsic cannot receive retained non-Array values because native `concat` reflects on `Symbol.isConcatSpreadable`, `length`, and indexed properties. Build the result remap directly from the receiver and each logical Array or ArrayView argument, preserving length, holes, and property origins. Resolve an argument only enough to determine whether it is a logical Array; retain every non-Array argument exactly and never inspect or export its contents. Ignore `Symbol.isConcatSpreadable`, which is outside the language graph, and remove the existing protocol-reflection path. A value that currently produces the unsupported-protocol Error instead behaves as an ordinary non-Array argument.
+Preserve argument count and omission. Leave `undefined` available for position-specific defaults, and do not resolve ignored extra arguments. Retained payload keeps an Error or Promise unchanged; an Error or rejection in a consumed conversion, search, `concat` item classification, or executable position poisons the call. Use a small shared implementation for scalar conversion and retention; keep search, `concat`, and sort as the only custom preparations.
+
+Logical numeric and string preparation deliberately replaces native coercion of exported objects. It never invokes `valueOf`, `toString`, `Symbol.toPrimitive`, or other host hooks on an external identity; an external object such as `Date` is invalid in such a scalar position. Managed records, logical Arrays, and managed classes retain Cascada's intrinsic conversion rules. This intentionally narrows native equivalence to supported logical scalar inputs.
+
+Implement `at` directly from the prepared index and captured property origin; it needs neither a Proxy nor a native intrinsic. Prepared `slice` bounds are already Number or `undefined`, so remove its coercion fallback and derive a view or remap directly. `join` and Array `toString` continue to convert inspected elements logically before a native join receives only prepared strings.
 
 `includes`, `indexOf`, and `lastIndexOf` capture their search value without leasing it because comparison reads only the captured identity or primitive. Keep the receiver lease for `indexOf` and `lastIndexOf` when ordered scanning resumes after a pending element; `includes` continues to capture every property version it will inspect before returning.
 
-If any preparation branch terminates the operation, close all Array-specific work. Later Promise settlement may update shared mirrors and property versions but performs no conversion, source reflection, callback invocation, remap construction, or result publication.
+### 3. Build `concat` from captured remaps
 
-### 3. Export one comparator snapshot
+`concat` has no host boundary. Its captured native intrinsic receives only internal remaps and one-element wrapper Arrays, never a retained value directly:
 
-The controlled sort retains its logical receiver, but a comparator supplied by host JavaScript receives exported arguments. For `sort` and `toSorted` with a comparator:
+1. Capture the receiver's property versions while its ordinary receiver lease is active. A remap result records them directly; an eligible ArrayView result performs the equivalent retained-property and mirror capture without allocating a remap.
+2. As soon as an item resolves to a logical Array or ArrayView, synchronously capture its length, holes, property origins, and exact property versions into an internal remap. Keep the source root leased until publication or failure so later mutation cannot change managed values retained by those origins.
+3. Retain every successfully classified non-Array item exactly. Never inspect or export its contents; a managed retained item keeps its ordinary call lease through publication or failure.
+4. Wrap each retained item as one internal element and concatenate it with the captured remaps. Native Array behavior preserves length and holes and enforces the supported Array-length limit without consulting the retained item.
 
-1. Capture the receiver's present property origins and export its complete logical Array once as the comparator snapshot. This eager export resolves the complete host-visible graph and preserves aliases, cycles, holes, and ArrayView bounds.
-2. Pair each captured origin with the snapshot value at the origin's logical index; the origin list is dense while the snapshot retains holes.
-3. If export finds an Error anywhere in the snapshot, abort before invoking the comparator. No Error reaches host code.
-4. Sort the origin records with a runtime wrapper that passes the paired snapshot values to the comparator. Reuse the same snapshot identities on every comparison; never export lazily or per comparison.
-5. Keep the comparator Function exact and call it synchronously. It may mutate or retain exported managed values without changing Cascada state; exact Functions and external identities remain read-only. It must not reenter Cascada.
-6. Consume the callback result directly without import or coercion. An Error is the callback Error outcome; a Promise or any other non-Number result is a validation Error. Only a ready Number reaches the native sorter.
+`Symbol.isConcatSpreadable` is outside the language graph and is ignored. Every successfully classified non-logical-Array item is one scalar result element. Preserve eligible ArrayView backing reuse without ever using imported storage as mutable backing.
 
-The snapshot is neither the sort receiver nor its result. The native sorting engine receives only internal origin records and the runtime wrapper; final ordering moves the original property origins, not the exported element copies.
+### 4. Use one sort-record pipeline
 
-Lazy export cannot work because export may wait while a native comparator must return synchronously. Sorting the exported Array directly would lose the mapping back to original property versions and could not reconstruct it reliably for duplicate or aliased values. The origin record and wrapper are therefore load-bearing; this phase changes only the value paired with each record from managed state to its operation-wide exported snapshot.
+Comparator readiness and validation precede element collection. Default and comparator sorting then share these steps:
 
-Eager snapshot export is intentionally more expensive than the current logical-value comparator path: it copies every present element's reachable managed graph and resolves nested Promise-backed state before sorting, even when the comparator would inspect less. A Promise rejection or Error anywhere in the snapshot aborts before host code. The cost is required to give arbitrary host comparator code independent, synchronously ready inputs while preserving Cascada state and stable identities across repeated comparisons.
+1. Capture every present property origin and resolve its top-level value through the captured version.
+2. Partition the records, in source order, into sortable non-`undefined` records and explicit-`undefined` origins. Count holes separately.
+3. When fewer than two sortable records remain, perform no comparison conversion, comparator export, or comparator call.
+4. Otherwise prepare only the sortable records:
+   - Default sort converts each occurrence once to its logical string key.
+   - A supplied comparator creates one dense runtime Array containing all sortable values and passes it as one root to `exportValue`. Pair the exported snapshot values with the dense origin records by position.
+5. Stable-sort only the sortable origin records with a runtime comparator, then append explicit-`undefined` origins. Preserve holes for `sort`; append ordinary `undefined` values for those holes in `toSorted`.
 
-### 4. Complete the callback boundary
+Exporting the dense comparator snapshot once preserves aliases and cycles across every future comparison without copying the receiver or walking its indexes twice. Keep it as one export root and one Error domain: `exportManyValues` would give each candidate a separate visited set and may repeatedly traverse an aliased graph. If export reaches an Error anywhere in the host-visible graph, abort before invoking the comparator.
 
-- Every declared input passed to a host callback by a controlled method uses Phase 7A's common export. A controlled method does not otherwise export its logical inputs.
-- A controlled comparator result does not enter the graph and is therefore not imported. Its callback contract accepts only a ready Number.
-- No controlled Array method exports logical input data except the one comparator snapshot. Array invocation no longer depends on observation argument-export helpers.
+Comparison count intentionally determines Error consumption. With zero or one sortable record, neither default conversion nor comparator export runs, so an Error remains retained Array data. With at least two sortable records, default conversion consumes an Error as its conversion outcome, while comparator export consumes every Error it reaches before host code. This also removes the current eager conversion failure for a lone unconvertible value and matches the absence of a native comparison.
+
+The native sorter receives only internal origin records. Its wrapper passes paired exported values to the exact comparator Function with `undefined` as `this`; repeated comparisons reuse the same exported identities. The comparator runs synchronously, may mutate or retain exported managed values, treats exact Functions and external identities as read-only, and must not reenter Cascada. Phase 10 later applies external source-use ordering before such identities reach a controlled callback.
+
+Consume the comparator result directly without import or coercion. An Error is the callback Error outcome. A Promise or any other non-Number result is a validation Error. A ready Number, including `NaN`, reaches the sorter. The snapshot is neither the receiver nor the result; final ordering moves the original property origins.
+
+Lazy or per-comparison export cannot work because export may wait while a native comparator must return synchronously. Sorting exported values directly would lose the exact source origins for duplicates and aliases. The eager dense snapshot and origin records are therefore load-bearing, but no controlled Array method otherwise exports logical input data.
+
+### 5. Close abandoned Array work
+
+The common invocation owns one per-call context containing the open/closed operation fact. Pass that context through the Array table's preparation and execution hooks; only helpers that schedule or resume operation work retain and check it. Synchronous helpers may ignore it. Do not use module-scoped current-operation state or create a lifetime per method.
+
+The lifetime covers input preparation, logical conversion, recursive `flat`, search continuation, comparator snapshot export, and remap construction until the Array result is handed to the common invocation. Mutation publication remains owned by `transformProperty` and its ordinary transition. Concrete abandonment cases include `includes` after an early match, recursive `flat`, independently resolving `concat` items, and sibling conversion or sort branches after a fatal failure.
+
+- Close synchronously before exposing a final result or propagating a fatal failure.
+- An intermediate data Error does not itself close the operation. Finish the Error scan and other preparation required by the selected boundary, then close when its final Error outcome is determined.
+- An early final result, such as `includes === true`, abandons unfinished operation work.
+- A late registered continuation first completes shared mirror, property-version, refcount, and required publication bookkeeping. If the operation is closed, it performs no further conversion, reflection, comparison, callback, remap, protection, or result-production work.
+- A top-level input Promise is operation work, so closure prevents admission of its late value. Shared graph settlement still performs its required admission and publication before observing closure.
+- Leases and export output retain their own last-access and Error-scan lifetimes. Closing the operation neither cancels shared settlement nor replaces those rules.
 
 ### Verification
 
 #### Array dispatch and inputs
 
 - Controlled table names always use controlled dispatch without host method-surface inspection; every other name is unsupported.
+- An own or inherited Array override is never invoked, and the removed Array shadow check no longer gives index-shaped unsupported names a special error.
+- Controlled dispatch uses its generic captured-intrinsic fallback under the documented unmodified-Array-primordials contract. Primordial tampering is outside the supported environment and is not tested as runtime behavior.
 - Removing override selection and its materialization inference changes neither controlled Array behavior nor valid backing reuse.
-- Indexes, bounds, separators, stored payload, search values, and `concat` use only their declared logical preparation.
-- Identity-only Array search values are not leased. Retained payloads remain protected until publication or failure, and resumed ordered searches keep their receiver lease.
-- After terminal preparation failure, resolving an earlier input performs no abandoned conversion, reflection, remap construction, or callback work.
-- Controlled `concat` combines logical remaps directly, retains non-Array arguments exactly, and neither exports element contents nor consults `Symbol.isConcatSpreadable`.
+- Indexes, bounds, separators, stored payload, search values, and `concat` use only their declared logical preparation. Omitted, explicit-`undefined`, and ignored extra arguments retain their native distinctions.
+- Object-valued scalar inputs follow Cascada logical conversion. External identities invoke no native conversion hook and produce a validation Error.
+- Direct `at` matches native negative, fractional, `NaN`, infinite, out-of-range, omitted, and explicit-`undefined` index behavior.
+- Identity-only Array search values are not leased. Retained payloads, captured logical Array `concat` items, and delayed `flat`, observation-mode `sort`, and `toSorted` origins remain protected until publication or failure. Resumed ordered searches keep their receiver lease.
+- After a final result or fatal failure, late settlement performs shared bookkeeping only and no abandoned Array work. `includes` early success and recursive `flat` failure cover this outside argument preparation.
+- Controlled `concat` captures and protects each logical Array item before another item can delay publication, combines those remaps with internally wrapped retained items, enforces the Array-length limit, and neither exports retained contents nor consults their `Symbol.isConcatSpreadable` protocol.
+- Generic `splice` and specialized `flat` retain native-equivalent plain-Array results under the trusted species and primordial assumptions.
 
 #### Comparator boundary
 
-- Default sorting caches one logical key per present non-`undefined` element occurrence and exports no receiver or element.
-- A supplied comparator receives values from one eager export of the complete logical Array. Aliases remain aliases, repeated comparisons reuse the same host identities, and the native sorting engine never receives managed elements.
+- Default sorting prepares one logical key per sortable occurrence only when comparison is possible and exports no receiver or element.
+- A supplied comparator receives values from one eager dense snapshot of only comparator-visible values. Aliases remain aliases, repeated comparisons reuse the same host identities, and the native sorting engine never receives managed elements.
+- Zero or one sortable value causes no key conversion, export, or comparator call. Explicit `undefined` and holes never reach the comparator and do not perturb its call sequence over sortable values.
+- A lone Error or unconvertible value remains Array data. With at least two sortable records, default conversion Errors poison default sort and comparator snapshot Errors poison comparator sort before host code.
 - Comparator export consumes every Error before sorting. A throw or Error result aborts sorting; any non-Number result, including a Promise, is invalid. The result is neither imported nor coerced.
 - Exported managed comparator values may be mutated or retained without changing Cascada state. Exact Functions and external identities remain read-only.
 
-Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`data-classes.md`](data-classes.md), [`array-view.md`](array-view.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
+Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`data-classes.md`](data-classes.md), [`array-view.md`](array-view.md), [`outbound-export.md`](outbound-export.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`work-bounds.md`](work-bounds.md), and the public API documentation.
+
+---
+
+## Phase 7D: Order invocation preparation and member resolution
+
+### Problem
+
+Common invocation currently performs record and managed-class member reflection during category selection. A poisoned argument can therefore invoke a getter, Proxy trap, or prototype reflection even though the call must not occur.
+
+### Design
+
+Separate reflection-free internal dispatch from dynamic member resolution. Keep native String and controlled Array selection early; prepare required inputs before every member lookup that may inspect application state.
+
+### 1. Finish internal dispatch first
+
+- Internal dispatch may use admitted category, method name, requested mode, controlled Array tables, and the trusted native String surface. It invokes no application hook.
+- Reject `constructor`, an unsupported controlled name, or an unsupported mode immediately. Because no executable boundary was selected, perform no boundary-specific receiver or argument preparation and return only that validation Error.
+- Controlled Array selection remains an internal table lookup. A boxed String's own indexes and `length` are deliberately not method candidates. String then selects only Function-valued own data properties from stable `String.prototype` and `Object.prototype`; descriptor lookup on these trusted ordinary prototypes invokes no application hook. Accessors, including `Object.prototype.__proto__`, are unsupported and never invoked. Feed the selected Function into the common host-call description instead of adding another invocation path. Do not export arguments after early String selection failure.
+
+### 2. Resolve dynamic members after preparation
+
+```text
+classify boundary
+start and finish required receiver and argument preparation
+resolve the dynamic callable or member
+isolate the receiver when managed mutation requires it
+invoke
+```
+
+- Defer the current record member lookup and shadow checks and managed-class prototype descriptor traversal until the boundary's required receiver and arguments are clean.
+- If preparation produces an Error, perform no dynamic member getter, Proxy trap, descriptor access, callable test, or invocation. If preparation succeeds, resolve and validate the member exactly once, then invoke at most once.
+- Resolve a managed member from the prepared receiver before mutation isolation. A managed class uses its admitted prototype chain. Isolation preserves that method and prototype; do not resolve the member again from the working copy.
+- A missing or non-callable dynamic member is therefore reported only after required argument preparation. A clean invalid call may allocate export copies that it then discards. Accept that cost rather than adding an early host lookup or a separate Error-scan preflight.
+- This cost differs deliberately from early String failure: trusted String selection is reflection-free, while record and managed-class lookup may inspect application-controlled state and must wait for clean preparation.
+- Phase 8 replaces the current record host-member resolver with managed-record placement resolution. Verify the common ordering contract, not the temporary resolver interface.
+- Keep one invocation coordinator. Category handlers describe their preparation and dynamic resolver; do not add another call path or compatibility interface.
+
+### Verification
+
+- A failed or poisoned argument prevents record and managed-class member reflection and invocation. Clean preparation resolves the member once and preserves existing validation and failure classification.
+- A clean missing dynamic member is reported only after all required argument preparation; an argument Error prevents that lookup. This uses one preparation pass even when export copies are later discarded.
+- Managed member resolution happens once against the prepared pre-isolation receiver. Mutation isolation neither repeats nor changes it.
+- Rejecting a constructor, unsupported controlled name, or unsupported mode performs no boundary-specific input preparation. Controlled Array and native String selection stays early and invokes no application hook; a String accessor is never invoked, and failed String selection exports no arguments.
+- Valid String calls preserve native results and export their explicit arguments through the ordinary host boundary.
+
+Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
+
+---
+
+## Phase 7E: Unify operation work lifetimes
+
+### Problem
+
+Invocation, export, and Error queries independently implement the same open/close fact, fatal-rejection observation, and guarded continuation. Registered receiver and argument roots still prepare through raw continuations, while Promise-aware Array-length conversion has no operation owner. These parallel mechanisms can drift and let abandoned work continue.
+
+### Design
+
+Use one minimal operation-work mechanism everywhere. Unify only lifetime behavior; keep resources and boundary policy at their natural scopes.
+
+### 1. Define the common owner
+
+- The common helpers operate on one open/closed fact and the operation's idempotent `close()`. Each operation keeps cleanup inside its own `close()`; add no cleanup callback or registration mechanism. Existing operation-specific state may implement this interface directly, so do not allocate a wrapper merely to hold it.
+- The helpers receive only results already classified at their boundary. They never decide whether a rejection or failure is language Error data or fatal.
+- All operation-specific pending registration goes through the guarded continuation helpers. A helper that receives a ready result continues synchronously without materializing lifetime state. Before it registers or observes a pending result, it materializes the standalone operation's lazy owner or reuses the containing operation's owner. No caller manually registers an unguarded operation continuation.
+- All components of one issued operation share that owner. A nested component never creates another owner, does not close on successful component completion, and closes the shared owner at the originating asynchronous layer before its fatal failure reaches an aggregate. The operation coordinator closes after its final success or language-Error outcome completes required processing and publication. Do not create an owner per input, branch, method, or Promise.
+- A late continuation first completes shared mirror, property-version, refcount, and required publication bookkeeping. It then performs no operation-specific admission, traversal, conversion, reflection, copying, comparison, protection, invocation, or result production after closure.
+- Keep policy and resources with their operations. Invocation retains lease ledgers, export retains output state, Error queries retain traversal and collection state, and gates, phases, publication, and export output retain their own completion rules.
+- Add no cancellation framework, task registry, cleanup registry, compatibility wrapper, or second continuation path.
+
+### 2. Reuse the owner without changing boundary policy
+
+- A standalone export owns its operation lifetime. Export used by invocation or callback preparation shares that operation's owner and does not close it on successful export.
+- Export output has a separate resource lifetime. Handing completed copies to the caller or discarding them ends output work without closing a shared operation owner.
+- Reaching a language Error discards export copies but does not close the owner. The required Error scan continues; a standalone export's coordinator closes afterward, while a containing invocation closes only after all of its required preparation finishes. Fatal closure by export or another component abandons unfinished export traversal after shared settlement.
+- `hasError` and `getErrors` use the same owner while retaining their distinct completion rules, visited state, and Error collection. Preserve early `hasError`, complete `getErrors`, and release query-only strong state in their own `close()`.
+- Invocation uses the owner while retaining its argument and receiver lease ledgers. Phase 8 later makes argument export share this same owner.
+- Replace only duplicated open facts, fatal observers, and guarded-transition wrappers in invocation, export, and Error queries. `runExportStep` remains export's per-reflection Error-capture policy and is not lifetime code. Retain no local lifetime path or adapter beside the common helpers.
+
+### 3. Close registered preparation
+
+Start every registered receiver and argument root synchronously under the invocation's one lifetime.
+
+- Before admitting a fulfilled top-level input, verify that the invocation remains open.
+- A captured property continuation completes its shared settlement before checking whether further preparation remains allowed.
+- A fatal failure in any root closes all unfinished roots. Late roots perform no graph traversal, reflection, materialization, Error collection, or lease acquisition.
+- Language Errors still complete the required receiver-then-argument collection. Preserve aliases, cycles, logical Promise versions, and balanced receiver and argument leases.
+
+Phase 8 removes registered argument preparation in favor of export, but reuses this receiver-preparation lifetime. The registered-argument wiring is deliberately temporary; verify the shared closure and balanced-lease contract, not that preparation path's interface. Do not add a transitional adapter or a second managed lifetime.
+
+### 4. Close Promise-aware scalar conversion
+
+Every Promise-aware scalar conversion must use the guarded continuation helpers before it registers pending work. Controlled Array conversion reuses its invocation. Array-length assignment carries a lazy owner slot; the helper materializes it only when conversion first becomes pending, so completely ready ordinary assignment and length conversion retain their current allocation. Rename `transformValue`'s current `operation` readiness result to `readiness` so it cannot be confused with the owner. Phase 11 extends the same lazy ownership through common path operations. Remove the optional unprotected asynchronous path.
+
+- Recursive logical-Array conversion branches share one lifetime.
+- A fatal branch closes unfinished conversion work before it propagates through an aggregate. Later branches still settle shared property versions but perform no further conversion or reflection.
+- A language Error remains a conversion outcome and completes all work required by that consumed input.
+- Observe every pending mutation continuation through the common helper at its originating layer even when the non-blocking API does not return that Promise.
+- `assignPath` may return before a pending mutation publishes. Its immediate non-blocking return does not close the owner; successful or failed gate publication does.
+- Preserve ready behavior, scalar semantics, mutation gating, Error publication, and allocation. Do not add a conversion-specific scheduler or lease.
+
+### Verification
+
+- Every operation-specific pending registration passes through the common helper and therefore has an owner before registration. Completely ready assignment and conversion allocate no owner and remain synchronous.
+- Standalone export and queries use one owner, which their existing operation state may implement without a wrapper allocation. Export nested in invocation shares its parent's owner. Successful nested export and completed output do not close the invocation, while a fatal nested failure does.
+- A language Error keeps export's required scan active without closing a shared owner. Fatal sibling closure abandons later export traversal after shared settlement. Existing output discard, Error order, alias, cycle, and captured-frontier behavior remains unchanged.
+- `hasError`, `getErrors`, and invocation preserve their existing completion, failure classification, operation-specific cleanup, and lease behavior after the duplicated lifetime code is removed. `runExportStep` retains its current Error-capture behavior.
+- A fatal registered receiver branch abandons late argument work, and a fatal argument branch abandons late receiver work. Resolving an abandoned root adds no metadata, lease, copy, or reflection while shared property settlement still completes.
+- A fatal Array-length conversion branch abandons late sibling conversion and reflection. A language Error still completes its required conversion outcome and ordinary mutation failure publication.
+- A hidden pending Array-length continuation is observed, remains active after `assignPath` returns, and closes only after publication or fatal failure.
+- Every registered lease remains balanced after success, language Error, rejection, and fatal failure. Invocation, non-invocation conversion, export, Error queries, mutation gates, and later external phases retain their distinct resource lifetimes while following the same closed-work rule.
+
+Update [`AGENTS.md`](../AGENTS.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`outbound-export.md`](outbound-export.md), [`counters-implementation.md`](counters-implementation.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`work-bounds.md`](work-bounds.md), and the public API documentation.
 
 ---
 
@@ -693,7 +842,7 @@ Managed record functions cannot use their containing state as `this`, while regi
 
 ### Design
 
-Generalize Phase 5 instead of adding another invocation path.
+Generalize Phase 5 through the lifetime and invocation ordering completed by Phases 7D and 7E instead of adding another invocation path.
 
 #### Rename
 
@@ -702,17 +851,17 @@ Generalize Phase 5 instead of adding another invocation path.
 - Use managed invocation for managed records and managed class instances.
 - Keep no compatibility module or document alias, and add no record-specific invocation path.
 
-### 1. Select managed methods
+### 1. Resolve managed methods after preparation
 
 For a managed record:
 
 - Treat each own enumerable string-keyed data placement as a possible method placement.
-- Capture and prepare its logical property version before testing callability. A Promise-backed placement is therefore interchangeable with its resolved Function.
+- After clean receiver and argument preparation, read the placement from the prepared record and test callability. Complete receiver preparation has already resolved its captured logical version, so a Promise-backed placement is interchangeable with its resolved Function.
 - Invoke a selected Function with the prepared record as `this`.
 - Do not expose inherited properties, accessors, non-enumerables, or resolved non-Functions as methods.
 - Keep a Function as data outside a supported call position.
 
-Managed classes retain Phase 5 prototype method selection and the managed-class state contract.
+Managed classes retain Phase 5's admitted-prototype-chain selection and managed-class state contract, with Phase 7D's deferred descriptor traversal and callable validation.
 
 ### 2. Share one invocation lifecycle
 
@@ -722,18 +871,19 @@ Both receiver forms reuse Phase 5's receiver preparation, leases, mutation isola
 - Replace independent result copying with Phase 6 import and ordinary shared ownership.
 - Keep runtime-controlled methods on their existing logical-input preparation.
 - Reuse Phase 7A's selection-to-call lease handoff and operation-wide cleanup; add no managed-method lease pool or export-source lease.
-- Reuse Phase 7B's operation lifetime across receiver preparation and argument export.
+- Reuse Phase 7E's common operation lifetime across receiver preparation and argument export, and Phase 7D's dynamic member-resolution order.
 
 Retain Phase 7A's rest-argument `run` signature. Managed invocation consumes the already collected internal argument Array; Phase 9 performs the only public signature change.
 
 The common pre-call lifecycle is:
 
-1. Select the managed method.
+1. Select the managed boundary from admitted category, method name, and mode without member reflection.
 2. Start complete receiver preparation and Phase 7A argument export synchronously.
-3. Finish both preparations, consuming receiver and top-level argument Errors, then isolate a mutating receiver.
-4. Invoke exactly once.
+3. Finish both preparations and consume their required Errors.
+4. If preparation is clean, resolve and validate the method exactly once.
+5. Isolate a mutating receiver, then invoke exactly once.
 
-Receiver preparation and argument export start synchronously under one operation lifetime. A terminal failure in either closes operation-specific work in both. Already-registered continuations still settle shared mirrors, property versions, and refcounts, but perform no further receiver or argument traversal, reflection, copying, or lease acquisition. Do not give each preparation an independent lifetime.
+Receiver preparation and argument export start synchronously under one operation lifetime. A fatal failure in either abandons operation-specific work in both. A language Error keeps the owner open until both preparations complete their required Error handling, after which the coordinator closes the final Error outcome. Already-registered continuations still settle shared mirrors, property versions, and refcounts but perform no further receiver or argument traversal, reflection, copying, or lease acquisition after closure. Do not give each preparation an independent lifetime.
 
 The method receives independent managed argument copies with admitted prototypes. It may mutate, retain, store, or return those copies without changing their Cascada sources. Functions and external identities remain exact and read-only as arguments. Argument export creates no source lease; later external mutation requires selecting the identity as an authorized receiver.
 
@@ -786,6 +936,7 @@ For every managed call:
 #### Selection and reuse
 
 - Ready and Promise-backed own enumerable Function placements receive the prepared record as `this`. Inherited, accessor, non-enumerable, resolved non-Function, and extracted Function values remain unavailable as record methods.
+- Receiver or argument preparation failure performs no post-preparation record method-placement read, managed-class prototype descriptor traversal, callable validation, or invocation.
 - `this.helper()` mutates the already isolated receiver and publishes only through the outer invocation.
 - Records and classes share one preparation, export, isolation, validation, result, and cleanup path.
 - The caller's mode matches method behavior.
@@ -797,8 +948,8 @@ For every managed call:
 - A direct-Promise mutation remains private behind one gate. Later operations wait; fulfillment validates and publishes once; rejection poisons the receiver while preserving rejection.
 - A completed mutation receiver containing a Promise or Error fails validation. A direct result Promise extends the invocation; a nested result Promise does not.
 - Receiver leases balance after fulfillment, rejection, and validation failure; argument export leaves no source lease on success or failure.
-- Managed invocation does not restore selection leases after export capture or acquire another argument-source lease. It uses Phase 7B's operation lifetime, so fatal preparation or completion cannot strand an acquisition attempted by a later parallel branch.
-- A terminal receiver-preparation or argument-export failure closes the other preparation. Later settlement performs shared bookkeeping only and neither traverses newly revealed data nor allocates output.
+- Managed invocation does not restore selection leases after export capture or acquire another argument-source lease. It uses Phase 7E's common operation lifetime, so fatal preparation or completion cannot strand an acquisition attempted by a later parallel branch.
+- A fatal receiver-preparation or argument-export failure abandons the other preparation. A language Error completes required preparation in both before the final Error outcome closes them. Later settlement performs shared bookkeeping only and neither traverses newly revealed data nor allocates output.
 - Direct fulfillment uses common import and shared ownership in FIFO order.
 - A synchronous result containing a nested Promise returns immediately; its retained placement imports later fulfillment.
 - Direct-Promise work may use prepared receiver and arguments until settlement but may not reenter Cascada. Later detached or nested-result access remains a trusted-contract violation, not an instrumented restriction.
@@ -958,6 +1109,7 @@ Any mutation rejected by this state machine, including one attempted through a d
 - Let observations after one exclusive operation share a read phase. The next exclusive operation waits for that whole group.
 - Never make entries created by one operation wait on one another.
 - Merge duplicate selections by making the entry exclusive if any selection is exclusive and setting repair only when an explicit repair scope covers that identity.
+- External selection, predecessor waiting, and use validation share the owning operation's Phase 7E lifetime. Closure prevents later operation-specific preparation or host work but neither retracts published successors nor releases a phase before its completion rule permits it.
 - Keep a direct Promise in its phase through boundary completion; a nested result Promise does not extend it.
 
 ### 5. Reserve phases across async children
@@ -1012,6 +1164,7 @@ Delete every hidden sequence Chain and duplicate scheduler. Add no compiler exte
 - Duplicate context identity selections join one phase without granting alias access. Outside-context observations use no phase and make mutation unavailable.
 - Observations wait for the previous exclusive operation and overlap one another; the next mutation or repair waits for the group even if one of those observations made the identity mutation-ineligible.
 - External phase entry occurs at graph-operation entry without self-wait or acquisition-order deadlock. Executions share no use or phase state.
+- A closed operation performs no late external selection, use validation, or host preparation, while every phase already entered still completes and releases in phase order.
 - Deep context traversal remains under its selected external boundary. No operation adds a phase after waiting; an uncovered later context identity fails before further host access. Non-context traversal records outside use and remains unphased.
 - Exact external work avoids managed COW and transition gates. Other managed behavior remains unchanged.
 - External receiver, argument, property, and `enter` ordering uses phases without creating `readLeaseCount` metadata.
@@ -1067,9 +1220,9 @@ Select Phase 9 requests consistently from facts supplied by the Cascada caller:
 
 ### 2. Reuse the common invocation coordinator
 
-Reuse Phase 5's coordinator for Error collection, member selection, invocation, result admission, category completion, and cleanup. Pass it the captured external phase scope. Add no external-specific coordinator, queue, Error collector, graph copier, importer, exporter, availability resolver, or preparation path.
+Reuse the common coordinator completed by Phases 7D, 7E, and 8 for Error collection, preparation, dynamic member resolution, invocation, result admission, category completion, operation lifetime, and cleanup. Pass it the captured external phase scope. Add no external-specific coordinator, queue, Error collector, graph copier, importer, exporter, availability resolver, or preparation path.
 
-Phase selection wraps every affected existing call category at coordinator entry. It completes before that category's receiver or argument preparation can wait; Phase 8 itself remains unchanged.
+External dispatch and phase selection wrap every affected call category at coordinator entry. They complete before that category's receiver or argument preparation can wait and invoke no host code. Phase 7D's ordering still requires explicit input preparation to finish before host suffix traversal, reflection, or callable resolution; Phase 8's managed behavior remains unchanged.
 
 An external call follows this lifecycle:
 
@@ -1220,7 +1373,18 @@ Several pending segments share this one scope. Do not nest a lease or gate per s
 
 A rejected segment or invalid normalized value follows ordinary failure handling at the protected prefix: an observation returns its Error; a mutation applies the ordinary gated mutation failure.
 
-### 3. Reuse common path transitions
+### 3. Stop closed path work
+
+Use the common operation-work lifetime completed by Phase 7E. It covers segment preparation and normalization, resumed traversal, prefix protection, external candidate selection, and final operation publication.
+
+- A path component receives its containing operation's owner. A standalone walker carries a lazy owner slot. Every pending segment continuation, external predecessor wait, and other asynchronous registration goes through Phase 7E's guarded helpers; the helper reuses the containing owner or materializes the standalone owner before registering. A completely ready path allocates none. This is generic operation state, not query state; do not thread it through property-version APIs.
+- A continuation first completes shared mirror, property-version, refcount, and required settlement bookkeeping. If the operation is closed, it performs no later segment normalization, path traversal, lease or gate acquisition, external-phase work, host access, or result production.
+- Observe every pending walker continuation at its originating layer even when a non-blocking mutation API does not return that Promise.
+- Ordinary publication required to complete the current operation happens before closure. Closing neither abandons an installed mutation gate nor releases an external phase before its own completion rule permits it.
+- A standalone observation's final result or fatal failure closes operation work at its originating transition. A pending mutation closes only after its gate publishes success or failure; its immediate non-blocking API return is not completion. A segment rejection first becomes the ordinary language Error and completes observation or gated-mutation failure before closure.
+- When a Promise-valued path is one component of a larger invocation, export, or Error query, only that larger owner determines the final outcome; path resolution reuses its lifetime rather than creating an independent one.
+
+### 4. Reuse common path transitions
 
 Reuse the existing:
 
@@ -1239,7 +1403,7 @@ Do not implement Promise segments by:
 - adding an operation-specific path preparation flow; or
 - changing ready-path allocation or synchronous behavior.
 
-### 4. Protect possible external targets before waiting
+### 5. Protect possible external targets before waiting
 
 For a context Chain with an unresolved suffix:
 
@@ -1260,14 +1424,18 @@ If the reached external identity is covered by a selected external boundary, obs
 - Broken ready prefixes do not wait for unused inputs. Unused Promise segments remain host-owned and receive no suppression continuation.
 - Segment rejection and invalid normalization follow ordinary Error publication at the protected prefix.
 - Root, middle, and final Promise segments work through common walkers for lookup, assignment, deletion, invocation, export, Error queries, and `enter`.
+- `hasError` and `getErrors` reuse their query owner and preserve early `hasError`, complete `getErrors`, fatal classification, and query-state release. Path export reuses its export owner and output lifetime. `run` and `enter` reuse their containing owner; standalone lookup and ordinary path operations use the lazy owner. These plumbing changes alter no ready-path or existing pending-value behavior.
 
 #### Protection and ordering
 
 - A pending observation leases the longest resolved managed prefix once. Later managed mutation uses COW and cannot change the captured result. An external prefix uses phases without a lease.
 - A pending mutation gates the longest resolved prefix before waiting. Conflicting work cannot overtake it; unrelated paths continue.
 - Several pending segments share one prefix scope while preserving aliases, mirrors, FIFO order, and Error identity.
+- After a final result or fatal failure, a late segment completes shared settlement but performs no normalization, traversal, protection, external-phase work, host access, or result publication. Any installed gate or phase still completes through its own ordinary rule.
+- Every pending path registration has an owner because the guarded helper materializes one before registration; callers cannot select an unguarded asynchronous path.
+- A hidden pending mutation continuation remains observed after the public API returns, and closes operation work only through fatal failure or gated publication.
 - A context suffix registers every candidate external phase before waiting but records use only for the resolved identity and path. Resolution never expands that phase set; an uncovered external target fails before host access.
 - Compiler-known ready String or Number segments may participate in external mutation. Computed ready and Promise-valued segments remain dynamic even when they resolve to the same key; external mutation poisons without host access.
 - No temporary Chain, direct `enter` call, new queue, operation-specific preparation path, or second scheduler is introduced.
 
-Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`promise-path-segments.md`](promise-path-segments.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`enter.md`](enter.md), and the public path-operation documentation.
+Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`promise-path-segments.md`](promise-path-segments.md), [`outbound-export.md`](outbound-export.md), [`counters-implementation.md`](counters-implementation.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`enter.md`](enter.md), [`work-bounds.md`](work-bounds.md), and the public path-operation documentation.

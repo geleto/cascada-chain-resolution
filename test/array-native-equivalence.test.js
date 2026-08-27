@@ -789,9 +789,7 @@ function verifyViewRepresentation(
             world.viewInfo.endAvailable && !world.viewInfo.restricted
         )
     } else if (method === "slice") {
-        expected = scenario.args.every(value => {
-            return value === undefined || typeof value === "number"
-        }) && native.result.length > 0
+        expected = native.result.length > 0
     } else if (
         scenario.mutates ||
         [

@@ -55,7 +55,7 @@ describe("run", () => {
         expect(invalidMode._state.value).to.eql([1])
     })
 
-    it("resolves arguments while leaving coercion native", async () => {
+    it("uses native String calls and logical Array conversion", async () => {
         const scalar = function scalar() {}
         expect(run(
             new Chain("ab"),
@@ -70,7 +70,7 @@ describe("run", () => {
             "slice",
             false,
             scalar,
-        )).to.eql(Array.prototype.slice.call([1, 2], scalar))
+        ) instanceof Error).to.be(true)
 
         const argument = deferred()
         const limit = deferred()
@@ -128,9 +128,8 @@ describe("run", () => {
             false,
             { ready: indexReady.promise },
         )
-        expect(indexed instanceof Promise).to.be(true)
+        expect(indexed).to.be(1)
         indexReady.resolve(true)
-        expect(await indexed).to.be(1)
 
         const retainedReady = deferred()
         const retained = { ready: retainedReady.promise }
@@ -1035,6 +1034,20 @@ describe("run", () => {
             false,
             direct,
         )).to.be(direct)
+        expect(run(
+            new Chain([direct]),
+            [],
+            "indexOf",
+            false,
+            direct,
+        )).to.be(direct)
+        expect(run(
+            new Chain([direct]),
+            [],
+            "lastIndexOf",
+            false,
+            direct,
+        )).to.be(direct)
 
         const concatenated = run(
             new Chain([]),
@@ -1085,6 +1098,26 @@ describe("run", () => {
         mutationPending.reject(rejected)
         expect(await mutationResult).to.be(rejected)
         expect(delayedMutation._state.value).to.be(rejected)
+    })
+
+    it("does not resolve ignored controlled Array arguments", () => {
+        const ignored = deferred()
+        const registrations = countPromiseRegistrations(ignored.promise)
+        const initial = registrations()
+
+        const result = run(
+            new Chain([1, 2]),
+            [],
+            "slice",
+            false,
+            0,
+            1,
+            ignored.promise,
+        )
+
+        expect([...result]).to.eql([1])
+        expect(registrations()).to.be(initial)
+        ignored.resolve(2)
     })
 
     it("combines argument Errors without flattening compounds", async () => {
@@ -1318,18 +1351,19 @@ describe("run", () => {
         expect(Object.hasOwn(original, "push")).to.be(false)
     })
 
-    it("rejects executable concat protocols", () => {
+    it("ignores concat protocols outside the language graph", () => {
         const source = [1]
         const chain = new Chain(source)
 
         const spread = { [Symbol.isConcatSpreadable]: true, 0: 2, length: 1 }
-        expect(run(
+        const result = run(
             chain,
             [],
             "concat",
             false,
             spread,
-        ) instanceof Error).to.be(true)
+        )
+        expect([...result]).to.eql([1, spread])
     })
 
     it("keeps every earlier value stable across prepends", () => {
@@ -1394,25 +1428,18 @@ describe("run", () => {
         const external = createProbe()
         importValue(external.value, "bounded slice")
         external.reset()
-        let conversions = 0
-        function start() {}
-        start.valueOf = () => {
-            conversions++
-            return 500
-        }
         const sliced = run(
             new Chain(external.value),
             [],
             "slice",
             false,
-            start,
+            500,
             502,
         )
 
         expect(Array.isArray(sliced)).to.be(true)
         expect(sliced.length).to.be(2)
         expect(Object.keys(sliced)).to.eql(["0"])
-        expect(conversions).to.be(1)
         expect(external.ownKeyScans()).to.be(0)
         expect(external.inspected.every(inRange)).to.be(true)
 
@@ -1470,7 +1497,7 @@ describe("run", () => {
         }
     })
 
-    it("preserves failing slice bound conversion order", () => {
+    it("rejects host conversion hooks without invoking them", () => {
         const slice = (...bounds) => run(
             new Chain([1, 2]),
             [],
@@ -1482,19 +1509,19 @@ describe("run", () => {
             expect(slice(bound) instanceof Error).to.be(true)
         }
 
-        const failure = new Error("slice start conversion failed")
         let endConversions = 0
         function start() {}
         function end() {}
         start.valueOf = () => {
-            throw failure
+            throw new Error("slice start conversion failed")
         }
         end.valueOf = () => {
             endConversions++
             return 2
         }
 
-        expect(slice(start, end)).to.be(failure)
+        const result = slice(start, end)
+        expect(result.errors.length).to.be(2)
         expect(endConversions).to.be(0)
     })
 
@@ -1506,9 +1533,7 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        function start() {}
-
-        expect(run(new Chain(source), [], "slice", false, start)).to.be(
+        expect(run(new Chain(source), [], "slice", false, 0)).to.be(
             failure,
         )
     })
@@ -1776,6 +1801,49 @@ describe("run", () => {
         expect(metaOf(value).readLeaseCount).to.be(undefined)
     })
 
+    it("captures concat Array items before another item resolves", async () => {
+        const delayed = deferred()
+        const item = [1]
+        const itemChain = new Chain(item)
+
+        const result = run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            item,
+            delayed.promise,
+        )
+        assignPath(itemChain, ["0"], 2)
+        delayed.resolve("done")
+
+        expect([...(await result)]).to.eql([1, "done"])
+        expect(itemChain._state.value).to.eql([2])
+    })
+
+    it("protects captured concat item values until publication", async () => {
+        const delayed = deferred()
+        const child = { value: 1 }
+        const item = [child]
+        const itemChain = new Chain(item)
+
+        const result = run(
+            new Chain([]),
+            [],
+            "concat",
+            false,
+            item,
+            delayed.promise,
+        )
+        assignPath(itemChain, ["0", "value"], 2)
+        delayed.resolve("done")
+
+        const output = [...(await result)]
+        expect(output).to.eql([child, "done"])
+        expect(child.value).to.be(1)
+        expect(itemChain._state.value[0].value).to.be(2)
+    })
+
     it("transforms the FIFO property version of a pending receiver", async () => {
         const receiver = deferred()
         const source = [1]
@@ -1950,6 +2018,61 @@ describe("run", () => {
         later.resolve(3)
     })
 
+    it("distinguishes omitted and explicit undefined lastIndexOf starts", async () => {
+        const values = [1, 2, 1]
+
+        expect(run(
+            new Chain(values),
+            [],
+            "lastIndexOf",
+            false,
+            1,
+        )).to.be(2)
+        expect(run(
+            new Chain(values),
+            [],
+            "lastIndexOf",
+            false,
+            1,
+            undefined,
+        )).to.be(0)
+
+        const start = deferred()
+        const result = run(
+            new Chain(values),
+            [],
+            "lastIndexOf",
+            false,
+            1,
+            start.promise,
+        )
+        start.resolve(undefined)
+        expect(await result).to.be(0)
+    })
+
+    it("protects delayed flat and sort origins until publication", async () => {
+        const cases = [
+            { method: "flat", args: [], ready: [3] },
+            { method: "sort", args: [() => 0], ready: { value: 3 } },
+            { method: "toSorted", args: [() => 0], ready: { value: 3 } },
+        ]
+        for (const { method, args, ready } of cases) {
+            const delayed = deferred()
+            const child = { value: 1 }
+            const source = [child, delayed.promise]
+            const chain = new Chain(source)
+
+            const result = run(chain, [], method, false, ...args)
+            assignPath(chain, ["0", "value"], 2)
+            delayed.resolve(ready)
+
+            const output = [...(await result)]
+            expect(output[0]).to.be(child)
+            expect(child.value).to.be(1)
+            expect(chain._state.value[0].value).to.be(2)
+        }
+    })
+
     it("preserves sort holes while toSorted reads through them", () => {
         const source = [3, , 1, undefined]
         const sorted = run(new Chain(source), [], "sort", false)
@@ -2009,6 +2132,65 @@ describe("run", () => {
         expect(chain._state.value).to.be(result)
         expect(values).to.eql([2, 1])
         comparison.resolve(0)
+    })
+
+    it("exports one aliased snapshot to a sort comparator", () => {
+        const shared = { rank: 2 }
+        const first = { rank: 1 }
+        const compared = []
+
+        const result = run(
+            new Chain([shared, shared, first]),
+            [],
+            "toSorted",
+            false,
+            (left, right) => {
+                compared.push(left, right)
+                left.compared = true
+                right.compared = true
+                return left.rank - right.rank
+            },
+        )
+
+        const sharedCopies = new Set(
+            compared.filter(value => value.rank === 2),
+        )
+        expect(sharedCopies.size).to.be(1)
+        expect([...sharedCopies][0]).not.to.be(shared)
+        expect(result[0]).to.be(first)
+        expect(result[1]).to.be(shared)
+        expect(result[2]).to.be(shared)
+        expect(shared.compared).to.be(undefined)
+        expect(first.compared).to.be(undefined)
+    })
+
+    it("exports comparator Errors only when a comparison is possible", () => {
+        const failure = new Error("nested comparator input")
+        let called = false
+        const comparator = () => {
+            called = true
+            return 0
+        }
+
+        const failed = run(
+            new Chain([{ failure }, { value: 1 }]),
+            [],
+            "toSorted",
+            false,
+            comparator,
+        )
+        expect(failed).to.be(failure)
+        expect(called).to.be(false)
+
+        const retained = run(
+            new Chain([failure]),
+            [],
+            "toSorted",
+            false,
+            comparator,
+        )
+        expect(retained[0]).to.be(failure)
+        expect(called).to.be(false)
     })
 
     it("uses intrinsic conversion for language data", () => {
@@ -2107,23 +2289,16 @@ describe("run", () => {
         )).to.be(Array.prototype.join.call(outer, "|"))
     })
 
-    it("leaves comparator result coercion to native sort", () => {
-        let coercions = 0
+    it("requires comparator results to be Numbers", () => {
         const result = run(
             new Chain([3, 1, 2]),
             [],
             "toSorted",
             false,
-            (left, right) => ({
-                valueOf() {
-                    coercions++
-                    return left - right
-                },
-            }),
+            (left, right) => ({ value: left - right }),
         )
 
-        expect(result).to.eql([1, 2, 3])
-        expect(coercions > 0).to.be(true)
+        expect(result instanceof Error).to.be(true)
     })
 
     it("invokes ordinary methods only on supported object surfaces", () => {
@@ -2524,7 +2699,7 @@ describe("run", () => {
         expect(metaOf(late)).to.be(undefined)
     })
 
-    it("refuses late call leases after preparation fails", async () => {
+    it("abandons late concat work after fatal preparation failure", async () => {
         const pending = deferred()
         const failure = new Error("concat preparation failed")
         const broken = {
@@ -2542,12 +2717,49 @@ describe("run", () => {
             broken,
         ))).to.be(failure)
 
-        const late = { value: 1 }
-        new Chain(late)
+        let reflected = false
+        const late = new Proxy([1], {
+            ownKeys(target) {
+                reflected = true
+                return Reflect.ownKeys(target)
+            },
+        })
         pending.resolve(late)
         await flushMicrotasks()
 
-        expect(metaOf(late).readLeaseCount).to.be(undefined)
+        expect(reflected).to.be(false)
+        expect(metaOf(late)).to.be(undefined)
+    })
+
+    it("abandons late recursive flat work after fatal failure", async () => {
+        const late = deferred()
+        const failing = deferred()
+        const failure = new Error("recursive flat preparation failed")
+        const result = run(
+            new Chain([late.promise, failing.promise]),
+            [],
+            "flat",
+            false,
+        )
+
+        failing.resolve(new Proxy([1], {
+            ownKeys() {
+                reportFatalError(failure)
+            },
+        }))
+        expect(await result.catch(error => error)).to.be(failure)
+
+        let reflected = false
+        const lateArray = new Proxy([2], {
+            ownKeys(target) {
+                reflected = true
+                return Reflect.ownKeys(target)
+            },
+        })
+        late.resolve(lateArray)
+        await flushMicrotasks()
+
+        expect(reflected).to.be(false)
     })
 
     it("balances nested entry and method-argument read leases", async () => {
@@ -2588,7 +2800,7 @@ describe("run", () => {
         expect(Object.keys(root)).to.eql(["missing"])
     })
 
-    it("allows trusted Array overrides while deferring native callbacks", () => {
+    it("uses only controlled Array methods", () => {
         const source = [1, 2]
         Object.defineProperty(source, "map", {
             enumerable: false,
@@ -2598,12 +2810,13 @@ describe("run", () => {
         })
         const view = run(new Chain(source), [], "push", false, 3)
 
-        expect(run(
+        const overridden = run(
             new Chain(view),
             [],
             "map",
             false,
-        )).to.be("1-2-3")
+        )
+        expect(overridden instanceof Error).to.be(true)
         expect(run(
             new Chain([1, 2]),
             [],
@@ -2613,7 +2826,7 @@ describe("run", () => {
         ) instanceof Error).to.be(true)
     })
 
-    it("propagates an Error-valued selected method", () => {
+    it("does not inspect unsupported Array method properties", () => {
         const failure = new Error("broken method")
         const source = []
         Object.defineProperty(source, "broken", {
@@ -2621,7 +2834,9 @@ describe("run", () => {
             configurable: true,
         })
 
-        expect(run(new Chain(source), [], "broken", false)).to.be(failure)
+        const result = run(new Chain(source), [], "broken", false)
+        expect(result instanceof Error).to.be(true)
+        expect(result).not.to.be(failure)
     })
 
     it("returns a validation Error for intrinsic length receivers", () => {
@@ -2670,45 +2885,6 @@ describe("run", () => {
         }
     })
 
-    it("keeps a temporary method receiver outside ownership", async () => {
-        const element = { value: 1 }
-        const argument = deferred()
-        const backing = [0]
-        Object.defineProperty(backing, "read", {
-            enumerable: false,
-            value(addend) {
-                return this[1].value + addend
-            },
-        })
-        const first = run(new Chain(backing), [], "push", false)
-        const viewChain = new Chain(first)
-        assignPath(viewChain, ["1"], element)
-        const items = viewChain._state.value
-        const chain = new Chain({ items })
-        hasError(chain, [])
-
-        const result = run(
-            chain,
-            ["items"],
-            "read",
-            false,
-            argument.promise,
-        )
-        expect(metaOf(element).shared).to.be(undefined)
-        assignPath(chain, ["items", "1", "value"], 2)
-        argument.resolve(0)
-
-        expect(await result).to.be(1)
-        expect(metaOf(element).shared).to.be(undefined)
-        expect([...getRefCounter(element).parents.keys()]).to.eql([items])
-
-        importValue(items, "temporary method receiver")
-        expect(metaOf(element).importBoundary).to.be(undefined)
-        expect(run(new Chain(items), [], "read", false, 0)).to.be(1)
-        expect(metaOf(element).importBoundary).to.be(undefined)
-        verifyRefCounts(chain._state.value, items)
-    })
-
     it("reports a bookkeeping failure during replay fatally", () => {
         const element = { value: 1 }
         const chain = new Chain([element, 2])
@@ -2747,11 +2923,6 @@ describe("run", () => {
                 true,
                 () => readPath(observed, []),
             ),
-            () => {
-                const index = () => {}
-                index.valueOf = () => readPath(observed, [])
-                return run(new Chain([1]), [], "slice", false, index)
-            },
             () => lookupPath(new Chain(new Proxy({}, {
                 getOwnPropertyDescriptor() {
                     readPath(observed, [])

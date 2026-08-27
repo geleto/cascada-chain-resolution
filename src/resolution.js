@@ -2,22 +2,28 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 
 // A direct value runs immediately. Data-Promise rejection becomes a Poison
-// before the continuation runs; continuation throws are Fatal.
+// before the continuation runs; continuation throws are Fatal. Initial
+// operation work may be abandoned before admission; graph settlement omits
+// that predicate and always completes.
 function resolveInitialValueOrPoison(
     value,
     fn = value => value,
+    shouldContinue = () => true,
 ) {
     if (!languageValues.isPromise(value)) {
+        if (!shouldContinue()) return undefined
         languageValues.admitReadyValue(value)
         return errorUtils.runFatal(fn, value)
     }
     return languageValues.continuePromise(
         value,
         value => {
+            if (!shouldContinue()) return undefined
             languageValues.admitReadyValue(value)
             return errorUtils.runFatal(fn, value)
         },
         reason => errorUtils.runFatal(() => {
+            if (!shouldContinue()) return undefined
             const failure = errorUtils.toPoison(reason)
             languageValues.admitReadyValue(failure)
             return fn(failure)
@@ -69,10 +75,12 @@ function unlessPoison(onResolved) {
 function continueInitialValueUnlessPoison(
     value,
     onResolved,
+    shouldContinue,
 ) {
     return resolveInitialValueOrPoison(
         value,
         unlessPoison(onResolved),
+        shouldContinue,
     )
 }
 

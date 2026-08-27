@@ -214,7 +214,11 @@ The controlled Array methods are `at`, `concat`, `copyWithin`, `fill`, `flat`,
 `slice`, `sort`, `splice`, `toReversed`, `toSorted`, `toSpliced`, `toString`,
 `unshift`, and `with`. Array callback methods such as `map`, `filter`, `reduce`,
 and `forEach` are not supported. `sort` and `toSorted` support synchronous
-comparators.
+comparators. Controlled methods prepare only the arguments they consume;
+numeric and string positions use Cascada conversion, while retained payloads
+keep their logical values. A comparator receives exported element copies and
+must return a Number. `concat` spreads only logical Arrays and ignores
+`Symbol.isConcatSpreadable`.
 
 For an Array mutator, `mutation: true` updates the receiver and returns the
 corresponding native mutator result. With `mutation: false`, the receiver is

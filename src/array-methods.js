@@ -2,141 +2,185 @@ import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
+import { exportValue } from "./export.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as resolution from "./resolution.js"
 import * as propertyVersions from "./property-versions.js"
+import * as resolution from "./resolution.js"
 
-const RECEIVER_RESULT = Symbol()
-// By default, the same-named native method runs on a property remap.
-// mutationResult is absent for observations, RECEIVER_RESULT for mutators
-// returning their receiver, or a publisher for an independent result.
-// viewOperationResult reconstructs that result for an ArrayView mutation.
+const RETURN_RECEIVER = Symbol()
+const PASS_AS_PAYLOAD = Symbol()
+const arrayConcat = Array.prototype.concat
+const arrayFlat = Array.prototype.flat
+const arraySort = Array.prototype.sort
+
+// Dispatch precedence is view, direct observation, remap producer, then the
+// captured intrinsic on a property remap. mutationResult is absent for pure
+// observations, RETURN_RECEIVER for receiver-returning mutators, or a result
+// publisher. viewOperationResult reconstructs a view mutation's result.
+// leaseReceiverThroughResult protects origins captured by delayed observations.
+// PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { exportArgs: [true], observe: observeAt },
+    at: { inputs: [numericInput], observe: observeAt },
     concat: {
         prepare: prepareConcatArguments,
-        remap: createConcatResultRemap,
+        remap: createConcatRemap,
         view: tryConcatArrayView,
     },
     copyWithin: {
-        exportArgs: [true, true, true],
-        mutationResult: RECEIVER_RESULT,
+        inputs: [numericInput, numericInput, numericInput],
+        intrinsic: Array.prototype.copyWithin,
+        mutationResult: RETURN_RECEIVER,
     },
     fill: {
-        exportArgs: [false, true, true],
-        mutationResult: RECEIVER_RESULT,
+        inputs: [PASS_AS_PAYLOAD, numericInput, numericInput],
+        intrinsic: Array.prototype.fill,
+        mutationResult: RETURN_RECEIVER,
     },
-    flat: { prepare: prepareFlatArguments, remap: flatRemap },
+    flat: {
+        inputs: [numericInput],
+        leaseReceiverThroughResult: true,
+        remap: flatRemap,
+    },
     includes: { prepare: prepareSearchArguments, observe: includes },
-    indexOf: { prepare: prepareSearchArguments, observe: indexOf },
-    join: { exportArgs: [true], observe: join },
+    indexOf: {
+        leaseReceiverThroughResult: true,
+        prepare: prepareSearchArguments,
+        observe: indexOf,
+    },
+    join: { inputs: [stringInput], observe: join },
     lastIndexOf: {
+        leaseReceiverThroughResult: true,
         prepare: prepareSearchArguments,
         observe: lastIndexOf,
     },
     pop: {
+        intrinsic: Array.prototype.pop,
         mutationResult: publishElement,
         view: tryPopArrayView,
         viewOperationResult: getLastElementOrigin,
     },
     push: {
-        restValues: true,
+        intrinsic: Array.prototype.push,
+        remainingArgsAsPayload: true,
         mutationResult: publishValue,
         view: tryAppendArrayView,
         viewOperationResult: getViewLength,
     },
-    reverse: { mutationResult: RECEIVER_RESULT },
+    reverse: {
+        intrinsic: Array.prototype.reverse,
+        mutationResult: RETURN_RECEIVER,
+    },
     shift: {
+        intrinsic: Array.prototype.shift,
         mutationResult: publishElement,
         view: tryShiftArrayView,
         viewOperationResult: getFirstElementOrigin,
     },
-    slice: { exportArgs: [true, true], observe: slice },
+    slice: { inputs: [numericInput, numericInput], observe: slice },
     sort: {
+        leaseReceiverThroughResult: true,
         prepare: prepareSortArguments,
         remap: prepareAndSortAndRemap,
-        mutationResult: RECEIVER_RESULT,
+        mutationResult: RETURN_RECEIVER,
     },
     splice: {
-        exportArgs: [true, true],
-        restValues: true,
+        inputs: [numericInput, numericInput],
+        intrinsic: Array.prototype.splice,
+        remainingArgsAsPayload: true,
         mutationResult: publishArray,
     },
-    toReversed: {},
+    toReversed: { intrinsic: Array.prototype.toReversed },
     toSorted: {
+        leaseReceiverThroughResult: true,
         prepare: prepareSortArguments,
         remap: prepareToSortedRemap,
     },
-    toSpliced: { exportArgs: [true, true], restValues: true },
-    toString: { observe: toString },
-    unshift: { restValues: true, mutationResult: publishValue },
-    with: { exportArgs: [true, false] },
+    toSpliced: {
+        inputs: [numericInput, numericInput],
+        intrinsic: Array.prototype.toSpliced,
+        remainingArgsAsPayload: true,
+    },
+    // No prepared arguments makes join use its default separator.
+    toString: { observe: join },
+    unshift: {
+        intrinsic: Array.prototype.unshift,
+        remainingArgsAsPayload: true,
+        mutationResult: publishValue,
+    },
+    with: {
+        inputs: [numericInput, PASS_AS_PAYLOAD],
+        intrinsic: Array.prototype.with,
+    },
 }
 
-function observeAt(thisValue, args) {
-    const receiver = new Proxy(
-        { length: arrayViews.logicalArrayLength(thisValue) },
-        {
-            get(target, key) {
-                return key === "length"
-                    ? target.length
-                    : propertyVersions.getPropertyOrigin(thisValue, key)
-            },
-        },
+function observeAt(thisValue, [index = 0], operation) {
+    const length = arrayViews.logicalArrayLength(thisValue)
+    index = index >= 0 ? index : length + index
+    if (index < 0 || index >= length) return undefined
+    return retainElement(
+        propertyVersions.getPropertyOrigin(thisValue, String(index)),
+        operation,
     )
-    const element = invocation.invokeDataFunction(
-        Array.prototype.at,
-        receiver,
-        args,
-    )
-    return retainElement(element)
+}
+
+function numericInput(value, operation) {
+    return operation.continueInitial(value, resolved => {
+        // Let each position apply its own undefined default.
+        return resolved === undefined
+            ? undefined
+            : conversion.toIntegerOrInfinity(resolved, operation)
+    })
+}
+
+function stringInput(value, operation) {
+    return operation.continueInitial(value, resolved => {
+        return resolved === undefined
+            ? undefined
+            : conversion.toStringValue(resolved, undefined, operation)
+    })
 }
 
 function slice(thisValue, args) {
-    const canDeriveView = args.every(value => {
-        return value === undefined || typeof value === "number"
-    })
     const length = arrayViews.logicalArrayLength(thisValue)
     const start = toRelativeIndex(args[0], length, 0)
-    let end = toRelativeIndex(args[1], length, length)
-    end = Math.max(start, end)
-
-    if (canDeriveView) {
-        const view = deriveArrayView(thisValue, start, end)
-        if (view !== undefined) return view
-    }
-    return arrayRemaps.createArrayFromRemap(
-        arrayRemaps.createRemap(thisValue, start, end),
-    )
+    const end = Math.max(start, toRelativeIndex(args[1], length, length))
+    return deriveArrayView(thisValue, start, end) ??
+        arrayRemaps.createArrayFromRemap(
+            arrayRemaps.createRemap(thisValue, start, end),
+        )
 }
 
 function publishValue(value) {
     return value
 }
 
-function publishElement(element, sourceSurvives) {
+function publishElement(element, sourceSurvives, operation) {
     return sourceSurvives
-        ? retainElement(element)
-        : transferElement(element)
+        ? retainElement(element, operation)
+        : transferElement(element, operation)
 }
 
 function publishArray(remap, sourceSurvives) {
     return arrayRemaps.createArrayFromRemap(remap, undefined, sourceSurvives)
 }
 
-function transferElement(element) {
-    return propertyVersions.isPropertyOrigin(element)
+function transferElement(element, operation) {
+    const result = propertyVersions.isPropertyOrigin(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
+    return operation.continueInternal(result, value => value)
 }
 
-function retainElement(element) {
-    return resolution.continueInternalPromiseOrFatal(
-        transferElement(element),
+function retainElement(element, operation) {
+    const result = propertyVersions.isPropertyOrigin(element)
+        ? propertyVersions.resolvePropertyValue(element)
+        : element
+    return operation.continueInternal(
+        result,
         value => {
             metadata.markShared(value)
             return value
@@ -159,85 +203,47 @@ function getViewLength(_thisValue, view) {
     return view.length
 }
 
-function prepareConcatArguments(args, retainSource) {
-    const items = args.map(item => {
-        return resolution.continueInitialValueUnlessPoison(
-            item,
-            value => {
-                const type = typeof value
-                if (
-                    value === null ||
-                    (type !== "object" && type !== "function")
-                ) return retainSource(value)
-
-                const entry = invocation.findPropertyDescriptor(
-                    value,
-                    Symbol.isConcatSpreadable,
-                )
-                const descriptor = entry?.descriptor
-                if (
-                    descriptor === undefined ||
-                    (
-                        "value" in descriptor &&
-                        descriptor.value === undefined
-                    )
-                ) return retainSource(value)
-                return errorUtils.validationError(
-                    "Concat protocols are unsupported",
-                )
-            },
-        )
-    })
-    return resolution.continuePreparedValuesUnlessPoison(
-        items,
-        prepared => prepared,
-    )
-}
-
-function createConcatResultRemap(thisValue, items) {
-    return createConcatRemap(
-        arrayRemaps.createRemap(thisValue),
-        items,
-    )
-}
-
-function createConcatRemap(receiver, items) {
-    const prepared = items.map(item => {
-        return arrayViews.isLogicalArray(item)
-            ? arrayRemaps.createRemap(item)
-            : item
-    })
-    return invocation.invokeDataFunction(
-        Array.prototype.concat,
-        receiver,
-        prepared,
-    )
-}
-
-function prepareFlatArguments(args) {
-    return resolution.continueInitialValueUnlessPoison(
-        args[0],
+function prepareConcatArguments(args, invocation) {
+    const parts = args.map(item => invocation.continueInitial(
+        item,
         value => {
-            return value === undefined
-                ? 1
-                : conversion.toIntegerOrInfinity(value)
+            if (arrayViews.isLogicalArray(value)) {
+                invocation.retainArgument(value)
+                return captureRemap(value)
+            }
+            return [invocation.retainArgument(value)]
         },
+    ))
+    return invocation.continuePreparedAll(parts, values => values)
+}
+
+function captureRemap(array) {
+    const remap = arrayRemaps.createRemap(array)
+    remap.forEach(propertyVersions.capturePropertyVersion)
+    return remap
+}
+
+function createConcatRemap(thisValue, parts) {
+    return invocation.invokeDataFunction(
+        arrayConcat,
+        captureRemap(thisValue),
+        parts,
     )
 }
 
-function flatRemap(thisValue, depth) {
+function flatRemap(thisValue, [depth = 1], operation) {
     depth = Math.max(depth, 0)
-    return resolution.continuePreparedValueUnlessPoison(
-        prepareFlatArray(thisValue, depth),
+    return operation.continuePrepared(
+        prepareFlatArray(thisValue, depth, undefined, operation),
         prepared => invocation.invokeDataFunction(
-            Array.prototype.flat,
+            arrayFlat,
             prepared,
             [depth],
         ),
     )
 }
 
-function prepareFlatArray(array, depth, ancestry = undefined) {
+function prepareFlatArray(array, depth, ancestry, operation) {
     if (
         depth === Infinity &&
         arrayViews.hasArrayAncestor(ancestry, array)
@@ -259,10 +265,11 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
             origin,
             depth,
             nestedAncestry,
+            operation,
         )
         if (languageValues.isError(prepared)) return prepared
         if (languageValues.isPromise(prepared)) {
-            pending.push(resolution.continuePreparedValueUnlessPoison(
+            pending.push(operation.continuePrepared(
                 prepared,
                 value => ({ index, value }),
             ))
@@ -270,173 +277,187 @@ function prepareFlatArray(array, depth, ancestry = undefined) {
             output[index] = prepared
         }
     }
-    return resolution.continuePreparedValuesUnlessPoison(pending, entries => {
-        for (const { index, value } of entries) {
-            output[index] = value
-        }
+    return operation.continuePreparedAll(pending, entries => {
+        for (const { index, value } of entries) output[index] = value
         return output
     })
 }
 
-function prepareFlatProperty(origin, depth, ancestry) {
+function prepareFlatProperty(origin, depth, ancestry, operation) {
     if (depth === 0) return origin
-    return resolution.continueInternalPromiseOrFatal(
+    return operation.continueInternal(
         propertyVersions.resolvePropertyValue(origin),
-        value => {
-            if (arrayViews.isLogicalArray(value)) {
-                return prepareFlatArray(value, depth - 1, ancestry)
-            }
-            return origin
-        },
+        value => arrayViews.isLogicalArray(value)
+            ? prepareFlatArray(value, depth - 1, ancestry, operation)
+            : origin,
     )
 }
 
-function prepareSearchArguments(args, retainSource) {
-    const searchResult = resolution.resolveInitialValueOrPoison(
+function prepareSearchArguments(args, invocation) {
+    const searchResult = invocation.continueInitial(
         args[0],
-        retainSource,
+        value => value,
     )
     const fromResult = args.length > 1
-        ? conversion.toIntegerOrInfinity(args[1])
+        ? conversion.toIntegerOrInfinity(args[1], invocation)
         : undefined
-    return resolution.continuePreparedValuesUnlessPoison(
+    return invocation.continuePreparedAll(
         [searchResult, fromResult],
         ([searchValue, fromIndex]) => ({ searchValue, fromIndex }),
     )
 }
 
-function join(thisValue, [separator]) {
-    return conversion.joinLogicalArray(thisValue, separator)
-}
-
-function toString(thisValue) {
-    return conversion.joinLogicalArray(thisValue)
-}
-
-function prepareSortArguments(args) {
-    const argument = args[0]
-    if (argument === undefined) return undefined
-    return resolution.continueInitialValueUnlessPoison(
-        argument,
-        value => {
-            if (value === undefined) return undefined
-            if (typeof value !== "function") {
-                return errorUtils.validationError(
-                    "Array sort comparator must be callable or undefined",
-                )
-            }
-            return value
-        },
+function join(thisValue, [separator], operation) {
+    return conversion.joinLogicalArray(
+        thisValue,
+        separator,
+        undefined,
+        operation,
     )
 }
 
-function prepareToSortedRemap(thisValue, comparator) {
-    return prepareAndSortAndRemap(thisValue, comparator, true)
+function prepareSortArguments(args, invocation) {
+    if (args[0] === undefined) return undefined
+    return invocation.continueInitial(args[0], value => {
+        if (value === undefined || typeof value === "function") return value
+        return errorUtils.validationError(
+            "Array sort comparator must be callable or undefined",
+        )
+    })
 }
 
-// Native sorting permutes property origins by their resolved values; placement
-// later reads each source slot before mutation replay changes the receiver.
-// Supplied comparators are synchronous and pure; default comparison stringifies
-// each defined element once.
+function prepareToSortedRemap(thisValue, comparator, operation) {
+    return prepareAndSortAndRemap(thisValue, comparator, operation, true)
+}
+
 function prepareAndSortAndRemap(
     thisValue,
     comparator,
+    operation,
     denseHoles = false,
 ) {
-    const records = []
-    let holeCount = 0
     const source = arrayRemaps.createRemap(thisValue)
-    for (let index = 0; index < source.length; index++) {
-        const origin = source[index]
-        if (!origin) {
-            holeCount++
-            continue
-        }
-        const valueResult = propertyVersions.resolvePropertyValue(origin)
-        records.push(resolution.continueInternalPromiseOrFatal(
-            valueResult,
-            value => {
-                return {
-                    origin,
-                    value,
-                }
-            },
+    const records = []
+    for (const origin of source) {
+        if (!origin) continue
+        records.push(operation.continueInternal(
+            propertyVersions.resolvePropertyValue(origin),
+            value => ({ origin, value }),
         ))
     }
-    return resolution.continueInternalPromisesOrFatal(records, prepared => {
-        const ready = comparator === undefined
-            ? prepared.map(record => {
-                if (record.value === undefined) return record
-                return resolution.continuePreparedValueUnlessPoison(
-                    conversion.toStringValue(record.value),
-                    key => ({ ...record, key }),
-                )
-            })
-            : prepared
-        return resolution.continuePreparedValuesUnlessPoison(
-            ready,
-            sortable => {
-                const compare = comparator === undefined
-                    ? comparePreparedKeys
-                    : compareRecords
-                const sorted = invocation.invokeDataFunction(
-                    Array.prototype.toSorted,
-                    sortable,
-                    [compare],
-                )
-                source.length = sorted.length
-                for (let index = 0; index < sorted.length; index++) {
-                    source[index] = sorted[index].origin
-                }
-                const sortedLength = source.length
-                source.length += holeCount
-                if (denseHoles) {
-                    for (let index = sortedLength; index < source.length; index++) {
-                        source[index] = undefined
-                    }
-                }
-                return source
-            },
-        )
-    })
-
-    function comparePreparedKeys(left, right) {
-        if (left.value === undefined) {
-            return right.value === undefined ? 0 : 1
+    return operation.continueInternalAll(records, ready => {
+        const sortable = []
+        const undefinedOrigins = []
+        for (const record of ready) {
+            if (record.value === undefined) {
+                undefinedOrigins.push(record.origin)
+            } else {
+                sortable.push(record)
+            }
         }
-        if (right.value === undefined) return -1
-        if (left.key < right.key) return -1
-        if (left.key > right.key) return 1
-        return 0
-    }
-
-    function compareRecords(left, right) {
-        if (left.value === undefined) {
-            return right.value === undefined ? 0 : 1
+        if (sortable.length < 2) {
+            return finish(sortable)
         }
-        if (right.value === undefined) return -1
-        const result = Reflect.apply(
-            comparator,
-            undefined,
-            [left.value, right.value],
-        )
-        if (languageValues.isPromise(result)) {
-            // Abort native sort through its callback boundary; invokeDataFunction
-            // preserves this validation Error as the operation's poison.
-            throw errorUtils.validationError(
-                "Promise-returning Array sort comparators are unsupported",
+        return prepareAndSortRecords(sortable, comparator, operation, finish)
+
+        function finish(sorted) {
+            return finishSortedRemap(
+                sorted,
+                undefinedOrigins,
+                denseHoles,
+                source.length,
             )
         }
-        // An Error comparator result poisons sort, so stop native comparison
-        // before it can invoke the comparator again or publish a partial order.
-        if (languageValues.isError(result)) throw result
-        return result
+    })
+}
+
+function prepareAndSortRecords(sortable, comparator, operation, finish) {
+    if (comparator === undefined) {
+        const records = sortable.map(record => operation.continuePrepared(
+            conversion.toStringValue(record.value, undefined, operation),
+            key => {
+                record.key = key
+                return record
+            },
+        ))
+        return operation.continuePreparedAll(
+            records,
+            ready => sortRecords(ready, comparePreparedKeys, finish),
+        )
     }
+
+    const snapshot = sortable.map(record => record.value)
+    return operation.continuePrepared(exportValue(snapshot), exported => {
+        for (let index = 0; index < sortable.length; index++) {
+            sortable[index].exported = exported[index]
+        }
+        return sortRecords(
+            sortable,
+            (left, right) => compareExported(
+                comparator,
+                left.exported,
+                right.exported,
+            ),
+            finish,
+        )
+    })
+}
+
+function sortRecords(sortable, compare, finish) {
+    const sorted = invocation.invokeDataFunction(
+        arraySort,
+        sortable,
+        [compare],
+    )
+    return finish(sorted)
+}
+
+function finishSortedRemap(
+    sorted,
+    undefinedOrigins,
+    denseHoles,
+    length,
+) {
+    const remap = new Array(length)
+    let index = 0
+    for (const record of sorted) remap[index++] = record.origin
+    for (const origin of undefinedOrigins) remap[index++] = origin
+    if (denseHoles) {
+        while (index < length) remap[index++] = undefined
+    }
+    return remap
+}
+
+function comparePreparedKeys(left, right) {
+    if (left.key < right.key) return -1
+    if (left.key > right.key) return 1
+    return 0
+}
+
+function compareExported(comparator, left, right) {
+    const result = invocation.invokeDataFunction(
+        comparator,
+        undefined,
+        [left, right],
+    )
+    if (languageValues.isError(result)) throw result
+    if (languageValues.isPromise(result)) {
+        throw errorUtils.validationError(
+            "Promise-returning Array sort comparators are unsupported",
+        )
+    }
+    if (typeof result !== "number") {
+        throw errorUtils.validationError(
+            "Array sort comparator must return a Number",
+        )
+    }
+    return result
 }
 
 function includes(
     thisValue,
     { searchValue, fromIndex = 0 },
+    operation,
 ) {
     const length = arrayViews.logicalArrayLength(thisValue)
     if (length === 0) return false
@@ -459,47 +480,49 @@ function includes(
     if (pending.length === 0) return false
 
     let remaining = pending.length
-    let matched = false
     let resolveResult
-    const result = new Promise(resolve => {
+    let rejectResult
+    const result = new Promise((resolve, reject) => {
         resolveResult = resolve
+        rejectResult = reject
     })
     for (const key of pending) {
-        const valueResult = propertyVersions.resolvePropertyValueAtKey(
-            thisValue,
-            key,
-        )
-        resolution.continueInternalPromiseOrFatal(
-            valueResult,
+        const branch = operation.continueInternal(
+            propertyVersions.resolvePropertyValueAtKey(thisValue, key),
             value => {
-                if (!matched && matches(value)) {
-                    matched = true
-                    resolveResult(true)
-                }
-                remaining--
-                if (remaining === 0 && !matched) resolveResult(false)
+                if (matches(value)) return finish(true)
+                if (--remaining === 0) finish(false)
             },
         )
+        if (languageValues.isPromise(branch)) {
+            resolution.observeResultPromise(branch, () => {}, rejectResult)
+        }
     }
     return result
+
+    function finish(value) {
+        operation.close()
+        resolveResult(value)
+    }
 
     function matches(value) {
         return value === searchValue || Object.is(value, searchValue)
     }
 }
 
-function indexOf(thisValue, prepared) {
-    return orderedIndexSearch(thisValue, prepared, false)
+function indexOf(thisValue, prepared, operation) {
+    return orderedIndexSearch(thisValue, prepared, false, operation)
 }
 
-function lastIndexOf(thisValue, prepared) {
-    return orderedIndexSearch(thisValue, prepared, true)
+function lastIndexOf(thisValue, prepared, operation) {
+    return orderedIndexSearch(thisValue, prepared, true, operation)
 }
 
 function orderedIndexSearch(
     thisValue,
     { searchValue, fromIndex },
     backwards,
+    operation,
 ) {
     fromIndex ??= backwards ? Infinity : 0
     const length = arrayViews.logicalArrayLength(thisValue)
@@ -510,13 +533,7 @@ function orderedIndexSearch(
     const result = next()
     if (!languageValues.isPromise(result)) return result
 
-    // Other Array observations capture every property version before returning.
-    // An ordered search resumes scanning the receiver after a pending element.
-    metadata.incrementReadLease(thisValue)
-    return resolution.observeResultPromise(
-        result,
-        () => metadata.decrementReadLease(thisValue),
-    )
+    return result
 
     function next() {
         while (index >= 0 && index < length) {
@@ -531,11 +548,9 @@ function orderedIndexSearch(
                 key,
             )
             if (languageValues.isPromise(value)) {
-                return resolution.continueInternalPromiseOrFatal(
+                return operation.continueInternal(
                     propertyVersions.resolvePropertyValueAtKey(thisValue, key),
-                    resolved => resolved === searchValue
-                        ? current
-                        : next(),
+                    resolved => resolved === searchValue ? current : next(),
                 )
             }
             if (value === searchValue) return current
@@ -558,9 +573,6 @@ function normalizeBackwardStart(fromIndex, length) {
 
 function toRelativeIndex(value, length, defaultValue) {
     if (value === undefined) return defaultValue
-    // Numeric coercion may invoke Symbol.toPrimitive or valueOf.
-    value = errorUtils.runUserCode(() => +value)
-    value = Number.isNaN(value) ? 0 : Math.trunc(value)
     return value < 0
         ? Math.max(length + value, 0)
         : Math.min(value, length)
@@ -592,8 +604,8 @@ function deriveArrayView(thisValue, start, end) {
     return view
 }
 
-function tryConcatArrayView(thisValue, items) {
-    const suffix = createConcatRemap([], items)
+function tryConcatArrayView(thisValue, parts) {
+    const suffix = invocation.invokeDataFunction(arrayConcat, [], parts)
     return tryAppendArrayView(thisValue, suffix)
 }
 
@@ -614,5 +626,6 @@ function tryAppendArrayView(thisValue, suffix) {
 
 export {
     ARRAY_METHODS,
-    RECEIVER_RESULT,
+    RETURN_RECEIVER,
+    PASS_AS_PAYLOAD,
 }

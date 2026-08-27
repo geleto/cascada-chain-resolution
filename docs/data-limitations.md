@@ -50,6 +50,14 @@ After host-owned managed data is passed to Cascada, application and host code mu
 
 This restriction follows the original identities even if Cascada later copies them. Mutate managed data through Cascada operations or mutate a host-ready copy produced by export.
 
+## Runtime primordials
+
+Cascada assumes the global `Array`, `Array[Symbol.species]`, the standard Array intrinsics, `Array.prototype`, `String.prototype`, and `Object.prototype` are not modified. Otherwise native dispatch, inherited indexes, accessors, species, or protocols could change controlled behavior.
+
+Custom or replaced methods and accessors on `String.prototype` or `Object.prototype` are unsupported through native String dispatch. Cascada never invokes those accessors while selecting a String method.
+
+A boxed String's own character indexes and `length` are not method candidates. `Object.prototype.__proto__` is an accessor, so it is unsupported and never invoked.
+
 ## Logical Arrays
 
 Logical Arrays support only the controlled methods documented in [`run.md`](run.md). Custom Array methods are unsupported.
@@ -65,6 +73,7 @@ run(chain, [], "total", false)
 
 - A supported method name always selects Cascada's controlled implementation. An own or inherited override cannot replace it.
 - Every other method name is rejected. Cascada does not inspect custom Array properties, prototypes, accessors, or proxies to find a callable.
+- Controlled numeric and string arguments use Cascada's logical conversion, not native coercion of exported objects. External identities such as `Date` are invalid in these scalar positions; Cascada never invokes their `valueOf`, `toString`, or `Symbol.toPrimitive` hooks.
 - Array callback methods are unsupported unless explicitly listed. A supplied `sort` or `toSorted` comparator is the documented exception.
 - `Symbol.isConcatSpreadable` and custom Array properties are outside the language graph and do not affect controlled `concat`.
 - A host comparator must run synchronously, must not reenter Cascada, and must return a Number. An Error is its Error outcome; a Promise or any other result is invalid. It may mutate or retain its exported managed argument copies, but exact Functions and external identities remain read-only.

@@ -25,18 +25,11 @@ function selectRegisteredClassCall(
     // Registered-class invocation prepares and admits its result here,
     // so it deliberately supplies no common admitResult hook.
     return {
-        prepareInputs: (
-            args,
-            retainArgument,
-            retainReceiver,
-            releaseReceivers,
-        ) => prepareCall(
+        prepareInputs: (args, invocation) => prepareCall(
             receiver,
             args,
             mutation,
-            retainArgument,
-            retainReceiver,
-            releaseReceivers,
+            invocation,
             mutationContext?.mustPreserveValue === true,
         ),
         invoke: prepared => mutation
@@ -79,15 +72,16 @@ function prepareCall(
     receiver,
     args,
     mutation,
-    retainArgument,
-    retainReceiver,
-    releaseReceivers,
+    invocation,
     preserveReceiver,
 ) {
     return resolution.continueInternalPromisesOrFatal(
         [
-            prepareRoot(receiver, retainReceiver),
-            ...args.map(value => prepareRoot(value, retainArgument)),
+            prepareRoot(receiver, invocation.retainReceiver),
+            ...args.map(root => prepareRoot(
+                root,
+                invocation.retainArgument,
+            )),
         ],
         finish,
     )
@@ -122,7 +116,7 @@ function prepareCall(
             }
         }
 
-        releaseReceivers()
+        invocation.releaseReceivers()
         const isolated = isolateReceiver(roots[0], preserveReceiver)
         const preparedArgs = materializeAndRemapInputs(
             roots.slice(1),

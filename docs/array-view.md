@@ -51,7 +51,7 @@ The first derivation attaches the source projection. Every derivation prepares i
 
 `pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. `unshift` uses the ordinary remap path whenever its receiver must be preserved; physically moving shared backing would require mutable coordinates shared by every existing view.
 
-`slice` with already-numeric bounds returns a subview over the selected range. Empty results use an empty native Array, and arguments requiring native coercion use the normal materializing path.
+`slice` logically converts its bounds before representation work, then returns a subview over the selected range when backing reuse is eligible. Empty results use an empty native Array; otherwise an ineligible source is remapped directly.
 
 `concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-origin remap, so holes, ownership, Promise versions, and indexed-edge accounting use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
 

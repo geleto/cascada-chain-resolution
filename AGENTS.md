@@ -104,7 +104,7 @@ A logical value is what Cascada observes; its representation is the storage used
 
 ## Read Leases
 
-A lease temporarily protects an exact managed identity that pending work may still read. It never delays later mutation; mutation uses COW instead. Release every lease after the operation's last access on success or failure, including identities revealed by required Promise resolution. Cleanup closes the operation's lease lifetime: already-scheduled work must not leave a lease acquired after closure, and must refuse or immediately balance such an acquisition.
+A lease temporarily protects an exact managed identity that pending work may still read or whose captured graph value is not yet owned by its result. It never delays later mutation; mutation uses COW instead. Release every lease after the operation's last access on success or failure, including identities revealed by required Promise resolution. Cleanup closes the operation's lease lifetime: already-scheduled work must not leave a lease acquired after closure, and must refuse or immediately balance such an acquisition.
 
 Leases are used for:
 
@@ -113,6 +113,8 @@ Leases are used for:
 - a managed observation's complete prepared receiver through its direct Promise;
 - a managed mutation's receiver until isolation;
 - a controlled observation that resumes reading its receiver;
+- delayed controlled Array observation results whose captured origins are not yet published;
+- a logical Array `concat` item from capture through publication;
 - read-only `enter` for its captured value;
 - a path observation waiting for its first pending segment, at the longest resolved prefix; later segments reuse that lease.
 
@@ -170,14 +172,18 @@ Shared settlement advances Promise mirrors, property versions, and required book
 - A registered continuation completes shared settlement first, including index maintenance required to publish into an already indexed graph. Index construction or traversal requested only by the operation is operation work. If the operation is closed, none of that work continues.
 - Failure of query-only managed-graph traversal or indexing is fatal. It is not language Error data and is never collected by an Error query. A supported failure during shared property publication follows that publication boundary instead.
 - Components prepared concurrently by one operation share its lifetime. Closing abandons unfinished siblings, while resources with earlier or later last-access points retain their own release rules. Release operation-only strong state that no unfinished result can use.
-- Do not build a task-cancellation system. Keep the open/closed fact at operation scope and reuse an existing lifecycle owner where one exists.
-- Export Error collection remains open until its required scan finishes even after output copying is discarded.
+- Use one operation-level lifetime mechanism around each operation's open/closed fact and idempotent `close()`. The operation keeps its cleanup inside `close()`; add no cleanup registration mechanism. Components of one issued operation share the same lifetime: component success does not close it, component fatal failure does, and the coordinator closes after required final processing and publication.
+- The lifetime mechanism receives already classified boundary results and never decides whether a failure is language Error data or fatal. Leases, export output, Error collection, gates, phases, and publication keep their own lifetimes and storage.
+- All operation-specific pending registration uses the guarded continuation helpers. A ready result continues synchronously without allocating lifetime state; before registering or observing a pending result, the helper materializes the standalone operation's lazy state or reuses its containing operation's state. No caller manually registers unguarded operation work.
+- Do not build a task-cancellation system.
+- Export output has a separate resource lifetime. Handing completed copies to a caller or discarding them ends output work without closing a shared operation. Discarding output because of a language Error does not close operation work; the required Error scan continues. Fatal closure by export or another component abandons unfinished export traversal after shared settlement.
 
 Operation work lifetimes are used by:
 
 - outbound export;
 - Error queries;
-- controlled Array preparation and conversion;
+- controlled Array operation work;
+- Promise-aware scalar conversion outside invocation, including Array-length assignment;
 - managed receiver and argument preparation;
 - external boundary preparation; and
 - Promise-valued path operations.
@@ -319,12 +325,15 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 ## Execution Boundaries
 
 - Select the operation boundary first from runtime-controlled facts such as admitted category, method name, and mode. This internal dispatch invokes no host code. Prepare each input only to the extent that boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors matter only when required preparation reaches them.
+- If internal dispatch rejects a constructor, controlled name, or mode before selecting an executable boundary, perform no boundary-specific receiver or argument preparation and return only that validation Error.
 - A value selected for invocation is prepared and validated as an executable, not imported as graph data. Import applies to a property-read result or invocation result that enters the graph.
-- After required operation phases complete, finish the selected boundary's explicit input preparation before proxy reflection, descriptor access, a getter, or other host method-selection code. If preparation prevents invocation, execute none of that host code; order collected failures by their logical receiver and argument positions. Do not confuse this host reflection with the earlier internal dispatch.
+- After required operation phases complete, finish the selected boundary's explicit input preparation before proxy reflection, descriptor access on application-controlled objects, a getter, or other host method-selection code. If preparation prevents invocation, execute none of that host code; order collected failures by their logical receiver and argument positions. Do not confuse this host reflection with the earlier internal dispatch.
+- Controlled Array table lookup and trusted native String lookup are internal dispatch and remain early because neither invokes an application hook in the supported runtime. String selects only Function-valued data properties from stable `String.prototype` and `Object.prototype`; it never invokes an accessor during selection. Dynamic record, managed-class, and external member resolution happens after preparation.
 - Native JavaScript calls export every explicit argument. Runtime-controlled methods resolve only declared logical inputs; when one invokes a host callback, it exports the complete callback argument list as one graph. Retained payload remains unchanged, including an Error or Promise. A rejected retained Promise poisons its eventual placement, not the retaining call. Controlled methods may return internal representations such as ArrayViews.
 - A controlled callback receives only its declared exported inputs. It may mutate or retain exported managed copies, but Functions and external identities remain exact and read-only. It must not access an unexported managed source or reenter Cascada.
 - A controlled callback position that must remain synchronous rejects a direct Promise result. Its declared result contract determines validation and conversion. Import the result only when it enters the graph as host data; a result consumed entirely by the controlled algorithm does not cross that boundary.
 - A logical Array supports only names in the controlled method table, which always select the controlled operation. Every other name is unsupported. Never inspect a custom Array method surface.
+- Controlled Array methods do not consult application method or protocol surfaces. They assume standard Array primordials and prototype behavior remain unmodified. Trusted native String dispatch likewise assumes stable `String.prototype` and `Object.prototype`.
 - Controlled methods avoid copying and materialization where possible. A special path must provide a material benefit while preserving every logical value.
 - Host code may mutate or retain exported managed argument copies without changing Cascada source data. Exact Functions and external identities are read-only as arguments; later external mutation requires a separate operation in which the identity is the authorized mutation receiver. A host observation must not mutate its exact receiver, while host mutation may change only its designated receiver.
 - External writes complete export before native assignment or setter execution; any reached Error prevents the write. A native setter must finish synchronously.
@@ -334,11 +343,13 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 ## Managed Methods
 
 - Declare a managed class before admitting its instances. Declaration is not retroactive; classification is fixed at first admission.
-- Resolve a managed record's captured own enumerable method placement before testing callability, then invoke it with the prepared record as receiver. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Its prototype chain must satisfy the accessor-free managed-class contract when admitted, and application code must not change it afterward.
+- Internal dispatch selects a managed boundary from admitted category, method name, and mode without member reflection. Complete receiver preparation and explicit-argument export before resolving a member; failed preparation performs no post-preparation method-placement read, prototype descriptor traversal, callable test, or invocation.
+- A managed record then resolves its own enumerable method placement from the prepared record and tests callability. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Its prototype chain must satisfy the accessor-free managed-class contract when admitted, and application code must not change it afterward.
+- Resolve a managed member once from the prepared receiver before mutation isolation. Isolation preserves that member and the admitted prototype and does not repeat resolution.
 - Managed classes expose semantic state only through own enumerable string-keyed data properties. Every managed method keeps mutable semantic state in `this` and receives other state through explicit arguments; it must not depend on mutable parent, closure, module, private-field, Symbol, non-enumerable, accessor, or internal-slot state.
 - Managed state may contain primitives, records, logical Arrays, managed classes, external identities, Functions, aliases, cycles, Promises, and Errors.
 - External identities inside a managed receiver are opaque leaves. A managed method may retain, replace, remove, compare, or return such an identity, but may not inspect or mutate its host state. Select that identity as an external receiver in a separate Cascada operation to access it.
-- After method selection, preparation consumes the complete receiver graph and exports every explicit argument. It resolves every receiver Promise through captured versions and provides no Promise or Error in the receiver. Exported arguments contain no unresolved language Promise or Error. Imported receiver storage keeps its physical Promise.
+- Preparation consumes the complete receiver graph, resolves every receiver Promise through captured versions, and provides no Promise or Error in the receiver. It exports every explicit argument, whose output contains no unresolved language Promise or Error. Imported receiver storage keeps its physical Promise.
 - A method may finish synchronously or remain active through one direct Promise. All later work and input access must belong to that Promise and finish before settlement; detached work is forbidden.
 - The caller's observation-or-mutation mode is a trusted assertion about the selected method. An observation method does not mutate its receiver; a mutating method changes only its isolated receiver. Exported managed argument data is independent and may be mutated, retained, stored in the receiver, or returned without changing its Cascada source. Exact Functions and external identities remain read-only as arguments and retain their boundary restrictions.
 - Nested method calls are ordinary JavaScript on the prepared receiver, not another Cascada invocation. Methods do not change a traversable identity's prototype, descriptors, or extensibility.
