@@ -3,58 +3,81 @@ import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
 
-function exportValue(value) {
-    const result = exportManyValues([value])
-    return resolution.continueInternalPromiseOrFatal(
-        result,
-        values => languageValues.isError(values) ? values : values[0],
-    )
+const keepValues = values => values
+const firstValue = values => values[0]
+
+class ExportContext {
+    constructor(inputCount, owner) {
+        this.owner = owner
+        this.copyBySource = new WeakMap()
+        this.collectedErrors = new Array(inputCount)
+        this.exportedValues = new Array(inputCount)
+        this.visited = Array.from(
+            { length: inputCount },
+            () => new WeakSet(),
+        )
+    }
+
+    discardCopies() {
+        this.copyBySource = undefined
+        this.exportedValues = undefined
+    }
+
+    release() {
+        const unregisterRelease = this.unregisterRelease
+        this.unregisterRelease = undefined
+        unregisterRelease?.()
+        this.copyBySource = undefined
+        this.collectedErrors = undefined
+        this.exportedValues = undefined
+        this.visited = undefined
+    }
 }
 
-function exportManyValues(values) {
-    const state = {
-        open: true,
-        copyBySource: new WeakMap(),
-        collectedErrors: new Array(values.length),
-        exportedValues: new Array(values.length),
-        visited: values.map(() => new WeakSet()),
-    }
+function exportValue(value, containingOperation = undefined) {
+    return exportValues([value], containingOperation, firstValue)
+}
+
+function exportManyValues(values, containingOperation = undefined) {
+    return exportValues(values, containingOperation, keepValues)
+}
+
+function exportValues(values, containingOperation, selectResult) {
+    const standalone = containingOperation === undefined
+    const owner = standalone
+        ? operationLifecycle.createOwner()
+        : containingOperation
+    const state = new ExportContext(values.length, owner)
     let result
     try {
-        const readiness = values.map((value, index) => {
-            return prepareValue(value, index, state)
-        })
-        result = resolution.continueInternalPromisesOrFatal(
+        const readiness = values.map((value, position) =>
+            prepareValue(value, position, state))
+        result = operationLifecycle.continueInternalAll(
+            owner,
             readiness,
-            () => finishExport(state),
+            () => finishExport(state, selectResult),
         )
     } catch (error) {
-        closeExport(state)
+        state.release()
+        operationLifecycle.close(owner)
         throw error
     }
-    return closeOnFatalRejection(result, state)
+    if (languageValues.isPromise(result)) {
+        state.unregisterRelease = operationLifecycle.registerRelease(
+            owner,
+            () => state.release(),
+        )
+    }
+    return standalone
+        ? operationLifecycle.closeWhenDone(owner, result)
+        : result
 }
 
 function prepareValue(value, position, state) {
-    // A closed export must not admit or inspect a late input fulfillment.
-    const result = languageValues.isPromise(value)
-        ? languageValues.continuePromise(
-            value,
-            resolved => errorUtils.runFatal(prepareReadyRoot, resolved),
-            reason => errorUtils.runFatal(() => {
-                if (!state.open) return undefined
-                return prepareReadyRoot(errorUtils.toPoison(reason))
-            }),
-        )
-        : errorUtils.runFatal(prepareReadyRoot, value)
-    return closeOnFatalRejection(result, state)
-
-    function prepareReadyRoot(resolved) {
-        if (!state.open) return undefined
-        languageValues.admitReadyValue(resolved)
+    return operationLifecycle.resolveInitial(state.owner, value, resolved => {
         return runExportTransition(state, position, () => {
             if (languageValues.isError(resolved)) {
                 collectError(state, position, resolved)
@@ -66,7 +89,7 @@ function prepareValue(value, position, state) {
             }
             return readiness
         })
-    }
+    })
 }
 
 function walkValue(value, state, position) {
@@ -74,8 +97,8 @@ function walkValue(value, state, position) {
         collectError(state, position, value)
         return undefined
     }
-
     if (!languageValues.isTraversable(value)) return undefined
+
     const visited = state.visited[position]
     if (visited.has(value)) return undefined
     visited.add(value)
@@ -107,7 +130,7 @@ function walkValue(value, state, position) {
         )
         if (languageValues.isError(child)) continue
         if (languageValues.isPromise(child)) {
-            // Reserve the key at capture time so settlement cannot reorder it.
+            // Reserve the key before settlement can reorder it.
             if (state.copyBySource) writeOutput(
                 state.copyBySource.get(value),
                 key,
@@ -130,19 +153,19 @@ function walkValue(value, state, position) {
         )
         if (readiness) waits.push(readiness)
     }
-    return waits.length === 0 ? undefined : Promise.all(waits)
+    return waits.length === 0
+        ? undefined
+        : operationLifecycle.continueInternal(
+            state.owner,
+            Promise.all(waits),
+            () => undefined,
+        )
 }
 
 function runExportStep(state, position, step) {
-    // Only supported user-code failure becomes language data. Any ordinary
-    // throw keeps propagating to the fatal transition boundary.
-    const result = errorUtils.catchUserCodeFailure(
-        step,
-        error => error,
-    )
-    if (languageValues.isError(result)) {
-        collectError(state, position, result)
-    }
+    // Only the exact user-code boundary becomes language Error data.
+    const result = errorUtils.catchUserCodeFailure(step, error => error)
+    if (languageValues.isError(result)) collectError(state, position, result)
     return result
 }
 
@@ -152,6 +175,7 @@ function walkPromise(parent, key, promise, state, position) {
         key,
         promise,
         value => {
+            if (!operationLifecycle.mayContinue(state.owner)) return undefined
             return runExportTransition(state, position, () => {
                 const readiness = walkValue(value, state, position)
                 if (state.copyBySource) writeOutput(
@@ -163,32 +187,13 @@ function walkPromise(parent, key, promise, state, position) {
             })
         },
     )
-    return closeOnFatalRejection(result, state)
-}
-
-function closeOnFatalRejection(result, state) {
-    if (languageValues.isPromise(result)) {
-        // Close at each async layer so a fatal rejection stops sibling
-        // continuations before it propagates through their Promise aggregates.
-        resolution.observeResultPromise(
-            result,
-            () => {},
-            () => closeExport(state),
-        )
-    }
-    return result
+    return operationLifecycle.observeFatal(state.owner, result)
 }
 
 function runExportTransition(state, position, transition) {
-    if (!state.open) return undefined
-    // A transition contains one synchronous continuation. runExportStep
-    // consumes language Errors; anything thrown past it is fatal.
-    try {
+    return operationLifecycle.run(state.owner, () => {
         return runExportStep(state, position, transition)
-    } catch (error) {
-        closeExport(state)
-        throw error
-    }
+    })
 }
 
 function createOutput(value) {
@@ -205,8 +210,7 @@ function copiedValue(value, state) {
 }
 
 function writeOutput(parent, key, value) {
-    // Define host data directly so keys such as __proto__ cannot invoke an
-    // inherited setter or change the output prototype.
+    // Never let an inherited __proto__ setter change the copy's prototype.
     Object.defineProperty(parent, key, {
         value,
         enumerable: true,
@@ -218,17 +222,10 @@ function writeOutput(parent, key, value) {
 function collectError(state, position, error) {
     const errors = state.collectedErrors[position] ??= new Set()
     errors.add(error)
-    discardOutput(state)
-    return undefined
+    state.discardCopies()
 }
 
-function discardOutput(state) {
-    if (!state.copyBySource) return
-    state.copyBySource = undefined
-    state.exportedValues = undefined
-}
-
-function finishExport(state) {
+function finishExport(state, selectResult) {
     const errors = state.collectedErrors
         .map(errors => errors && errorUtils.combineErrors(
             errors,
@@ -236,21 +233,14 @@ function finishExport(state) {
         ))
         .filter(languageValues.isError)
     const exportedValues = state.exportedValues
-    closeExport(state)
-    return errors.length > 0
-        ? errorUtils.combineErrors(
+    state.release()
+    if (errors.length > 0) {
+        return errorUtils.combineErrors(
             errors,
             "Operation received multiple Errors",
         )
-        : exportedValues
-}
-
-function closeExport(state) {
-    state.open = false
-    state.copyBySource = undefined
-    state.collectedErrors = undefined
-    state.exportedValues = undefined
-    state.visited = undefined
+    }
+    return selectResult(exportedValues)
 }
 
 export { exportManyValues, exportValue }

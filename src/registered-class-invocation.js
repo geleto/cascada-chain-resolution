@@ -5,9 +5,9 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { createEmptyContainerCopy } from "./mutations.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import * as refcounts from "./refcounts.js"
-import * as resolution from "./resolution.js"
 
 // Registered-class methods are trusted synchronous class code. They may
 // mutate only their receiver graph and expose state only through language
@@ -83,12 +83,18 @@ function prepareReceiverAndArgsForMethodLookup(
     args,
     invocation,
 ) {
-    return resolution.continueInternalPromisesOrFatal(
+    return operationLifecycle.continueInternalAll(
+        invocation,
         [
-            prepareInput(receiver, invocation.retainReceiver),
+            prepareInput(
+                receiver,
+                invocation.retainReceiver,
+                invocation,
+            ),
             ...args.map(value => prepareInput(
                 value,
                 invocation.retainArgument,
+                invocation,
             )),
         ],
         finish,
@@ -150,31 +156,58 @@ function prepareReceiverAndArgsBeforeCall(
     }
 }
 
-function prepareInput(input, retain) {
-    const visited = new Set()
-    const errors = new Set()
-    let preparedValue
-    const readiness = resolution.resolveInitialValueOrPoison(
-        input,
-        resolved => {
-            preparedValue = resolved
-            return visit(resolved)
-        },
-    )
-    return resolution.continueInternalPromiseOrFatal(
-        readiness,
-        () => ({ value: preparedValue, errors }),
-    )
+function prepareInput(input, retain, operation) {
+    const preparation = {
+        errors: new Set(),
+        value: undefined,
+        visited: new WeakSet(),
+    }
+    let unregisterRelease
+    try {
+        const readiness = operationLifecycle.resolveInitial(
+            operation,
+            input,
+            resolved => {
+                preparation.value = resolved
+                return visit(resolved)
+            },
+        )
+        if (languageValues.isPromise(readiness)) {
+            unregisterRelease = operationLifecycle.registerRelease(
+                operation,
+                release,
+            )
+        }
+        return operationLifecycle.continueInternal(
+            operation,
+            readiness,
+            () => {
+                unregisterRelease?.()
+                return {
+                    value: preparation.value,
+                    errors: preparation.errors,
+                }
+            },
+        )
+    } catch (error) {
+        unregisterRelease?.()
+        release()
+        throw error
+    }
 
     function visit(current) {
+        if (!operationLifecycle.mayContinue(operation)) return undefined
         if (languageValues.isError(current)) {
-            errors.add(current)
+            preparation.errors.add(current)
             return undefined
         }
-        if (!languageValues.isTraversable(current) || visited.has(current)) {
+        if (
+            !languageValues.isTraversable(current) ||
+            preparation.visited.has(current)
+        ) {
             return undefined
         }
-        visited.add(current)
+        preparation.visited.add(current)
         retain(current)
 
         const keys = catchPreparationFailure(
@@ -192,17 +225,18 @@ function prepareInput(input, retain) {
                 if (nested) waits.push(nested)
                 continue
             }
-            const continued = catchPreparationFailure(
-                () => propertyVersions.continuePropertyValue(
+            const continued = catchPreparationFailure(() => {
+                const result = propertyVersions.continuePropertyValue(
                     current,
                     key,
                     child,
                     visit,
-                ),
-            )
+                )
+                return operationLifecycle.observeFatal(operation, result)
+            })
             waits.push(continued)
         }
-        return combineReadiness(waits)
+        return combineReadiness(waits, operation)
     }
 
     function catchPreparationFailure(fn) {
@@ -210,18 +244,24 @@ function prepareInput(input, retain) {
             fn,
             failure => {
                 languageValues.admitReadyValue(failure)
-                errors.add(failure)
+                preparation.errors.add(failure)
                 return undefined
             },
         )
     }
+
+    function release() {
+        preparation.errors = undefined
+        preparation.value = undefined
+    }
 }
 
-function combineReadiness(waits) {
+function combineReadiness(waits, operation) {
     if (waits.length === 0) return undefined
     if (waits.length === 1) return waits[0]
-    return resolution.continueInternalPromisesOrFatal(
-        waits,
+    return operationLifecycle.continueInternal(
+        operation,
+        Promise.all(waits),
         () => undefined,
     )
 }

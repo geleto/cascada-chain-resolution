@@ -8,6 +8,7 @@ import {
     readPath,
     managedStateClass,
     importValue,
+    reportFatalError,
     deferred,
     flushMicrotasks,
     hasError,
@@ -602,6 +603,48 @@ describe("path assignment", () => {
 
         expect(await exportValue(chain, [])).to.eql([9])
         verifyRefCounts(chain._state.value)
+    })
+
+    it("abandons late Array-length conversion after a fatal branch", async () => {
+        const failing = deferred()
+        const late = deferred()
+        let fail = false
+        const broken = new Proxy([1], {
+            getOwnPropertyDescriptor(target, key) {
+                if (fail) reportFatalError(new Error("conversion failed"))
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        importValue(broken, "prepared fatal conversion value")
+        fail = true
+        const chain = new Chain([1, 2, 3])
+        let reported
+        setFatalErrorReporter(error => {
+            reported ??= error
+        })
+
+        const input = [failing.promise, late.promise]
+        assignPath(chain, ["length"], input)
+        failing.resolve(broken)
+        await flushMicrotasks()
+
+        let reflected = false
+        const lateValue = new Proxy([1], {
+            getOwnPropertyDescriptor(target, key) {
+                reflected = true
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        importValue(lateValue, "prepared late conversion value")
+        reflected = false
+        late.resolve(lateValue)
+        await flushMicrotasks()
+
+        expect(reported?.message).to.be("conversion failed")
+        expect(reflected).to.be(false)
+        expect(readPath(new Chain(input), ["1"])).to.be(lateValue)
+        fail = false
+        verifyRefCounts(input)
     })
 
     it("keeps deferred Array length on its captured receiver version", async () => {

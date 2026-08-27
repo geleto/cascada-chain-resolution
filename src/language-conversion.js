@@ -4,16 +4,16 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
 
 const stringConcat = String.prototype.concat
 const arrayJoin = Array.prototype.join
 
-function toStringValue(value, ancestry = undefined, operation = undefined) {
-    return continueConversion(
-        toPrimitiveValue(value, ancestry, operation),
+function toStringValue(value, ancestry, operation) {
+    return operationLifecycle.continuePrepared(
         operation,
+        toPrimitiveValue(value, ancestry, operation),
         primitive => invocation.invokeDataFunction(
             stringConcat,
             "",
@@ -22,10 +22,10 @@ function toStringValue(value, ancestry = undefined, operation = undefined) {
     )
 }
 
-function toNumberValue(value, operation = undefined) {
-    return continueConversion(
-        toPrimitiveValue(value, undefined, operation),
+function toNumberValue(value, operation) {
+    return operationLifecycle.continuePrepared(
         operation,
+        toPrimitiveValue(value, undefined, operation),
         primitive => {
             try {
                 return +primitive
@@ -37,10 +37,10 @@ function toNumberValue(value, operation = undefined) {
 }
 
 function toPrimitiveValue(value, ancestry, operation) {
-    const continuation = resolution.continueInitialValueUnlessPoison(
+    return operationLifecycle.continueInitial(
+        operation,
         value,
         resolved => {
-            if (operation?.open === false) return undefined
             if (arrayViews.isLogicalArray(resolved)) {
                 if (arrayViews.hasArrayAncestor(ancestry, resolved)) {
                     return ""
@@ -70,13 +70,12 @@ function toPrimitiveValue(value, ancestry, operation) {
                 : conversionError()
         },
     )
-    return operation?.watch(continuation) ?? continuation
 }
 
-function toIntegerOrInfinity(value, operation = undefined) {
-    return continueConversion(
-        toNumberValue(value, operation),
+function toIntegerOrInfinity(value, operation) {
+    return operationLifecycle.continuePrepared(
         operation,
+        toNumberValue(value, operation),
         number => {
             if (Number.isNaN(number) || number === 0) return 0
             if (!Number.isFinite(number)) return number
@@ -95,7 +94,7 @@ function joinLogicalArray(
     array,
     separator = ",",
     ancestry = undefined,
-    operation = undefined,
+    operation,
 ) {
     ancestry ??= { array, parent: undefined }
     const length = arrayViews.logicalArrayLength(array)
@@ -107,34 +106,24 @@ function joinLogicalArray(
             conversions[index] = ""
             continue
         }
-        conversions[index] = continueConversion(
-            propertyVersions.resolvePropertyValueAtKey(array, key),
+        conversions[index] = operationLifecycle.continuePrepared(
             operation,
+            propertyVersions.resolvePropertyValueAtKey(array, key),
             value => {
                 if (value === undefined || value === null) return ""
                 return toStringValue(value, ancestry, operation)
             },
         )
     }
-    const continuation = resolution.continuePreparedValuesUnlessPoison(
+    return operationLifecycle.continuePreparedAll(
+        operation,
         conversions,
-        values => operation?.open === false
-            ? undefined
-            : invocation.invokeDataFunction(
-                arrayJoin,
-                values,
-                [separator],
-            ),
+        values => invocation.invokeDataFunction(
+            arrayJoin,
+            values,
+            [separator],
+        ),
     )
-    return operation?.watch(continuation) ?? continuation
-}
-
-function continueConversion(result, operation, onReady) {
-    const continuation = resolution.continuePreparedValueUnlessPoison(
-        result,
-        value => operation?.open === false ? undefined : onReady(value),
-    )
-    return operation?.watch(continuation) ?? continuation
 }
 
 export {

@@ -102,7 +102,7 @@ checks the existing parent DAG before committing.
 they continue from its independently indexed target. Export instead walks the
 raw graph and never builds or reads counters.
 
-Each Error query owns only its operation-local search state: its lifetime, visited set, and optional Error collection. After `hasError` succeeds early or either query fails fatally, captured Promise versions still maintain shared counters when they publish, but the closed query performs no further indexing or traversal. `getErrors` otherwise exhausts its complete captured frontier.
+Each Error query implements the common operation-lifecycle owner while keeping only query-local visited and Error-collection state. After `hasError` succeeds early or either query fails fatally, captured Promise versions still maintain shared counters when they publish, but the closed query performs no further indexing or traversal. `getErrors` otherwise exhausts its complete captured frontier.
 
 The test verifier independently recounts property contributions, raw-reachable
 index closure, reverse-edge multiplicity, cut and mirror shape, and parent-DAG

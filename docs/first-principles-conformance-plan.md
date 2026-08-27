@@ -776,22 +776,23 @@ Invocation, export, and Error queries independently implement the same open/clos
 
 ### Design
 
-Use one minimal operation-work mechanism everywhere. Unify only lifetime behavior; keep resources and boundary policy at their natural scopes.
+Use one minimal operation-lifecycle mechanism everywhere. Unify only lifetime behavior; keep resources and boundary policy at their natural scopes.
 
 ### 1. Define the common owner
 
-- The common helpers operate on one open/closed fact and the operation's idempotent `close()`. Each operation keeps cleanup inside its own `close()`; add no cleanup callback or registration mechanism. Existing operation-specific state may implement this interface directly, so do not allocate a wrapper merely to hold it.
+- The common helpers operate on one open/closed fact and the operation's idempotent `close()`. Existing operation-specific state may implement this interface directly, so do not allocate a wrapper merely to hold it. A pending nested component with independently stored operation-only resources registers one synchronous, idempotent, non-throwing release with the owner and unregisters it on normal completion. This includes values already collected by an unfinished aggregate. Closing runs remaining releases immediately without cancelling shared settlement.
 - The helpers receive only results already classified at their boundary. They never decide whether a rejection or failure is language Error data or fatal.
-- All operation-specific pending registration goes through the guarded continuation helpers. A helper that receives a ready result continues synchronously without materializing lifetime state. Before it registers or observes a pending result, it materializes the standalone operation's lazy owner or reuses the containing operation's owner. No caller manually registers an unguarded operation continuation.
+- Every owner has an explicit Boolean open fact and idempotent `close()`. Existing operation state implements that contract directly instead of receiving a wrapper. All operation-specific pending registration goes through the guarded continuation helpers. Ready work continues synchronously without allocating release-registry state. Pending nested resources reuse the containing owner and register their release before control returns. No caller manually registers an unguarded operation continuation.
 - All components of one issued operation share that owner. A nested component never creates another owner, does not close on successful component completion, and closes the shared owner at the originating asynchronous layer before its fatal failure reaches an aggregate. The operation coordinator closes after its final success or language-Error outcome completes required processing and publication. Do not create an owner per input, branch, method, or Promise.
 - A late continuation first completes shared mirror, property-version, refcount, and required publication bookkeeping. It then performs no operation-specific admission, traversal, conversion, reflection, copying, comparison, protection, invocation, or result production after closure.
 - Keep policy and resources with their operations. Invocation retains lease ledgers, export retains output state, Error queries retain traversal and collection state, and gates, phases, publication, and export output retain their own completion rules.
-- Add no cancellation framework, task registry, cleanup registry, compatibility wrapper, or second continuation path.
+- Add no cancellation framework, task registry, compatibility wrapper, or second continuation path. The release registry contains only synchronous, idempotent releases for independently stored operation resources; it never contains tasks or continuations.
 
 ### 2. Reuse the owner without changing boundary policy
 
 - A standalone export owns its operation lifetime. Export used by invocation or callback preparation shares that operation's owner and does not close it on successful export.
 - Export output has a separate resource lifetime. Handing completed copies to the caller or discarding them ends output work without closing a shared operation owner.
+- A pending nested export registers its output release with the shared owner. Owner closure therefore releases partial output immediately even when an abandoned input never settles.
 - Reaching a language Error discards export copies but does not close the owner. The required Error scan continues; a standalone export's coordinator closes afterward, while a containing invocation closes only after all of its required preparation finishes. Fatal closure by export or another component abandons unfinished export traversal after shared settlement.
 - `hasError` and `getErrors` use the same owner while retaining their distinct completion rules, visited state, and Error collection. Preserve early `hasError`, complete `getErrors`, and release query-only strong state in their own `close()`.
 - Invocation uses the owner while retaining its argument and receiver lease ledgers. Phase 8 later makes argument export share this same owner.
@@ -811,7 +812,7 @@ Phase 8 removes registered argument preparation in favor of export, but reuses t
 
 ### 4. Close Promise-aware scalar conversion
 
-Every Promise-aware scalar conversion must use the guarded continuation helpers before it registers pending work. Controlled Array conversion reuses its invocation. Array-length assignment carries a lazy owner slot; the helper materializes it only when conversion first becomes pending, so completely ready ordinary assignment and length conversion retain their current allocation. Rename `transformValue`'s current `operation` readiness result to `readiness` so it cannot be confused with the owner. Phase 11 extends the same lazy ownership through common path operations. Remove the optional unprotected asynchronous path.
+Every Promise-aware scalar conversion must use the guarded continuation helpers before it registers pending work. Controlled Array conversion reuses its invocation. Array-length assignment makes its already-required mutation context an explicit owner, so completely ready ordinary assignment and length conversion allocate no additional owner object or release-registry state. Rename `transformValue`'s current `operation` readiness result to `readiness` so it cannot be confused with the owner. Phase 11 extends the same ownership through common path operations. Remove the optional unprotected asynchronous path.
 
 - Recursive logical-Array conversion branches share one lifetime.
 - A fatal branch closes unfinished conversion work before it propagates through an aggregate. Later branches still settle shared property versions but perform no further conversion or reflection.
@@ -1376,9 +1377,9 @@ A rejected segment or invalid normalized value follows ordinary failure handling
 
 ### 3. Stop closed path work
 
-Use the common operation-work lifetime completed by Phase 7E. It covers segment preparation and normalization, resumed traversal, prefix protection, external candidate selection, and final operation publication.
+Use the common operation lifecycle completed by Phase 7E. It covers segment preparation and normalization, resumed traversal, prefix protection, external candidate selection, and final operation publication.
 
-- A path component receives its containing operation's owner. A standalone walker carries a lazy owner slot. Every pending segment continuation, external predecessor wait, and other asynchronous registration goes through Phase 7E's guarded helpers; the helper reuses the containing owner or materializes the standalone owner before registering. A completely ready path allocates none. This is generic operation state, not query state; do not thread it through property-version APIs.
+- A path component receives its containing operation's owner. A standalone walker makes its existing path context an explicit owner. Every pending segment continuation, external predecessor wait, and other asynchronous registration goes through Phase 7E's guarded helpers. A completely ready path allocates no additional owner object or release-registry state. This is generic operation state, not query state; do not thread it through property-version APIs.
 - A continuation first completes shared mirror, property-version, refcount, and required settlement bookkeeping. If the operation is closed, it performs no later segment normalization, path traversal, lease or gate acquisition, external-phase work, host access, or result production.
 - Observe every pending walker continuation at its originating layer even when a non-blocking mutation API does not return that Promise.
 - Ordinary publication required to complete the current operation happens before closure. Closing neither abandons an installed mutation gate nor releases an external phase before its own completion rule permits it.
@@ -1425,7 +1426,7 @@ If the reached external identity is covered by a selected external boundary, obs
 - Broken ready prefixes do not wait for unused inputs. Unused Promise segments remain host-owned and receive no suppression continuation.
 - Segment rejection and invalid normalization follow ordinary Error publication at the protected prefix.
 - Root, middle, and final Promise segments work through common walkers for lookup, assignment, deletion, invocation, export, Error queries, and `enter`.
-- `hasError` and `getErrors` reuse their query owner and preserve early `hasError`, complete `getErrors`, fatal classification, and query-state release. Path export reuses its export owner and output lifetime. `run` and `enter` reuse their containing owner; standalone lookup and ordinary path operations use the lazy owner. These plumbing changes alter no ready-path or existing pending-value behavior.
+- `hasError` and `getErrors` reuse their query owner and preserve early `hasError`, complete `getErrors`, fatal classification, and query-state release. Path export reuses its export owner and output lifetime. `run` and `enter` reuse their containing owner; standalone lookup and ordinary path operations make their existing path context the owner. These plumbing changes alter no ready-path or existing pending-value behavior.
 
 #### Protection and ordering
 
@@ -1433,7 +1434,7 @@ If the reached external identity is covered by a selected external boundary, obs
 - A pending mutation gates the longest resolved prefix before waiting. Conflicting work cannot overtake it; unrelated paths continue.
 - Several pending segments share one prefix scope while preserving aliases, mirrors, FIFO order, and Error identity.
 - After a final result or fatal failure, a late segment completes shared settlement but performs no normalization, traversal, protection, external-phase work, host access, or result publication. Any installed gate or phase still completes through its own ordinary rule.
-- Every pending path registration has an owner because the guarded helper materializes one before registration; callers cannot select an unguarded asynchronous path.
+- Every pending path registration receives an owner before registration; callers cannot select an unguarded asynchronous path.
 - A hidden pending mutation continuation remains observed after the public API returns, and closes operation work only through fatal failure or gated publication.
 - A context suffix registers every candidate external phase before waiting but records use only for the resolved identity and path. Resolution never expands that phase set; an uncovered external target fails before host access.
 - Compiler-known ready String or Number segments may participate in external mutation. Computed ready and Promise-valued segments remain dynamic even when they resolve to the same key; external mutation poisons without host access.

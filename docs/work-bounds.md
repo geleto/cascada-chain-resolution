@@ -34,6 +34,8 @@ One invocation lifetime covers controlled input preparation, logical conversion,
 
 `concat` bounds later work by synchronously capturing each resolved logical Array as a sparse property-origin remap. Sort resolves each present top-level origin once. Default sorting converts each sortable occurrence once; comparator sorting exports one dense snapshot and reuses it for every comparison.
 
+Array-length assignment makes the existing mutation context its explicit guarded-work owner, so ready conversion allocates no additional owner object or release-registry state. Pending conversion closes only after its mutation gate publishes; a fatal sibling abandons later conversion work without suppressing shared property settlement.
+
 ## Detached results
 
 Settlement of a detached or displaced property version stores its logical mirror value without building a ref index or inspecting nested data. Imported settlement still performs its independent admission and Promise-placement work before liveness is considered.

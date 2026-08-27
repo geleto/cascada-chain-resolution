@@ -63,7 +63,7 @@ Export resolves required availability, removes runtime representations, and copi
 
 Export uses no managed source lease. Its synchronous walk copies every ready placement. Exact Promise mirrors preserve pending property versions whose FIFO continuations synchronously traverse each newly revealed branch once, without rereading already captured source state. Host code may retain exported copies, Functions, and exact external identities, but receives no external mutation authority through export. Independent host mutation remains outside Cascada's ordering guarantees.
 
-Fatal or abandoned export closes its output lifetime and releases partial output state. Later registered continuations still complete shared Promise-mirror and property-version settlement, then stop before doing more export work. Error collection remains open until every required branch has been inspected, although it discards output copies after the first Error.
+Completed or discarded output releases its export state without closing a containing operation. Fatal failure closes the operation, which releases partial export state. Later registered continuations still complete shared Promise-mirror and property-version settlement, then stop before doing more export work. Error collection remains open until every required branch has been inspected, although it discards output copies after the first Error.
 
 ## Managed methods
 
@@ -71,7 +71,7 @@ Every own enumerable string-keyed data placement of a managed record is a possib
 
 Records and classes share one managed invocation. Prepare the complete receiver graph and export every explicit argument, resolve the method once from the prepared pre-isolation receiver, isolate a mutation receiver, invoke once, validate and publish mutation, and import the result. Failed preparation performs no post-preparation method-placement read, prototype descriptor traversal, callable test, or invocation. Isolation preserves the selected method and admitted prototype and does not repeat resolution. Nested calls such as `this.increaseBy(1)` are ordinary JavaScript on the already prepared receiver.
 
-Receiver preparation and argument export share one operation-work lifetime. A fatal failure in either abandons operation-specific work in both. A language Error keeps the owner open until required Error handling completes. After closure, later continuations complete shared mirror and property-version settlement but perform no further traversal, reflection, copying, or lease acquisition.
+Receiver preparation and argument export share one operation lifecycle. A fatal failure in either abandons operation-specific work in both. A language Error keeps the owner open until required Error handling completes. After closure, later continuations complete shared mirror and property-version settlement but perform no further traversal, reflection, copying, or lease acquisition.
 
 The caller's mode is a trusted assertion about the selected method. An observation does not mutate its receiver; a mutating method runs only in mutation mode. Exported managed argument data is independent and may be mutated, retained, stored in the receiver, or returned without changing its Cascada source. Functions and external identities remain exact and read-only as arguments; later external mutation requires selecting the identity as an authorized receiver. Every method keeps mutable semantic state in `this` and receives other state explicitly; it does not depend on mutable parent, closure, module, private, hidden, or internal state.
 

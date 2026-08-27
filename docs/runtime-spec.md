@@ -283,6 +283,14 @@ continues an already-native intermediate wait directly and owns its rejection.
 An independent result Promise remains unchanged. None adds a per-consumer
 proxy.
 
+`src/operation-lifecycle.js` guards operation-specific continuations with one shared
+open/closed owner. Fatal failure closes the owner before an aggregate can run a
+late sibling; shared property settlement still completes before the closed
+check. Every owner has an explicit open fact and idempotent close operation;
+ready work allocates no release-registry state. Pending nested resources register synchronous release with the
+owner and unregister on completion; closing releases them without cancelling
+settlement.
+
 An object-like fatal value is reported once per identity even if it crosses
 several fatal wrapper boundaries.
 

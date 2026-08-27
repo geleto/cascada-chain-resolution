@@ -157,7 +157,8 @@ external values retain their exact identities.
 If the branch contains one `Error`, that Error is returned. If it contains
 several distinct Errors, export returns a new `Error` whose `errors` property
 contains them. The result is a Promise when the complete snapshot or Error set
-depends on pending data.
+depends on pending data. An `Error` keeps the full scan running; a fatal runtime
+failure stops it.
 
 ### `hasError(chain, path)`
 

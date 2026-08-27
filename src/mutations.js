@@ -5,6 +5,7 @@ import * as conversion from "./language-conversion.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import * as refcounts from "./refcounts.js"
 import * as resolution from "./resolution.js"
@@ -116,10 +117,9 @@ function transformProperty(
 ) {
     const origin = propertyVersions.getPropertyOrigin(parent, key)
     propertyVersions.capturePropertyVersion(origin)
-    const context = {
+    const context = operationLifecycle.createOwner({
         present: origin !== undefined,
-        rawValue: origin?.value,
-    }
+    })
     return transformValue(
         propertyVersions.resolvePropertyValue(origin),
         attachmentRoot,
@@ -141,7 +141,8 @@ function transformValue(
     returnResultPromise,
 ) {
     let originalValue
-    const operation = resolution.continueInternalPromisesOrFatal(
+    const readiness = operationLifecycle.continueInternalAll(
+        context,
         [value, preparedInput],
         values => recoverMutationFailure(
             () => {
@@ -151,7 +152,8 @@ function transformValue(
                     resolvedTargetValue,
                     attachmentRoot,
                 )
-                return resolution.continueInternalPromiseOrFatal(
+                return operationLifecycle.continueInternal(
+                    context,
                     transform(
                         resolvedTargetValue,
                         preparedArguments,
@@ -163,11 +165,12 @@ function transformValue(
         ),
     )
 
-    if (!languageValues.isPromise(operation)) {
-        const outcome = prepareMutationPublication(operation)
+    if (!languageValues.isPromise(readiness)) {
+        const outcome = prepareMutationPublication(readiness)
         if (outcome.mutatedValue !== originalValue) {
             publishValue(outcome.mutatedValue)
         }
+        operationLifecycle.close(context)
         return outcome.result
     }
 
@@ -182,15 +185,16 @@ function transformValue(
         })
         : undefined
     publishValue(mutatedValueGate)
-    resolution.continueInternalPromiseOrFatal(
-        operation,
+    operationLifecycle.continueInternal(
+        context,
+        readiness,
         outcome => {
             outcome = prepareMutationPublication(outcome)
-            if (returnResultPromise) {
-                resolution.onLaterPromiseReady(mutatedValueGate, () => {
-                    resolveResult(outcome.result)
-                })
-            }
+            // This private publication gate has only a resolve capability.
+            operationLifecycle.continueInternal(context, mutatedValueGate, () => {
+                if (returnResultPromise) resolveResult(outcome.result)
+                operationLifecycle.close(context)
+            })
             resolveMutatedValue(outcome.mutatedValue)
         },
     )
@@ -260,7 +264,7 @@ function assignPath(chain, path, value) {
                     undefined,
                     transformArrayLength,
                     target.replaceReceiver,
-                    {},
+                    operationLifecycle.createOwner(),
                     false,
                 )
             },
@@ -296,10 +300,11 @@ function assignPath(chain, path, value) {
     function transformArrayLength(
         array,
         _input,
-        { mustPreserveValue },
+        context,
     ) {
-        return resolution.continuePreparedValueUnlessPoison(
-            toArrayLength(value),
+        return operationLifecycle.continuePrepared(
+            context,
+            toArrayLength(value, context),
             length => {
                 let mutatedValue = array
                 const representationCopy =
@@ -307,11 +312,11 @@ function assignPath(chain, path, value) {
                         array,
                         length,
                     )
-                if (mustPreserveValue || representationCopy) {
+                if (context.mustPreserveValue || representationCopy) {
                     mutatedValue = arrayRemaps.createArrayFromRemap(
                         arrayRemaps.createRemap(array),
                         array,
-                        mustPreserveValue,
+                        context.mustPreserveValue,
                     )
                 }
                 return {
@@ -326,9 +331,10 @@ function assignPath(chain, path, value) {
     }
 }
 
-function toArrayLength(value) {
-    return resolution.continuePreparedValueUnlessPoison(
-        conversion.toNumberValue(value),
+function toArrayLength(value, operation) {
+    return operationLifecycle.continuePrepared(
+        operation,
+        conversion.toNumberValue(value, operation),
         number => {
             const length = number >>> 0
             return length === number

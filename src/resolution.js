@@ -68,70 +68,8 @@ function observeResultPromise(promise, onFulfilled, onRejected = onFulfilled) {
     return promise
 }
 
-function unlessPoison(onResolved) {
-    return value => languageValues.isError(value) ? value : onResolved(value)
-}
-
-function continueInitialValueUnlessPoison(
-    value,
-    onResolved,
-    shouldContinue,
-) {
-    return resolveInitialValueOrPoison(
-        value,
-        unlessPoison(onResolved),
-        shouldContinue,
-    )
-}
-
-function continuePreparedValueUnlessPoison(result, onResolved) {
-    return continueInternalPromiseOrFatal(result, unlessPoison(onResolved))
-}
-
-function continueInternalPromisesOrFatal(results, onResolved) {
-    const values = new Array(results.length)
-    const waits = []
-    for (let index = 0; index < results.length; index++) {
-        const result = results[index]
-        if (!languageValues.isPromise(result)) {
-            values[index] = result
-            continue
-        }
-        waits.push(continueInternalPromiseOrFatal(
-            result,
-            value => {
-                values[index] = value
-            },
-        ))
-    }
-    if (waits.length === 0) return errorUtils.runFatal(onResolved, values)
-    return continueInternalPromiseOrFatal(
-        Promise.all(waits),
-        () => onResolved(values),
-    )
-}
-
-function continuePreparedValuesUnlessPoison(results, onResolved) {
-    return continueInternalPromisesOrFatal(
-        results,
-        values => {
-            const errors = values.filter(languageValues.isError)
-            return errors.length > 0
-                ? errorUtils.combineErrors(
-                    errors,
-                    "Operation received multiple Errors",
-                )
-                : onResolved(values)
-        },
-    )
-}
-
 export {
-    continueInitialValueUnlessPoison,
     continueInternalPromiseOrFatal,
-    continueInternalPromisesOrFatal,
-    continuePreparedValueUnlessPoison,
-    continuePreparedValuesUnlessPoison,
     observeResultPromise,
     onLaterPromiseReady,
     resolveInitialValueOrPoison,

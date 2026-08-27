@@ -3,7 +3,7 @@ import { exportManyValues } from "./export.js"
 import * as imports from "./import.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as resolution from "./resolution.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 
 class InvocationContext {
     #selectionArgumentLeases = createLeaseLedger()
@@ -30,66 +30,6 @@ class InvocationContext {
         this.releaseArguments()
         this.releaseReceivers()
     }
-
-    continueInitial(result, onReady) {
-        return this.watch(resolution.continueInitialValueUnlessPoison(
-            result,
-            onReady,
-            () => this.open,
-        ))
-    }
-
-    continueInternal(result, onReady) {
-        return this.#continueWhileOpen(
-            result,
-            onReady,
-            resolution.continueInternalPromiseOrFatal,
-        )
-    }
-
-    continueInternalAll(result, onReady) {
-        return this.#continueWhileOpen(
-            result,
-            onReady,
-            resolution.continueInternalPromisesOrFatal,
-        )
-    }
-
-    continuePrepared(result, onReady) {
-        return this.#continueWhileOpen(
-            result,
-            onReady,
-            resolution.continuePreparedValueUnlessPoison,
-        )
-    }
-
-    continuePreparedAll(result, onReady) {
-        return this.#continueWhileOpen(
-            result,
-            onReady,
-            resolution.continuePreparedValuesUnlessPoison,
-        )
-    }
-
-    watch(result) {
-        if (languageValues.isPromise(result)) {
-            // Close at the originating async layer, before a fatal rejection
-            // reaches aggregates that may still have runnable siblings.
-            resolution.observeResultPromise(
-                result,
-                () => {},
-                () => this.close(),
-            )
-        }
-        return result
-    }
-
-    #continueWhileOpen(result, onReady, continueResult) {
-        return this.watch(continueResult(
-            result,
-            value => this.open ? onReady(value) : undefined,
-        ))
-    }
 }
 
 function invokeDataFunction(callable, thisValue, args) {
@@ -108,7 +48,8 @@ function getHostMethodCallDescription(
         invoke: (args, _invocation, callable) =>
             invokeDataFunction(callable, thisValue, args),
         leaseReceiver,
-        prepareInputs: exportManyValues,
+        prepareInputs: (args, invocation) =>
+            exportManyValues(args, invocation),
         getMethod,
     }
 }
@@ -121,21 +62,15 @@ function methodNotCallableError(method) {
 // and its argument and receiver leases.
 function invokeCall(method, mutation, args, select, reachReceiver) {
     const invocation = new InvocationContext()
-    let result
-    try {
-        result = reachReceiver(invokeReceiver)
-    } catch (error) {
-        invocation.close()
-        throw error
-    }
+    const result = operationLifecycle.run(
+        invocation,
+        () => reachReceiver(invokeReceiver),
+    )
 
-    if (!languageValues.isPromise(result)) {
-        invocation.close()
-        return result
+    if (languageValues.isPromise(result)) {
+        invocation.retainArgumentsUntilReceiver(args)
     }
-    invocation.retainArgumentsUntilReceiver(args)
-    resolution.observeResultPromise(result, () => invocation.close())
-    return result
+    return operationLifecycle.closeWhenDone(invocation, result)
 
     function invokeReceiver(receiver, present, context) {
         let selected
@@ -149,7 +84,8 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
             invocation.markReceiverReached()
         }
 
-        return resolution.continueInternalPromiseOrFatal(
+        return operationLifecycle.continueInternal(
+            invocation,
             preparedInputs,
             invokePrepared,
         )
@@ -157,7 +93,6 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
         function invokePrepared(readyInputs) {
             let receiverLeaseContinues = false
             try {
-                if (!invocation.open) return undefined
                 if (languageValues.isError(readyInputs)) {
                     return readyInputs
                 }

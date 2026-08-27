@@ -2,6 +2,7 @@ import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
@@ -71,7 +72,8 @@ function prepareArrayMethodArguments(
             continue
         }
         const result = input(args[index], invocation)
-        readiness.push(invocation.continuePrepared(
+        readiness.push(operationLifecycle.continuePrepared(
+            invocation,
             result,
             value => {
                 prepared[index] = value
@@ -83,7 +85,11 @@ function prepareArrayMethodArguments(
             prepared[index] = invocation.retainArgument(args[index])
         }
     }
-    return invocation.continuePreparedAll(readiness, () => prepared)
+    return operationLifecycle.continuePreparedAll(
+        invocation,
+        readiness,
+        () => prepared,
+    )
 }
 
 // view, observe, remap, and intrinsic fallback are distinct because each avoids
@@ -115,7 +121,8 @@ function invokeArrayObservationMethod(
         // Mutators change the receiver remap; observations return one.
         if (definition.mutationResult === undefined) remap = result
     }
-    return operation.continuePrepared(
+    return operationLifecycle.continuePrepared(
+        operation,
         remap,
         arrayRemaps.createArrayFromRemap,
     )
@@ -143,7 +150,8 @@ function invokeArrayMutationMethod(
     }
 
     if (definition.remap) {
-        return operation.continuePrepared(
+        return operationLifecycle.continuePrepared(
+            operation,
             definition.remap(thisValue, preparedArguments, operation),
             remap => finishMutation(remap, undefined, remap),
         )

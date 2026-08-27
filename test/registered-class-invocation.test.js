@@ -12,6 +12,7 @@ import {
     metaOf,
     readPath,
     managedStateClass,
+    reportFatalError,
     run,
     setFatalErrorReporter,
     thrownBy,
@@ -902,5 +903,96 @@ describe("registered class invocation", () => {
         expect(await second).to.be(2)
         expect(chain._state.value.value).to.be(2)
         await flushMicrotasks()
+    })
+
+    it("abandons a late argument after fatal receiver preparation", async () => {
+        class Value {
+            read() {}
+        }
+        managedStateClass(Value)
+        const receiverValue = deferred()
+        const argument = deferred()
+        let fail = false
+        const broken = new Proxy({}, {
+            ownKeys() {
+                if (fail) reportFatalError(new Error("receiver failed"))
+                return []
+            },
+        })
+        importValue(broken, "prepared fatal receiver child")
+        fail = true
+        const receiver = new Value()
+        receiver.child = receiverValue.promise
+        const result = run(
+            new Chain(receiver),
+            [],
+            "read",
+            false,
+            argument.promise,
+        )
+
+        receiverValue.resolve(broken)
+        expect(await result.catch(error => error)).to.be.a(Error)
+
+        let reflected = false
+        argument.resolve(new Proxy({}, {
+            getPrototypeOf(target) {
+                reflected = true
+                return Reflect.getPrototypeOf(target)
+            },
+        }))
+        await flushMicrotasks()
+
+        expect(reflected).to.be(false)
+        expect(metaOf(receiver).readLeaseCount).to.be(undefined)
+    })
+
+    it("abandons late receiver work after fatal argument preparation", async () => {
+        class Value {
+            read() {}
+        }
+        managedStateClass(Value)
+        const receiverValue = deferred()
+        const argument = deferred()
+        let fail = false
+        const broken = new Proxy({}, {
+            ownKeys() {
+                if (fail) reportFatalError(new Error("argument failed"))
+                return []
+            },
+        })
+        importValue(broken, "prepared fatal argument")
+        fail = true
+        const receiver = new Value()
+        receiver.child = receiverValue.promise
+        const chain = new Chain(receiver)
+        const result = run(
+            chain,
+            [],
+            "read",
+            false,
+            argument.promise,
+        )
+
+        argument.resolve(broken)
+        expect(await result.catch(error => error)).to.be.a(Error)
+
+        let reflected = false
+        const late = new Proxy({}, {
+            ownKeys() {
+                reflected = true
+                return []
+            },
+        })
+        importValue(late, "prepared late receiver child")
+        reflected = false
+        receiverValue.resolve(late)
+        await flushMicrotasks()
+
+        expect(reflected).to.be(false)
+        expect(readPath(chain, ["child"])).to.be(late)
+        expect(metaOf(receiver).readLeaseCount).to.be(undefined)
+        expect(metaOf(late).readLeaseCount).to.be(undefined)
+        verifyRefCounts(chain._state.value)
     })
 })

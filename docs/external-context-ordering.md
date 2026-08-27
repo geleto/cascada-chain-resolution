@@ -96,7 +96,7 @@ An external operation follows this order:
 7. Validate mutation authority when requested, then perform host reflection and invoke once.
 8. Import the result, store any new mutation poison, and release the phases.
 
-External preparation follows the common operation-work lifetime. A closed continuation completes shared settlement but performs no later host reflection, phase acquisition, invocation, or publication. A direct Promise keeps the phases until fulfillment import or rejection. Ready operations remain synchronous. Host code may not issue Cascada operations while its direct invocation remains active. A nested result Promise neither extends the phases nor receives later receiver or input access.
+External preparation follows the common operation lifecycle. A closed continuation completes shared settlement but performs no later host reflection, phase acquisition, invocation, or publication. A direct Promise keeps the phases until fulfillment import or rejection. Ready operations remain synchronous. Host code may not issue Cascada operations while its direct invocation remains active. A nested result Promise neither extends the phases nor receives later receiver or input access.
 
 ## Scope
 

@@ -7,8 +7,8 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -128,7 +128,7 @@ function observeAt(thisValue, [index = 0], operation) {
 }
 
 function numericInput(value, operation) {
-    return operation.continueInitial(value, resolved => {
+    return operationLifecycle.continueInitial(operation, value, resolved => {
         // Let each position apply its own undefined default.
         return resolved === undefined
             ? undefined
@@ -137,7 +137,7 @@ function numericInput(value, operation) {
 }
 
 function stringInput(value, operation) {
-    return operation.continueInitial(value, resolved => {
+    return operationLifecycle.continueInitial(operation, value, resolved => {
         return resolved === undefined
             ? undefined
             : conversion.toStringValue(resolved, undefined, operation)
@@ -172,14 +172,15 @@ function transferElement(element, operation) {
     const result = propertyVersions.isPropertyOrigin(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
-    return operation.continueInternal(result, value => value)
+    return operationLifecycle.continueInternal(operation, result, value => value)
 }
 
 function retainElement(element, operation) {
     const result = propertyVersions.isPropertyOrigin(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
-    return operation.continueInternal(
+    return operationLifecycle.continueInternal(
+        operation,
         result,
         value => {
             metadata.markShared(value)
@@ -204,7 +205,8 @@ function getViewLength(_thisValue, view) {
 }
 
 function prepareConcatArguments(args, invocation) {
-    const parts = args.map(item => invocation.continueInitial(
+    const parts = args.map(item => operationLifecycle.continueInitial(
+        invocation,
         item,
         value => {
             if (arrayViews.isLogicalArray(value)) {
@@ -214,7 +216,11 @@ function prepareConcatArguments(args, invocation) {
             return [invocation.retainArgument(value)]
         },
     ))
-    return invocation.continuePreparedAll(parts, values => values)
+    return operationLifecycle.continuePreparedAll(
+        invocation,
+        parts,
+        values => values,
+    )
 }
 
 function captureRemap(array) {
@@ -233,7 +239,8 @@ function createConcatRemap(thisValue, parts) {
 
 function flatRemap(thisValue, [depth = 1], operation) {
     depth = Math.max(depth, 0)
-    return operation.continuePrepared(
+    return operationLifecycle.continuePrepared(
+        operation,
         prepareFlatArray(thisValue, depth, undefined, operation),
         prepared => invocation.invokeDataFunction(
             arrayFlat,
@@ -269,7 +276,8 @@ function prepareFlatArray(array, depth, ancestry, operation) {
         )
         if (languageValues.isError(prepared)) return prepared
         if (languageValues.isPromise(prepared)) {
-            pending.push(operation.continuePrepared(
+            pending.push(operationLifecycle.continuePrepared(
+                operation,
                 prepared,
                 value => ({ index, value }),
             ))
@@ -277,7 +285,7 @@ function prepareFlatArray(array, depth, ancestry, operation) {
             output[index] = prepared
         }
     }
-    return operation.continuePreparedAll(pending, entries => {
+    return operationLifecycle.continuePreparedAll(operation, pending, entries => {
         for (const { index, value } of entries) output[index] = value
         return output
     })
@@ -285,7 +293,8 @@ function prepareFlatArray(array, depth, ancestry, operation) {
 
 function prepareFlatProperty(origin, depth, ancestry, operation) {
     if (depth === 0) return origin
-    return operation.continueInternal(
+    return operationLifecycle.continueInternal(
+        operation,
         propertyVersions.resolvePropertyValue(origin),
         value => arrayViews.isLogicalArray(value)
             ? prepareFlatArray(value, depth - 1, ancestry, operation)
@@ -294,14 +303,16 @@ function prepareFlatProperty(origin, depth, ancestry, operation) {
 }
 
 function prepareSearchArguments(args, invocation) {
-    const searchResult = invocation.continueInitial(
+    const searchResult = operationLifecycle.continueInitial(
+        invocation,
         args[0],
         value => value,
     )
     const fromResult = args.length > 1
         ? conversion.toIntegerOrInfinity(args[1], invocation)
         : undefined
-    return invocation.continuePreparedAll(
+    return operationLifecycle.continuePreparedAll(
+        invocation,
         [searchResult, fromResult],
         ([searchValue, fromIndex]) => ({ searchValue, fromIndex }),
     )
@@ -318,7 +329,7 @@ function join(thisValue, [separator], operation) {
 
 function prepareSortArguments(args, invocation) {
     if (args[0] === undefined) return undefined
-    return invocation.continueInitial(args[0], value => {
+    return operationLifecycle.continueInitial(invocation, args[0], value => {
         if (value === undefined || typeof value === "function") return value
         return errorUtils.validationError(
             "Array sort comparator must be callable or undefined",
@@ -340,12 +351,13 @@ function prepareAndSortAndRemap(
     const records = []
     for (const origin of source) {
         if (!origin) continue
-        records.push(operation.continueInternal(
+        records.push(operationLifecycle.continueInternal(
+            operation,
             propertyVersions.resolvePropertyValue(origin),
             value => ({ origin, value }),
         ))
     }
-    return operation.continueInternalAll(records, ready => {
+    return operationLifecycle.continueInternalAll(operation, records, ready => {
         const sortable = []
         const undefinedOrigins = []
         for (const record of ready) {
@@ -373,34 +385,40 @@ function prepareAndSortAndRemap(
 
 function prepareAndSortRecords(sortable, comparator, operation, finish) {
     if (comparator === undefined) {
-        const records = sortable.map(record => operation.continuePrepared(
+        const records = sortable.map(record => operationLifecycle.continuePrepared(
+            operation,
             conversion.toStringValue(record.value, undefined, operation),
             key => {
                 record.key = key
                 return record
             },
         ))
-        return operation.continuePreparedAll(
+        return operationLifecycle.continuePreparedAll(
+            operation,
             records,
             ready => sortRecords(ready, comparePreparedKeys, finish),
         )
     }
 
     const snapshot = sortable.map(record => record.value)
-    return operation.continuePrepared(exportValue(snapshot), exported => {
-        for (let index = 0; index < sortable.length; index++) {
-            sortable[index].exported = exported[index]
-        }
-        return sortRecords(
-            sortable,
-            (left, right) => compareExported(
-                comparator,
-                left.exported,
-                right.exported,
-            ),
-            finish,
-        )
-    })
+    return operationLifecycle.continuePrepared(
+        operation,
+        exportValue(snapshot, operation),
+        exported => {
+            for (let index = 0; index < sortable.length; index++) {
+                sortable[index].exported = exported[index]
+            }
+            return sortRecords(
+                sortable,
+                (left, right) => compareExported(
+                    comparator,
+                    left.exported,
+                    right.exported,
+                ),
+                finish,
+            )
+        },
+    )
 }
 
 function sortRecords(sortable, compare, finish) {
@@ -487,7 +505,8 @@ function includes(
         rejectResult = reject
     })
     for (const key of pending) {
-        const branch = operation.continueInternal(
+        const branch = operationLifecycle.continueInternal(
+            operation,
             propertyVersions.resolvePropertyValueAtKey(thisValue, key),
             value => {
                 if (matches(value)) return finish(true)
@@ -495,13 +514,13 @@ function includes(
             },
         )
         if (languageValues.isPromise(branch)) {
-            resolution.observeResultPromise(branch, () => {}, rejectResult)
+            operationLifecycle.observeFatal(operation, branch, rejectResult)
         }
     }
     return result
 
     function finish(value) {
-        operation.close()
+        operationLifecycle.close(operation)
         resolveResult(value)
     }
 
@@ -548,7 +567,8 @@ function orderedIndexSearch(
                 key,
             )
             if (languageValues.isPromise(value)) {
-                return operation.continueInternal(
+                return operationLifecycle.continueInternal(
+                    operation,
                     propertyVersions.resolvePropertyValueAtKey(thisValue, key),
                     resolved => resolved === searchValue ? current : next(),
                 )

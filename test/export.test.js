@@ -22,6 +22,8 @@ import {
 } from "./support.js"
 import * as packageRuntime from "cascada-chain-resolution"
 import { export as packageExport } from "cascada-chain-resolution"
+import { exportValue as exportManagedValue } from "../src/export.js"
+import * as operationLifecycle from "../src/operation-lifecycle.js"
 import { hasCycleCut } from "../src/refcounts.js"
 
 function expectExportErrors(outcome, expected) {
@@ -71,6 +73,42 @@ describe("export", () => {
         expectExportErrors(outcome, [repeated, distinct])
         expect(outcome.then).to.be(undefined)
         expect(exportValue(new Chain([1, 2]), [])).to.eql([1, 2])
+    })
+
+    it("abandons a nested export when its containing operation closes", async () => {
+        const pending = deferred()
+        let reflected = false
+        const late = importValue(new Proxy({}, {
+            ownKeys() {
+                reflected = true
+                return []
+            },
+        }), "prepared abandoned export value")
+        reflected = false
+        const source = importValue(
+            { pending: pending.promise },
+            "abandoned nested export",
+        )
+        const operation = {
+            open: true,
+            close() {
+                this.open = false
+            },
+        }
+        let reported
+        setFatalErrorReporter(error => {
+            reported ??= error
+        })
+
+        const result = exportManagedValue(source, operation)
+        operationLifecycle.close(operation)
+        pending.resolve(late)
+
+        expect(await result).to.be(undefined)
+        expect(reflected).to.be(false)
+        expect(reported).to.be(undefined)
+        expect(readPath(new Chain(source), ["pending"])).to.be(late)
+        verifyRefCounts(source)
     })
 
     it("reuses one output identity across synchronous and promised aliases", async () => {

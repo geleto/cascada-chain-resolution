@@ -6,7 +6,7 @@ Export is the single outbound graph boundary. It prepares an ordered batch of ho
 
 ## Copying
 
-One export operation uses one visited set and one source-to-output identity map. It therefore preserves aliases and cycles, including aliases shared by separate argument positions.
+One export operation uses one visited set per root and one source-to-output identity map for the batch. Separate visited sets preserve each root's Error domain; the shared map preserves aliases and cycles across argument positions.
 
 The copier:
 
@@ -38,7 +38,7 @@ Export captures only the selected path and the Promise frontier recursively expo
 
 ## Output lifetime
 
-Export operation work uses its containing operation's owner, or its own owner when export is standalone. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. A language Error discards output while the required Error scan continues. Fatal failure or closure by the owning operation releases partial output and abandons later export traversal after shared settlement.
+Export operation work uses its containing operation's owner, or its own owner when export is standalone. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. A pending nested export registers that release with its owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. Fatal failure or closure by the owning operation abandons later export traversal after shared settlement.
 
 An already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication after operation closure.
 
@@ -48,4 +48,4 @@ The result is synchronous when its captured frontier is ready. Otherwise one ope
 
 Export adds no owner or shared mark to its source. This relies on ordinary ownership rules: another valid Cascada owner marks managed data shared, and later mutation uses COW. Application code must not mutate data after passing it to Cascada. Exact external state remains governed by its own ordering and mutation authority; export grants none.
 
-`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. Common operation-work helpers own guarded Promise continuation; observation and invocation code call the two export shapes directly.
+`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/operation-lifecycle.js` owns guarded continuation and operation closure; observation and invocation code call the two export shapes directly.

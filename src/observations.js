@@ -4,8 +4,24 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
+import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
+
+class ErrorQueryContext {
+    open = true
+
+    constructor(collectErrors = false) {
+        if (collectErrors) this.errors = new Set()
+    }
+
+    close() {
+        if (!this.open) return
+        this.open = false
+        this.errors = undefined
+        this.resolveFound = undefined
+        this.visited = undefined
+    }
+}
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path) {
@@ -27,13 +43,17 @@ function readPath(chain, path) {
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path) {
     return errorUtils.runFatal(() => {
-        return walkObservationPath(chain, path, exportValue)
+        return walkObservationPath(
+            chain,
+            path,
+            value => exportValue(value),
+        )
     })
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path) {
-    const query = { open: true }
+    const query = new ErrorQueryContext()
     return runErrorQuery(chain, path, query, hasErrorAtPathValue)
 }
 
@@ -57,7 +77,8 @@ function searchForFirstError(value, query) {
     // Every non-fatal close resolves foundPromise before readiness can finish.
     return Promise.race([
         foundPromise,
-        resolution.continueInternalPromiseOrFatal(
+        operationLifecycle.continueInternal(
+            query,
             readiness,
             () => runQueryTransition(
                 query,
@@ -69,7 +90,7 @@ function searchForFirstError(value, query) {
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path) {
-    const query = { open: true, errors: new Set() }
+    const query = new ErrorQueryContext(true)
     return runErrorQuery(chain, path, query, getErrorsAtPathValue)
 }
 
@@ -82,7 +103,8 @@ function getErrorsAtPathValue(value, query) {
     }
     if (!readiness) return finishErrors(query)
 
-    return resolution.continueInternalPromiseOrFatal(
+    return operationLifecycle.continueInternal(
+        query,
         readiness,
         () => finishErrors(query),
     )
@@ -98,7 +120,11 @@ function collectFencedErrorWaits(value, query) {
     walk(value)
     // A synchronous Error proof abandons observed waits, not an aggregate.
     if (!query.open || waits.length === 0) return undefined
-    return Promise.all(waits)
+    return operationLifecycle.continueInternal(
+        query,
+        Promise.all(waits),
+        () => undefined,
+    )
 
     function walk(node) {
         if (!query.open || query.visited.has(node)) return
@@ -130,23 +156,21 @@ function collectFencedErrorWaits(value, query) {
     }
 
     function collectPromiseErrors(parent, key, promise) {
-        return closeOnQueryFatal(
-            propertyVersions.continuePropertyValue(
-                parent,
-                key,
-                promise,
-                value => runQueryTransition(query, () => {
-                    if (languageValues.isError(value)) {
-                        foundQueryError(query, value)
-                        return undefined
-                    }
-                    if (!languageValues.isTraversable(value)) return undefined
+        const result = propertyVersions.continuePropertyValue(
+            parent,
+            key,
+            promise,
+            value => runQueryTransition(query, () => {
+                if (languageValues.isError(value)) {
+                    foundQueryError(query, value)
+                    return undefined
+                }
+                if (!languageValues.isTraversable(value)) return undefined
 
-                    return collectFencedErrorWaits(value, query)
-                }),
-            ),
-            query,
+                return collectFencedErrorWaits(value, query)
+            }),
         )
+        return operationLifecycle.observeFatal(query, result)
     }
 }
 
@@ -158,7 +182,7 @@ function foundQueryError(query, error) {
     }
 
     const resolve = query.resolveFound
-    closeQuery(query)
+    operationLifecycle.close(query)
     if (resolve) resolve(true)
 }
 
@@ -170,40 +194,24 @@ function runErrorQuery(chain, path, query, onResolved) {
             value => onResolved(value, query),
             error => failQuery(query, error),
         )
-        return closeOnQueryFatal(result, query)
+        return operationLifecycle.observeFatal(query, result)
     }))
 }
 
 function runQueryTransition(query, transition) {
-    if (!query.open) return undefined
-    try {
+    return operationLifecycle.run(query, () => {
         return errorUtils.catchUserCodeFailure(
             transition,
             error => failQuery(query, error),
         )
-    } catch (error) {
-        closeQuery(query)
-        throw error
-    }
+    })
 }
 
 function failQuery(query, error) {
     // Query reflection is neither a Boolean result nor graph Error data.
     // An asynchronous path failure has no enclosing query transition.
-    closeQuery(query)
+    operationLifecycle.close(query)
     return errorUtils.reportFatalError(error)
-}
-
-function closeOnQueryFatal(result, query) {
-    if (languageValues.isPromise(result)) {
-        // Close before rejection propagates beyond this asynchronous layer.
-        resolution.observeResultPromise(
-            result,
-            () => {},
-            () => closeQuery(query),
-        )
-    }
-    return result
 }
 
 function finishErrors(query) {
@@ -211,15 +219,8 @@ function finishErrors(query) {
 }
 
 function finishQuery(query, result) {
-    closeQuery(query)
+    operationLifecycle.close(query)
     return result
-}
-
-function closeQuery(query) {
-    query.open = false
-    query.errors = undefined
-    query.resolveFound = undefined
-    query.visited = undefined
 }
 
 function counterHasErrorSearchWork(counter) {
