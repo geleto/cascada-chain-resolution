@@ -6,6 +6,7 @@ import * as metadata from "./meta.js"
 function prepareImportedData(root, importBoundary, installPromise) {
     if (!metadata.isObjectLike(root)) return root
 
+    const shareGraph = importBoundary.shareGraph === true
     const admitted = new Map()
     const retained = new Set()
     const promises = []
@@ -45,12 +46,15 @@ function prepareImportedData(root, importBoundary, installPromise) {
         const existing = metadata.metaOf(value)
         if (existing) {
             retained.add(value)
-            return undefined
+            if (
+                !shareGraph ||
+                !languageValues.isTraversableType(existing.type)
+            ) return undefined
+        } else {
+            const facts = metadata.inspectMetaFacts(value)
+            admitted.set(value, facts)
+            if (!languageValues.isTraversableType(facts.type)) return undefined
         }
-
-        const facts = metadata.inspectMetaFacts(value)
-        admitted.set(value, facts)
-        if (!languageValues.isTraversableType(facts.type)) return undefined
 
         for (const key of languageProperties.enumerableLanguageKeys(value)) {
             const descriptor = languageProperties

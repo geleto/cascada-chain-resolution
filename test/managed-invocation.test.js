@@ -19,7 +19,150 @@ import {
     verifyRefCounts,
 } from "./support.js"
 
-describe("registered class invocation", () => {
+describe("managed invocation", () => {
+    it("uses the same managed boundary for record methods", () => {
+        const value = {
+            count: 1,
+            increaseBy(amount) {
+                this.count += amount
+            },
+            increment() {
+                this.increaseBy(1)
+                return this.count
+            },
+        }
+        const chain = new Chain(value)
+
+        expect(run(chain, [], "increment", true)).to.be(2)
+        expect(chain._state.value).to.be(value)
+        expect(value.count).to.be(2)
+    })
+
+    it("isolates a protected record mutation", () => {
+        const source = importValue({
+            count: 1,
+            increaseBy(amount) {
+                this.count += amount
+                return this.count
+            },
+        }, "managed record receiver")
+        const chain = new Chain(source)
+
+        expect(run(chain, [], "increaseBy", true, 2)).to.be(3)
+        expect(chain._state.value).not.to.be(source)
+        expect(chain._state.value.count).to.be(3)
+        expect(source.count).to.be(1)
+    })
+
+    it("uses an own record placement instead of an inherited method", () => {
+        const value = {
+            toString() {
+                return "managed record"
+            },
+        }
+
+        expect(run(new Chain(value), [], "toString", false)).to.be(
+            "managed record",
+        )
+    })
+
+    it("rejects an own record constructor placement", () => {
+        let called = false
+        const value = {
+            constructor() {
+                called = true
+            },
+        }
+
+        expect(run(
+            new Chain(value),
+            [],
+            "constructor",
+            false,
+        ).message).to.be("Method is not callable: constructor")
+        expect(called).to.be(false)
+    })
+
+    it("resolves a Promise-backed record method placement", async () => {
+        const method = deferred()
+        const value = { count: 2, read: method.promise }
+        const result = run(new Chain(value), [], "read", false, 3)
+
+        method.resolve(function (amount) {
+            return this.count + amount
+        })
+
+        expect(await result).to.be(5)
+    })
+
+    it("protects a fulfilled argument root while receiver selection waits", async () => {
+        const receiver = deferred()
+        const argument = deferred()
+        const source = { value: 1 }
+        const sourceChain = new Chain(source)
+        const result = run(
+            new Chain(receiver.promise),
+            [],
+            "read",
+            false,
+            argument.promise,
+        )
+
+        argument.resolve(source)
+        await flushMicrotasks()
+        expect(metaOf(source).readLeaseCount).to.be(1)
+        assignPath(sourceChain, ["value"], 2)
+        receiver.resolve({
+            read(value) {
+                return value.value
+            },
+        })
+
+        expect(await result).to.be(1)
+        expect(source.value).to.be(1)
+        expect(sourceChain._state.value.value).to.be(2)
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
+    })
+
+    it("ignores a primitive fulfillment while receiver selection waits", async () => {
+        const receiver = deferred()
+        const argument = deferred()
+        const result = run(
+            new Chain(receiver.promise),
+            [],
+            "read",
+            false,
+            argument.promise,
+        )
+
+        argument.resolve(3)
+        await flushMicrotasks()
+        receiver.resolve({ read: value => value })
+
+        expect(await result).to.be(3)
+    })
+
+    it("releases a fulfilled argument when pending selection fails", async () => {
+        const receiver = deferred()
+        const argument = deferred()
+        const source = { value: 1 }
+        const result = run(
+            new Chain(receiver.promise),
+            [],
+            "missing",
+            false,
+            argument.promise,
+        )
+
+        argument.resolve(source)
+        await flushMicrotasks()
+        expect(metaOf(source).readLeaseCount).to.be(1)
+        receiver.resolve({})
+
+        expect((await result).message).to.be("Method is not callable: missing")
+        expect(metaOf(source).readLeaseCount).to.be(undefined)
+    })
+
     it("rejects prototype accessors and excludes Object.prototype methods", () => {
         class WithAccessor {
             get value() {
@@ -72,7 +215,7 @@ describe("registered class invocation", () => {
         expect((await result).message).to.be("Method is not callable: missing")
     })
 
-    it("rejects a language property that shadows a registered-class method", () => {
+    it("rejects a language property that shadows a managed-class method", () => {
         class Value {
             read() {
                 return 1
@@ -190,12 +333,12 @@ describe("registered class invocation", () => {
         setFatalErrorReporter()
 
         expect(failure.message).to.be(
-            "Registered class prototype accessor changed",
+            "Managed class prototype accessor changed",
         )
         expect(reported).to.be(failure)
     })
 
-    it("rejects synchronous Cascada reentry from a registered-class method", () => {
+    it("rejects synchronous Cascada reentry from a managed-class method", () => {
         const observed = new Chain({ value: 1 })
         class Value {
             read() {
@@ -269,7 +412,7 @@ describe("registered class invocation", () => {
         const pending = deferred()
         const source = new Vec()
         source.x = pending.promise
-        importValue(source, "registered-class Promise state")
+        importValue(source, "managed-class Promise state")
         const result = run(new Chain(source), [], "value", false)
 
         pending.resolve(4)
@@ -306,9 +449,9 @@ describe("registered class invocation", () => {
             }
         }
         managedStateClass(Vec)
-        const source = importValue(new Vec(), "shared registered-class receiver")
+        const source = importValue(new Vec(), "shared managed-class receiver")
         source.x = 1
-        importValue(source, "shared registered-class receiver")
+        importValue(source, "shared managed-class receiver")
         const chain = new Chain(source)
 
         expect(run(chain, [], "add", true, 2)).to.be(3)
@@ -361,7 +504,7 @@ describe("registered class invocation", () => {
         expect(start.x).to.be(1)
     })
 
-    it("isolates a registered-class mutation beneath a shared ancestor", () => {
+    it("isolates a managed-class mutation beneath a shared ancestor", () => {
         class Value {
             change() {
                 return ++this.x
@@ -382,7 +525,7 @@ describe("registered class invocation", () => {
         expect(value.x).to.be(1)
     })
 
-    it("retains nested argument identities exactly and marks them shared", () => {
+    it("exports managed arguments independently", () => {
         class Line {
             setStart(options) {
                 this.start = options.point
@@ -396,12 +539,12 @@ describe("registered class invocation", () => {
 
         run(chain, [], "setStart", true, options)
 
-        expect(line.start).to.be(point)
-        expect(metaOf(point).shared).to.be(true)
+        expect(line.start).not.to.be(point)
+        expect(line.start).to.eql(point)
         expect(metaOf(point).readLeaseCount).to.be(undefined)
     })
 
-    it("isolates an argument retained by a later registered-class mutation", () => {
+    it("isolates an argument retained by a later managed-class mutation", () => {
         class Line {
             setStart(start) {
                 this.start = start
@@ -433,7 +576,7 @@ describe("registered class invocation", () => {
         managedStateClass(Holder)
         const pending = deferred()
         const argument = { value: pending.promise }
-        importValue(argument, "registered-class argument")
+        importValue(argument, "managed-class argument")
         const holder = new Holder()
         const chain = new Chain(holder)
 
@@ -446,7 +589,7 @@ describe("registered class invocation", () => {
         expect(argument.value).to.be(pending.promise)
     })
 
-    it("remaps receiver aliases nested in arguments", () => {
+    it("does not cross-remap receiver and argument identities", () => {
         class Line {
             move(options) {
                 this.same = this.start === options.point
@@ -462,10 +605,10 @@ describe("registered class invocation", () => {
 
         run(chain, [], "move", true, options)
 
-        expect(line.same).to.be(true)
-        expect(line.start).not.to.be(point)
+        expect(line.same).to.be(false)
+        expect(line.start).to.be(point)
         expect(line.start.x).to.be(2)
-        expect(point.x).to.be(1)
+        expect(point.x).to.be(2)
         expect(options.point).to.be(point)
     })
 
@@ -517,13 +660,38 @@ describe("registered class invocation", () => {
             { error: argumentError },
         )
 
-        expect(result.errors).to.have.length(3)
-        expect(result.errors.slice(0, 2).includes(receiverErrors[0])).to.be(true)
-        expect(result.errors.slice(0, 2).includes(receiverErrors[1])).to.be(true)
-        expect(result.errors[2]).to.be(argumentError)
+        expect(result.errors).to.have.length(2)
+        expect(result.errors[0].errors).to.eql(receiverErrors)
+        expect(result.errors[1]).to.be(argumentError)
     })
 
-    it("rejects invalid completed state and independent Promise results", () => {
+    it("orders pending receiver and argument Errors by input position", async () => {
+        const receiverFailure = new Error("receiver")
+        const argumentFailure = new Error("argument")
+        const receiverValue = deferred()
+        const argumentValue = deferred()
+        const source = {
+            failure: receiverValue.promise,
+            read() {},
+        }
+        const result = run(
+            new Chain(source),
+            [],
+            "read",
+            false,
+            { failure: argumentValue.promise },
+        )
+
+        argumentValue.resolve(argumentFailure)
+        receiverValue.resolve(receiverFailure)
+
+        expect((await result).errors).to.eql([
+            receiverFailure,
+            argumentFailure,
+        ])
+    })
+
+    it("rejects invalid completed state and awaits a direct result Promise", async () => {
         class Value {
             leavePromise() {
                 this.value = Promise.resolve(1)
@@ -549,14 +717,17 @@ describe("registered class invocation", () => {
         const valid = new Value()
         valid.value = 1
         const validChain = new Chain(valid)
-        expect(run(
+        const result = run(
             validChain,
             [],
             "returnPromise",
             true,
-        ) instanceof Error).to.be(true)
+        )
+        expect(result instanceof Promise).to.be(true)
+        expect(validChain._state.value instanceof Promise).to.be(true)
+        expect(await result).to.be(2)
         expect(validChain._state.value).to.be(valid)
-        expect(valid.value).to.be(2)
+        expect(validChain._state.value.value).to.be(2)
     })
 
     it("publishes a valid mutation that deliberately returns an Error", () => {
@@ -575,6 +746,159 @@ describe("registered class invocation", () => {
         expect(run(chain, [], "change", true)).to.be(resultError)
         expect(chain._state.value).to.be(value)
         expect(value.value).to.be(2)
+    })
+
+    it("keeps a direct mutation Promise private through fulfillment", async () => {
+        const completion = deferred()
+        const resultError = new Error("result")
+        const value = {
+            count: 1,
+            change(start) {
+                this.count++
+                return start()
+            },
+        }
+        const chain = new Chain(value)
+
+        const result = run(
+            chain,
+            [],
+            "change",
+            true,
+            () => completion.promise,
+        )
+        expect(chain._state.value instanceof Promise).to.be(true)
+        completion.resolve(resultError)
+
+        expect(await result).to.be(resultError)
+        expect(chain._state.value).to.be(value)
+        expect(value.count).to.be(2)
+    })
+
+    it("poisons a direct mutation Promise rejection without making it fatal", async () => {
+        const completion = deferred()
+        const argument = deferred()
+        const failure = new Error("rejected mutation")
+        const value = {
+            change(_argument, start) {
+                this.changed = true
+                return start()
+            },
+        }
+        const chain = new Chain(value)
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+
+        const result = run(
+            chain,
+            [],
+            "change",
+            true,
+            argument.promise,
+            () => completion.promise,
+        )
+        argument.resolve("ready")
+        await flushMicrotasks()
+        completion.reject(failure)
+        const rejection = await result.catch(error => error)
+        setFatalErrorReporter()
+
+        expect(rejection).to.be(failure)
+        expect(chain._state.value).to.be(failure)
+        expect(reported).to.be(undefined)
+    })
+
+    it("protects an observation receiver through direct rejection", async () => {
+        const completion = deferred()
+        const failure = new Error("observation rejected")
+        const value = {
+            child: { value: 1 },
+            read(start) {
+                return start().then(() => this.child.value)
+            },
+        }
+        const chain = new Chain(value)
+        const result = run(
+            chain,
+            [],
+            "read",
+            false,
+            () => completion.promise,
+        )
+
+        expect(metaOf(value).readLeaseCount).to.be(1)
+        assignPath(chain, ["child", "value"], 2)
+        completion.reject(failure)
+
+        expect(await result.catch(error => error)).to.be(failure)
+        expect(value.child.value).to.be(1)
+        expect(chain._state.value.child.value).to.be(2)
+        expect(metaOf(value).readLeaseCount).to.be(undefined)
+        expect(metaOf(value.child).readLeaseCount).to.be(undefined)
+    })
+
+    it("publishes direct receiver results before a following mutation", async () => {
+        const completion = deferred()
+        class Value {
+            change(start) {
+                this.value++
+                return start().then(() => this)
+            }
+
+            add(amount) {
+                this.value += amount
+                return this.value
+            }
+        }
+        managedStateClass(Value)
+        const source = new Value()
+        source.value = 1
+        lookupPath(new Chain(source), [])
+        const chain = new Chain(source)
+
+        const first = run(
+            chain,
+            [],
+            "change",
+            true,
+            () => completion.promise,
+        )
+        const second = run(chain, [], "add", true, 10)
+        completion.resolve()
+
+        const firstReceiver = await first
+        expect(firstReceiver.value).to.be(2)
+        expect(firstReceiver).not.to.be(source)
+        expect(await second).to.be(12)
+        expect(chain._state.value).not.to.be(firstReceiver)
+        expect(chain._state.value.value).to.be(12)
+        expect(source.value).to.be(1)
+    })
+
+    it("publishes receiver validation failure after direct completion", async () => {
+        const completion = deferred()
+        const value = {
+            change(start) {
+                this.invalid = Promise.resolve(1)
+                return start()
+            },
+        }
+        const chain = new Chain(value)
+
+        const result = run(
+            chain,
+            [],
+            "change",
+            true,
+            () => completion.promise,
+        )
+        completion.resolve("done")
+        const failure = await result
+
+        expect(failure instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(failure)
     })
 
     it("poisons receiver validation reflection failures", () => {
@@ -616,7 +940,7 @@ describe("registered class invocation", () => {
         expect(chain._state.value).to.be(failure)
     })
 
-    it("copies every non-receiver traversable result independently", () => {
+    it("retains exact admitted identities returned by an observation", () => {
         class Point {
             constructor(x) {
                 this.x = x
@@ -637,13 +961,15 @@ describe("registered class invocation", () => {
         const result = run(new Chain(holder), [], "result", false)
 
         expect(result.self).to.be(result)
-        expect(result.point).not.to.be(holder.point)
+        expect(result.point).to.be(holder.point)
         expect(result.point instanceof Point).to.be(true)
-        result.point.x = 2
-        expect(holder.point.x).to.be(1)
+        const chain = new Chain(holder)
+        assignPath(chain, ["point", "x"], 2)
+        expect(result.point.x).to.be(1)
+        expect(chain._state.value.point.x).to.be(2)
     })
 
-    it("copies a mutation result independently from receiver state", () => {
+    it("shares an exact mutation result through ordinary COW", () => {
         class Holder {
             change() {
                 this.point.x++
@@ -657,13 +983,44 @@ describe("registered class invocation", () => {
 
         const result = run(chain, [], "change", true)
 
-        expect(result).not.to.be(holder.point)
+        expect(result).to.be(holder.point)
         expect(result.x).to.be(2)
-        result.x = 3
-        expect(holder.point.x).to.be(2)
+        run(chain, [], "change", true)
+        expect(result.x).to.be(2)
+        expect(chain._state.value.point).not.to.be(result)
+        expect(chain._state.value.point.x).to.be(3)
     })
 
-    it("copies a result containing the mutation receiver", () => {
+    it("protects descendants retained by a detached mutation result", () => {
+        class Holder {
+            detach() {
+                const result = this.wrapper
+                this.child = result.branch.child
+                delete this.wrapper
+                return result
+            }
+
+            change() {
+                this.child.value++
+            }
+        }
+        managedStateClass(Holder)
+        const child = { value: 1 }
+        const holder = new Holder()
+        holder.wrapper = { branch: { child } }
+        const chain = new Chain(holder)
+
+        const result = run(chain, [], "detach", true)
+        expect(result.branch.child).to.be(chain._state.value.child)
+
+        run(chain, [], "change", true)
+
+        expect(result.branch.child).not.to.be(chain._state.value.child)
+        expect(result.branch.child.value).to.be(1)
+        expect(chain._state.value.child.value).to.be(2)
+    })
+
+    it("shares a mutation receiver nested in its result", () => {
         class Value {
             change() {
                 this.x++
@@ -677,34 +1034,36 @@ describe("registered class invocation", () => {
 
         const result = run(chain, [], "change", true)
 
-        expect(result.me).not.to.be(value)
+        expect(result.me).to.be(value)
         expect(result.me instanceof Value).to.be(true)
         expect(result.me.x).to.be(2)
-        result.me.x = 3
-        expect(value.x).to.be(2)
+        run(chain, [], "change", true)
+        expect(result.me.x).to.be(2)
+        expect(chain._state.value).not.to.be(result.me)
+        expect(chain._state.value.x).to.be(3)
     })
 
-    it("keeps opaque identities and Functions exact in copied results", () => {
-        class Opaque {}
-        const opaque = new Opaque()
+    it("keeps external identities and Functions exact in imported results", () => {
+        class External {}
+        const external = new External()
         const fn = () => {}
         class Holder {
             result() {
-                return { opaque: this.opaque, fn: this.fn }
+                return { external: this.external, fn: this.fn }
             }
         }
         managedStateClass(Holder)
         const holder = new Holder()
-        holder.opaque = opaque
+        holder.external = external
         holder.fn = fn
 
         const result = run(new Chain(holder), [], "result", false)
 
-        expect(result.opaque).to.be(opaque)
+        expect(result.external).to.be(external)
         expect(result.fn).to.be(fn)
     })
 
-    it("keeps result-copy reflection failure independent from mutation", () => {
+    it("keeps result-import reflection failure independent from mutation", () => {
         const failure = new Error("result reflection failed")
         const result = new Proxy({}, {
             ownKeys() {
@@ -727,7 +1086,7 @@ describe("registered class invocation", () => {
         expect(value.value).to.be(2)
     })
 
-    it("rejects direct and nested Promise observation results", () => {
+    it("awaits direct Promise results and retains nested Promise results", async () => {
         class Value {
             direct() {
                 return Promise.resolve(1)
@@ -740,11 +1099,13 @@ describe("registered class invocation", () => {
         managedStateClass(Value)
         const chain = new Chain(new Value())
 
-        expect(run(chain, [], "direct", false) instanceof Error).to.be(true)
-        expect(run(chain, [], "nested", false) instanceof Error).to.be(true)
+        expect(await run(chain, [], "direct", false)).to.be(1)
+        const nested = run(chain, [], "nested", false)
+        expect(nested instanceof Promise).to.be(false)
+        expect(await readPath(new Chain(nested), ["value"])).to.be(1)
     })
 
-    it("materializes logical Arrays before registered-class host code", () => {
+    it("materializes logical Arrays before managed host code", () => {
         const source = [1, , 3]
         const view = run(new Chain(source), [], "slice", false, 0, 3)
         class Holder {
@@ -760,8 +1121,11 @@ describe("registered class invocation", () => {
         managedStateClass(Holder)
         const holder = new Holder()
         holder.items = view
+        const sibling = {}
+        holder.sibling = sibling
 
         expect(run(new Chain(holder), [], "inspect", false)).to.be(true)
+        expect(metaOf(sibling).shared).to.be(undefined)
         const chain = new Chain(holder)
         run(chain, [], "append", true)
 
@@ -882,7 +1246,7 @@ describe("registered class invocation", () => {
         expect(source.value).to.be(1)
     })
 
-    it("orders mutations behind pending registered-class preparation", async () => {
+    it("orders mutations behind pending managed preparation", async () => {
         class Counter {
             add(value) {
                 this.value += value

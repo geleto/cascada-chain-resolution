@@ -29,7 +29,7 @@ Do not place semantic managed state outside graph-visible properties. Cascada ma
 - Strings support documented native observations only.
 - Number, Boolean, BigInt, Symbol, `null`, and `undefined` have no methods or property writes.
 - A Promise has no direct operations; the resolved value determines its capabilities.
-- A Promise input that an operation does not consume remains host-owned. This includes an unused path segment or an argument rejected before a callable boundary is selected; application code remains responsible for handling its rejection.
+- A Promise input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to a call rejected while its receiver is ready; application code remains responsible for handling its rejection. While receiver selection is pending, explicit call arguments are provisionally consumed only at root availability so their captured values can be preserved if the boundary uses them.
 - An Error has no operations and propagates as language data when consumed.
 
 ## Classification and declarations
@@ -109,7 +109,7 @@ These restrictions allow records and class instances to share one managed invoca
 - Access nested external state through a separate Cascada operation that selects it as the external receiver. `api!.db.close()` is supported; a managed `api!.close()` must not call `this.db.close()` internally.
 - A completed mutation receiver contains no Promise or Error. Managed state may contain either between calls, because Cascada resolves or propagates them before the next managed invocation.
 - A method may complete synchronously or through one direct Promise. All later receiver or input access and every asynchronous effect must belong to that Promise and finish before it settles.
-- Detached work, later access from a Promise nested in a synchronous result, and Cascada reentry during the invocation are forbidden.
+- Detached work, later access from a Promise nested in a synchronous result, and Cascada reentry during the invocation are forbidden. A nested result Promise must not fulfill with a receiver or argument identity; return that Promise directly when its completion must retain or expose invocation state.
 
 Nested calls such as `this.increment()` are ordinary JavaScript calls on the already prepared receiver and follow the same outer invocation contract.
 
@@ -167,7 +167,7 @@ Host data entering Cascada's language graph is imported. Data leaving the graph 
 - Export consumes Errors at any depth. If any argument or assigned value contains an Error, host code is not called and no Error crosses the boundary.
 - Host code may retain exported copies. It must not retain access to an unexported managed receiver or source.
 - Host methods, accessors, callbacks, and reflection hooks must not issue Cascada operations while active.
-- A direct result Promise may keep using its receiver and exported inputs until it settles. A nested result Promise does not extend that permission.
+- A direct result Promise may keep using its receiver and exported inputs until it settles. A nested result Promise does not extend that permission and must not later expose either identity.
 - A callback invoked by a controlled method must complete synchronously and must not return a Promise. It receives only its declared exported inputs and may not access an unexported managed source.
 
 ## Choosing a representation

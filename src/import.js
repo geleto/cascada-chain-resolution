@@ -4,12 +4,23 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 
 function importValue(value, errorContext) {
+    return importData(value, errorContext, false)
+}
+
+// Unlike ordinary import, revisit and share admitted managed descendants.
+function importManagedMutationResult(value, errorContext) {
+    return importData(value, errorContext, true)
+}
+
+function importData(value, errorContext, shareGraph) {
     return errorUtils.runFatal(() => {
         if (!errorContext) {
             throw new Error("import requires an error context")
         }
         if (!metadata.isObjectLike(value)) return value
-        const importBoundary = { errorContext }
+        const importBoundary = shareGraph
+            ? { errorContext, shareGraph: true }
+            : { errorContext }
         if (!languageValues.isPromise(value)) {
             return propertyVersions.prepareImportedValue(
                 value,
@@ -31,4 +42,7 @@ function importValue(value, errorContext) {
     })
 }
 
-export { importValue as import }
+export {
+    importManagedMutationResult,
+    importValue as import,
+}

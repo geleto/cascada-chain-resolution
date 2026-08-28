@@ -4,7 +4,7 @@ Developer-facing restrictions are centralized in [`data-limitations.md`](data-li
 
 ## Status
 
-Implemented. Admission permanently classifies each identity as managed or external. Records and Arrays default to managed; class instances default to external. Managed class instances participate in the graph, preserve their prototype during copy-on-write, and support the synchronous methods described in [`registered-class-invocation.md`](registered-class-invocation.md).
+Implemented. Admission permanently classifies each identity as managed or external. Records and Arrays default to managed; class instances default to external. Managed records and class instances support the methods described in [`managed-invocation.md`](managed-invocation.md), and managed class copies preserve their admitted prototype.
 
 ## Declarations
 
@@ -36,8 +36,8 @@ A record or managed-class copy is created from its admitted prototype and popula
 
 Arrays, including cross-realm Arrays and subclasses, use the Array path and normalize to local ordinary Arrays. Records retain their admitted prototype, including cross-realm and null prototypes.
 
-## Current invocation and export
+## Invocation and export
 
-`run` prepares the complete managed-class receiver graph and every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, invoke once synchronously, validate the receiver, and publish it through the ordinary mutation transition.
+`run` uses one managed boundary for records and class instances. It prepares the complete receiver graph and exports every explicit argument before invoking a method. Observations are trusted read-only calls under receiver leases. Mutations isolate protected receiver state, validate it after invocation, and publish it through the ordinary mutation transition. One direct result Promise extends the invocation.
 
-A mutation returning `this` returns the published receiver. Other traversable results are copied independently from the receiver and arguments. Public export creates independent metadata-free managed-class copies with their admitted prototypes and keeps external identities exact.
+A mutation returning `this` returns the published receiver. Every other result is imported without copying. Shared-graph import of a non-receiver mutation result preserves exact identities while protecting descendants still reachable from the receiver. Public export creates independent metadata-free managed-class copies with their admitted prototypes and keeps external identities exact.

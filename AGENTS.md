@@ -107,7 +107,7 @@ A lease temporarily protects an exact managed identity that pending work may sti
 
 Leases are used for:
 
-- ready managed argument roots while a pending receiver prevents boundary-specific capture or protection; release them at the synchronous selection handoff;
+- managed argument roots, including traversable Promise fulfillments, while a pending receiver prevents boundary-specific capture; release them at the synchronous selection handoff;
 - managed receiver preparation;
 - a managed observation's complete prepared receiver through its direct Promise;
 - a managed mutation's receiver until isolation;
@@ -219,7 +219,7 @@ Chain construction from an existing Cascada value, assignment, lookup, and inter
 
 - Validate each reached synchronous import segment before committing origin, sharing, or Promise mirrors. A boundary failure commits none of that segment.
 - Traverse managed state once while preserving aliases and cycles; stop at Errors, Functions, and external identities. Containment neither grants nor removes origin.
-- Existing identity metadata identifies an already admitted value. Import retains such a managed result without traversing it again and marks it shared when the result adds an owner. This includes unexported data returned by another Cascada execution. A new host-produced managed identity becomes imported and shared.
+- Existing identity metadata identifies an already admitted value. Ordinary import retains such a managed result without traversing it again and marks its root shared when the result adds an owner. This includes unexported data returned by another Cascada execution. A managed mutation result is different: arbitrary receiver mutation may detach an admitted container while retaining its descendants, so its import traverses the retained managed graph and marks every reached managed identity shared. A new host-produced managed identity becomes imported and shared.
 - A new identity read from an external property remains external, even when it is a record or Array. External state may contain only external state. If property traversal encounters an already admitted managed identity, poison that external container without replacing either value. Do not scan external state to search for this violation. A host call may instead return admitted managed data because its result crosses a separate import boundary rather than remaining external property state.
 - Application and host code must not mutate managed data after passing it to Cascada. Imported storage is borrowed and never modified; metadata and logical Promise settlement remain outside it.
 - Mutable live host state must be external and accessed through ordered external operations.
@@ -324,7 +324,7 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 ## Execution Boundaries
 
 - Select the operation boundary first from runtime-controlled facts such as admitted category, method name, and mode. This internal dispatch invokes no host code. Prepare each input only to the extent that boundary consumes it. Continue required preparation after an Error to collect the rest, but do not invoke the selected function, accessor, callback, or method. Nested Errors matter only when required preparation reaches them.
-- An operation input that the selected boundary never consumes, including an unused path segment or an argument rejected before boundary selection, remains host-owned. Do not wait for it or attach a rejection observer merely to suppress host reporting.
+- An operation input that the selected boundary never consumes, including an unused path segment, remains host-owned. Do not wait for it or attach a rejection observer merely to suppress host reporting. While receiver selection is pending, explicit call arguments are provisionally consumed only at root availability so a later selected boundary can preserve their captured values; this performs no traversal or export. If the receiver is ready and internal dispatch rejects the call, no argument is consumed.
 - If internal dispatch rejects a constructor, controlled name, or mode before selecting an executable boundary, perform no boundary-specific receiver or argument preparation and return only that validation Error.
 - A value selected for invocation is prepared and validated as an executable, not imported as graph data. Import applies to a property-read result or invocation result that enters the graph.
 - After required operation phases complete, finish the selected boundary's explicit input preparation before proxy reflection, descriptor access on application-controlled objects, a getter, or other host method-selection code. If preparation prevents invocation, execute none of that host code; order collected failures by their logical receiver and argument positions. Do not confuse this host reflection with the earlier internal dispatch.
@@ -344,7 +344,7 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 
 - Declare a managed class before admitting its instances. Declaration is not retroactive; classification is fixed at first admission.
 - Internal dispatch selects a managed boundary from admitted category, method name, and mode without member reflection. Complete receiver preparation and explicit-argument export before resolving a member; failed preparation performs no post-preparation method-placement read, prototype descriptor traversal, callable test, or invocation.
-- A managed record then resolves its own enumerable method placement from the prepared record and tests callability. Accessors, non-enumerables, inherited properties, and extracted Functions are not record methods. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Its prototype chain must satisfy the accessor-free managed-class contract when admitted, and application code must not change it afterward.
+- A managed record then resolves its own enumerable method placement from the prepared record and tests callability. Accessors, non-enumerables, inherited properties, extracted Functions, and the globally reserved `constructor` name are not record methods. `run` rejects that name before selecting an executable boundary, keeping constructor handling category-independent. A managed class selects from its admitted prototype chain up to, but excluding, `Object.prototype`. Its prototype chain must satisfy the accessor-free managed-class contract when admitted, and application code must not change it afterward.
 - Resolve a managed member once from the prepared receiver before mutation isolation. Isolation preserves that member and the admitted prototype and does not repeat resolution.
 - Managed classes expose semantic state only through own enumerable string-keyed data properties. Every managed method keeps mutable semantic state in `this` and receives other state through explicit arguments; it must not depend on mutable parent, closure, module, private-field, Symbol, non-enumerable, accessor, or internal-slot state.
 - Managed state may contain primitives, records, logical Arrays, managed classes, external identities, Functions, aliases, cycles, Promises, and Errors.
@@ -356,7 +356,7 @@ Guard poison is an Error stored in the execution's external phase entry for the 
 - Cascada may copy managed receiver state for isolation. Argument export always copies managed records, Arrays, and class instances while preserving prototypes, Array structure, aliases, and cycles. Code relies on managed identity only while its invocation is active.
 - After mutation, validate and admit the receiver and publish through the ordinary transition. A completed receiver contains neither Promise nor Error.
 - Preparation poison, receiver validation failure, or method failure poisons a mutation receiver. Observation and independent-result failure affect only their result. A direct-Promise rejection preserves the rejection outcome after applying the corresponding graph effect.
-- Import every managed-method result. Returning the mutation receiver returns its published identity; every other result keeps its admitted identities and gains ordinary shared ownership instead of being copied.
+- Import every managed-method result. Returning the mutation receiver returns its published identity. An observation result uses ordinary import. Every other mutation result uses managed mutation-result import, which keeps admitted identities and marks the reached managed graph shared so receiver/result aliases gain shared ownership without result copying or provenance state.
 
 ## Errors
 
@@ -390,7 +390,7 @@ These constrain implementation cost. A mechanism that inherently exceeds them sh
 - Prefer integration tests through public operations across meaningful synchronous and Promise interleavings.
 - Cover sequential equivalence and owner isolation; lease and gate lifetimes; overlapping observations and mutation barriers; external ancestor, descendant, and sibling guards; nested external argument observations; and Promise fulfillment and rejection.
 - Verify that ready and Promise-backed boundary results have identical admission outcomes, including admission Errors.
-- Verify that importing an already admitted result skips graph traversal, including unexported data returned by another Cascada execution.
+- Verify that ordinary import of an already admitted result skips graph traversal, including unexported data returned by another Cascada execution. Verify separately that managed mutation-result import protects descendants still reachable from the receiver.
 - Verify that export collects synchronous and Promise-revealed Errors at every depth, loses no distinct Error identity, combines within each root and then across failed argument roots, and never invokes host code with an Error.
 - Verify that external-property traversal poisons the external container when it encounters admitted managed data, leaves both identities intact, and never inspects unrelated external properties.
 - Verify unused, one-static-context-path, dynamic-path, outside-context, different-path, different-context-Chain, and mixed external use. Only the single compiler-static context path may mutate host code.

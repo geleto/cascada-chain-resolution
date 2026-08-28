@@ -3,7 +3,7 @@ import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
-import * as registeredClassInvocation from "./registered-class-invocation.js"
+import * as managedInvocation from "./managed-invocation.js"
 import {
     transformProperty,
     walkMutationPath,
@@ -76,7 +76,7 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
         )
     }
     if (method === "constructor") {
-        return errorUtils.validationError("Constructors are unsupported")
+        return invocation.methodNotCallableError(method)
     }
 
     const type = languageValues.typeOf(receiver)
@@ -88,8 +88,11 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
             mutationContext,
         )
     }
-    if (type === languageValues.TYPE_MANAGED_CLASS) {
-        return registeredClassInvocation.selectRegisteredClassCall(
+    if (
+        type === languageValues.TYPE_RECORD ||
+        type === languageValues.TYPE_MANAGED_CLASS
+    ) {
+        return managedInvocation.selectManagedCall(
             receiver,
             method,
             mutation,
@@ -105,15 +108,7 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
         const callable = getStringMethod(method)
         if (languageValues.isError(callable)) return callable
         return invocation.getHostMethodCallDescription(
-            () => callable,
-            receiver,
-            undefined,
-        )
-    }
-    if (type === languageValues.TYPE_RECORD) {
-        return invocation.getHostMethodCallDescription(
-            () => getRecordMethod(receiver, method),
-            receiver,
+            callable,
             receiver,
         )
     }
@@ -131,20 +126,6 @@ function getStringMethod(method) {
         "value" in descriptor &&
         typeof descriptor.value === "function"
         ? descriptor.value
-        : invocation.methodNotCallableError(method)
-}
-
-function getRecordMethod(receiver, method) {
-    if (languageProperties.hasLanguageProperty(receiver, method)) {
-        return errorUtils.validationError(
-            `Cannot call ${method} because an own data property ` +
-            "with that name hides the method",
-        )
-    }
-    const callable = errorUtils.runUserCode(() => receiver[method])
-    if (languageValues.isError(callable)) return callable
-    return typeof callable === "function"
-        ? callable
         : invocation.methodNotCallableError(method)
 }
 

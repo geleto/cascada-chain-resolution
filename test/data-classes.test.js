@@ -16,8 +16,8 @@ import {
     verifyRefCounts,
 } from "./support.js"
 
-describe("data class copy-on-write", () => {
-    it("registers only the exact prototype without modifying it", () => {
+describe("managed class copy-on-write", () => {
+    it("declares only the exact prototype without modifying it", () => {
         class Base {
             constructor() {
                 this.value = 1
@@ -29,20 +29,20 @@ describe("data class copy-on-write", () => {
         managedStateClass(Base)
 
         expect(Reflect.ownKeys(Base.prototype)).to.eql(keys)
-        const base = importValue(new Base(), "registered base")
+        const base = importValue(new Base(), "managed base")
         const baseChain = new Chain(base)
         assignPath(baseChain, ["value"], 2)
         expect(baseChain._state.value.value).to.be(2)
         expect(base.value).to.be(1)
 
-        const child = importValue(new Child(), "unregistered child")
+        const child = importValue(new Child(), "external child")
         const childChain = new Chain(child)
         assignPath(childChain, ["value"], 2)
         expect(childChain._state.value instanceof Error).to.be(true)
         expect(child.value).to.be(1)
     })
 
-    it("preserves independently registered inheritance and methods", () => {
+    it("preserves independently declared inheritance and methods", () => {
         class Vec2 {
             constructor(x, y) {
                 this.x = x
@@ -241,7 +241,7 @@ describe("data class copy-on-write", () => {
         verifyRefCounts(source, copy)
     })
 
-    it("preserves path-copy cycle semantics for registered classes", () => {
+    it("preserves path-copy cycle semantics for managed classes", () => {
         class Cyclic {
             constructor() {
                 this.value = 1
@@ -385,13 +385,13 @@ describe("data class copy-on-write", () => {
         expect(foreignArray[0].value).to.be(1)
     })
 
-    it("treats an unregistered root as an opaque leaf", () => {
-        class Unregistered {
+    it("treats an external root as a graph leaf", () => {
+        class External {
             constructor() {
                 this.value = 1
             }
         }
-        const source = importValue(new Unregistered(), "unsupported root")
+        const source = importValue(new External(), "external root")
         const chain = new Chain(source)
 
         assignPath(chain, ["value"], 2)
@@ -404,16 +404,16 @@ describe("data class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("treats a nested unregistered instance as an opaque leaf", () => {
-        class Unregistered {
+    it("treats a nested external instance as a graph leaf", () => {
+        class External {
             constructor() {
                 this.value = 1
             }
         }
-        const source = new Unregistered()
+        const source = new External()
         const root = importValue(
             { branch: source, sibling: true },
-            "unsupported nested",
+            "nested external",
         )
         buildRefIndex(root)
         const chain = new Chain(root)
@@ -433,8 +433,8 @@ describe("data class copy-on-write", () => {
         verifyRefCounts(root, copy)
     })
 
-    it("treats an unregistered instance behind a Promise as an opaque leaf", async () => {
-        class Unregistered {
+    it("treats an external instance behind a Promise as a graph leaf", async () => {
+        class External {
             constructor() {
                 this.value = 1
             }
@@ -442,12 +442,12 @@ describe("data class copy-on-write", () => {
         const pending = deferred()
         const root = importValue(
             { branch: pending.promise },
-            "unsupported Promise",
+            "external Promise",
         )
         const chain = new Chain(root)
 
         assignPath(chain, ["branch", "value"], 2)
-        const source = new Unregistered()
+        const source = new External()
         pending.resolve(source)
         await flushMicrotasks()
         const failure = chain._state.value.branch
@@ -459,14 +459,14 @@ describe("data class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("does not detect falsely registered internal slots", () => {
+    it("does not emulate internal slots for a managed subclass", () => {
         class FalseDate extends Date {}
         managedStateClass(FalseDate)
         const source = new FalseDate(0)
         source.value = 1
         const chain = new Chain(importValue(
             source,
-            "false Date registration",
+            "managed Date subclass",
         ))
 
         assignPath(chain, ["value"], 2)
@@ -479,12 +479,12 @@ describe("data class copy-on-write", () => {
         )
     })
 
-    it("normalizes registered and unregistered array subclasses", () => {
-        class UnregisteredList extends Array {}
-        class RegisteredList extends Array {}
-        managedStateClass(RegisteredList)
+    it("normalizes managed and external array subclasses", () => {
+        class ExternalList extends Array {}
+        class ManagedList extends Array {}
+        managedStateClass(ManagedList)
 
-        for (const List of [UnregisteredList, RegisteredList]) {
+        for (const List of [ExternalList, ManagedList]) {
             const source = importValue(
                 new List({ value: 1 }),
                 "array subclass",
@@ -503,7 +503,7 @@ describe("data class copy-on-write", () => {
         }
     })
 
-    it("does not traverse an unregistered shared class", () => {
+    it("does not traverse a shared external class", () => {
         class Unsupported {
             constructor() {
                 this.value = 1
@@ -523,7 +523,7 @@ describe("data class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("imports a value with uninspectable type as opaque", () => {
+    it("imports a value with uninspectable type as external", () => {
         const source = new Proxy({ value: 1 }, {
             getPrototypeOf() {
                 throw new Error("reflection trap")

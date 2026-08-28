@@ -189,7 +189,7 @@ Complete.
 
 ### Design
 
-[`registered-class-invocation.md`](registered-class-invocation.md) defines this boundary together with the direct-Promise lifetime added in Phase 8; Phase 5's implemented call itself is synchronous.
+[`managed-invocation.md`](managed-invocation.md) records the generalized boundary, including the direct-Promise lifetime added in Phase 8; Phase 5's implemented call itself was synchronous.
 
 #### 1. Establish the common invocation lifecycle
 
@@ -199,13 +199,13 @@ Before pending work can retain a source, lease every reached record, Array, and 
 
 #### 2. Prepare registered-class calls
 
-One registered-class receiver-category module follows [`registered-class-invocation.md`](registered-class-invocation.md). Registration rejects prototype-chain accessors before recording the class. Method-behavior restrictions are trusted except for the receiver and result validation specified below; the boundary adds no snapshots, comparisons, or scheduling instrumentation to detect violations.
+One registered-class receiver-category module follows the isolation contract now recorded in [`managed-invocation.md`](managed-invocation.md). Registration rejects prototype-chain accessors before recording the class. Method-behavior restrictions are trusted except for the receiver and result validation specified below; the boundary adds no snapshots, comparisons, or scheduling instrumentation to detect violations.
 
 After registered-class method selection succeeds, prepare every explicit argument and the complete receiver graph in one operation-local state through existing property-version continuations. Preserve aliases and cycles across materialized inputs and expose logical values without changing imported storage. Observations use leases without a gate; pending mutations use the ordinary receiver gate.
 
 #### 3. Isolate registered-class mutations
 
-The [pre-call isolation and mutation lifecycle](registered-class-invocation.md#receiver-mutation) is:
+The [pre-call isolation and mutation lifecycle](managed-invocation.md#mutation-isolation) is:
 
 1. During preparation, lease every traversable identity reachable through any argument; keep those leases through finalization and release receiver-only preparation leases.
 2. Isolate the prepared receiver once with one fresh copy map. Copy the receiver root when the ordinary mutation context must preserve it because an ancestor path was copied; otherwise use a predicate composed from ordinary identity COW protection, bookkeeping invalidated by direct JavaScript mutation, and Array materialization.
@@ -218,7 +218,7 @@ Use one metadata-free complete-graph copier for qualifying isolation subgraphs a
 
 #### 4. Admit results and classify failures
 
-Return the published receiver when a mutation returns `this`; otherwise copy and admit traversable results as specified by the [result contract](registered-class-invocation.md#results). Promise-valued result data becomes an independent validation Error and is never awaited. A valid mutated receiver still publishes. Runtime invariant failures and host-contract violations exposed at existing boundaries remain fatal; an explicitly returned Error remains an ordinary result.
+Return the published receiver when a mutation returns `this`; otherwise copy and admit traversable results as specified by the Phase 5 contract later superseded by Phase 8. Promise-valued result data becomes an independent validation Error and is never awaited. A valid mutated receiver still publishes. Runtime invariant failures and host-contract violations exposed at existing boundaries remain fatal; an explicitly returned Error remains an ordinary result.
 
 #### 5. Keep registered behavior at the invocation boundary
 
@@ -255,7 +255,7 @@ Registered-class invocation adds no persistent state and no registered-class-spe
 - Registration rejects prototype accessors, and a Promise-valued result is rejected without being awaited. Trusted representation, external-state, reentry, and post-return restrictions add no runtime enforcement machinery; ordinary registered state access remains ordinary graph access.
 - No ordinary graph operation stores a registered-class ownership unit or gains a registered-class-specific transition.
 
-The implemented behavior is documented in [`registered-class-invocation.md`](registered-class-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), and [`run.md`](run.md).
+The current generalized behavior is documented in [`managed-invocation.md`](managed-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), and [`run.md`](run.md).
 
 ---
 
@@ -764,7 +764,7 @@ invoke
 - Rejecting a constructor, unsupported controlled name, or unsupported mode performs no boundary-specific input preparation. Controlled Array and native String selection stays early and invokes no application hook; a String accessor is never invoked, and failed String selection exports no arguments.
 - Valid String calls preserve native results and export their explicit arguments through the ordinary host boundary.
 
-Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
+Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-invocation.md`](managed-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
 ---
 
@@ -832,113 +832,103 @@ Every Promise-aware scalar conversion must use the guarded continuation helpers 
 - A hidden pending Array-length continuation is observed, remains active after `assignPath` returns, and closes only after publication or fatal failure.
 - Every registered lease remains balanced after success, language Error, rejection, and fatal failure. Invocation, non-invocation conversion, export, Error queries, mutation gates, and later external phases retain their distinct resource lifetimes while following the same closed-work rule.
 
-Update [`AGENTS.md`](../AGENTS.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`outbound-export.md`](outbound-export.md), [`counters-implementation.md`](counters-implementation.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`work-bounds.md`](work-bounds.md), and the public API documentation.
+Update [`AGENTS.md`](../AGENTS.md), [`managed-invocation.md`](managed-invocation.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`outbound-export.md`](outbound-export.md), [`counters-implementation.md`](counters-implementation.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), [`work-bounds.md`](work-bounds.md), and the public API documentation.
 
 ---
 
 ## Phase 8: Generalize managed invocation
 
+**Status: Implemented.**
+
 ### Problem
 
-Managed record functions cannot use their containing state as `this`, while registered-class invocation is already the required managed-state boundary. Managed methods also reject Promise results instead of treating a direct Promise as the call's completion.
+Before this phase, an own Function placement on a managed record cannot be invoked as a method with that record as `this`. Registered-class invocation already provides the required managed-state boundary, but it contains synchronous-only argument/result machinery and rejects a direct Promise instead of treating it as the call's completion.
 
-### Design
+### Outcome
 
-Generalize Phase 5 through the lifetime and invocation ordering completed by Phases 7D and 7E instead of adding another invocation path.
+- Rename **registered-class invocation** to **managed invocation**, including its module and architecture document. Keep no compatibility module or document alias.
+- Use that one path for managed records and managed class instances. Add no record-specific invocation path.
+- Remove the old record host-method surface. Inherited `Object.prototype` methods, accessors, and non-enumerable Functions are no longer callable on records; an own enumerable Function placement becomes the method instead.
+- Retain Phase 7A's rest-argument `run` signature and consume its already collected internal argument Array; Phase 9 performs the only public signature change.
 
-#### Rename
+### 1. Reuse the existing managed boundary
 
-- Rename **registered-class invocation** to **managed invocation**.
-- Rename its module and architecture document at the same time.
-- Use managed invocation for managed records and managed class instances.
-- Keep no compatibility module or document alias, and add no record-specific invocation path.
+This phase does not build another invocation mechanism. Both receiver forms reuse Phase 5's complete receiver preparation, mutation isolation, validation, and publication; Phase 7A's argument export and selection-to-call protection; Phase 7D's deferred member resolution; and Phase 7E's common operation lifecycle. Runtime-controlled methods retain their logical-input preparation.
 
-### 1. Resolve managed methods after preparation
-
-For a managed record:
-
-- Treat each own enumerable string-keyed data placement as a possible method placement.
-- After clean receiver and argument preparation, read the placement from the prepared record and test callability. Complete receiver preparation has already resolved its captured logical version, so a Promise-backed placement is interchangeable with its resolved Function.
-- Invoke a selected Function with the prepared record as `this`.
-- Do not expose inherited properties, accessors, non-enumerables, or resolved non-Functions as methods.
-- Keep a Function as data outside a supported call position.
-
-Managed classes retain Phase 5's admitted-prototype-chain selection and managed-class state contract, with Phase 7D's deferred descriptor traversal and callable validation.
-
-### 2. Share one invocation lifecycle
-
-Both receiver forms reuse Phase 5's receiver preparation, leases, mutation isolation, validation, publication, and cleanup. Change only the boundaries that later phases centralize:
-
-- Replace registered argument preparation with Phase 7A export.
-- Replace independent result copying with Phase 6 import and ordinary shared ownership.
-- Keep runtime-controlled methods on their existing logical-input preparation.
-- Reuse Phase 7A's selection-to-call lease handoff and operation-wide cleanup; add no managed-method lease pool or export-source lease.
-- Reuse Phase 7E's common operation lifetime across receiver preparation and argument export, and Phase 7D's dynamic member-resolution order.
-
-Retain Phase 7A's rest-argument `run` signature. Managed invocation consumes the already collected internal argument Array; Phase 9 performs the only public signature change.
-
-The common pre-call lifecycle is:
+The pre-call sequence remains:
 
 1. Select the managed boundary from admitted category, method name, and mode without member reflection.
-2. Start complete receiver preparation and Phase 7A argument export synchronously.
-3. Finish both preparations and consume their required Errors.
-4. If preparation is clean, resolve and validate the method exactly once.
-5. Isolate a mutating receiver, then invoke exactly once.
+2. Prepare the complete receiver and export all explicit arguments under one operation lifecycle.
+3. Finish both and collect their required Errors in receiver-then-argument order.
+4. If preparation is clean, resolve and validate the method once from the prepared receiver or admitted class prototype.
+5. Isolate a mutation receiver, then invoke once.
 
-Receiver preparation and argument export start synchronously under one operation lifetime. A fatal failure in either abandons operation-specific work in both. A language Error keeps the owner open until both preparations complete their required Error handling, after which the coordinator closes the final Error outcome. Already-registered continuations still settle shared mirrors, property versions, and refcounts but perform no further receiver or argument traversal, reflection, copying, or lease acquisition after closure. Do not give each preparation an independent lifetime.
+A fatal failure in either preparation abandons operation-specific work in both. A language Error keeps the operation open until both finish required Error handling, then closes the combined outcome. Guarded continuations still settle shared mirrors, property versions, and refcounts after closure, but perform no further traversal, reflection, copying, or lease acquisition. The two preparations never receive separate lifetimes.
 
-The method receives independent managed argument copies with admitted prototypes. It may mutate, retain, store, or return those copies without changing their Cascada sources. Functions and external identities remain exact and read-only as arguments. Argument export creates no source lease; later external mutation requires selecting the identity as an authorized receiver.
+Selection must also protect an argument whose root Promise fulfills before the receiver is available. In `invokeCall`, immediately after receiver traversal reports pending selection and before returning to the caller, register one guarded FIFO root-resolution continuation per Promise argument. Lease a traversable fulfillment until argument export starts; a non-traversable fulfillment is a no-op. If receiver selection starts first, normal export registration supplies the protection. Do not export or traverse arguments before receiver category selection, and release every selection lease on success or failure. If the receiver is ready and internal dispatch rejects the call, attach no argument continuation. Once receiver selection is pending, provisional root capture is required even if selection later fails; it performs no argument traversal or export.
 
-External identities inside the managed receiver are opaque leaves. Managed code may retain, replace, remove, compare, or return them, but may not inspect or mutate their host state. Such access must be a separate Cascada operation selecting the external identity as its receiver. `api!.db.close()` can therefore mutate external `db`; a managed `api!.close()` may not call `this.db.close()` internally.
+### 2. Add managed-record method selection
 
-Managed state may contain Promises or Errors between calls. The prepared receiver contains neither, and a completed mutation receiver may contain neither.
+After preparation, an own enumerable string-keyed record placement other than the globally forbidden `constructor` placement may supply the method. Read its prepared logical value once, test callability, and invoke it as:
 
-The complete receiver graph is the call's explicit work bound. Preparation, mutation isolation, and finalization may each traverse it, but no call walk may enter unrelated graph state.
+```js
+Reflect.apply(callable, preparedReceiver, exportedArgs)
+```
 
-### 3. Apply trusted method contracts
+A Promise-backed placement is therefore interchangeable with its resolved Function. Inherited properties, accessors, non-enumerables, resolved non-Functions, `constructor`, and extracted Functions are not record methods; a Function remains data outside a supported call position. Managed classes retain Phase 5's admitted-prototype-chain selection and state contract. The common selector passes the prepared receiver to member resolution; managed classes may ignore it.
 
-- The caller's mode is authoritative: an observation method does not mutate its receiver; any method that may mutate it runs in mutation mode.
-- Managed code may access exported inputs and, for a mutation, its isolated receiver until the direct Promise settles.
-- Every asynchronous access or effect belongs to work represented by that direct Promise and finishes before settlement.
-- Detached work and Cascada reentry during an active invocation are forbidden. Do not add async-context tracking to enforce this contract.
-- A Promise nested in a synchronous result may not later access the receiver or inputs.
-- A nested call such as `this.increaseBy(1)` is ordinary JavaScript on the already prepared receiver, not another Cascada invocation.
+A nested call such as `this.increaseBy(1)` is ordinary JavaScript on the already prepared receiver, not another Cascada invocation.
 
-### 4. Complete observations
+### 3. Preserve managed-state boundaries
 
-For an observation:
+- Export all explicit arguments together. Managed argument data is an independent graph with aliases, cycles, and admitted prototypes preserved across argument positions; the method may mutate, retain, store, or return it without changing Cascada sources.
+- Functions and external identities cross exactly and remain read-only as arguments. Argument export creates no source lease; later external mutation requires a separate authorized receiver operation.
+- External identities inside the managed receiver are opaque leaves. Managed code may retain, replace, remove, compare, or return them, but may not inspect or mutate their host state. `api!.db.close()` may mutate external `db`; a managed `api!.close()` may not call `this.db.close()` internally.
+- Managed state may contain Promises or Errors between calls. A clean prepared receiver contains neither, and a completed mutation receiver may contain neither.
+- The complete receiver graph is the call's work bound. Preparation, isolation, and finalization may traverse it; no call walk enters unrelated graph state.
+- A managed-record call therefore costs `O(receiver graph + exported arguments)`, unlike the old record host-method path. This deliberate bound is required because ordinary method code may read any receiver property through `this`; add no selective receiver-preparation mode.
+- The caller's mode is authoritative. An observation does not mutate its receiver; any method that may do so runs as a mutation.
 
-- Lease every traversable receiver identity through the direct Promise's settlement.
-- Let later mutation proceed through COW without waiting; do not add a readers-writer phase.
-- On fulfillment, import the result and give retained managed identities ordinary shared ownership.
-- On rejection, preserve the rejection and leave the receiver unchanged.
-- Release receiver leases after the last access on every completion path.
+### 4. Remove superseded registered-call machinery
 
-### 5. Complete mutations
+Keep receiver preparation, argument export, and receiver isolation as three existing responsibilities instead of preserving the old joint synchronous path:
 
-For a mutation:
+- Prepare only the complete receiver. Export arguments through `exportManyValues`; do not materialize or cross-remap receiver and argument identities.
+- Remove registered argument-preparation leases. Keep only selection-to-receiver protection, observation receiver leases, and mutation receiver-source leases until isolation.
+- Finalization only validates that the receiver contains no Promise or Error and admits new identities as runtime-owned. Remove its active-read-lease scan: exported arguments cannot retain Cascada argument identities, and receiver-source leases end at isolation.
+- Delete registered result copying. Use ordinary import for observations and managed mutation-result import for non-receiver mutation results. Managed mutation-result import revisits admitted managed containers and marks every reached managed identity shared, protecting descendants split between the result and final receiver without result-provenance tracking. Keep the complete-graph copier only for qualifying receiver-isolation subgraphs.
+- Simplify receiver materialization and remapping to receiver input only. Delete the old joint receiver/argument preparation, forced result-copy map, `prepareResult`, and the copier's `promiseFound` result.
+- Delete the record half of the old own-placement shadow check, `getRecordMethod`, and the `TYPE_RECORD` host-call branch. Retain managed-class own-placement shadowing and route records into managed selection.
 
-- Keep the isolated receiver private behind the ordinary transition gate.
-- End receiver-source preparation leases when isolation begins.
-- A synchronous result validates and publishes the receiver immediately, then imports the result.
-- A direct Promise keeps the receiver private. On fulfillment, validate and publish the receiver once, then import the result.
-- Release receiver leases at receiver finalization. If finalization publishes a synchronous graph value while result import remains pending, do not extend those leases to the outer operation Promise.
-- If the result is the working receiver, return the published receiver with ordinary result ownership.
-- A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
-- Rejection poisons the receiver as a mutator throw while preserving the rejection outcome.
+This phase should remove the superseded helpers and fields in the same change; keep no compatibility path.
 
-For every managed call:
+### 5. Complete managed results
 
-- Return one operation Promise for a direct Promise result.
-- Treat a Promise nested in a synchronous result as independent data. Return immediately and let its retained result placement continue import later.
-- Import all results and mark retained admitted identities shared rather than copying them.
+Managed invocation owns result completion and deliberately supplies no common `admitResult` hook: an observation returns the imported method result, while a mutation returns the ordinary `{ mutatedValue, result }` outcome after receiver validation. Importing the whole mutation outcome would cross the wrong boundary. A mutation transition must publish its validated receiver before exposing the imported result.
+
+A synchronous call completes that work immediately. A Promise nested inside a synchronous result is independent data, not invalid state; return immediately and let import continue its retained placement when the Promise settles.
+
+One Promise returned directly by the method extends the managed invocation and becomes its one operation Promise:
+
+- Managed code may access exported arguments and, for a mutation, its isolated receiver until that Promise settles. Every asynchronous access and effect must belong to it and finish before settlement.
+- Detached work, later access from a nested result Promise, and Cascada reentry during an active invocation are forbidden trusted-contract violations. A nested result Promise must not fulfill with a receiver or argument identity; return it directly when its completion retains invocation state. Add no async-context tracking.
+- An observation leases every traversable prepared-receiver identity through settlement. Fulfillment imports the result with ordinary shared ownership; rejection remains rejection and leaves the receiver unchanged. Release leases after the last access on every completion path. Later mutations use COW without waiting; add no readers-writer phase.
+- A mutation ends receiver-source leases after isolation and keeps its private receiver behind the ordinary transition gate; the gate, not another lease, protects it. Fulfillment uses managed mutation-result import for a non-receiver result, validates the receiver, and publishes one mutation outcome. The result cannot become observable before receiver publication.
+- Keep internal preparation readiness separate from the produced method result. The common coordinator must not pass a produced result Promise through an internal continuation whose rejection is fatal.
+- Observe a direct mutation Promise at the managed boundary and return a non-rejecting internal completion to the mutation transition. Fulfillment creates the normal mutation outcome. Rejection creates an outcome that poisons the receiver while its `result` remains the admitted direct Promise, so the operation Promise adopts the exact original rejection.
+- If a mutation returns its working receiver, return the published receiver with ordinary result ownership. A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
+
+Import every managed result without copying it. Ordinary observation import may retain an admitted root without rescanning. A non-receiver mutation result uses managed mutation-result import because arbitrary JavaScript mutation may detach an admitted result container while leaving descendants in the receiver.
 
 ### Verification
 
 #### Selection and reuse
 
 - Ready and Promise-backed own enumerable Function placements receive the prepared record as `this`. Inherited, accessor, non-enumerable, resolved non-Function, and extracted Function values remain unavailable as record methods.
+- `constructor` remains unavailable as a managed record method.
+- Records no longer call inherited `hasOwnProperty`, `toString`, or other `Object.prototype` methods. An own accessor is not invoked, and neither it nor an own non-enumerable Function supplies a method.
 - Receiver or argument preparation failure performs no post-preparation record method-placement read, managed-class prototype descriptor traversal, callable validation, or invocation.
+- Receiver and argument Errors, including mixed ready and pending failures, combine in logical receiver-then-argument order.
 - `this.helper()` mutates the already isolated receiver and publishes only through the outer invocation.
 - Records and classes share one preparation, export, isolation, validation, result, and cleanup path.
 - The caller's mode matches method behavior.
@@ -946,17 +936,30 @@ For every managed call:
 
 #### Promise lifetime and protection
 
+- When a root argument Promise fulfills while receiver selection remains pending, its traversable fulfillment is protected until export starts. A later source mutation cannot change the exported argument, and every selection lease balances on success or failure.
 - A direct-Promise observation holds receiver leases but no readers-writer phase. Exported arguments retain no source lease, and later mutation uses COW without waiting.
-- A direct-Promise mutation remains private behind one gate. Later operations wait; fulfillment validates and publishes once; rejection poisons the receiver while preserving rejection.
+- A direct-Promise mutation remains private behind one gate. Later operations wait; fulfillment validates and publishes once; rejection is handled as language failure rather than fatal, poisons the receiver, and preserves the exact rejection reason.
+- Direct mutation fulfillment with an Error returns that Error without poisoning an otherwise valid receiver. Direct rejection poisons the receiver and preserves the exact rejection reason.
 - A completed mutation receiver containing a Promise or Error fails validation. A direct result Promise extends the invocation; a nested result Promise does not.
 - Receiver leases balance after fulfillment, rejection, and validation failure; argument export leaves no source lease on success or failure.
 - Managed invocation does not restore selection leases after export capture or acquire another argument-source lease. It uses Phase 7E's common operation lifetime, so fatal preparation or completion cannot strand an acquisition attempted by a later parallel branch.
 - A fatal receiver-preparation or argument-export failure abandons the other preparation. A language Error completes required preparation in both before the final Error outcome closes them. Later settlement performs shared bookkeeping only and neither traverses newly revealed data nor allocates output.
 - Direct fulfillment uses common import and shared ownership in FIFO order.
-- A synchronous result containing a nested Promise returns immediately; its retained placement imports later fulfillment.
+- A synchronous result containing a nested Promise succeeds immediately instead of producing the old registered-result validation Error; its retained placement imports later fulfillment.
+- Returning a receiver child retains that exact identity and marks it shared. A later receiver mutation uses ordinary COW and preserves the returned logical value.
+- Returning a detached admitted container while retaining one of its descendants in the receiver marks the complete result graph shared; later receiver mutation preserves the earlier result.
+- Observation materialization does not permanently share reused receiver children unless the imported result retains them.
 - Direct-Promise work may use prepared receiver and arguments until settlement but may not reenter Cascada. Later detached or nested-result access remains a trusted-contract violation, not an instrumented restriction.
 
-Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`registered-class-invocation.md`](registered-class-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
+#### Removed machinery
+
+- Receiver and argument preparation preserve no cross-input remapping; exported arguments are independent from receiver state.
+- Managed invocation has no registered-only argument preparation, active-lease finalization scan, result deep copy, forced result-copy map, `prepareResult`, or `promiseFound` copier result.
+- The record placement now supplies the method, while a managed-class own placement still hides its admitted prototype method.
+- Equivalent record and class failures produce the same receiver-then-argument Error order and balanced selection and receiver leases.
+- Receiver preparation and isolation retain their aliases, cycles, logical Array, admitted-prototype, metadata, and refcount guarantees after the simplification.
+
+Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`managed-invocation.md`](managed-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
 ---
 
@@ -1304,6 +1307,7 @@ Every explicit argument source supplies its Chain and normalized path:
 
 #### Properties and calls
 
+- External traversal uses external dispatch and never reports an external identity as a missing or primitive value. Truly absent and primitive paths retain their ordinary path Errors.
 - New external-property identities remain external. A reached admitted managed identity poisons only its external container; untouched properties are never scanned. Host-call results may contain admitted managed data through import.
 - Repair removes that container poison; reaching the invalid managed property again restores it.
 - Every native JavaScript argument and external-property write uses export. Functions and external identities remain exact under selected phases.

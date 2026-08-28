@@ -57,13 +57,16 @@ describe("run", () => {
         expect(unsupportedMode._state.value).to.be(unsupportedModeError)
 
         const observation = new Chain([1])
-        expect(run(
+        const constructorError = run(
             observation,
             [],
             "constructor",
             false,
             pending.promise,
-        ) instanceof Error).to.be(true)
+        )
+        expect(constructorError.message).to.be(
+            "Method is not callable: constructor",
+        )
         expect(observation._state.value).to.eql([1])
 
         const invalidMode = new Chain([1])
@@ -124,7 +127,7 @@ describe("run", () => {
         let received
         const target = {}
         Object.defineProperty(target, "read", {
-            enumerable: false,
+            enumerable: true,
             value(value) {
                 received = value
                 return value.nested
@@ -175,7 +178,7 @@ describe("run", () => {
         const argument = lookupPath(source, ["argument"])
         const target = {}
         Object.defineProperty(target, "read", {
-            enumerable: false,
+            enumerable: true,
             value(value) {
                 return value.answer
             },
@@ -294,30 +297,48 @@ describe("run", () => {
         expect(resultChain._state.value).not.to.be(external)
     })
 
-    it("uses normal property access for ordinary methods", () => {
+    it("uses only own enumerable data properties as record methods", () => {
         const source = { value: 2 }
-        const failure = new Error("lookup failed")
+        let accessed = false
         Object.defineProperty(source, "read", {
-            get() {
-                return function read() {
-                    return this.value
-                }
+            enumerable: true,
+            value() {
+                return this.value
             },
         })
-        Object.defineProperty(source, "fail", {
+        Object.defineProperty(source, "hidden", {
+            value() {
+                return 3
+            },
+        })
+        Object.defineProperty(source, "accessor", {
             get() {
-                throw failure
+                accessed = true
+                return () => 4
             },
         })
 
         expect(run(new Chain(source), [], "read", false)).to.be(2)
-        expect(run(new Chain(source), [], "fail", false)).to.be(failure)
+        expect(run(
+            new Chain(source),
+            [],
+            "hidden",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(run(
+            new Chain(source),
+            [],
+            "accessor",
+            false,
+        ) instanceof Error).to.be(true)
+        expect(accessed).to.be(false)
     })
 
     it("returns a synchronous observation failure without changing its receiver", () => {
         const failure = new Error("observation failed")
         const source = { value: 2 }
         Object.defineProperty(source, "fail", {
+            enumerable: true,
             value() {
                 throw failure
             },
@@ -326,7 +347,7 @@ describe("run", () => {
 
         expect(run(chain, [], "fail", false)).to.be(failure)
         expect(chain._state.value).to.be(source)
-        expect(source).to.eql({ value: 2 })
+        expect(source.value).to.be(2)
     })
 
     it("returns a delayed synchronous observation failure", async () => {
@@ -334,6 +355,7 @@ describe("run", () => {
         const failure = new Error("delayed observation failed")
         const source = { value: 2 }
         Object.defineProperty(source, "fail", {
+            enumerable: true,
             value() {
                 throw failure
             },
@@ -351,7 +373,7 @@ describe("run", () => {
 
         expect(await result).to.be(failure)
         expect(chain._state.value).to.be(source)
-        expect(source).to.eql({ value: 2 })
+        expect(source.value).to.be(2)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
@@ -363,6 +385,7 @@ describe("run", () => {
         const source = {}
         const chain = new Chain(source)
         Object.defineProperty(source, "result", {
+            enumerable: true,
             value() {
                 return returned.promise
             },
@@ -391,6 +414,7 @@ describe("run", () => {
         const returnedData = deferred()
         const hostValue = {}
         Object.defineProperty(source, "data", {
+            enumerable: true,
             value() {
                 return returnedData.promise
             },
@@ -403,6 +427,7 @@ describe("run", () => {
 
         const failed = deferred()
         Object.defineProperty(source, "failure", {
+            enumerable: true,
             value() {
                 return failed.promise
             },
@@ -425,8 +450,11 @@ describe("run", () => {
         const external = externalState({})
         const source = {}
         Object.defineProperties(source, {
-            managed: { value: () => managed },
-            external: { value: () => Promise.resolve(external) },
+            managed: { enumerable: true, value: () => managed },
+            external: {
+                enumerable: true,
+                value: () => Promise.resolve(external),
+            },
         })
         const chain = new Chain(source)
 
@@ -444,6 +472,7 @@ describe("run", () => {
         const completion = deferred()
         const source = { value: 1 }
         Object.defineProperty(source, "laterRead", {
+            enumerable: true,
             value() {
                 return completion.promise.then(() => this.value)
             },
@@ -465,6 +494,7 @@ describe("run", () => {
         const completion = deferred()
         const source = { value: 1 }
         Object.defineProperty(source, "laterSelf", {
+            enumerable: true,
             value() {
                 return completion.promise.then(() => this)
             },
@@ -491,6 +521,7 @@ describe("run", () => {
         let returned = thenable
         const source = { value: 1 }
         Object.defineProperty(source, "result", {
+            enumerable: true,
             value() {
                 return returned
             },
@@ -532,28 +563,31 @@ describe("run", () => {
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
-    it("does not discover nested Promises read by ordinary methods", () => {
+    it("prepares nested Promises before invoking a record method", async () => {
         const pending = deferred()
         const registrationCount = countPromiseRegistrations(pending.promise)
         const source = { nested: { pending: pending.promise } }
         Object.defineProperty(source, "seesPending", {
+            enumerable: true,
             value() {
-                return this.nested.pending === pending.promise
+                return this.nested.pending
             },
         })
         const initialCount = registrationCount()
 
         const result = run(new Chain(source), [], "seesPending", false)
 
-        expect(result).to.be(true)
-        expect(registrationCount()).to.be(initialCount)
+        expect(result instanceof Promise).to.be(true)
+        expect(registrationCount() > initialCount).to.be(true)
         pending.resolve(1)
+        expect(await result).to.be(1)
     })
 
-    it("exposes physical Promise writeback to ordinary methods", async () => {
+    it("exposes prepared logical Promise values to record methods", async () => {
         const runtimePending = deferred()
         const runtimeOwned = { pending: runtimePending.promise }
         Object.defineProperty(runtimeOwned, "stillPending", {
+            enumerable: true,
             value() {
                 return this.pending === runtimePending.promise
             },
@@ -563,6 +597,7 @@ describe("run", () => {
         const importedPending = deferred()
         const imported = { pending: importedPending.promise }
         Object.defineProperty(imported, "stillPending", {
+            enumerable: true,
             value() {
                 return this.pending === importedPending.promise
             },
@@ -576,24 +611,28 @@ describe("run", () => {
         expect(run(new Chain(runtimeOwned), [], "stillPending", false)).to.be(
             false,
         )
-        expect(run(new Chain(imported), [], "stillPending", false)).to.be(true)
+        expect(run(new Chain(imported), [], "stillPending", false)).to.be(false)
     })
 
-    it("imports an ordinary method result that aliases its receiver", async () => {
+    it("imports a record method result that aliases its receiver", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
+        root.self = function () {
+            return this
+        }
         const languageKeys = Reflect.ownKeys(root)
         const earlierRead = readPath(new Chain(root), ["pending"])
 
-        const result = run(new Chain(root), [], "valueOf", false)
+        const invocation = run(new Chain(root), [], "self", false)
+        expect(invocation instanceof Promise).to.be(true)
 
+        const resolved = { done: true }
+        pending.resolve(resolved)
+        const result = await invocation
         expect(result).to.be(root)
         expect(Reflect.ownKeys(root)).to.eql(languageKeys)
         expect(metaOf(root).importBoundary).to.be(undefined)
         expect(metaOf(root).shared).to.be(true)
-
-        const resolved = { done: true }
-        pending.resolve(resolved)
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
 
@@ -1224,7 +1263,7 @@ describe("run", () => {
         expect(reflections).to.be(0)
     })
 
-    it("resolves a dynamic member once after clean argument export", async () => {
+    it("rejects a record accessor after clean argument export", async () => {
         const pending = deferred()
         let lookups = 0
         const receiver = {}
@@ -1246,7 +1285,7 @@ describe("run", () => {
         expect(lookups).to.be(0)
         pending.resolve(3)
         expect((await result).message).to.be("Method is not callable: missing")
-        expect(lookups).to.be(1)
+        expect(lookups).to.be(0)
     })
 
     it("rejects unsupported String members without exporting arguments", async () => {
@@ -1746,12 +1785,11 @@ describe("run", () => {
         const result = run(chain, [], "splice", true, start.promise, 1)
 
         expect(receiverCount() > initialReceiverCount).to.be(true)
-        expect(startCount()).to.be(initialStartCount)
+        expect(startCount() > initialStartCount).to.be(true)
         expect(chain._state.value instanceof Promise).to.be(true)
 
         receiver.resolve([1, 2])
         await flushMicrotasks()
-        expect(startCount() > initialStartCount).to.be(true)
         start.resolve(0)
         expect(await result).to.eql([1])
         expect(await exportValue(chain, [])).to.eql([2])
@@ -2335,14 +2373,14 @@ describe("run", () => {
             Symbol(),
         ) instanceof Error).to.be(true)
 
-        class Opaque {
+        class External {
             toString() {
                 hookCalls++
-                return "opaque"
+                return "external"
             }
         }
         expect(run(
-            new Chain([new Opaque()]),
+            new Chain([new External()]),
             [],
             "join",
             false,
@@ -2384,10 +2422,10 @@ describe("run", () => {
         expect(result instanceof Error).to.be(true)
     })
 
-    it("invokes ordinary methods only on supported object surfaces", () => {
+    it("invokes record methods only on supported object surfaces", () => {
         const record = {}
         Object.defineProperty(record, "size", {
-            enumerable: false,
+            enumerable: true,
             value() {
                 return { value: this.value }
             },
@@ -2395,13 +2433,13 @@ describe("run", () => {
         record.value = 3
         const callable = () => 4
         Object.defineProperty(record, "getCallable", {
-            enumerable: false,
+            enumerable: true,
             value() {
                 return callable
             },
         })
         Object.defineProperty(record, "isReceiver", {
-            enumerable: false,
+            enumerable: true,
             value() {
                 return this === record
             },
@@ -2452,7 +2490,7 @@ describe("run", () => {
 
         const date = new Date()
         Object.defineProperty(record, "getDate", {
-            enumerable: false,
+            enumerable: true,
             value: () => date,
         })
         expect(run(
@@ -2500,7 +2538,7 @@ describe("run", () => {
         const argument = deferred()
         const record = { value: 1 }
         Object.defineProperty(record, "read", {
-            enumerable: false,
+            enumerable: true,
             value(addend) {
                 return this.value + addend
             },
@@ -2528,6 +2566,7 @@ describe("run", () => {
         const argumentChain = new Chain(argument)
         const methodReceiver = {}
         Object.defineProperty(methodReceiver, "read", {
+            enumerable: true,
             value(value) {
                 return value.value
             },
@@ -2558,6 +2597,7 @@ describe("run", () => {
         const argumentChain = new Chain(argument)
         const receiver = {}
         Object.defineProperty(receiver, "read", {
+            enumerable: true,
             value(first, second) {
                 return {
                     aliased: first === second,
@@ -2594,6 +2634,7 @@ describe("run", () => {
         let received
         const receiver = {}
         Object.defineProperty(receiver, "inspect", {
+            enumerable: true,
             value(...values) {
                 received = values
                 return true
@@ -2625,6 +2666,7 @@ describe("run", () => {
         let received
         const receiver = {}
         Object.defineProperty(receiver, "read", {
+            enumerable: true,
             value(value) {
                 received = value
                 return completion.promise.then(() => value.value)
@@ -2667,6 +2709,7 @@ describe("run", () => {
         let received
         const receiver = {}
         Object.defineProperty(receiver, "inspect", {
+            enumerable: true,
             value(value) {
                 received = value
                 return value.read()
@@ -2697,6 +2740,7 @@ describe("run", () => {
         })
         const receiver = {}
         Object.defineProperty(receiver, "read", {
+            enumerable: true,
             value() {},
         })
 
@@ -2849,7 +2893,7 @@ describe("run", () => {
         const argument = deferred()
         const record = { value: 1 }
         Object.defineProperty(record, "read", {
-            enumerable: false,
+            enumerable: true,
             value(addend) {
                 return this.value + addend
             },
@@ -2993,6 +3037,7 @@ describe("run", () => {
             () => {
                 const receiver = {}
                 Object.defineProperty(receiver, "reenter", {
+                    enumerable: true,
                     value() {
                         readPath(observed, [])
                     },

@@ -67,21 +67,11 @@ Completed or discarded output releases its export state without closing a contai
 
 ## Managed methods
 
-Every own enumerable string-keyed data placement of a managed record is a possible method. Internal dispatch first selects the managed boundary without reading a member. After clean receiver and argument preparation, read the placement from the prepared record and test callability, then invoke a Function with that record as `this`. Inherited properties, accessors, non-enumerables, and resolved non-Functions are unavailable. A managed class resolves its method from the admitted prototype chain at the same late point under the managed-class contract.
+Records and classes use the single boundary defined in [`managed-invocation.md`](managed-invocation.md). A record selects an own enumerable Function-valued placement; a class selects from its admitted prototype chain. Selection occurs only after complete receiver preparation and explicit-argument export. The boundary then isolates mutation state when required, invokes once, validates and publishes a mutation, and imports the result.
 
-Records and classes share one managed invocation. Prepare the complete receiver graph and export every explicit argument, resolve the method once from the prepared pre-isolation receiver, isolate a mutation receiver, invoke once, validate and publish mutation, and import the result. Failed preparation performs no post-preparation method-placement read, prototype descriptor traversal, callable test, or invocation. Isolation preserves the selected method and admitted prototype and does not repeat resolution. Nested calls such as `this.increaseBy(1)` are ordinary JavaScript on the already prepared receiver.
+The caller's mode is trusted: observations do not mutate their receiver, and mutations change only their isolated receiver. Exported managed arguments are independent; exact Functions and external identities remain read-only. External identities nested in a managed receiver are opaque leaves and require a separate external Cascada operation for host access.
 
-Receiver preparation and argument export share one operation lifecycle. A fatal failure in either abandons operation-specific work in both. A language Error keeps the owner open until required Error handling completes. After closure, later continuations complete shared mirror and property-version settlement but perform no further traversal, reflection, copying, or lease acquisition.
-
-The caller's mode is a trusted assertion about the selected method. An observation does not mutate its receiver; a mutating method runs only in mutation mode. Exported managed argument data is independent and may be mutated, retained, stored in the receiver, or returned without changing its Cascada source. Functions and external identities remain exact and read-only as arguments; later external mutation requires selecting the identity as an authorized receiver. Every method keeps mutable semantic state in `this` and receives other state explicitly; it does not depend on mutable parent, closure, module, private, hidden, or internal state.
-
-External identities inside a managed receiver are opaque leaves. A managed method may retain, replace, remove, compare, or return one, but may not inspect or mutate its host state. Access requires a separate Cascada operation that selects the external identity as its receiver. Thus `api!.db.close()` may mutate an external `db`, while a managed `api!.close()` may not hide `this.db.close()` inside its method.
-
-A direct Promise keeps the invocation active until settlement. All later receiver and argument access must belong to that Promise and finish before it settles; detached work and Cascada reentry are forbidden. A nested result Promise is independent data and receives no later receiver access.
-
-A pending observation retains receiver leases through settlement; later mutation proceeds through COW without waiting. A mutation keeps its isolated receiver private behind the ordinary transition gate. Argument export creates no source lease. Fulfillment imports the result; rejection preserves rejection and applies the ordinary observation or mutation graph effect. A completed mutation receiver contains neither Promise nor Error.
-
-Importing a managed result preserves admitted identities and adds ordinary shared ownership instead of copying the result. Returning the mutation receiver returns its published identity.
+Receiver and argument work share one operation lifetime. One direct Promise extends it; a nested result Promise does not. Observations retain receiver leases through direct completion, mutations keep private state behind the ordinary transition gate, and managed mutation-result import gives exact receiver/result aliases shared ownership.
 
 ## External ordering
 
@@ -99,4 +89,4 @@ Register the complete context receiver and argument guard set when the operation
 
 ## Scope
 
-Generalize registered-class invocation into managed invocation instead of adding a record-specific path. Reuse one import boundary, one export boundary, and ordinary managed COW, leases, gates, mirrors, and publication. External ordering adds one readers-writer phase mechanism, identity use state, phase state for selected mutation-eligible identities, and one occurrence index per context Chain; it adds no hidden Chain, special importer, external graph model, or second invocation coordinator.
+Managed records and classes share one invocation instead of using a record-specific path. The architecture reuses one import boundary, one export boundary, and ordinary managed COW, leases, gates, mirrors, and publication. External ordering adds one readers-writer phase mechanism, identity use state, phase state for selected mutation-eligible identities, and one occurrence index per context Chain; it adds no hidden Chain, special importer, external graph model, or second invocation coordinator.

@@ -31,10 +31,10 @@ instead expose canonical Array-index strings and the special `length`
 property; other string properties are outside their language surface and
 cannot be assigned or deleted through Cascada.
 
-Managed-class COW, exact prototype preservation, and synchronous observation
-and mutation methods are implemented. Construction remains outside the runtime.
-Invocation is defined in [`run.md`](run.md) and
-[`registered-class-invocation.md`](registered-class-invocation.md).
+Managed COW, exact class-prototype preservation, and managed-record and
+managed-class methods are implemented. Construction remains outside the
+runtime. Invocation is defined in [`run.md`](run.md) and
+[`managed-invocation.md`](managed-invocation.md).
 
 ## Chain roots
 
@@ -148,7 +148,7 @@ remains rejection.
 Import:
 
 - records origin and marks newly imported managed identities shared;
-- retains already admitted identities without rescanning or changing origin;
+- retains already admitted identities without rescanning or changing origin, except when managed mutation-result import must establish ownership throughout a managed mutation result;
 - registers continuations for nested Promises without awaiting them; and
 - does not build subtree counters.
 

@@ -15,11 +15,27 @@ class InvocationContext {
     releaseArguments = this.#argumentLeases.release
     releaseReceivers = this.#receiverLeases.release
 
-    retainArgumentsUntilReceiver(args) {
-        for (const value of args) this.#selectionArgumentLeases.retain(value)
+    retainArgumentsUntilReceiverReached(args) {
+        for (const value of args) {
+            if (!languageValues.isPromise(value)) {
+                this.#selectionArgumentLeases.retain(value)
+                continue
+            }
+            const protection = languageValues.continuePromise(
+                value,
+                resolved => operationLifecycle.run(
+                    this,
+                    () => this.#selectionArgumentLeases.retain(resolved),
+                ),
+                // Rejection reveals no identity to protect. Input preparation
+                // consumes it only if receiver selection eventually reaches it.
+                () => undefined,
+            )
+            operationLifecycle.observeFatal(this, protection)
+        }
     }
 
-    markReceiverReached() {
+    releaseSelectionArguments() {
         this.#selectionArgumentLeases.release()
     }
 
@@ -32,25 +48,26 @@ class InvocationContext {
     }
 }
 
+// Internal continuations may adopt a returned Promise. Boxing keeps receiver
+// traversal and input readiness separate from the method's public result.
+class WrappedInvocationResult {
+    constructor(value) {
+        this.value = value
+    }
+}
+
 function invokeDataFunction(callable, thisValue, args) {
     return errorUtils.runUserCode(
         () => Reflect.apply(callable, thisValue, args),
     )
 }
 
-function getHostMethodCallDescription(
-    getMethod,
-    thisValue,
-    leaseReceiver,
-) {
+function getHostMethodCallDescription(callable, thisValue) {
     return {
         admitResult: value => imports.import(value, "run method result"),
-        invoke: (args, _invocation, callable) =>
-            invokeDataFunction(callable, thisValue, args),
-        leaseReceiver,
+        invoke: args => invokeDataFunction(callable, thisValue, args),
         prepareInputs: (args, invocation) =>
             exportManyValues(args, invocation),
-        getMethod,
     }
 }
 
@@ -62,17 +79,19 @@ function methodNotCallableError(method) {
 // and its argument and receiver leases.
 function invokeCall(method, mutation, args, select, reachReceiver) {
     const invocation = new InvocationContext()
-    const result = operationLifecycle.run(
+    let receiverReached = false
+    const reached = operationLifecycle.run(
         invocation,
-        () => reachReceiver(invokeReceiver),
+        () => reachReceiver(invokeWithReceiver),
     )
 
-    if (languageValues.isPromise(result)) {
-        invocation.retainArgumentsUntilReceiver(args)
+    if (!receiverReached && languageValues.isPromise(reached)) {
+        invocation.retainArgumentsUntilReceiverReached(args)
     }
-    return operationLifecycle.closeWhenDone(invocation, result)
+    return operationLifecycle.closeWhenDone(invocation, reached)
 
-    function invokeReceiver(receiver, present, context) {
+    function invokeWithReceiver(receiver, present, context) {
+        receiverReached = true
         let selected
         let preparedInputs
         try {
@@ -81,14 +100,17 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
             preparedInputs = selected.prepareInputs(args, invocation)
             invocation.retainReceiver(selected.leaseReceiver)
         } finally {
-            invocation.markReceiverReached()
+            invocation.releaseSelectionArguments()
         }
 
-        return operationLifecycle.continueInternal(
+        const preparedResult = operationLifecycle.continueInternal(
             invocation,
             preparedInputs,
-            invokePrepared,
+            readyInputs => new WrappedInvocationResult(
+                invokePrepared(readyInputs),
+            ),
         )
+        return unwrapInvocationResult(preparedResult)
 
         function invokePrepared(readyInputs) {
             let receiverLeaseContinues = false
@@ -101,7 +123,7 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
                 // and before category-specific isolation inside invoke.
                 const callable = selected.getMethod
                     ? errorUtils.catchUserCodeFailure(
-                        selected.getMethod,
+                        () => selected.getMethod(readyInputs),
                         failure => failure,
                     )
                     : undefined
@@ -130,6 +152,21 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
                 if (!receiverLeaseContinues) invocation.releaseReceivers()
             }
         }
+    }
+
+    function unwrapInvocationResult(result) {
+        if (!languageValues.isPromise(result)) {
+            return result instanceof WrappedInvocationResult
+                ? result.value
+                : result
+        }
+        return languageValues.continuePromise(
+            result,
+            resolved => resolved instanceof WrappedInvocationResult
+                ? resolved.value
+                : resolved,
+            errorUtils.reportFatalError,
+        )
     }
 }
 

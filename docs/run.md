@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implemented.** This is the common invocation layer for standard String and Array operations, trusted record observations, and synchronous managed-class observations and mutations.
+**Implemented.** This is the common invocation layer for standard String and Array operations and managed-record and managed-class methods.
 
 ## Contract
 
@@ -27,16 +27,16 @@ copyWithin fill pop push reverse shift sort splice unshift
 | `false` | Logical Array mutator | Leave the receiver unchanged and return a distinct transformed logical Array. |
 | `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
 | `true` | Logical Array mutator | Mutate or publish a new receiver and return the JavaScript mutator result. |
-| `true` | Managed-class method | Isolate, invoke, validate, and publish the receiver; return the method result. |
+| `true` | Managed method | Isolate, invoke, validate, and publish the receiver; return the method result. |
 | `true` | Other receiver | Publish and return a language Error without invocation. |
 
 A supported logical Array method is selected intrinsically by name even when a receiver property shadows it. Every other Array method name is unsupported; dispatch does not inspect custom properties or prototypes.
 
 Controlled Array table lookup and native String method lookup happen during internal dispatch. String lookup examines only Function-valued data properties on the stable `String.prototype` and `Object.prototype`; boxed indexes, `length`, accessors, and unsupported names are not method candidates. A failed early lookup performs no argument export.
 
-Record and managed-class member lookup happens only after their required inputs are clean. Ordinary record lookup preserves JavaScript shadowing: an own enumerable data property hides the host surface but is never executable, while a supported non-placement getter may supply a trusted read-only, non-retaining host method. Managed-class lookup selects a data method once from the prepared receiver's admitted prototype chain up to, but excluding, `Object.prototype`; declaration rejects accessors on that chain. Failed preparation performs none of this application-controlled reflection.
+Managed-record and managed-class member lookup happens only after their required inputs are clean. A record method is an own enumerable Function-valued placement; inherited properties, accessors, and non-enumerables are unavailable. Managed-class lookup selects a data method once from the prepared receiver's admitted prototype chain up to, but excluding, `Object.prototype`; declaration rejects accessors on that chain. Failed preparation performs none of this application-controlled reflection.
 
-A managed-class call resolves the complete receiver graph and every explicit argument through captured property versions before selecting its method. An observation leases its prepared receiver without a gate. A mutation selects the method before isolation, then uses the ordinary receiver gate while pending, leases the complete argument graph through finalization, selectively isolates receiver identities protected by COW or runtime bookkeeping, and publishes only a valid completed receiver. Managed-class methods execute synchronously and follow the trusted class contract in [`registered-class-invocation.md`](registered-class-invocation.md).
+A managed call resolves the complete receiver graph and exports every explicit argument before selecting its method. An observation leases its prepared receiver without a gate. A mutation selects the method before isolation, uses the ordinary receiver gate while pending, selectively isolates receiver identities protected by COW or runtime bookkeeping, and publishes only a valid completed receiver. Shared-graph import protects aliases between a non-receiver mutation result and the receiver. A direct result Promise extends the call; a nested result Promise is ordinary result data and must not later expose receiver or argument identities. The full contract is in [`managed-invocation.md`](managed-invocation.md).
 
 String methods use the ordinary observation path. Their dispatch protocols, such as `Symbol.match`, `Symbol.replace`, and `Symbol.split`, and callable arguments such as replacement callbacks are part of the same trusted read-only call and are subject to the ordinary exported-argument and result-admission boundaries. Controlled Array intrinsics support the methods declared by the Array method table; `sort` and `toSorted` additionally support the comparator contract below. Array callback methods such as `map`, `filter`, `reduce`, and `forEach` are deferred. Array `keys`, `values`, and `entries` are outside the controlled method table; direct Array iteration and spread use the runtime iterator path.
 
@@ -52,7 +52,8 @@ Lowering captures every argument position before issuing `run`, preserving omiss
 | --- | --- |
 | Controlled Array input | None. The wrapper resolves only values the method consumes and leaves retained payloads exact, including Error and Promise values. |
 | `sort` or `toSorted` comparator input | One exported snapshot containing every comparator-visible value. |
-| Managed-class receiver and arguments | Prepare every reached logical value; materialize only paths required for host representation or receiver isolation. |
+| Managed receiver | Prepare the complete logical graph; materialize only paths required for receiver representation or isolation. |
+| Managed arguments | Export every explicit argument as one independent graph. |
 | Ordinary observation, including a String method | Resolve the receiver through its path; export and resolve every argument before invocation. |
 
 Controlled Array operations never export their logical receiver merely to invoke an intrinsic. They operate on internal property-origin remaps. Only a supplied sort comparator receives exported elements.
@@ -61,7 +62,7 @@ Retained Array payloads keep their logical identity. This includes Error and Pro
 
 Call poisoning reaches only consumed inputs. Export consumes every Error reached inside each native-code input. One is preserved; several within one input are combined, then failed inputs are combined in argument order without flattening their `.errors` payloads. Any failed input prevents invocation. If every required input is ready, invocation is synchronous. Otherwise common preparation returns one operation Promise.
 
-Array `toLocaleString` is deferred because it invokes executable element methods. Controlled Array results are runtime-owned. Host-call results are imported because host code may retain them; a returned host Promise preserves its fulfillment and rejection. Managed-class result rules remain described in [`registered-class-invocation.md`](registered-class-invocation.md).
+Array `toLocaleString` is deferred because it invokes executable element methods. Controlled Array results are runtime-owned. Host-call results are imported because host code may retain them; a returned host Promise preserves its fulfillment and rejection. Managed result rules are described in [`managed-invocation.md`](managed-invocation.md).
 
 ## Cascada scalar conversion
 

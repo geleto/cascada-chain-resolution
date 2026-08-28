@@ -205,10 +205,8 @@ Supported receivers are:
 - Strings, for native observations.
 - Logical Arrays, for the controlled standard methods listed below. Custom
   Array methods are unsupported.
-- Records, for trusted read-only host methods outside the language-property
-  surface.
-- Managed class instances, for trusted synchronous observations and
-  mutations.
+- Managed records, for own enumerable Function-valued methods.
+- Managed class instances, for methods on their admitted prototype chain.
 
 Controlled Array and native String dispatch rejects unsupported calls before
 preparing arguments. Record and managed-class members are resolved only after
@@ -228,7 +226,9 @@ must return a Number. `concat` spreads only logical Arrays and ignores
 
 For an Array mutator, `mutation: true` updates the receiver and returns the
 corresponding native mutator result. With `mutation: false`, the receiver is
-unchanged and the transformed Array is returned. Managed-class methods must
-finish synchronously; observation methods must not mutate, and mutation methods
-may mutate only their receiver graph. A method result may be returned directly
-or as a Promise where that receiver category permits asynchronous host results.
+unchanged and the transformed Array is returned. Managed-record and
+managed-class observations must not mutate their receiver; mutations may
+mutate only their isolated receiver graph. Every explicit argument is exported.
+A direct result Promise extends the managed invocation, while a Promise nested
+inside a synchronous result is ordinary result data and must not later expose
+the receiver or an argument identity.
