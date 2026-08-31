@@ -4,100 +4,142 @@ Developer-facing restrictions are centralized in [`data-limitations.md`](data-li
 
 ## Model
 
-External values are exact host identities and are observation-only by default. Mutation is allowed only when every actual Cascada use of the identity has occurred through one compiler-static path of one context Chain. Import and storage are not uses.
+External values are exact host identities and are observation-only by default. Cascada may mutate an identity only when its boundary was synchronously reachable from a compiler-provided scope or property mutation path during initial import and every actual use follows one normalized path of one context Chain. Import, storage, copying, and return are not uses.
 
-Managed state uses COW, leases, and transition gates. External state that remains mutation-eligible uses one readers-writer phase per exact identity, shared by all context occurrences. Outside-context use is observation-only and permanently removes mutation eligibility, so it needs no phase. External mutation changes the exact host identity in place.
+Managed state uses COW, leases, and transition gates. Mutation-eligible external state uses one readers-writer phase per exact identity. External mutation changes that identity in place. A direct operation Promise retains the phase through boundary completion; a nested result Promise does not.
 
-A selected external boundary is the first external identity whose phase was synchronously selected on an operation path. Its phase guards host traversal below that identity for that operation.
+An external boundary is a context root or the first external identity reached from managed state. It guards the host suffix below that identity for one operation. Cascada never scans an external graph or compares its hidden descendants for aliases.
 
-A new identity obtained from an external property remains external, including a record or Array. Managed state may contain external identities, but external state may contain no admitted managed identity. Detect this only if property traversal reaches one; poison the external container without replacing either identity and do not scan external state for violations. A host method may instead return separately declared, default-managed, or already admitted managed data through its separate result import.
+## Static context tree
 
-External operations may traverse and mutate deeply nested host state. Cascada does not inspect external graphs in advance or compare their descendants for aliases. Host code must not expose one mutable resource through independently scheduled external roots; such hidden sharing is outside Cascada's ordering guarantees.
+Constructing a `ContextChain` imports its raw host root. `ContextChain` extends the ordinary `Chain` operation surface and owns the context anchor and optional static tree; it adds no separate walker or invocation path. The compiler supplies two String/Number path Arrays:
 
-## Context index
+- `scopeMutationPaths` contains each prefix before `!`;
+- `propertyMutationPaths` contains each complete assignment or deletion target.
 
-Phase 9 context construction marks a Chain as context and passes its host root through the common `import(value, errorContext)` boundary. During that import, inspect each synchronously reached managed identity once while recording every external occurrence by normalized Chain path. Preserve aliases and cycles and stop at Promises and external identities. Importing, indexing, or storing an identity does not record a use or restrict later mutation.
+Two empty Arrays import the context but build no external tree. Ordinary `Chain` construction admits existing Cascada data without importing it. Both classes use the same importer and execution representation.
 
-Several context Chains may contain the same external identity. Each keeps its own path index, while the identity's use state remains unset until an operation actually uses it. Ordinary context-graph transitions maintain occurrence paths without turning them into uses.
+Property discovery starts at the context root. For `propertyMutationPaths: [["status"]]`, the empty containing path therefore records the root when the root is external. An empty property mutation path is different: it replaces the Chain's root value and has no containing graph placement, so it discovers nothing. An empty scope mutation path searches the root scope.
 
-The path index maps context paths to external identities and answers exact, longest-prefix, and descendant queries. It contains no ownership or use state. It lets ready operations select external dispatch before managed COW and lets an operation with an unresolved suffix protect every external identity it may reach.
+During the initial synchronous root import, follow only those paths. A property mutation path follows only its containing path and never inspects the old target. A scope mutation path follows the complete scope and, if still in managed state, searches its selected subtree. Reaching an external identity while following either path records that first boundary and stops the opaque suffix. Stop discovery at Promises, Errors, Functions, and external identities. Cut recursion-stack backedges and reuse completed relative discoveries for acyclic aliases, preserving their distinct finite occurrences. Merge duplicate and overlapping results and retain nothing for a path with no external boundary.
 
-## Use state
+Import and tree construction form one transaction for each synchronous segment. A supported boundary or host-reflection failure returns a language Error and commits none of the segment's admission, origin, sharing, mirrors, leaves, or new identity entries. An existing Error remains data; an internal failure is fatal. A later Promise fulfillment is a separate segment and cannot add tree leaves.
 
-One execution-scoped WeakMap records each external identity's actual Cascada use:
+The compiler paths are discovery inputs, not the tree leaves. The tree stores each discovered first external boundary at its complete normalized context path. Each leaf refers to the execution entry keyed by that exact identity; the owning Chain and leaf position provide the candidate location. Discovery leaves the entry's actual-use location unset. Several leaves or context Chains may therefore initially refer to one entry without selecting a location. An external identity absent from every tree is observation-only.
 
-- no entry: not yet used;
-- `{ usedInContextChain, usedAtPath, allUsesStatic, mutationAuthorized }`: used only through that exact context Chain and normalized path, with sticky staticness and first-mutation facts;
-- `OUTSIDE_CONTEXT`: used through a non-context Chain;
-- `MULTIPLE_USE`: used through different context Chains or paths, or through both context and non-context Chains.
+The tree is a fixed positive index, not a copy of the managed graph:
 
-Every operation carries a compiler-static-path fact before graph work begins. A path is static only when every segment to the identity is a compiler-known String or Number. A computed or Promise-valued segment is dynamic even if ready. Every lookup, external receiver or property operation, and external argument use records its location and staticness before host access. Before mutation authority exists, repeating the same static context Chain and path changes nothing, a dynamic use at that location clears `allUsesStatic`, and a different context Chain or path records `MULTIPLE_USE`. A first non-context use records `OUTSIDE_CONTEXT`; mixing it with a context use records `MULTIPLE_USE`. Import, assignment, return, and storage alone remain irrelevant.
+- Promise fulfillment and later graph changes add no leaf.
+- It stores no managed alias or cycle topology.
+- It is not updated after COW, Array remapping, assignment, deletion, or `enter`.
+- Ordinary managed assignment creates another owner. Later mutation through either managed placement uses COW and cannot change the other placement or its live leaves.
+- External identities remain exact through a managed copy. Actual use through another Chain or path, or through a later alias elsewhere, is handled by the identity map and conflicts.
+- A controlled graph replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf returns a language Error before publication. Array changes that preserve every live leaf's exact path and identity remain valid. A managed host method must preserve every live leaf at its recorded path and identity; violating that trusted contract is fatal when detected.
 
-| Current state and next use | Result |
-| --- | --- |
-| No entry; static context use | Record its Chain and path with `allUsesStatic: true` and `mutationAuthorized: false` |
-| No entry; dynamic context use | Record its Chain and path with `allUsesStatic: false` and `mutationAuthorized: false` |
-| No entry; non-context use | `OUTSIDE_CONTEXT` |
-| Unfixed recorded location; same static location | Unchanged |
-| Unfixed recorded location; same dynamic location | Clear `allUsesStatic` |
-| Unfixed recorded location; any other location | `MULTIPLE_USE` |
-| Fixed location; same static location | Unchanged |
-| Fixed location; any other use | Validation Error; state unchanged |
-| `OUTSIDE_CONTEXT`; non-context use | Unchanged |
-| `OUTSIDE_CONTEXT`; context use | `MULTIPLE_USE` |
-| `MULTIPLE_USE`; any use | Unchanged |
+Tree lookup is the only tree-removal point. A leaf is always checked against the identity map before use. If its identity is already in permanent conflict, remove that leaf and report no live boundary. Other leaves remove themselves if later queried; no reverse identity-to-leaf index or tree scan is needed. Already-issued operations retain their captured identity state.
 
-A mutation records its use before validation. It is allowed only with one recorded context Chain and path whose `allUsesStatic` remains true. The first valid mutation sets `mutationAuthorized` before host access and fixes that location. Every later use must be compiler-static at the same Chain and path; any other use returns a validation Error without host access and leaves the fixed location unchanged. Dynamic, `OUTSIDE_CONTEXT`, or `MULTIPLE_USE` mutation produces the ordinary mutation Error, invokes no host code, and poisons any selected mutation phases.
+Every context-path call or property operation, including an unmarked observation, queries the tree with its complete receiver or target path. The tree finds an exact boundary or the first boundary prefix; any suffix below that external identity is opaque host state and is not stored in the tree. When traversal reaches the boundary, its identity must map back to the leaf's entry; a mismatch is a violated fixed binding. Mutation additionally queries the live descendants of its selected scope. Host code may mutate only the boundaries actually selected for that operation; a removed or otherwise unselected identity is outside its authority.
+
+## Identity use map
+
+One execution-scoped `WeakMap` accounts for every external identity recorded in any static tree, including later references to that identity outside the tree. Tree construction creates or reuses the identity's entry, while actual use changes only its `use` field:
+
+- unset before first use;
+- `ONE(location)`, where `location` is one Chain and normalized path; or
+- `CONFLICT(reason)`, after actual use from more than one location or any use incompatible with an indexed mutation location. Keep only the first stable reason, not operation history.
+
+The entry also owns the identity's phase and repairable poison. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
+
+Actual use means a call or property operation through an external boundary. Import, managed assignment, storage, return, and copying do not count. A direct lookup of a mutable external identity and any attempt to export one fail without recording use.
+
+Apply actual-use transitions in operation order before host access:
+
+```text
+no state + use at a live leaf              -> ONE(that location)
+no state + use anywhere else               -> CONFLICT and Error
+ONE(location) + use at the same location   -> unchanged
+ONE(location) + any other actual use       -> CONFLICT and Error
+CONFLICT(reason) + any actual use           -> Error using that reason
+```
+
+Mutation additionally requires the current location to be a live tree leaf. An identity absent from every static tree remains observation-only and may be observed from any location; it needs no identity-map entry or phase.
+
+Conflict is permanent. The conflicting operation performs no host access, publishes poison in operation order when a phase exists, and returns an Error explaining the first incompatible use. Repair may clear an ordinary operation failure but cannot clear conflict or grant another location. A late alias discovered behind a Promise is rejected when reached; it never acquires authority or causes tree growth.
+
+Evaluate one operation's proposed uses from one pre-operation state. If any conflict exists, commit every discovered permanent conflict but no compatible new location, because host access will not occur. Otherwise commit all new locations together immediately before host access. Report conflicts in deterministic receiver, argument, then path order; iteration order must not grant partial authority.
 
 ## External phases
 
-Every selected mutation-eligible external identity owns one readers-writer phase state, so duplicate context selections join one phase. This does not make aliases interchangeable: mutation is unavailable after incompatible prior use, and the first mutation fixes the only compiler-static location later operations may use.
+Use one common readers-writer phase primitive:
 
-Mutation-capable graph APIs receive `mutation` and `repair` as required positional Booleans, with `repair` immediately after `mutation`. Invocation becomes `run(chain, path, method, mutation, repair, args)`, where `args` is the required native Array of explicit argument values and `[]` means no arguments. The Array is operation control data, not one language argument; its elements remain separate ordered argument roots. Observation is `(false, false)`, mutation is `(true, false)`, and repair-and-mutate is `(true, true)`; `(false, true)` is invalid for an operation that would access host state. An inherently mutating API needs only a positional `repair` Boolean. A dedicated repair-only path operation performs the fourth behavior without a dummy method or callback. Cascada syntax is only one caller of these APIs.
+```text
+observation:
+  wait for the latest exclusive operation
+  join the current read group
 
-Register every selected receiver and argument phase synchronously when the operation is issued, before waiting on a Chain, Promise, or predecessor. Freeze that phase set before the first wait; an operation never retains one phase while acquiring another. Consecutive observations share a read phase after the preceding exclusive operation; the next exclusive operation waits for the group. Publish all phase successors before waiting, merge duplicate identity entries by making the entry exclusive if any selection is exclusive and repairing if any explicit repair selection covers it, and never let entries created by one operation wait on one another.
+mutation or repair:
+  wait for the current read group or latest exclusive operation
+  become the new exclusive operation
+  close the current read group
+```
 
-A context external operation selects its identity directly. A marked context prefix selects the external identities indexed at or below that path. An outside-context operation records outside use before host access and proceeds observation-only without a phase unless the identity is already fixed elsewhere, in which case it fails. Phase access is shared observation or exclusive work. Mutation and repair remain independent after positional argument validation. Cascada lowers unmarked access to observation, `!` to mutation, bare `!!` to repair-only, and `!!` attached to a mutation to repair-and-mutate; this project receives only the resulting facts or repair-only call. Managed operations continue to use ordinary COW, leases, and gates. One direct operation Promise keeps its phases until boundary completion; a nested result Promise does not.
+Register every synchronously selectable receiver and mutation-scope leaf when the operation is issued and before its first wait. Merge duplicate selections by identity; exclusive access wins. Publish all successors before waiting on any predecessor, and never make entries created by one operation wait on one another.
 
-The first selected external identity on a context path guards the complete host suffix traversed through it. Deeper identities record their own use before further access but add no phase to the active operation. A context identity revealed after waiting must be covered by an already selected boundary; otherwise the operation returns a validation Error before accessing or passing it to host code. A non-context identity revealed after waiting records outside use and proceeds without a phase only when it is not fixed elsewhere. The host must keep independently scheduled roots free of shared mutable state. Identity and phase state are local to one execution.
+After phase publication, synchronously capture ready managed property versions, any ready external boundary, and selected input export. Phase predecessors and ordinary readiness may then settle concurrently. Host reflection begins only after both complete. Freeze the phase set before the first wait; an identity first revealed later never acquires another phase.
 
-## Exported arguments
+`run` protects raw managed arguments itself after dispatch. Synchronous issuance is sufficient: the producing lookup has captured and shared its logical result before the consuming `run`, and selected preparation uses ordinary COW, leases, and property versions. Host-input export rejects mutation-capable external identities, so arguments need no lookup provenance or external phase.
 
-Every native JavaScript method receives exported explicit arguments, including managed record and managed-class methods. Runtime-controlled methods such as supported Array methods consume logical Cascada values directly.
+An identity with no live tree leaf needs no external phase for ordinary observation. If actual traversal finds it in `CONFLICT`, it returns Error without host access. Exact external identities use phases, not managed leases or transition gates; a managed prefix may independently require its ordinary lease or gate.
 
-Export copies managed records, Arrays, and managed class instances while preserving aliases, cycles, and admitted prototypes. Host code may mutate or retain those copies without changing their Cascada sources. Functions and external identities remain exact and read-only as arguments. For a context source, discover indexed external argument identities and enter their observation phases with the receiver phases before waiting or export; a later identity outside that coverage fails before host access. For a non-context source, record outside use when export reaches an identity, reject one already fixed elsewhere, and otherwise pass it without a phase because future mutation is no longer possible. Passing, retaining, storing, or returning an exact identity never transfers mutation authority.
+## Mutation scopes
 
-## Async control flow
+`!` selects a mutation scope. If the scope is external, select that exact boundary and clamp any deeper host suffix to it. If the scope is managed, use the ordinary managed transition at that prefix and select live external leaves below it only when an external host operation declares that broader scope. A managed method never receives authority over its opaque external descendants.
 
-Before an async condition, loop, or `enter` scope suspends, query each affected context path and reserve the phases of every external identity its child may use. Use observation mode when the child only observes and mutation mode otherwise. Child operations use child-local phase entries so they do not wait on their own outer reservation. Complete the reservation after the child drains; apply the same rule recursively.
+For example, with managed `apis` containing external `db` and `cache`:
+
+- `apis.db!.write()` selects `db`.
+- `apis!.db.refresh()` uses managed mutation handling for `apis` and may select the live external leaves under `apis` for the declared external host effect.
+- If `apis` itself is external, both forms select only `apis`; its suffix is opaque.
+
+Host code may mutate only the selected external boundaries. Hidden sharing with another external root or a removed conflict leaf is a host-contract violation.
+
+Pruning deliberately prevents a conflicting sibling from disabling later broad scopes. Those scopes may use their remaining live leaves, but host code must not touch the pruned identity.
+
+## Entered branches
+
+A mutating entry's ordinary branch gate prevents outside operations from reaching the entered branch until publication. Operations on the private Chain may therefore run at any time behind that gate and select ordinary external phases only to order themselves. A read-only entry cannot mutate, and the containing Cascada runtime preserves its command ordering.
+
+`enter` creates an internal `EnteredChain` that inherits the ordinary Chain operation surface, source execution, and context anchor. It alone owns the exact read-only/mutating capability and one-shot close lifecycle. Closing is available only to the `enter` implementation, not as an instance method exposed to the callback. Its operations query the original tree through the anchored prefix; it neither retains a semantic parent relation nor copies a subtree. Mutating `enter` may publish only state that preserves every live external leaf at its original identity and path.
 
 ## Poison and repair
 
-External poison is an Error stored in the execution's phase entry for the exact identity, not in global identity metadata or application data. It never replaces the external identity or one of its properties. Existing poison contributes that Error at the selecting receiver or argument position unless that exact scope is explicitly repaired; required preparation continues, and unrepaired poison skips host code.
+External poison belongs to the identity's execution-scoped phase state, not to application data, graph metadata, or the external object. Poisoning never replaces the selected placement with an Error. Existing poison contributes an Error at the selecting receiver; required preparation finishes, host code is skipped, and the poison remains.
 
-Ordinary observation failure does not poison. Reaching admitted managed data inside external property state is an external-containment violation. It poisons that container's selected phase, if any; an unphased outside-context access only returns the Error. A failed or rejected mutation records its combined Error on every selected mutation phase after predecessors finish; completed host effects remain visible. Dynamic, outside-context, and multiple-use mutations invoke no host code and poison any selected mutation phases.
+Each phase completion carries the repairable poison visible after that phase. Observation failure normally does not poison. A failed or rejected mutation publishes its combined Error through every selected mutation-phase completion. An external-containment violation adds its Error to the selected boundary. Observations already issued in the same read group share their predecessor and do not retroactively consume peer poison; their completed group carries newly produced poison to the next exclusive operation.
 
-A repair-only request enters its explicitly selected external phases exclusively, waits normally, bypasses and clears their existing poison, performs no host access, and has logical result `undefined`. It is idempotent. A repair-and-mutate request is one exclusive operation: it bypasses old poison, performs the mutation, and leaves the selected scopes clear on success or stores only the new mutation poison on failure.
+Repair-only enters an existing selected location exclusively, bypasses and clears repairable predecessor poison, performs no host access, and returns `undefined`. Repair-and-call bypasses old poison, invokes one selected method, then completes cleanly on success or publishes its new mutation Error. These are the only repair forms. Repair never changes actual-use history, clears `CONFLICT`, creates a tree leaf, or transfers authority.
 
-Repair requires a compiler-static context path and records ordinary use without establishing mutation authority. It does not clear application Errors, ancestor or unrelated poison, use history, or mutation eligibility. The runtime supports repair-only and repair-and-mutate requests but no combined repair-and-observe request; Cascada issues repair-only followed by an ordinary observation when required.
+Assignment replaces, and deletion removes, an Error at the final managed graph placement through ordinary placement transitions. Neither operation implicitly repairs external phase poison; a property operation inside a poisoned external boundary remains blocked until repair-only clears it.
 
 ## Host boundary
 
-External property access and method calls operate on exact host state. Every property read imports its value; every property write exports its value before assignment. Every host-call argument is exported and every result is imported.
+External property access and calls operate on exact host state. Observation-only property reads and call results use ordinary import. A property read inside mutable external state copies the reached ready graph into managed state with export's synchronous copy core. A direct property-result Promise completes before copying; the copy walk rejects nested Promises. Every explicit argument and property-write value is exported. A native setter completes synchronously.
 
-An external operation follows this order:
+Public `import(value, errorContext)` never creates a static tree or external mutation authority. External identities admitted through it remain observation-only even when the imported value is later used as a Chain root. Only initial `ContextChain` import can establish possible authority.
 
-1. Select possible mutation-eligible external identities from the reached context receiver and context-path indexes; an outside-context operation selects no phase.
-2. Record actual locations and static-path facts available at issuance and register all selected identity phases.
-3. Wait for captured predecessors.
-4. Bypass old poison only for explicitly repaired scopes. Other poison remains an input Error.
-5. For repair-only, clear selected poison and complete with logical result `undefined` without host access.
-6. Otherwise finish input preparation. A context identity revealed by required resolution must have an already selected external boundary. A non-context identity records outside use and is rejected only if already fixed elsewhere.
-7. Validate mutation authority when requested, then perform host reflection and invoke once.
-8. Import the result, store any new mutation poison, and release the phases.
+An external operation follows the common lifecycle:
 
-External preparation follows the common operation lifecycle. A closed continuation completes shared settlement but performs no later host reflection, phase acquisition, invocation, or publication. A direct Promise keeps the phases until fulfillment import or rejection. Ready operations remain synchronous. Host code may not issue Cascada operations while its direct invocation remains active. A nested result Promise neither extends the phases nor receives later receiver or input access.
+1. Validate operation inputs and perform ready hook-free internal dispatch.
+2. Query the static tree for the receiver and mutation scope, validate identity-map state, and register all known phases.
+3. Capture graph versions, the ready external boundary, and input export before waiting.
+4. Wait for phase predecessors and finish required preparation.
+5. Evaluate all receiver and property-use transitions from one state. Commit permanent conflicts; if any Error exists, commit no compatible new location and perform no host reflection.
+6. Otherwise commit every new location together immediately before host access.
+7. Traverse the host suffix and invoke the selected callable exactly once.
+8. Import the result, publish mutation poison or repair, complete any managed scope, and release phases.
+
+A closed continuation completes shared settlement but performs no later host access or publication. Host code may not reenter Cascada while a direct invocation remains active. External identities reached below a selected boundary gain no tree leaf or independent mutation authority. A property value returned to Cascada is copied into managed state; call results still use ordinary import.
 
 ## Scope
 
-External ordering adds one use-and-phase WeakMap shared by the Chains of an execution and one external-occurrence index per context Chain. It reuses import, export, invocation, and property boundaries and adds one external readers-writer phase mechanism. It adds no hidden Chain, compiler external classification, second importer, command scheduler, or external graph model.
+External ordering adds one static external tree per ContextChain with non-empty scope or property mutation paths and one identity use-and-phase map per execution. It reuses import, export, invocation, readers-writer phases, operation lifetime, managed COW, leases, gates, mirrors, and publication.

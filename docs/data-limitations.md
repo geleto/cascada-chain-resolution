@@ -43,7 +43,7 @@ Records and Arrays default to managed. Class instances default to external.
 - Repeating the same declaration is allowed. A conflicting declaration returns a validation Error without changing the established category.
 - Declaration APIs are synchronous and never await. Do not pass them a Promise or callable thenable. `externalState` also rejects Functions and primitives. Passing an Error returns that exact Error unchanged.
 
-Declare a managed class before any instance is admitted. Changing its prototype or its classification afterward is unsupported.
+Declare a managed class before ordinary admission of its instances. A detached property copy from mutable external state may instead preserve a source prototype after validating it against the managed-class contract; this does not make other instances managed. Changing an admitted identity's prototype or classification afterward is unsupported.
 
 ## Managed data ownership
 
@@ -105,11 +105,11 @@ These restrictions allow records and class instances to share one managed invoca
 - Managed receiver state and exported managed arguments are separate graphs. A method must not rely on a managed argument retaining an identity relationship with `this` or one of its properties across the boundary.
 - Functions and external identities remain exact when exported and are read-only as arguments. Passing or retaining one never grants external mutation authority.
 - Every managed record or class method keeps mutable semantic state in `this` and receives other state through explicit arguments. It must not read or mutate mutable parent, closure, module, or other state outside those inputs.
-- External identities inside a managed receiver are opaque leaves. A method may retain, replace, remove, compare, or return them, but it must not inspect or mutate their host state.
+- External identities inside a managed receiver are opaque leaves. A method may retain, compare, return, or add another reference to them, but it must not inspect or mutate their host state. It may replace or remove an observation-only identity, but must not move, replace, or remove a mutation-capable identity recorded at a live context-tree leaf.
 - Access nested external state through a separate Cascada operation that selects it as the external receiver. `api!.db.close()` is supported; a managed `api!.close()` must not call `this.db.close()` internally.
 - A completed mutation receiver contains no Promise or Error. Managed state may contain either between calls, because Cascada resolves or propagates them before the next managed invocation.
-- A method may complete synchronously or through one direct Promise. All later receiver or input access and every asynchronous effect must belong to that Promise and finish before it settles.
-- Detached work, later access from a Promise nested in a synchronous result, and Cascada reentry during the invocation are forbidden. A nested result Promise must not fulfill with a receiver or argument identity; return that Promise directly when its completion must retain or expose invocation state.
+- A managed method may complete synchronously or through one direct Promise. Later receiver access and any inspection of a read-only exact external input must belong to that Promise and finish before it settles.
+- Detached receiver or external-input work and Cascada reentry during the invocation are forbidden. A Promise nested in a synchronous result must not later access or expose the receiver, or inspect or mutate an exact external input; return that Promise directly when its completion needs such access. Exact external identities may be retained or returned inertly because this grants no authority. The managed structure of exported argument copies may be retained, used, or returned later; exact external leaves inside it follow the same rule.
 
 Nested calls such as `this.increment()` are ordinary JavaScript calls on the already prepared receiver and follow the same outer invocation contract.
 
@@ -119,29 +119,47 @@ External identities are exact host objects. Cascada observes them by default and
 
 ### Mutation location
 
-One external identity that Cascada may mutate must be used through one compiler-static location: one context Chain and one complete normalized path.
+One external identity that Cascada may mutate must be available under a compiler-provided mutation path during initial context import and used through one location: one context Chain and one complete normalized path.
 
-- A compiler-static path contains only compiler-known String or Number segments. A computed or Promise-valued segment is dynamic even when its value is already ready.
-- The first valid mutation fixes the identity's location. Every later observation or mutation of that identity must use the same static location.
-- Earlier use from another Chain, another path, outside a context Chain, or through a dynamic path permanently makes the identity ineligible for mutation.
-- Import, assignment, storage, export, and return do not count as use and do not transfer the location.
-- Observation-only external state may be used from several locations, but it cannot later become mutation-capable after incompatible use.
-- Host code must keep the exact identity at its fixed location stable while Cascada may use it.
+- Mutation paths are String/Number prefixes selected by `!` and String/Number complete targets of assignment and deletion. Initial import searches only the supplied paths and their selected subtrees.
+- Initial import records only external boundaries reached without crossing a Promise. Mutation paths containing no external boundary are discarded. External identities outside the resulting tree, Promise-revealed identities, and subsequently added identities remain observation-only.
+- The first actual observation or mutation must occur at a recorded location and selects that one location. Every later use of that identity must use the same Chain and path.
+- First use elsewhere, or later use through another Chain or path, later alias, copied occurrence, or Promise-revealed occurrence elsewhere, creates permanent conflict. The operation performs no host access, poisons the external identity's ordering state, and returns an Error explaining the first incompatible use even when it requested observation.
+- Several stored occurrences do not conflict until used. If one identity appears at several recorded leaves, the first actual use selects one; use through another conflicts.
+- Managed assignment creates another owner rather than JavaScript reference semantics. Later mutation through either managed placement uses COW and cannot change the original live binding.
+- A Cascada replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf fails before publication. Array changes that leave every live leaf at the same index and path remain valid. Managed host methods must preserve every live leaf at its recorded path and identity; a detected violation is fatal.
+- Another reference may be stored elsewhere, including at another Array index, but actual external use through it creates permanent conflict.
+- A later Cascada gate may temporarily hide the original path without changing it.
+- Passing an exact external identity as a host argument, external write value, or controlled-callback input is use at its captured source location. Source provenance belongs to the captured value; Cascada never substitutes a later value from that path.
+- Import, managed-graph assignment, storage, export copying, and return do not count as use or transfer authority. Actual use of a stored alias still conflicts when reached.
+- An identity reached only after waiting acquires no late phase. If it was not already selected from the static context tree, it returns an Error before host access when it conflicts with a mutation-capable identity.
+- External identities never recorded in a context tree are observation-only and may be observed from any location. Their aliases are the developer's responsibility because Cascada provides no mutation ordering for them.
+- Public `import(value, errorContext)` creates no context tree or mutation authority. External identities entering through it remain observation-only even if its result later becomes an ordinary Chain root. Mutation-capable context state must enter through `ContextChain` initialization.
+
+A `!` prefix declares the complete mutation scope. An external host operation may affect only the live external-tree leaves selected beneath that prefix. A conflicted leaf is removed lazily when queried and no longer disables broad operations on its siblings; host code must not mutate that removed identity. A managed method receives no authority over external descendants.
+
+A `!` attached to a method call selects that method's receiver. Moving it to an earlier receiver prefix broadens the scope; the method Function itself is not graph state or a separate ordering scope.
+
+An external identity is opaque. A `!` written deeper inside it still selects that first external boundary: if `apis` is external, `apis!.db.write()` and `apis.db!.write()` share the `apis` ordering scope. Put independently ordered external identities such as `db` and `cache` in a managed parent when they need separate scopes.
 
 ### Identity and hidden state
 
 - One mutable host resource must have one external identity. Do not expose the same resource through multiple wrappers or independently scheduled roots.
 - Cascada does not scan external graphs for aliases or shared descendants. Hidden mutable sharing between external roots is the developer's responsibility.
 - Application code must not independently mutate or replace external state while Cascada may access it.
+- Mutation-capable external APIs should be stable context resources, such as databases, web services, or LLM clients. Do not move, replace, or delete their original context binding after initialization.
 - External state may contain primitives, Functions, and other external identities, but no already admitted managed identity. If traversal reaches admitted managed data inside an external property graph, the external container is poisoned.
-- An identity read from an external property remains external even when it is a record or Array. A host method result crosses a separate import boundary and may therefore be admitted as managed data.
+- An identity read from observation-only external property state remains external even when it is a record or Array. Reading inside mutable external state instead produces a detached managed copy that preserves prototypes and Functions. Any copied class-like value must satisfy the managed-class state and method restrictions; native/internal-slot objects that cannot survive structural copying must be returned through a host method or remain observation-only external state.
 - Managed state may contain external identities, subject to the opaque-leaf managed-method rule above.
 
 ### External operations
 
 - An external observation must not mutate its receiver.
-- An external mutation may mutate state encapsulated by its selected exact receiver, including deeply reached host state. It must not mutate another external root or an exact external argument.
-- A property read crosses into Cascada and its result is imported. A property write crosses into host code and its value is exported first.
+- An external mutation may mutate state encapsulated by its selected exact receiver and live external siblings selected by an ancestor `!` scope. Every external argument must validate its source location. An argument grants no authority; only independent selection by the mutation scope makes the same identity mutable. All other exact external arguments and external state outside the scope remain read-only.
+- A property read crosses into Cascada through import. Observation-only external state retains its external result; mutable external state uses import's detached-copy policy instead. A property write crosses into host code and its value is exported first.
+- The detached copy uses export's synchronous graph-copy semantics: it preserves Arrays, aliases, cycles, prototypes, and Functions and may therefore expose supported managed methods without exposing the mutable external source. A Promise returned directly by the selected property may resolve before copying, but the copied graph itself must contain no Promise.
+- Assignment and deletion are mutations even without `!`; their default mutation scope is the exact target placement. An explicit ancestor `!` broadens that scope, while a target inside external state clamps to its first external boundary.
+- Replacing `ctx.db` changes a managed placement even when its old value is external. Changing `ctx.db.name` is an external property operation when `ctx.db` is external.
 - A native setter must finish synchronously.
 - External mutation authority is never transferred through lookup, assignment, an argument, export, storage, or return.
 
@@ -150,9 +168,13 @@ One external identity that Cascada may mutate must be used through one compiler-
 External mutation failure poisons its selected ordering scope rather than replacing the external value. An invalid mutation with no authorized context scope returns an Error but creates no repairable path state. Cascada's `!!` syntax lowers to one of two runtime operations:
 
 - `apis.db!!` issues an exclusive repair-only operation. It clears poison for the selected external scope, performs no host access, has logical result `undefined`, and is harmless when the scope is already clear.
-- `apis.db!!.close()` issues one exclusive repair-and-mutate operation. It bypasses old poison and calls `close()`; success leaves the scope clear, while failure stores the new Error as poison.
+- `apis.db!!.close()` issues one exclusive repair-and-call operation. It bypasses old poison and calls `close()`; success leaves the scope clear, while failure stores the new Error as poison.
 
-Repair requires a compiler-static context path. It records use but does not establish mutation authority. Repair does not remove Errors stored in application data, clear ancestor or unrelated poison, change external-use history, or restore mutation eligibility. There is no combined repair-and-observe operation; issue repair-only and then an ordinary observation.
+Repair requires the identity's selected context location. Another occurrence cannot repair it. Repair does not record use, establish authority, clear permanent location conflict, or remove Errors stored in application data. There is no repair-and-observe, repair-and-assign, or repair-and-delete operation.
+
+Ordinary assignment replaces, and deletion removes, an Error at their final managed placement. This needs no repair marker. An Error in an earlier path segment still propagates. External phase poison is not a property value, so an external property write or deletion remains blocked until repair-only clears that poison.
+
+A repair marker inside opaque external state selects the first external boundary, just like mutation. If `apis` is external, `apis.db!!` repairs the `apis` ordering scope.
 
 A ready repair produces `undefined` directly; one waiting for earlier external work produces a Promise for `undefined`. The following Cascada operation can still be issued immediately and is ordered after the repair.
 
@@ -162,12 +184,13 @@ Host data entering Cascada's language graph is imported. Data leaving the graph 
 
 - Import is used for host roots, supported host-call and callback results that enter the graph, external-property reads, and later Promise fulfillment from those boundaries.
 - Export is used for native-call arguments, controlled callback inputs, external-property writes, and script results.
+- Export, `hasError`, and `getErrors` treat an external identity as a terminal graph value. Their paths do not inspect external properties or external guard poison. Read an external property through an ordinary Cascada lookup before exporting or querying the imported result.
 - Exported managed records, Arrays, and class instances are independent host data. Class copies preserve their admitted prototypes without running constructors. Host code may mutate or retain the copies without changing their Cascada sources.
-- Functions and external identities cross exactly. Host code must treat them as read-only unless the exact external identity is the separately authorized mutation receiver.
+- Functions and external identities cross exactly. Host code must treat them as read-only unless the exact external identity is independently covered by the active receiver mutation scope.
 - Export consumes Errors at any depth. If any argument or assigned value contains an Error, host code is not called and no Error crosses the boundary.
 - Host code may retain exported copies. It must not retain access to an unexported managed receiver or source.
 - Host methods, accessors, callbacks, and reflection hooks must not issue Cascada operations while active.
-- A direct result Promise may keep using its receiver and exported inputs until it settles. A nested result Promise does not extend that permission and must not later expose either identity.
+- A direct result Promise may keep using its receiver and exact external inputs until it settles. A nested result Promise does not extend that authority, though it may carry an exact external identity as inert result data. The managed structure of exported copies may outlive either Promise; exact external leaves gain no later authority.
 - A callback invoked by a controlled method must complete synchronously and must not return a Promise. It receives only its declared exported inputs and may not access an unexported managed source.
 
 ## Choosing a representation

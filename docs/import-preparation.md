@@ -2,6 +2,14 @@
 
 `import(value, errorContext)` is the inbound host-data boundary. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
 
+## Context roots
+
+The public import API remains unchanged. Ordinary `Chain` construction admits existing Cascada data without importing it. `ContextChain(initialValue, errorContext, execution, scopeMutationPaths, propertyMutationPaths)` sends its raw host root once through the same importer. Two empty path Arrays import the context but build no external tree.
+
+`apis.data!.write()` contributes `["apis", "data"]` to `scopeMutationPaths`. `apis.data.status = value` and `delete apis.data.status` contribute `["apis", "data", "status"]` to `propertyMutationPaths`.
+
+During the initial synchronous import segment, only those paths are searched. A property mutation path follows only its containing path; it never scans the old target. A scope mutation path follows its complete scope and searches the reached managed subtree. If traversal reaches external state while following either path, record that first boundary and stop the opaque suffix. Cut cycle backedges, preserve distinct finite acyclic alias occurrences, and add nothing for paths containing no external state. The tree grants the only possible external mutation locations.
+
 ## Admission walk
 
 Each available synchronous segment uses one transactional identity walk:
@@ -12,9 +20,11 @@ Each available synchronous segment uses one transactional identity walk:
 4. Capture each reached Promise placement without awaiting it.
 5. Commit admission, origin, sharing, and Promise mirrors only after the complete segment validates.
 
-The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. Enumeration or descriptor failure returns a language Error and commits nothing from that synchronous segment.
+The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. A supported enumeration, descriptor, validation, or host-reflection failure returns a language Error for that whole synchronous segment and commits nothing from it; an existing Error remains data and an internal failure is fatal.
 
 An already admitted identity keeps its category and origin and is not rescanned. When importing it adds another owner, an admitted managed identity is marked shared. Import builds no refcount index.
+
+Public `import(value, errorContext)` creates no static external tree. External identities admitted through it remain observation-only even when its result later becomes an ordinary Chain root; only initial ContextChain import may establish mutation authority.
 
 ## Promise boundaries
 

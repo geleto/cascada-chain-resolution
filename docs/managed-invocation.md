@@ -71,7 +71,7 @@ A Promise nested inside a synchronous result is ordinary imported data and does 
 - A fulfilled Error is an ordinary result and does not poison an otherwise valid mutation receiver.
 - A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
 
-All asynchronous receiver or argument access must belong to the direct Promise and finish before it settles. Detached work, exposing a receiver or argument identity through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access, receiver exposure through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations. Exact external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
 
 ## Managed-code contract
 

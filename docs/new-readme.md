@@ -9,10 +9,10 @@ apis.db!.write(1)
 return apis.db.read()
 ```
 
-The read waits for the write's Promise. Storing an external identity does not count as using it. Cascada records actual uses. External mutation is allowed only when every use has occurred through one compiler-static path of one context Chain; a computed path, use outside context, or use through several context Chains or paths makes mutation fail.
+The compiler gives each context Chain its possible external-mutation locations. Initial context import searches a `!` scope for external state, but an assignment or deletion checks only its containing path and never the old target. The read waits for the write's Promise. Storing an external identity does not count as using it. External mutation is allowed only when every actual use occurs through one recorded path of one context Chain; use outside that Chain or through another path makes access fail.
 
 There are two types of data in Cascada:
-1. External state is exact host state that Cascada cannot inspect. Mutation requires exclusive use through one compiler-static context Chain path and fixes all later access to that location.
+1. External state is exact host state that Cascada cannot inspect. Mutation requires exclusive use through one context Chain path and fixes all later access to that location.
 2. Managed state exposes its complete state through graph properties, so Cascada can resolve, copy, and isolate it.
 
 External methods may mutate deeply nested host state. Cascada does not scan external objects for hidden aliases, so independently accessed external roots must not share mutable state.
