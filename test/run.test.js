@@ -30,7 +30,7 @@ import {
 } from "./support.js"
 
 describe("run", () => {
-    it("validates call syntax before dispatch and mode by category", () => {
+    it("rejects unsupported calls before consuming arguments", () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const before = registrations()
@@ -39,8 +39,8 @@ describe("run", () => {
             mutation,
             [],
             "map",
-            true,
-            pending.promise,
+            [pending.promise],
+            { mutationScopeDepth: 0 },
         )
         expect(mutationError instanceof Error).to.be(true)
         expect(mutation._state.value).to.be(mutationError)
@@ -50,8 +50,8 @@ describe("run", () => {
             unsupportedMode,
             [],
             "slice",
-            true,
-            pending.promise,
+            [pending.promise],
+            { mutationScopeDepth: 0 },
         )
         expect(unsupportedModeError instanceof Error).to.be(true)
         expect(unsupportedMode._state.value).to.be(unsupportedModeError)
@@ -61,23 +61,14 @@ describe("run", () => {
             observation,
             [],
             "constructor",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
         expect(constructorError.message).to.be(
             "Method is not callable: constructor",
         )
         expect(observation._state.value).to.eql([1])
 
-        const invalidMode = new Chain([1])
-        expect(run(
-            invalidMode,
-            [],
-            "push",
-            "yes",
-            pending.promise,
-        ) instanceof Error).to.be(true)
-        expect(invalidMode._state.value).to.eql([1])
         expect(registrations()).to.be(before)
         pending.resolve(1)
     })
@@ -88,28 +79,32 @@ describe("run", () => {
             new Chain("ab"),
             [],
             "concat",
-            false,
-            scalar,
+            [scalar],
+            {},
+
         )).to.be(String.prototype.concat.call("ab", scalar))
         expect(run(
             new Chain([1, 2]),
             [],
             "slice",
-            false,
-            scalar,
+            [scalar],
+            {},
+
         ) instanceof Error).to.be(true)
 
         const argument = deferred()
         const limit = deferred()
         const chain = new Chain("ab")
-        const result = run(chain, [], "concat", false, argument.promise)
+        const result = run(chain, [], "concat", [argument.promise], {})
         const split = run(
             new Chain("ab"),
             [],
             "split",
-            false,
-            "",
-            limit.promise,
+            [
+                "",
+                limit.promise,
+            ],
+            {},
         )
 
         expect(result instanceof Promise).to.be(true)
@@ -138,8 +133,8 @@ describe("run", () => {
             new Chain(target),
             [],
             "read",
-            false,
-            argument,
+            [argument],
+            {},
         )
         expect(ordinary instanceof Promise).to.be(true)
         nested.resolve(3)
@@ -152,8 +147,8 @@ describe("run", () => {
             new Chain([1]),
             [],
             "at",
-            false,
-            { ready: indexReady.promise },
+            [{ ready: indexReady.promise }],
+            {},
         )
         expect(indexed).to.be(1)
         indexReady.resolve(true)
@@ -164,8 +159,8 @@ describe("run", () => {
             new Chain([]),
             [],
             "push",
-            false,
-            retained,
+            [retained],
+            {},
         )
         expect(pushed instanceof Promise).to.be(false)
         expect([...pushed]).to.eql([retained])
@@ -188,8 +183,8 @@ describe("run", () => {
             new Chain(target),
             [],
             "read",
-            false,
-            argument,
+            [argument],
+            {},
         )
         assignPath(source, ["argument"], { answer: 2 })
         pending.resolve({ answer: 1 })
@@ -205,8 +200,8 @@ describe("run", () => {
             new Chain([]),
             [],
             "push",
-            false,
-            item,
+            [item],
+            {},
         )
 
         expect(pushed instanceof Promise).to.be(false)
@@ -226,9 +221,11 @@ describe("run", () => {
             chain,
             [],
             "replace",
-            false,
-            "a",
-            replacement.promise,
+            [
+                "a",
+                replacement.promise,
+            ],
+            {},
         )
 
         replacement.resolve(() => "x")
@@ -239,11 +236,11 @@ describe("run", () => {
             new Chain("a,b"),
             [],
             "split",
-            false,
-            ",",
+            [","],
+            {},
         )
         const partsChain = new Chain(parts)
-        run(partsChain, [], "push", true, "c")
+        run(partsChain, [], "push", ["c"], { mutationScopeDepth: 0 })
 
         expect(parts).to.eql(["a", "b"])
         expect(partsChain._state.value).to.eql(["a", "b", "c"])
@@ -263,8 +260,8 @@ describe("run", () => {
             new Chain("abc"),
             [],
             "match",
-            false,
-            new Matcher(),
+            [new Matcher()],
+            {},
         )
         const resultChain = new Chain(result)
         assignPath(resultChain, ["value"], 2)
@@ -285,8 +282,8 @@ describe("run", () => {
             new Chain("abc"),
             [],
             "match",
-            false,
-            matcher,
+            [matcher],
+            {},
         )
         const resultChain = new Chain(result)
         assignPath(resultChain, ["0"], "changed")
@@ -318,18 +315,22 @@ describe("run", () => {
             },
         })
 
-        expect(run(new Chain(source), [], "read", false)).to.be(2)
+        expect(run(new Chain(source), [], "read", [], {})).to.be(2)
         expect(run(
             new Chain(source),
             [],
             "hidden",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(run(
             new Chain(source),
             [],
             "accessor",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(accessed).to.be(false)
     })
@@ -345,7 +346,7 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        expect(run(chain, [], "fail", false)).to.be(failure)
+        expect(run(chain, [], "fail", [], {})).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
     })
@@ -366,8 +367,8 @@ describe("run", () => {
             chain,
             [],
             "fail",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
         argument.resolve("ready")
 
@@ -395,8 +396,8 @@ describe("run", () => {
             chain,
             [],
             "result",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
         argument.resolve("ready")
         returned.resolve(fulfilledError)
@@ -406,7 +407,8 @@ describe("run", () => {
             chain,
             [],
             "result",
-            false,
+            [],
+            {},
         )
         expect(ready).not.to.be(returned.promise)
         expect(await ready).to.be(fulfilledError)
@@ -419,7 +421,7 @@ describe("run", () => {
                 return returnedData.promise
             },
         })
-        const dataResult = run(chain, [], "data", false)
+        const dataResult = run(chain, [], "data", [], {})
         expect(dataResult).not.to.be(returnedData.promise)
         returnedData.resolve(hostValue)
         expect(await dataResult).to.be(hostValue)
@@ -432,7 +434,7 @@ describe("run", () => {
                 return failed.promise
             },
         })
-        const rejection = run(chain, [], "failure", false)
+        const rejection = run(chain, [], "failure", [], {})
         failed.reject(rejectedError)
         let rejected
         try {
@@ -458,11 +460,11 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        expect(run(chain, [], "managed", false)).to.be(managed)
+        expect(run(chain, [], "managed", [], {})).to.be(managed)
         expect(metaOf(managed).type).to.be(
             languageValues.TYPE_MANAGED_CLASS,
         )
-        expect(await run(chain, [], "external", false)).to.be(external)
+        expect(await run(chain, [], "external", [], {})).to.be(external)
         expect(metaOf(external).type).to.be(
             languageValues.TYPE_EXTERNAL,
         )
@@ -479,7 +481,7 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        const result = run(chain, [], "laterRead", false)
+        const result = run(chain, [], "laterRead", [], {})
         assignPath(chain, ["value"], 2)
         completion.resolve()
 
@@ -501,7 +503,7 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        const result = run(chain, [], "laterSelf", false)
+        const result = run(chain, [], "laterSelf", [], {})
         completion.resolve()
         const alias = await result
         assignPath(chain, ["value"], 2)
@@ -528,7 +530,7 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        const result = run(chain, [], "result", false)
+        const result = run(chain, [], "result", [], {})
 
         expect(result).not.to.be(thenable)
         completion.resolve("done")
@@ -545,7 +547,8 @@ describe("run", () => {
             chain,
             [],
             "result",
-            false,
+            [],
+            {},
         )
         expect(rejectedResult).not.to.be(rejectedThenable)
         failed.reject(failure)
@@ -575,7 +578,7 @@ describe("run", () => {
         })
         const initialCount = registrationCount()
 
-        const result = run(new Chain(source), [], "seesPending", false)
+        const result = run(new Chain(source), [], "seesPending", [], {})
 
         expect(result instanceof Promise).to.be(true)
         expect(registrationCount() > initialCount).to.be(true)
@@ -608,10 +611,10 @@ describe("run", () => {
         importedPending.resolve("imported")
         await flushMicrotasks()
 
-        expect(run(new Chain(runtimeOwned), [], "stillPending", false)).to.be(
+        expect(run(new Chain(runtimeOwned), [], "stillPending", [], {})).to.be(
             false,
         )
-        expect(run(new Chain(imported), [], "stillPending", false)).to.be(false)
+        expect(run(new Chain(imported), [], "stillPending", [], {})).to.be(false)
     })
 
     it("imports a record method result that aliases its receiver", async () => {
@@ -623,7 +626,7 @@ describe("run", () => {
         const languageKeys = Reflect.ownKeys(root)
         const earlierRead = readPath(new Chain(root), ["pending"])
 
-        const invocation = run(new Chain(root), [], "self", false)
+        const invocation = run(new Chain(root), [], "self", [], {})
         expect(invocation instanceof Promise).to.be(true)
 
         const resolved = { done: true }
@@ -644,8 +647,8 @@ describe("run", () => {
         const child = {}
         const source = [child, , 3]
         const chain = new Chain(source)
-        const sliced = run(chain, [], "slice", false, 0)
-        const reversed = run(chain, [], "toReversed", false)
+        const sliced = run(chain, [], "slice", [0], {})
+        const reversed = run(chain, [], "toReversed", [], {})
 
         expect(sliced.keys()).to.eql(["0", "2"])
         expect(sliced.get("0")).to.be(child)
@@ -663,33 +666,37 @@ describe("run", () => {
             new Chain([1, 2, 3]),
             [],
             "slice",
-            false,
-            0,
-            sliceEnd.promise,
+            [
+                0,
+                sliceEnd.promise,
+            ],
+            {},
         )
         const copiedChain = new Chain([1, 2, 3])
         const copied = run(
             copiedChain,
             [],
             "copyWithin",
-            true,
-            1,
-            0,
-            copyEnd.promise,
+            [
+                1,
+                0,
+                copyEnd.promise,
+            ],
+            { mutationScopeDepth: 0 },
         )
         const flattened = run(
             new Chain([[1], [2]]),
             [],
             "flat",
-            false,
-            flatDepth.promise,
+            [flatDepth.promise],
+            {},
         )
         const joined = run(
             new Chain([1, 2]),
             [],
             "join",
-            false,
-            separator.promise,
+            [separator.promise],
+            {},
         )
 
         sliceEnd.resolve(undefined)
@@ -709,7 +716,7 @@ describe("run", () => {
         const source = runInNewContext("[]")
         source.push(pending.promise)
 
-        const result = run(new Chain(source), [], "slice", false)
+        const result = run(new Chain(source), [], "slice", [], {})
 
         expect(result instanceof Promise).to.be(false)
         expect(result.get("0")).to.be(pending.promise)
@@ -722,9 +729,11 @@ describe("run", () => {
             new Chain(source),
             [],
             "slice",
-            false,
-            1,
-            -1,
+            [
+                1,
+                -1,
+            ],
+            {},
         )
 
         expect(arrayViews.isArrayView(sliced)).to.be(true)
@@ -732,7 +741,7 @@ describe("run", () => {
         expect([...sliced]).to.eql([1, 2, 3])
 
         const changed = new Chain(sliced)
-        run(changed, [], "push", true, 5)
+        run(changed, [], "push", [5], { mutationScopeDepth: 0 })
         expect(arrayViews.isArrayView(changed._state.value)).to.be(false)
         expect(exportValue(new Chain(source), [])).to.eql([0, 1, 2, 3, 4])
     })
@@ -748,7 +757,7 @@ describe("run", () => {
         await flushMicrotasks()
 
         const values = chain._state.value.values
-        const sliced = run(new Chain(values), [], "slice", false, 0, 2)
+        const sliced = run(new Chain(values), [], "slice", [0, 2], {})
         expect(values[0]).to.be(imported)
         expect(readPath(new Chain(sliced), ["0"])).to.be(imported)
     })
@@ -760,9 +769,11 @@ describe("run", () => {
             new Chain(left),
             [],
             "concat",
-            false,
-            right,
-            6,
+            [
+                right,
+                6,
+            ],
+            {},
         )
 
         expect(arrayViews.isArrayView(concatenated)).to.be(true)
@@ -786,8 +797,8 @@ describe("run", () => {
             new Chain(self),
             [],
             "concat",
-            false,
-            self,
+            [self],
+            {},
         )
         expect(selfConcat.keys()).to.eql(["0", "2", "3", "5"])
         expect([...selfConcat]).to.eql([
@@ -816,8 +827,8 @@ describe("run", () => {
             new Chain([1]),
             [],
             "concat",
-            false,
-            value,
+            [value],
+            {},
         )
 
         expect(arrayViews.isArrayView(result)).to.be(true)
@@ -832,8 +843,8 @@ describe("run", () => {
             leftChain,
             [],
             "concat",
-            false,
-            right,
+            [right],
+            {},
         )
         const mirrors = [
             propertyVersions.getPromiseMirror(leftChain._state.value, "0"),
@@ -860,37 +871,39 @@ describe("run", () => {
             new Chain([1, 2, 3]),
             [],
             "slice",
-            false,
-            0,
-            2,
+            [
+                0,
+                2,
+            ],
+            {},
         )
         const sliced = run(
             new Chain(slicedSource),
             [],
             "slice",
-            false,
-            1,
+            [1],
+            {},
         )
         const concatenated = run(
             new Chain(concatSource),
             [],
             "concat",
-            false,
-            [3],
+            [[3]],
+            {},
         )
         const middleConcat = run(
             new Chain(middle),
             [],
             "concat",
-            false,
-            [4],
+            [[4]],
+            {},
         )
         const nestedSlice = run(
             new Chain(nestedSource),
             ["values"],
             "slice",
-            false,
-            1,
+            [1],
+            {},
         )
 
         expect(Array.isArray(sliced)).to.be(true)
@@ -909,7 +922,7 @@ describe("run", () => {
     it("forks Promise property versions at the operation position", async () => {
         const pending = deferred()
         const chain = new Chain([pending.promise])
-        const copy = run(chain, [], "slice", false)
+        const copy = run(chain, [], "slice", [], {})
 
         assignPath(chain, ["0"], 9)
         pending.resolve(1)
@@ -936,7 +949,7 @@ describe("run", () => {
         )
 
         expect(source0 === source1).to.be(false)
-        run(chain, [], "reverse", true)
+        run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
 
         const reversed = chain._state.value
         const reversed0 = propertyVersions.getPromiseMirror(reversed, "0")
@@ -946,7 +959,7 @@ describe("run", () => {
         expect(reversed1 === source0).to.be(false)
 
         const copied = new Chain([pending.promise, 0])
-        run(copied, [], "copyWithin", true, 1, 0, 1)
+        run(copied, [], "copyWithin", [1, 0, 1], { mutationScopeDepth: 0 })
         expect(
             propertyVersions.getPromiseMirror(copied._state.value, "0") ===
                 propertyVersions.getPromiseMirror(copied._state.value, "1"),
@@ -962,7 +975,7 @@ describe("run", () => {
     it("does not export Error values nested in host inputs", async () => {
         const direct = new Error("direct")
         const nested = deferred()
-        const flat = run(new Chain([direct]), [], "flat", false)
+        const flat = run(new Chain([direct]), [], "flat", [], {})
         let received
         const target = {}
         Object.defineProperty(target, "inspect", {
@@ -977,8 +990,8 @@ describe("run", () => {
             new Chain(target),
             [],
             "inspect",
-            false,
-            argument,
+            [argument],
+            {},
         )
 
         expect(flat).to.eql([direct])
@@ -1005,9 +1018,11 @@ describe("run", () => {
             new Chain(target),
             [],
             "inspect",
-            false,
-            { first, nested: { second } },
-            { third },
+            [
+                { first, nested: { second } },
+                { third },
+            ],
+            {},
         )
 
         expect(invoked).to.be(false)
@@ -1033,9 +1048,11 @@ describe("run", () => {
             new Chain(target),
             [],
             "inspect",
-            false,
-            shared,
-            shared,
+            [
+                shared,
+                shared,
+            ],
+            {},
         )
 
         expect(invoked).to.be(false)
@@ -1054,16 +1071,20 @@ describe("run", () => {
             new Chain("abc"),
             [],
             "slice",
-            false,
-            direct,
+            [direct],
+            {},
+
         )).to.be(direct)
         expect(run(
             new Chain([1]),
             [],
             "with",
-            false,
-            direct,
-            2,
+            [
+                direct,
+                2,
+            ],
+            {},
+
         )).to.be(direct)
 
         const pushed = new Chain([1])
@@ -1071,8 +1092,9 @@ describe("run", () => {
             pushed,
             [],
             "push",
-            true,
-            direct,
+            [direct],
+            { mutationScopeDepth: 0 },
+
         )).to.be(2)
         expect(pushed._state.value).to.eql([1, direct])
 
@@ -1082,8 +1104,9 @@ describe("run", () => {
             promisedPush,
             [],
             "push",
-            true,
-            pushedPromise.promise,
+            [pushedPromise.promise],
+            { mutationScopeDepth: 0 },
+
         )).to.be(1)
         pushedPromise.reject(rejected)
         await flushMicrotasks()
@@ -1094,30 +1117,33 @@ describe("run", () => {
             new Chain([direct]),
             [],
             "includes",
-            false,
-            direct,
+            [direct],
+            {},
+
         )).to.be(direct)
         expect(run(
             new Chain([direct]),
             [],
             "indexOf",
-            false,
-            direct,
+            [direct],
+            {},
+
         )).to.be(direct)
         expect(run(
             new Chain([direct]),
             [],
             "lastIndexOf",
-            false,
-            direct,
+            [direct],
+            {},
+
         )).to.be(direct)
 
         const concatenated = run(
             new Chain([]),
             [],
             "concat",
-            false,
-            concatItem.promise,
+            [concatItem.promise],
+            {},
         )
         concatItem.reject(rejected)
         expect(await concatenated).to.be(rejected)
@@ -1126,8 +1152,8 @@ describe("run", () => {
             new Chain([1]),
             [],
             "slice",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
         pending.reject(rejected)
         expect(await delayed).to.be(rejected)
@@ -1137,15 +1163,17 @@ describe("run", () => {
             mutation,
             [],
             "copyWithin",
-            true,
-            direct,
+            [direct],
+            { mutationScopeDepth: 0 },
+
         )).to.be(direct)
         expect(run(
             new Chain([]),
             [],
             "concat",
-            false,
-            direct,
+            [direct],
+            {},
+
         )).to.be(direct)
         expect(mutation._state.value).to.be(direct)
 
@@ -1155,8 +1183,8 @@ describe("run", () => {
             delayedMutation,
             [],
             "copyWithin",
-            true,
-            mutationPending.promise,
+            [mutationPending.promise],
+            { mutationScopeDepth: 0 },
         )
         mutationPending.reject(rejected)
         expect(await mutationResult).to.be(rejected)
@@ -1172,10 +1200,12 @@ describe("run", () => {
             new Chain([1, 2]),
             [],
             "slice",
-            false,
-            0,
-            1,
-            ignored.promise,
+            [
+                0,
+                1,
+                ignored.promise,
+            ],
+            {},
         )
 
         expect([...result]).to.eql([1])
@@ -1195,10 +1225,12 @@ describe("run", () => {
             new Chain([1, 2]),
             [],
             "copyWithin",
-            false,
-            firstPending.promise,
-            secondPending.promise,
-            firstPending.promise,
+            [
+                firstPending.promise,
+                secondPending.promise,
+                firstPending.promise,
+            ],
+            {},
         )
         secondPending.reject(second)
         firstPending.reject(first)
@@ -1212,10 +1244,12 @@ describe("run", () => {
             new Chain([1, 2]),
             [],
             "copyWithin",
-            false,
-            first,
-            second,
-            first,
+            [
+                first,
+                second,
+                first,
+            ],
+            {},
         )
         expect(ready.errors).to.eql([first, second])
 
@@ -1224,10 +1258,12 @@ describe("run", () => {
             new Chain([]),
             [],
             "concat",
-            false,
-            first,
-            concatPending.promise,
-            first,
+            [
+                first,
+                concatPending.promise,
+                first,
+            ],
+            {},
         )
         concatPending.reject(second)
         const concatCombined = await concatResult
@@ -1255,8 +1291,8 @@ describe("run", () => {
             chain,
             [],
             "missing",
-            false,
-            failure,
+            [failure],
+            {},
         )
 
         expect(result).to.be(failure)
@@ -1278,8 +1314,8 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "missing",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
 
         expect(lookups).to.be(0)
@@ -1297,15 +1333,15 @@ describe("run", () => {
             new Chain("value"),
             [],
             "missing",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
         const accessor = run(
             new Chain("value"),
             [],
             "__proto__",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
 
         expect(missing.message).to.be("Method is not callable: missing")
@@ -1333,7 +1369,7 @@ describe("run", () => {
             secondCount(),
         ]
 
-        const result = run(chain, [], "flat", false, 1)
+        const result = run(chain, [], "flat", [1], {})
 
         expect(firstCount() > initial[0]).to.be(true)
         expect(secondCount() > initial[1]).to.be(true)
@@ -1359,8 +1395,8 @@ describe("run", () => {
             new Chain(root),
             [],
             "fill",
-            true,
-            inserted,
+            [inserted],
+            { mutationScopeDepth: 0 },
         )
 
         expect(result instanceof Error).to.be(false)
@@ -1382,7 +1418,7 @@ describe("run", () => {
             const value = { answer: 1 }
             const chain = new Chain([0])
 
-            run(chain, [], method, true, ...args(value))
+            run(chain, [], method, [...args(value)], { mutationScopeDepth: 0 })
             assignPath(chain, [String(index), "answer"], 2)
 
             expect(value).to.eql({ answer: 1 })
@@ -1395,7 +1431,7 @@ describe("run", () => {
         const removedValue = { value: 1 }
         const chain = new Chain([removedValue, 2])
 
-        const removed = run(chain, [], "splice", true, 0, 1)
+        const removed = run(chain, [], "splice", [0, 1], { mutationScopeDepth: 0 })
 
         expect(removed).to.eql([removedValue])
         expect(metaOf(removedValue)?.shared).not.to.be(true)
@@ -1410,7 +1446,7 @@ describe("run", () => {
         const chain = new Chain(source)
         lookupPath(chain, [])
 
-        const removed = run(chain, [], "splice", true, 0, 1)
+        const removed = run(chain, [], "splice", [0, 1], { mutationScopeDepth: 0 })
         assignPath(new Chain(removed), ["0", "value"], 3)
 
         expect(source[0]).to.be(removedValue)
@@ -1425,11 +1461,11 @@ describe("run", () => {
             ["pop", 1],
         ]) {
             const source = [{ value: 1 }, { value: 2 }]
-            const view = run(new Chain(source), [], "slice", false)
+            const view = run(new Chain(source), [], "slice", [], {})
             const chain = new Chain(view)
             lookupPath(chain, [])
 
-            const removed = run(chain, [], method, true)
+            const removed = run(chain, [], method, [], { mutationScopeDepth: 0 })
             const removedChain = new Chain(removed)
             assignPath(removedChain, ["value"], 3)
 
@@ -1450,9 +1486,9 @@ describe("run", () => {
     it("returns transformed Arrays from mutators in observation mode", () => {
         const source = [1, 2]
         const chain = new Chain(source)
-        const result = run(chain, [], "push", false, 3)
-        const cleared = run(new Chain([1]), [], "fill", false)
-        const spliced = run(new Chain([1, 2, 3]), [], "splice", false, 1, 1, 9)
+        const result = run(chain, [], "push", [3], {})
+        const cleared = run(new Chain([1]), [], "fill", [], {})
+        const spliced = run(new Chain([1, 2, 3]), [], "splice", [1, 1, 9], {})
 
         expect([...result]).to.eql([1, 2, 3])
         expect(cleared).to.eql([undefined])
@@ -1465,7 +1501,7 @@ describe("run", () => {
         source.push = 0
         const chain = new Chain(source)
 
-        const result = run(chain, [], "push", false, 2)
+        const result = run(chain, [], "push", [2], {})
         const original = exportValue(chain, [])
 
         expect([...result]).to.eql([1, 2])
@@ -1482,16 +1518,16 @@ describe("run", () => {
             chain,
             [],
             "concat",
-            false,
-            spread,
+            [spread],
+            {},
         )
         expect([...result]).to.eql([1, spread])
     })
 
     it("keeps every earlier value stable across prepends", () => {
         const sourceChain = new Chain([2, 3])
-        const first = run(sourceChain, [], "unshift", false, 1)
-        const second = run(new Chain(first), [], "unshift", false, 0)
+        const first = run(sourceChain, [], "unshift", [1], {})
+        const second = run(new Chain(first), [], "unshift", [0], {})
 
         expect([...second]).to.eql([0, 1, 2, 3])
         expect([...first]).to.eql([1, 2, 3])
@@ -1500,8 +1536,8 @@ describe("run", () => {
 
     it("materializes when an endpoint no longer reaches a physical edge", () => {
         const sourceChain = new Chain([1, 2, 3])
-        const shorter = run(sourceChain, [], "pop", false)
-        const extended = run(new Chain(shorter), [], "push", false, 4)
+        const shorter = run(sourceChain, [], "pop", [], {})
+        const extended = run(new Chain(shorter), [], "push", [4], {})
 
         expect(Array.isArray(extended)).to.be(true)
         expect(extended).to.eql([1, 2, 4])
@@ -1513,13 +1549,13 @@ describe("run", () => {
         const source = [1, 2]
         const chain = new Chain(source)
 
-        expect(run(chain, [], "push", true, 3)).to.be(3)
+        expect(run(chain, [], "push", [3], { mutationScopeDepth: 0 })).to.be(3)
         expect(chain._state.value).to.be(source)
         expect(source).to.eql([1, 2, 3])
     })
 
     it("keeps observation results lazily ref-indexed", () => {
-        const result = run(new Chain([{ value: 1 }]), [], "slice", false)
+        const result = run(new Chain([{ value: 1 }]), [], "slice", [], {})
 
         expect(getRefCounter(result)).to.be(undefined)
     })
@@ -1530,9 +1566,11 @@ describe("run", () => {
             new Chain(runtime.value),
             [],
             "slice",
-            false,
-            500,
-            502,
+            [
+                500,
+                502,
+            ],
+            {},
         )
 
         expect([...view]).to.eql(["inside", undefined])
@@ -1554,9 +1592,11 @@ describe("run", () => {
             new Chain(external.value),
             [],
             "slice",
-            false,
-            500,
-            502,
+            [
+                500,
+                502,
+            ],
+            {},
         )
 
         expect(Array.isArray(sliced)).to.be(true)
@@ -1566,7 +1606,7 @@ describe("run", () => {
         expect(external.inspected.every(inRange)).to.be(true)
 
         external.reset()
-        const full = run(new Chain(external.value), [], "slice", false)
+        const full = run(new Chain(external.value), [], "slice", [], {})
         expect(full.length).to.be(1000)
         expect(Object.keys(full)).to.eql(["0", "500", "999"])
         expect(external.ownKeyScans()).to.be(1)
@@ -1624,8 +1664,8 @@ describe("run", () => {
             new Chain([1, 2]),
             [],
             "slice",
-            false,
-            ...bounds,
+            [...bounds],
+            {},
         )
         for (const bound of [Symbol(), 1n]) {
             expect(slice(bound) instanceof Error).to.be(true)
@@ -1655,7 +1695,7 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        expect(run(new Chain(source), [], "slice", false, 0)).to.be(
+        expect(run(new Chain(source), [], "slice", [0], {})).to.be(
             failure,
         )
     })
@@ -1674,7 +1714,7 @@ describe("run", () => {
             importValue(source, `run ${method} cycle`)
             const chain = new Chain(source)
 
-            const result = run(chain, [], method, true, ...args)
+            const result = run(chain, [], method, [...args], { mutationScopeDepth: 0 })
 
             expect(source).to.eql([cyclic, other])
             expect(cyclic.self).to.be(cyclic)
@@ -1709,7 +1749,11 @@ describe("run", () => {
                 },
             })
             const result = run(
-                new Chain(source), [], method, mutate, ...args,
+                new Chain(source),
+                [],
+                method,
+                args,
+                mutate ? { mutationScopeDepth: 0 } : {},
             )
 
             expect(result instanceof Error).to.be(false)
@@ -1723,7 +1767,7 @@ describe("run", () => {
         importValue(root)
         const chain = new Chain(root)
 
-        expect(run(chain, ["left"], "push", true, 3)).to.be(3)
+        expect(run(chain, ["left"], "push", [3], { mutationScopeDepth: 1 })).to.be(3)
         expect(exportValue(chain, [])).to.eql({
             left: [1, 2, 3],
             right: [1, 2],
@@ -1735,7 +1779,7 @@ describe("run", () => {
         importValue(external)
         const chain = new Chain(external)
 
-        expect(run(chain, ["values"], "push", true, 3)).to.be(3)
+        expect(run(chain, ["values"], "push", [3], { mutationScopeDepth: 1 })).to.be(3)
         expect(external.values).to.eql([1, 2])
         expect(exportValue(chain, [])).to.eql({
             values: [1, 2, 3],
@@ -1746,7 +1790,7 @@ describe("run", () => {
         const values = [1, 2, 3]
         importValue({ values })
 
-        const result = run(new Chain(values), [], "slice", false, 1)
+        const result = run(new Chain(values), [], "slice", [1], {})
 
         expect(Array.isArray(result)).to.be(true)
         expect(result).to.eql([2, 3])
@@ -1760,10 +1804,12 @@ describe("run", () => {
             chain,
             [],
             "splice",
-            true,
-            start.promise,
-            1,
-            9,
+            [
+                start.promise,
+                1,
+                9,
+            ],
+            { mutationScopeDepth: 0 },
         )
 
         expect(chain._state.value instanceof Promise).to.be(true)
@@ -1782,7 +1828,7 @@ describe("run", () => {
         const initialReceiverCount = receiverCount()
         const initialStartCount = startCount()
 
-        const result = run(chain, [], "splice", true, start.promise, 1)
+        const result = run(chain, [], "splice", [start.promise, 1], { mutationScopeDepth: 0 })
 
         expect(receiverCount() > initialReceiverCount).to.be(true)
         expect(startCount() > initialStartCount).to.be(true)
@@ -1805,11 +1851,13 @@ describe("run", () => {
             chain,
             [],
             "splice",
-            true,
-            1,
-            0,
-            payload,
-            payload,
+            [
+                1,
+                0,
+                payload,
+                payload,
+            ],
+            { mutationScopeDepth: 0 },
         )
         expect(metaOf(payload).readLeaseCount).to.be(1)
 
@@ -1834,10 +1882,12 @@ describe("run", () => {
             receiver,
             [],
             "splice",
-            true,
-            start.promise,
-            0,
-            payload,
+            [
+                start.promise,
+                0,
+                payload,
+            ],
+            { mutationScopeDepth: 0 },
         )
         expect(metaOf(payload).readLeaseCount).to.be(1)
 
@@ -1859,10 +1909,12 @@ describe("run", () => {
             new Chain([1, 2]),
             [],
             "slice",
-            false,
-            start.promise,
-            undefined,
-            ignored,
+            [
+                start.promise,
+                undefined,
+                ignored,
+            ],
+            {},
         )
         expect(metaOf(ignored)).to.be(undefined)
 
@@ -1881,10 +1933,12 @@ describe("run", () => {
             receiver,
             [],
             "splice",
-            true,
-            start.promise,
-            0,
-            payload,
+            [
+                start.promise,
+                0,
+                payload,
+            ],
+            { mutationScopeDepth: 0 },
         )
         expect(metaOf(payload).readLeaseCount).to.be(1)
 
@@ -1904,9 +1958,11 @@ describe("run", () => {
             new Chain([]),
             [],
             "concat",
-            false,
-            first.promise,
-            second.promise,
+            [
+                first.promise,
+                second.promise,
+            ],
+            {},
         )
         first.resolve(value)
         await flushMicrotasks()
@@ -1931,9 +1987,11 @@ describe("run", () => {
             new Chain([]),
             [],
             "concat",
-            false,
-            item,
-            delayed.promise,
+            [
+                item,
+                delayed.promise,
+            ],
+            {},
         )
         assignPath(itemChain, ["0"], 2)
         delayed.resolve("done")
@@ -1952,9 +2010,11 @@ describe("run", () => {
             new Chain([]),
             [],
             "concat",
-            false,
-            item,
-            delayed.promise,
+            [
+                item,
+                delayed.promise,
+            ],
+            {},
         )
         assignPath(itemChain, ["0", "value"], 2)
         delayed.resolve("done")
@@ -1972,7 +2032,7 @@ describe("run", () => {
         const escaped = lookupPath(chain, [])
 
         assignPath(chain, ["0"], 9)
-        const result = run(chain, [], "push", true, 2)
+        const result = run(chain, [], "push", [2], { mutationScopeDepth: 0 })
 
         receiver.resolve(source)
         expect(await escaped).to.be(source)
@@ -1984,7 +2044,7 @@ describe("run", () => {
     it("publishes a delayed receiver before its independent result", async () => {
         const start = deferred()
         const chain = new Chain([1, 2, 3])
-        const result = run(chain, [], "splice", true, start.promise, 1)
+        const result = run(chain, [], "splice", [start.promise, 1], { mutationScopeDepth: 0 })
         const receiver = lookupPath(chain, [])
         const order = []
 
@@ -2003,9 +2063,11 @@ describe("run", () => {
             chain,
             ["values"],
             "splice",
-            true,
-            start.promise,
-            1,
+            [
+                start.promise,
+                1,
+            ],
+            { mutationScopeDepth: 1 },
         )
 
         assignPath(chain, ["values"], ["newer"])
@@ -2021,7 +2083,7 @@ describe("run", () => {
         const item = deferred()
         const chain = new Chain([1])
 
-        expect(run(chain, [], "push", true, item.promise)).to.be(2)
+        expect(run(chain, [], "push", [item.promise], { mutationScopeDepth: 0 })).to.be(2)
         expect(chain._state.value instanceof Promise).to.be(false)
         expect(chain._state.value[1]).to.be(item.promise)
 
@@ -2036,7 +2098,7 @@ describe("run", () => {
     it("does not gate a removed Promise result", async () => {
         const removed = deferred()
         const chain = new Chain([1, removed.promise])
-        const result = run(chain, [], "pop", true)
+        const result = run(chain, [], "pop", [], { mutationScopeDepth: 0 })
 
         expect(chain._state.value instanceof Promise).to.be(false)
         expect(result instanceof Promise).to.be(true)
@@ -2048,7 +2110,7 @@ describe("run", () => {
     it("preserves a null mutation result", () => {
         const chain = new Chain([null])
 
-        expect(run(chain, [], "pop", true)).to.be(null)
+        expect(run(chain, [], "pop", [], { mutationScopeDepth: 0 })).to.be(null)
         expect(chain._state.value).to.eql([])
     })
 
@@ -2057,7 +2119,7 @@ describe("run", () => {
         const array = [selected.promise]
         const chain = new Chain(array)
 
-        const result = run(chain, [], "at", false, 0)
+        const result = run(chain, [], "at", [0], {})
         assignPath(chain, ["0"], 2)
 
         expect(chain._state.value).to.be(array)
@@ -2071,7 +2133,7 @@ describe("run", () => {
         const array = [1]
         const chain = new Chain(array)
 
-        const result = run(chain, [], "at", false, index.promise)
+        const result = run(chain, [], "at", [index.promise], {})
         assignPath(chain, ["0"], 2)
 
         index.resolve(0)
@@ -2085,8 +2147,8 @@ describe("run", () => {
         const later = deferred()
         const chain = new Chain([first.promise, 2, later.promise])
 
-        const index = run(chain, [], "indexOf", false, 2)
-        expect(run(chain, [], "includes", false, 2)).to.be(true)
+        const index = run(chain, [], "indexOf", [2], {})
+        expect(run(chain, [], "includes", [2], {})).to.be(true)
         first.resolve(1)
         expect(await index).to.be(1)
         later.resolve(3)
@@ -2097,7 +2159,7 @@ describe("run", () => {
         const array = [first.promise, 2]
         const chain = new Chain(array)
 
-        const result = run(chain, [], "indexOf", false, 2)
+        const result = run(chain, [], "indexOf", [2], {})
         assignPath(chain, ["1"], 3)
 
         first.resolve(1)
@@ -2111,7 +2173,7 @@ describe("run", () => {
         const array = [first.promise, 2]
         const chain = new Chain(array)
 
-        const result = run(chain, [], "includes", false, 1)
+        const result = run(chain, [], "includes", [1], {})
         assignPath(chain, ["1"], 1)
 
         expect(chain._state.value).to.be(array)
@@ -2129,7 +2191,7 @@ describe("run", () => {
         const initialFirst = firstCount()
         const initialLater = laterCount()
 
-        const result = run(chain, [], "indexOf", false, 2)
+        const result = run(chain, [], "indexOf", [2], {})
 
         expect(firstCount() > initialFirst).to.be(true)
         expect(laterCount()).to.be(initialLater)
@@ -2146,16 +2208,20 @@ describe("run", () => {
             new Chain(values),
             [],
             "lastIndexOf",
-            false,
-            1,
+            [1],
+            {},
+
         )).to.be(2)
         expect(run(
             new Chain(values),
             [],
             "lastIndexOf",
-            false,
-            1,
-            undefined,
+            [
+                1,
+                undefined,
+            ],
+            {},
+
         )).to.be(0)
 
         const start = deferred()
@@ -2163,9 +2229,11 @@ describe("run", () => {
             new Chain(values),
             [],
             "lastIndexOf",
-            false,
-            1,
-            start.promise,
+            [
+                1,
+                start.promise,
+            ],
+            {},
         )
         start.resolve(undefined)
         expect(await result).to.be(0)
@@ -2183,7 +2251,7 @@ describe("run", () => {
             const source = [child, delayed.promise]
             const chain = new Chain(source)
 
-            const result = run(chain, [], method, false, ...args)
+            const result = run(chain, [], method, [...args], {})
             assignPath(chain, ["0", "value"], 2)
             delayed.resolve(ready)
 
@@ -2196,8 +2264,8 @@ describe("run", () => {
 
     it("preserves sort holes while toSorted reads through them", () => {
         const source = [3, , 1, undefined]
-        const sorted = run(new Chain(source), [], "sort", false)
-        const copied = run(new Chain(source), [], "toSorted", false)
+        const sorted = run(new Chain(source), [], "sort", [], {})
+        const copied = run(new Chain(source), [], "toSorted", [], {})
 
         expect([...sorted]).to.eql([1, 3, undefined, undefined])
         expect(Object.keys(sorted)).to.eql(["0", "1", "2"])
@@ -2212,8 +2280,8 @@ describe("run", () => {
             chain,
             [],
             "sort",
-            true,
-            comparator.promise,
+            [comparator.promise],
+            { mutationScopeDepth: 0 },
         )
 
         expect(chain._state.value instanceof Promise).to.be(true)
@@ -2228,7 +2296,7 @@ describe("run", () => {
         const root = [value]
         const chain = new Chain(root)
 
-        const result = run(chain, [], "sort", true)
+        const result = run(chain, [], "sort", [], { mutationScopeDepth: 0 })
 
         expect(result).to.be(root)
         expect(chain._state.value).to.be(root)
@@ -2244,8 +2312,8 @@ describe("run", () => {
             chain,
             [],
             "sort",
-            true,
-            () => comparison.promise,
+            [() => comparison.promise],
+            { mutationScopeDepth: 0 },
         )
 
         expect(result instanceof Error).to.be(true)
@@ -2264,13 +2332,15 @@ describe("run", () => {
             new Chain([shared, shared, first]),
             [],
             "toSorted",
-            false,
-            (left, right) => {
+            [
+                (left, right) => {
                 compared.push(left, right)
                 left.compared = true
                 right.compared = true
                 return left.rank - right.rank
             },
+            ],
+            {},
         )
 
         const sharedCopies = new Set(
@@ -2297,8 +2367,8 @@ describe("run", () => {
             new Chain([{ failure }, { value: 1 }]),
             [],
             "toSorted",
-            false,
-            comparator,
+            [comparator],
+            {},
         )
         expect(failed).to.be(failure)
         expect(called).to.be(false)
@@ -2307,8 +2377,8 @@ describe("run", () => {
             new Chain([failure]),
             [],
             "toSorted",
-            false,
-            comparator,
+            [comparator],
+            {},
         )
         expect(retained[0]).to.be(failure)
         expect(called).to.be(false)
@@ -2343,34 +2413,41 @@ describe("run", () => {
             new Chain([nested, record, new DataValue()]),
             [],
             "join",
-            false,
-            "|",
+            ["|"],
+            {},
+
         )).to.be("2|[object Object]|[object Object]")
         expect(run(
             new Chain(nested),
             [],
             "toString",
-            false,
+            [],
+            {},
+
         )).to.be("2")
         expect(run(
             new Chain([[1]]),
             [],
             "flat",
-            false,
-            record,
+            [record],
+            {},
+
         )).to.eql([[1]])
         expect(run(
             new Chain([Object.create(null)]),
             [],
             "join",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(run(
             new Chain([1]),
             [],
             "join",
-            false,
-            Symbol(),
+            [Symbol()],
+            {},
+
         ) instanceof Error).to.be(true)
 
         class External {
@@ -2383,7 +2460,9 @@ describe("run", () => {
             new Chain([new External()]),
             [],
             "join",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(hookCalls).to.be(0)
     })
@@ -2399,14 +2478,17 @@ describe("run", () => {
             new Chain(outer),
             [],
             "toString",
-            false,
+            [],
+            {},
+
         )).to.be(Array.prototype.toString.call(outer))
         expect(run(
             new Chain(outer),
             [],
             "join",
-            false,
-            "|",
+            ["|"],
+            {},
+
         )).to.be(Array.prototype.join.call(outer, "|"))
     })
 
@@ -2415,8 +2497,8 @@ describe("run", () => {
             new Chain([3, 1, 2]),
             [],
             "toSorted",
-            false,
-            (left, right) => ({ value: left - right }),
+            [(left, right) => ({ value: left - right })],
+            {},
         )
 
         expect(result instanceof Error).to.be(true)
@@ -2449,7 +2531,8 @@ describe("run", () => {
             new Chain(record),
             [],
             "size",
-            false,
+            [],
+            {},
         )
         expect(size).to.eql({ value: 3 })
         const sizeChain = new Chain(size)
@@ -2460,19 +2543,25 @@ describe("run", () => {
             new Chain(record),
             [],
             "getCallable",
-            false,
+            [],
+            {},
+
         )).to.be(callable)
         expect(run(
             new Chain(record),
             [],
             "isReceiver",
-            false,
+            [],
+            {},
+
         )).to.be(true)
         expect(run(
             new Chain(new Date()),
             [],
             "getTime",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
 
         const callableReceiver = function callableReceiver() {}
@@ -2484,7 +2573,9 @@ describe("run", () => {
             new Chain(callableReceiver),
             [],
             "read",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(invoked).to.be(false)
 
@@ -2497,7 +2588,9 @@ describe("run", () => {
             new Chain(record),
             [],
             "getDate",
-            false,
+            [],
+            {},
+
         )).to.be(date)
     })
 
@@ -2515,8 +2608,9 @@ describe("run", () => {
             new Chain(managed),
             [],
             "read",
-            false,
-            2,
+            [2],
+            {},
+
         )).to.be(3)
 
         let invoked = false
@@ -2529,7 +2623,9 @@ describe("run", () => {
             new Chain(new ExternalReceiver()),
             [],
             "read",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
         expect(invoked).to.be(false)
     })
@@ -2548,8 +2644,8 @@ describe("run", () => {
             chain,
             [],
             "read",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         assignPath(chain, ["value"], 2)
@@ -2576,8 +2672,8 @@ describe("run", () => {
             new Chain(receiver.promise),
             [],
             "read",
-            false,
-            argument,
+            [argument],
+            {},
         )
         expect(metaOf(argument).readLeaseCount).to.be(1)
 
@@ -2610,9 +2706,11 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            argument,
-            argument,
+            [
+                argument,
+                argument,
+            ],
+            {},
         )
         expect(metaOf(argument).readLeaseCount).to.be(undefined)
 
@@ -2645,9 +2743,11 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "inspect",
-            false,
-            first,
-            second,
+            [
+                first,
+                second,
+            ],
+            {},
         )
         pending.resolve(shared)
 
@@ -2677,8 +2777,8 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            argument,
+            [argument],
+            {},
         )
 
         expect(received).not.to.be(argument)
@@ -2720,8 +2820,9 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "inspect",
-            false,
-            point,
+            [point],
+            {},
+
         )).to.be(3)
         expect(received).not.to.be(point)
         expect(Object.getPrototypeOf(received)).to.be(Point.prototype)
@@ -2748,8 +2849,8 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            { retained, broken },
+            [{ retained, broken }],
+            {},
         )
         expect(result instanceof Promise).to.be(true)
         expect(metaOf(retained).readLeaseCount).to.be(undefined)
@@ -2774,8 +2875,8 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            { pending: pending.promise, broken },
+            [{ pending: pending.promise, broken }],
+            {},
         )
         expect(result instanceof Promise).to.be(true)
 
@@ -2807,9 +2908,12 @@ describe("run", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            pending.promise,
-            broken,
+            [
+                pending.promise,
+                broken,
+            ],
+            {},
+
         ))).to.be(failure)
 
         let reflected = false
@@ -2839,9 +2943,12 @@ describe("run", () => {
             new Chain([]),
             [],
             "concat",
-            false,
-            pending.promise,
-            broken,
+            [
+                pending.promise,
+                broken,
+            ],
+            {},
+
         ))).to.be(failure)
 
         let reflected = false
@@ -2866,7 +2973,8 @@ describe("run", () => {
             new Chain([late.promise, failing.promise]),
             [],
             "flat",
-            false,
+            [],
+            {},
         )
 
         failing.resolve(new Proxy([1], {
@@ -2904,8 +3012,8 @@ describe("run", () => {
                 entered,
                 [],
                 "read",
-                false,
-                argument.promise,
+                [argument.promise],
+                {},
             )
             expect(metaOf(record).readLeaseCount).to.be(2)
             return observed
@@ -2920,7 +3028,7 @@ describe("run", () => {
         const root = {}
         const chain = new Chain(root)
 
-        const result = run(chain, ["missing"], "push", true, 1)
+        const result = run(chain, ["missing"], "push", [1], { mutationScopeDepth: 1 })
 
         expect(result instanceof Error).to.be(true)
         expect(root.missing).to.be(result)
@@ -2935,21 +3043,23 @@ describe("run", () => {
                 return this.join("-")
             },
         })
-        const view = run(new Chain(source), [], "push", false, 3)
+        const view = run(new Chain(source), [], "push", [3], {})
 
         const overridden = run(
             new Chain(view),
             [],
             "map",
-            false,
+            [],
+            {},
         )
         expect(overridden instanceof Error).to.be(true)
         expect(run(
             new Chain([1, 2]),
             [],
             "map",
-            false,
-            value => value,
+            [value => value],
+            {},
+
         ) instanceof Error).to.be(true)
     })
 
@@ -2961,7 +3071,7 @@ describe("run", () => {
             configurable: true,
         })
 
-        const result = run(new Chain(source), [], "broken", false)
+        const result = run(new Chain(source), [], "broken", [], {})
         expect(result instanceof Error).to.be(true)
         expect(result).not.to.be(failure)
     })
@@ -2972,7 +3082,7 @@ describe("run", () => {
             const chain = new Chain(root)
             const length = receiver.length
 
-            const result = run(chain, ["target", "length"], "push", true, 1)
+            const result = run(chain, ["target", "length"], "push", [1], { mutationScopeDepth: 2 })
 
             expect(result instanceof Error).to.be(true)
             expect(root.target).to.be(result)
@@ -2999,7 +3109,7 @@ describe("run", () => {
             const payload = { answer: 1 }
             const chain = new Chain(source)
 
-            run(chain, [], method, true, ...args(Promise.resolve(payload)))
+            run(chain, [], method, [...args(Promise.resolve(payload))], { mutationScopeDepth: 0 })
             await flushMicrotasks()
             assignPath(chain, ["0", "answer"], 2)
             await flushMicrotasks()
@@ -3024,7 +3134,7 @@ describe("run", () => {
             reported = error
         })
 
-        const failure = thrownBy(() => run(chain, [], "reverse", true))
+        const failure = thrownBy(() => run(chain, [], "reverse", [], { mutationScopeDepth: 0 }))
 
         expect(failure instanceof Error).to.be(true)
         expect(failure.message).to.be("Ref counts require a ref-indexed value")
@@ -3042,14 +3152,15 @@ describe("run", () => {
                         readPath(observed, [])
                     },
                 })
-                return run(new Chain(receiver), [], "reenter", false)
+                return run(new Chain(receiver), [], "reenter", [], {})
             },
             () => run(
                 new Chain([2, 1]),
                 [],
                 "sort",
-                true,
-                () => readPath(observed, []),
+                [() => readPath(observed, [])],
+                { mutationScopeDepth: 0 },
+
             ),
             () => lookupPath(new Chain(new Proxy({}, {
                 getOwnPropertyDescriptor() {
@@ -3084,7 +3195,7 @@ describe("run", () => {
         })
         const chain = new Chain(receiver)
 
-        expect(run(chain, [], "reverse", true)).to.be(failure)
+        expect(run(chain, [], "reverse", [], { mutationScopeDepth: 0 })).to.be(failure)
         expect(chain._state.value).to.be(failure)
         expect([...receiver]).to.eql([1, 2])
     })
@@ -3126,7 +3237,7 @@ describe("run", () => {
             const chain = new Chain(receiver)
             buildRefIndex(receiver)
 
-            const result = run(chain, [], method, true)
+            const result = run(chain, [], method, [], { mutationScopeDepth: 0 })
 
             expect(result).to.be(failure)
             expect(chain._state.value).to.be(failure)
@@ -3139,9 +3250,13 @@ describe("run", () => {
         const source = [2, 1]
         const chain = new Chain(source)
 
-        const result = run(chain, [], "sort", true, () => {
+        const result = run(chain, [], "sort", [
+            () => {
             throw failure
-        })
+        },
+        ],
+        { mutationScopeDepth: 0 },
+        )
 
         expect(result).to.be(failure)
         expect(chain._state.value).to.be(failure)
@@ -3158,8 +3273,8 @@ describe("run", () => {
             chain,
             [],
             "sort",
-            true,
-            comparator.promise,
+            [comparator.promise],
+            { mutationScopeDepth: 0 },
         )
         comparator.resolve(() => {
             throw failure
@@ -3176,8 +3291,8 @@ describe("run", () => {
         importValue(cyclic)
         const chain = new Chain({ items: cyclic })
 
-        const unlimited = run(chain, ["items"], "flat", false, Infinity)
-        const bounded = run(chain, ["items"], "flat", false, 2)
+        const unlimited = run(chain, ["items"], "flat", [Infinity], {})
+        const bounded = run(chain, ["items"], "flat", [2], {})
 
         expect(unlimited instanceof RangeError).to.be(true)
         expect(bounded instanceof Error).to.be(false)
@@ -3206,13 +3321,15 @@ describe("run", () => {
                 new Chain(observedSource),
                 [],
                 "reverse",
-                false,
+                [],
+                {},
             )
             mutationResult = run(
                 new Chain(mutatedSource),
                 [],
                 "reverse",
-                true,
+                [],
+                { mutationScopeDepth: 0 },
             )
         } finally {
             if (descriptor) {
@@ -3229,7 +3346,7 @@ describe("run", () => {
 
     it("materializes a view before an ordinary indexed write", () => {
         const sourceChain = new Chain([1, 2])
-        const view = run(sourceChain, [], "push", false, 3)
+        const view = run(sourceChain, [], "push", [3], {})
         const viewChain = new Chain(view)
 
         assignPath(viewChain, ["0"], 9)

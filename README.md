@@ -39,6 +39,8 @@ console.log(await cascada.export(chain, []))
 ```js
 import {
     Chain,
+    ContextChain,
+    Execution,
     assignPath,
     deletePath,
     enter,
@@ -70,18 +72,25 @@ Managed records, Arrays, and class instances are traversable. Primitives,
 Functions, Errors, and external identities are terminal values. Records and
 Arrays default to managed; class instances default to external.
 
-### `new Chain(initialValue, mutates = true)`
+### `new Execution()`
 
-Creates a Chain rooted at `initialValue`. `mutates` must be exactly `true` or
-`false`. A read-only Chain accepts observations but rejects mutation operations.
-Creating a Chain admits the value but does not mark host data as imported; pass
-host-provided roots through `import` first.
+Creates execution-scoped runtime state shared by related Chains. Omitting an
+execution from a Chain constructor creates a private one.
 
-#### `chain.close()`
+### `new Chain(initialValue, execution = new Execution())`
 
-Permanently prevents new operations through the Chain. Work issued before the
-call continues at its captured position. Closing a Chain more than once, or
-using it after closure, is a fatal usage error.
+Creates a mutation-capable Chain rooted at an existing Cascada value. It admits
+the value but does not import host data; pass host-provided roots through
+`import` first. Read-only and automatically closed Chains exist only inside
+`enter`.
+
+### `new ContextChain(initialValue, errorContext, execution = new Execution(), scopeMutationPaths = [], propertyMutationPaths = [])`
+
+Imports a raw host context root and builds its initial external-mutation index
+from compiler-provided paths. Scope paths contain each prefix selected by `!`;
+property paths contain complete assignment and deletion targets. When both
+path Arrays are empty, the context is imported without external authority. An
+empty property path replaces the root and likewise creates no authority.
 
 ### `import(value, errorContext)`
 
@@ -95,22 +104,24 @@ Imported identities are protected by copy-on-write, so Cascada mutations never
 modify their host representation. Application code must not mutate the imported
 graph after admission.
 
-### `assignPath(chain, path, value)`
+### `assignPath(chain, path, value, mutationScopeDepth = path.length)`
 
 Assigns `value` to the selected property, creating a missing final property when
 needed. An empty path replaces the root. Assignment uses copy-on-write whenever
 the current logical value must be preserved for another owner.
+`mutationScopeDepth` gives the depth of the compiler-selected `!` scope; by
+default, only the target is selected.
 
 Successful issuance returns `undefined`, including when traversal must resume
 after a Promise. A failure found synchronously is published at the failed
 mutation location and returned as an `Error`; a failure found later is published
 to the graph.
 
-### `deletePath(chain, path)`
+### `deletePath(chain, path, mutationScopeDepth = path.length)`
 
 Deletes the selected property. A missing final property is a no-op, deleting an
 Array index preserves its length, and an empty path replaces the root with
-`null`.
+`null`. `mutationScopeDepth` has the same meaning as for `assignPath`.
 
 Its return behavior matches `assignPath`: success and suspended issuance return
 `undefined`, while a synchronous failed mutation publishes and returns its
@@ -126,9 +137,9 @@ Promise.
 ### `enter(chain, path, mutates, onEntered)`
 
 Enters the value captured at `path` and passes a temporary Chain to
-`onEntered`. `mutates` must be exactly `true` or `false`, and `onEntered` must be
-a function. The temporary Chain is closed automatically when the callback's
-direct result or Promise completes.
+`onEntered`. The compiler supplies the exact `mutates` Boolean and callback as
+trusted runtime facts. The temporary Chain is closed automatically when the
+callback's direct result or Promise completes.
 
 With `mutates: false`, the callback receives a read-only Chain and the captured
 value is protected from concurrent Cascada mutation for the callback's complete
@@ -193,12 +204,13 @@ returns a validation `Error`. Managed classes keep semantic state in own
 enumerable string-keyed data properties and cannot require prototype accessors,
 private fields, Symbols, hidden mutable state, or native internal slots.
 
-### `run(chain, path, method, mutation, ...arguments)`
+### `run(chain, path, method, args, { mutationScopeDepth })`
 
-Invokes a supported method on the receiver at `path`. `method` must be a string
-and `mutation` must be exactly `true` or `false`. Observation mode preserves the
-receiver. Mutation mode publishes the completed receiver through the normal
-copy-on-write mutation path and requires a mutable Chain.
+Invokes a supported method on the receiver at `path`. `args` is the ordered
+Array of explicit arguments. An absent or `undefined` `mutationScopeDepth`
+selects observation; otherwise it selects mutation and gives the depth of the
+`!` prefix, where `0` selects the root. Observation preserves the receiver;
+mutation publishes it through the normal copy-on-write path.
 
 Supported receivers are:
 
@@ -224,8 +236,8 @@ keep their logical values. A comparator receives exported element copies and
 must return a Number. `concat` spreads only logical Arrays and ignores
 `Symbol.isConcatSpreadable`.
 
-For an Array mutator, `mutation: true` updates the receiver and returns the
-corresponding native mutator result. With `mutation: false`, the receiver is
+For an Array mutator, a defined `mutationScopeDepth` updates the receiver and
+returns the corresponding native mutator result. Without it, the receiver is
 unchanged and the transformed Array is returned. Managed-record and
 managed-class observations must not mutate their receiver; mutations may
 mutate only their isolated receiver graph. Every explicit argument is exported.

@@ -1,5 +1,6 @@
 import {
     Chain,
+    Execution,
     expect,
     metaOf,
     assignPath,
@@ -11,7 +12,6 @@ import {
     exportValue,
     importValue,
     setFatalErrorReporter,
-    thrownBy,
     deferred,
     flushMicrotasks,
 } from "./support.js"
@@ -26,28 +26,15 @@ describe("Chain root state", () => {
         expect(metaOf(value).importBoundary).to.be(undefined)
     })
 
-    it("owns its capability mode and closure", async () => {
-        expect(thrownBy(() => new Chain({}, "yes"))).to.be.a(TypeError)
-
-        const readOnly = new Chain({ value: 1 }, false)
-        expect(readPath(readOnly, ["value"])).to.be(1)
-        expect(thrownBy(() => assignPath(readOnly, ["value"], 2)))
-            .to.be.an(Error)
-
-        const pending = deferred()
-        const chain = new Chain(pending.promise)
-        const issued = readPath(chain, ["value"])
-
-        chain.close()
-        expect(thrownBy(() => readPath(chain, [])))
-            .to.be.an(Error)
-        expect(thrownBy(() => chain.close())).to.be.an(Error)
-
-        pending.resolve({ value: 2 })
-        expect(await issued).to.be(2)
+    it("uses the supplied execution", () => {
+        const execution = new Execution()
+        const chain = new Chain({ value: 1 }, execution)
+        expect(assignPath(chain, ["value"], 2)).to.be(undefined)
+        expect(readPath(chain, ["value"])).to.be(2)
+        expect(chain.close).to.be(undefined)
     })
 
-    it("keeps its capability outside the language graph", () => {
+    it("keeps execution state outside the language root", () => {
         const chain = new Chain({})
 
         expect(Object.keys(chain._state)).to.eql(["value"])

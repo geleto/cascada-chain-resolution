@@ -13,15 +13,17 @@ import * as resolution from "./resolution.js"
 
 function enter(chain, path, mutates, onEntered) {
     return errorUtils.runFatal(() => {
-        if (mutates !== true && mutates !== false) {
-            throw new TypeError("enter requires an exact mutates Boolean")
-        }
-        if (typeof onEntered !== "function") {
-            throw new TypeError("enter requires an onEntered callback")
-        }
-        return mutates
-            ? enterMutating(chain, path, onEntered)
-            : enterReadOnly(chain, path, onEntered)
+        path = [...path]
+        const execution = chain.execution
+        const externalMutationTree = chain._externalMutationTree?.branch(path)
+        const enterOperation = mutates ? enterMutating : enterReadOnly
+        return enterOperation(
+            chain,
+            path,
+            onEntered,
+            execution,
+            externalMutationTree,
+        )
     })
 }
 
@@ -46,14 +48,25 @@ function runEnteredCallback(callback, entered, onFulfilled, onRejected) {
     )
 }
 
-function enterReadOnly(chain, path, onEntered) {
+function enterReadOnly(
+    chain,
+    path,
+    onEntered,
+    execution,
+    externalMutationTree,
+) {
     return walkObservationPath(chain, path, value => {
         if (languageValues.isError(value)) return value
 
-        const entered = new Chain(value, false)
+        const entered = new Chain(
+            value,
+            execution,
+            false,
+            externalMutationTree,
+        )
         const leased = metadata.incrementReadLease(value)
         const close = () => {
-            entered.close()
+            entered._closeEntry()
             if (leased) metadata.decrementReadLease(value)
         }
         return runEnteredCallback(
@@ -68,7 +81,13 @@ function enterReadOnly(chain, path, onEntered) {
     })
 }
 
-function enterMutating(chain, path, onEntered) {
+function enterMutating(
+    chain,
+    path,
+    onEntered,
+    execution,
+    externalMutationTree,
+) {
     let entered
     let resolveGate
 
@@ -89,7 +108,12 @@ function enterMutating(chain, path, onEntered) {
             }
             const { parent, key, attachmentRoot } = target
             const value = languageProperties.readLanguageProperty(parent, key)
-            const privateChain = new Chain(value, true)
+            const privateChain = new Chain(
+                value,
+                execution,
+                true,
+                externalMutationTree,
+            )
             const sourceMirror = languageValues.isPromise(value)
                 ? propertyVersions.getOrCreatePromiseMirror(
                     parent,
@@ -130,7 +154,7 @@ function enterMutating(chain, path, onEntered) {
         entryError => {
             if (entryError) return entryError
             const close = () => {
-                entered.close()
+                entered._closeEntry()
             }
             return runEnteredCallback(
                 onEntered,

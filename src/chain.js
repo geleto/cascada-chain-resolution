@@ -1,15 +1,15 @@
 import * as errorUtils from "./error.js"
+import { Execution } from "./execution.js"
+import { importContext } from "./import.js"
 import * as languageValues from "./language-values.js"
 
-const hasOwn = Object.prototype.hasOwnProperty
-
 class Chain {
-    constructor(initialValue, mutates = true) {
-        if (mutates !== true && mutates !== false) {
-            errorUtils.reportFatalError(
-                new TypeError("Chain requires an exact mutates Boolean"),
-            )
-        }
+    constructor(
+        initialValue,
+        execution = new Execution(),
+        entryMutable = undefined,
+        externalMutationTree = undefined,
+    ) {
         languageValues.admitValue(initialValue)
         const state = { value: initialValue }
         languageValues.admitReadyValue(
@@ -18,30 +18,69 @@ class Chain {
             Object.prototype,
         )
         this._state = state
-        this._mutates = mutates
+        this._execution = execution
+        // Entry-only tri-state: absent on ordinary Chains, false for a
+        // read-only entry, and true for a mutable entry.
+        if (entryMutable !== undefined) {
+            this._entryMutable = entryMutable
+        }
+        if (externalMutationTree !== undefined) {
+            this._externalMutationTree = externalMutationTree
+        }
     }
 
-    // Validate and return the issuance mode at the public operation boundary.
-    // Continuations registered before closure keep their captured positions.
-    assertState() {
-        const state = this._state
-        const mutates = this._mutates
-        if (
-            !state ||
-            !hasOwn.call(this, "_mutates") ||
-            (mutates !== true && mutates !== false)
-        ) {
+    _assertOpen() {
+        if (!this._state || this._closed === true) {
             errorUtils.reportFatalError(
                 new Error("Cannot use a closed Chain"),
             )
         }
-        return mutates
     }
 
-    close() {
-        this.assertState()
-        delete this._mutates
+    get execution() {
+        this._assertOpen()
+        return this._execution
+    }
+
+    _closeEntry() {
+        this._assertOpen()
+        if (this._entryMutable === undefined) {
+            errorUtils.reportFatalError(
+                new Error("Cannot close a Chain outside enter"),
+            )
+        }
+        this._closed = true
     }
 }
 
-export { Chain }
+class ContextChain extends Chain {
+    constructor(
+        initialValue,
+        errorContext,
+        execution = new Execution(),
+        scopeMutationPaths = [],
+        propertyMutationPaths = [],
+    ) {
+        const externalTreeSetup = {
+            execution,
+            scopeMutationPaths,
+            propertyMutationPaths,
+        }
+        const imported = importContext(
+            initialValue,
+            errorContext,
+            externalTreeSetup,
+        )
+        super(
+            imported,
+            execution,
+            undefined,
+            externalTreeSetup.externalMutationTree,
+        )
+    }
+}
+
+export {
+    Chain,
+    ContextChain,
+}

@@ -380,8 +380,8 @@ describe("Array native equivalence", () => {
                     chain,
                     [],
                     method,
-                    true,
-                    ...cloneData(fact.mutationArgs),
+                    [...cloneData(fact.mutationArgs)],
+                    { mutationScopeDepth: 0 },
                 )
                 const scenario = {
                     message: `${method} restriction=${restriction}`,
@@ -409,12 +409,15 @@ async function compareArrayCase(scenario, mode) {
         cloneData(scenario.args),
     )
     const world = (mode.setup ?? setupArrayWorld)(scenario, mode)
+    const receiverPath = world.path ?? []
     const result = run(
         world.chain,
-        world.path ?? [],
+        receiverPath,
         scenario.method,
-        mode.mutate === true,
-        ...(world.args ?? cloneData(scenario.args)),
+        world.args ?? cloneData(scenario.args),
+        mode.mutate
+            ? { mutationScopeDepth: receiverPath.length }
+            : {},
     )
     if (mode.expectPromise) {
         assert(result instanceof Promise, scenario.message)
@@ -540,9 +543,11 @@ function setupViewWorld(scenario, mode) {
         base,
         [],
         "slice",
-        false,
-        scenario.layout.start,
-        scenario.layout.end,
+        [
+            scenario.layout.start,
+            scenario.layout.end,
+        ],
+        {},
     )
     assert(arrayViews.isArrayView(view), scenario.message)
     const world = {
@@ -571,8 +576,8 @@ function setupAttachedWorld(scenario) {
         chain,
         [],
         "push",
-        false,
-        marker,
+        [marker],
+        {},
     )
     assert(arrayViews.isArrayView(version), scenario.message)
     const expectedVersion = cloneData(scenario.source)
@@ -825,13 +830,15 @@ async function compareDelayedObservation(scenario, mode) {
         chain,
         [],
         scenario.method,
-        false,
-        ...(mode.promiseArguments
+        [
+            ...(mode.promiseArguments
             ? promisedArguments(scenario.args)
             : cloneData(scenario.args)),
+        ],
+        {},
     )
     assert(result instanceof Promise, scenario.message)
-    const laterResult = run(chain, [], "push", true, marker)
+    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
         result,
@@ -866,13 +873,15 @@ async function compareDelayedMutation(scenario, mode) {
         chain,
         [],
         scenario.method,
-        true,
-        ...(mode.promiseArguments
+        [
+            ...(mode.promiseArguments
             ? promisedArguments(scenario.args)
             : cloneData(scenario.args)),
+        ],
+        { mutationScopeDepth: 0 },
     )
     assert(result instanceof Promise, scenario.message)
-    const laterResult = run(chain, [], "push", true, marker)
+    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
         result,
@@ -910,19 +919,21 @@ async function comparePromiseViewVersionChain(scenario) {
         base,
         [],
         "slice",
-        false,
-        scenario.layout.start,
-        scenario.layout.end,
+        [
+            scenario.layout.start,
+            scenario.layout.end,
+        ],
+        {},
     )
     const chain = new Chain(view)
     const result = run(
         chain,
         [],
         scenario.method,
-        true,
-        ...cloneData(scenario.args),
+        [...cloneData(scenario.args)],
+        { mutationScopeDepth: 0 },
     )
-    const laterResult = run(chain, [], "push", true, marker)
+    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
         result,

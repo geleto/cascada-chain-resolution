@@ -53,7 +53,7 @@ The first derivation attaches the source projection. Every derivation prepares i
 
 `slice` logically converts its bounds before representation work, then returns a subview over the selected range when backing reuse is eligible. Empty results use an empty native Array; otherwise an ineligible source is remapped directly.
 
-`concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-origin remap, so holes, ownership, Promise versions, and indexed-edge accounting use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
+`concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-placement remap, so holes, ownership, Promise versions, and indexed-edge accounting use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
 
 End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
 

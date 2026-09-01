@@ -72,14 +72,13 @@ function createEmptyContainerCopy(source) {
 function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
     const destination = createEmptyContainerCopy(source)
     attachmentRoot ??= destination
-    const pathKeyString = String(pathKey)
 
     // Copy only language-visible own enumerable string keys. Metadata lives
     // outside that surface, so the source alone keeps its metadata.
     // Reused off-path children are marked shared because both copies retain
     // them. The path child is replaced or copied by the current walk.
     for (const key of languageProperties.enumerableLanguageKeys(source)) {
-        const retainedOffPath = key !== pathKeyString
+        const retainedOffPath = key !== pathKey
         const value = languageProperties.readLanguageProperty(source, key)
         if (languageValues.isPromise(value)) {
             const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
@@ -115,7 +114,7 @@ function transformProperty(
     transform,
     returnResultPromise = true,
 ) {
-    const origin = propertyVersions.getPropertyOrigin(parent, key)
+    const origin = propertyVersions.getPropertyPlacement(parent, key)
     propertyVersions.capturePropertyVersion(origin)
     const context = operationLifecycle.createOwner({
         present: origin !== undefined,
@@ -228,12 +227,18 @@ function transformValue(
 }
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
-function assignPath(chain, path, value) {
+function assignPath(
+    chain,
+    path,
+    value,
+    mutationScopeDepth = path.length,
+) {
     return errorUtils.runFatal(() => {
+        const preparedPath = [...path]
         languageValues.admitValue(value)
         return walkMutationPath(
             chain,
-            path,
+            preparedPath,
             target => {
                 if (
                     target.propertyKind ===
@@ -357,13 +362,13 @@ function walkMutationPath(
         deletesTarget = false,
     } = {},
 ) {
-    const mutates = chain.assertState()
-    const state = chain._state
-    if (!mutates) {
+    chain._assertOpen()
+    if (chain._entryMutable === false) {
         errorUtils.reportFatalError(
             new Error("Cannot mutate through a read-only Chain"),
         )
     }
+    const state = chain._state
     const targetPath = ["value", ...path]
     let attachmentRoot
     return walk(state, 0, () => {})
@@ -397,7 +402,13 @@ function walkMutationPath(
         if (languageValues.isError(value)) {
             return complete(writeBack, value)
         }
-        const key = String(targetPath[index])
+        const key = languageProperties.normalizePathSegment(
+            targetPath[index],
+        )
+        if (languageValues.isError(key)) {
+            languageValues.admitReadyValue(key)
+            return complete(writeBack, key, key)
+        }
         const atTarget = index === targetPath.length - 1
         const propertyKind = languageProperties.classifyLanguageProperty(
             value,
@@ -538,12 +549,13 @@ function walkMutationPath(
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------
-function deletePath(chain, path) {
+function deletePath(chain, path, mutationScopeDepth = path.length) {
     return errorUtils.runFatal(() => {
-        const deletesRoot = path.length === 0
+        const preparedPath = [...path]
+        const deletesRoot = preparedPath.length === 0
         return walkMutationPath(
             chain,
-            path,
+            preparedPath,
             target => {
                 if (deletesRoot) {
                     setProperty(target.parent, target.key, null)

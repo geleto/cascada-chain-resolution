@@ -482,8 +482,8 @@ describe("path assignment", () => {
             new Chain(source),
             ["length"],
             "push",
-            true,
-            2,
+            [2],
+            { mutationScopeDepth: 1 },
         )
 
         expect(deletion.message).to.be(
@@ -508,8 +508,9 @@ describe("path assignment", () => {
                 chain,
                 ["values", "length"],
                 "push",
-                true,
-                3,
+                [3],
+                { mutationScopeDepth: 2 },
+
             ),
             chain => assignPath(chain, ["text", "length"], 1),
             chain => assignPath(chain, ["values", "name"], 1),
@@ -739,7 +740,7 @@ describe("path assignment", () => {
 
     it("shrinks ArrayView bounds and materializes before regrowth", () => {
         const sourceChain = new Chain([1, 2, 3])
-        const view = run(sourceChain, [], "push", false, 4)
+        const view = run(sourceChain, [], "push", [4], {})
         const viewChain = new Chain(view)
 
         assignPath(viewChain, ["length"], 2)
@@ -763,7 +764,7 @@ describe("path assignment", () => {
             configurable: false,
         })
         const sourceChain = new Chain(source)
-        const view = run(sourceChain, [], "push", false, 3)
+        const view = run(sourceChain, [], "push", [3], {})
         const chain = new Chain(view)
 
         const result = assignPath(chain, ["length"], 0)
@@ -1344,7 +1345,7 @@ describe("deletePath", () => {
 
     it("does not delete ArrayView length", () => {
         const source = new Chain([1, 2])
-        const view = run(source, [], "push", false, 3)
+        const view = run(source, [], "push", [3], {})
         const chain = new Chain(view)
 
         const result = deletePath(chain, ["length"])

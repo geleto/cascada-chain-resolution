@@ -122,7 +122,7 @@ function observeAt(thisValue, [index = 0], operation) {
     index = index >= 0 ? index : length + index
     if (index < 0 || index >= length) return undefined
     return retainElement(
-        propertyVersions.getPropertyOrigin(thisValue, String(index)),
+        propertyVersions.getPropertyPlacement(thisValue, String(index)),
         operation,
     )
 }
@@ -169,14 +169,14 @@ function publishArray(remap, sourceSurvives) {
 }
 
 function transferElement(element, operation) {
-    const result = propertyVersions.isPropertyOrigin(element)
+    const result = propertyVersions.isPropertyPlacement(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
     return operationLifecycle.continueInternal(operation, result, value => value)
 }
 
 function retainElement(element, operation) {
-    const result = propertyVersions.isPropertyOrigin(element)
+    const result = propertyVersions.isPropertyPlacement(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
     return operationLifecycle.continueInternal(
@@ -190,14 +190,14 @@ function retainElement(element, operation) {
 }
 
 function getFirstElementOrigin(thisValue) {
-    return propertyVersions.getPropertyOrigin(thisValue, "0")
+    return propertyVersions.getPropertyPlacement(thisValue, "0")
 }
 
 function getLastElementOrigin(thisValue) {
     const length = arrayViews.logicalArrayLength(thisValue)
     return length === 0
         ? undefined
-        : propertyVersions.getPropertyOrigin(thisValue, String(length - 1))
+        : propertyVersions.getPropertyPlacement(thisValue, String(length - 1))
 }
 
 function getViewLength(_thisValue, view) {

@@ -321,12 +321,14 @@ shared. The result is synchronous unless path resolution crosses a Promise.
 Returns the value captured at the path without adding an owner. The caller must
 either use it temporarily or cede the prior ownership.
 
-### `run(chain, path, method, mutation, ...arguments)`
+### `run(chain, path, method, args, { mutationScopeDepth })`
 
 Invokes a supported operation through one common lifecycle after classifying
-the receiver. Mutation mode publishes through the normal mutation path;
-observation mode preserves the receiver. See [`run.md`](run.md) for dispatch,
-argument, ordering, and result contracts.
+the receiver. `args` contains the ordered explicit arguments.
+`mutationScopeDepth` is absent or `undefined` for observation; otherwise it
+selects mutation and identifies the `!` prefix. Mutation publishes through the
+normal mutation path; observation preserves the receiver. See
+[`run.md`](run.md) for dispatch, argument, ordering, and result contracts.
 
 ### `export(chain, path)`
 
@@ -421,7 +423,7 @@ The kernel relies on these rules instead of validating trusted data for aliases
 or cycles.
 
 Controlled Array methods consume only their declared logical inputs. Captured
-intrinsics receive property-origin remaps, prepared scalars, or exact retained
+intrinsics receive property-placement remaps, prepared scalars, or exact retained
 payload in positions that store without inspection. The wrapper owns
 classification, ownership, Promise mirrors, and bookkeeping. It never exposes
 ArrayView backing or dispatches through custom Array properties or prototypes.

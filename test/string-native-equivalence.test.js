@@ -127,10 +127,12 @@ async function compareStringCase(scenario, mode) {
         chain,
         [],
         method,
-        false,
-        ...(mode.promiseArguments
+        [
+            ...(mode.promiseArguments
             ? args.map(value => Promise.resolve(cloneData(value)))
             : cloneData(args)),
+        ],
+        {},
     )
     result = await result
     if (!(result instanceof Error) && method === "matchAll") {

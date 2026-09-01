@@ -10,18 +10,12 @@ import {
 } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
 
-function run(chain, path, method, mutation, ...args) {
+function run(chain, path, method, args, facts) {
     return errorUtils.runFatal(() => {
-        if (typeof method !== "string") {
-            return errorUtils.validationError(
-                "run requires a string method name",
-            )
-        }
-        if (mutation !== true && mutation !== false) {
-            return errorUtils.validationError(
-                "run requires an exact mutation Boolean",
-            )
-        }
+        const mutationScopeDepth = facts.mutationScopeDepth
+        path = [...path]
+        args = [...args]
+        const mutation = mutationScopeDepth !== undefined
 
         return invocation.invokeCall(
             method,

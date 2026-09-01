@@ -3,7 +3,6 @@ import * as languageValues from "./language-values.js"
 import * as resolution from "./resolution.js"
 
 const ignore = () => {}
-const releasesByOperation = new WeakMap()
 
 function createOwner(state = {}) {
     state.open = true
@@ -29,9 +28,9 @@ function close(operation) {
     try {
         if (operation.open) operation.close()
     } finally {
-        const releases = releasesByOperation.get(operation)
+        const releases = operation.releases
         if (releases) {
-            releasesByOperation.delete(operation)
+            operation.releases = undefined
             // Releases are trusted, non-throwing runtime cleanup. A violation
             // propagates as Fatal; clearing still severs unregister closures.
             try {
@@ -48,15 +47,15 @@ function registerRelease(operation, release) {
         release()
         return undefined
     }
-    let releases = releasesByOperation.get(operation)
+    let releases = operation.releases
     if (!releases) {
         releases = new Set()
-        releasesByOperation.set(operation, releases)
+        operation.releases = releases
     }
     releases.add(release)
     return () => {
         if (!releases.delete(release)) return
-        if (releases.size === 0) releasesByOperation.delete(operation)
+        if (releases.size === 0) operation.releases = undefined
     }
 }
 

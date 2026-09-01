@@ -33,15 +33,6 @@ function expectClosed(chain) {
 }
 
 describe("enter", () => {
-    it("validates its compiler facts", () => {
-        const chain = new Chain({})
-
-        expect(thrownBy(() => enter(chain, [], 1, () => {})))
-            .to.be.a(TypeError)
-        expect(thrownBy(() => enter(chain, [], true, undefined)))
-            .to.be.a(TypeError)
-    })
-
     it("rejects a read lease underflow", () => {
         const value = {}
         new Chain(value)

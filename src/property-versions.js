@@ -7,7 +7,12 @@ import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
 import * as resolution from "./resolution.js"
 
-const PROPERTY_ORIGINS = new WeakSet()
+class PropertyPlacement {
+    constructor(owner, key) {
+        this.owner = owner
+        this.key = key
+    }
+}
 
 function getPromiseMirror(owner, key) {
     return metadata.metaOf(owner)?.mirrors?.[key]
@@ -53,16 +58,14 @@ function continuePropertyValue(owner, key, promise, onValue) {
 
 // Fix presence and key order when structure is observed; capture the value and
 // its exact version only when the operation reaches this origin.
-function getPropertyOrigin(owner, key) {
+function getPropertyPlacement(owner, key) {
     key = String(key)
     if (!languageProperties.hasLanguageProperty(owner, key)) return undefined
-    const origin = { owner, key }
-    PROPERTY_ORIGINS.add(origin)
-    return origin
+    return new PropertyPlacement(owner, key)
 }
 
-function isPropertyOrigin(value) {
-    return PROPERTY_ORIGINS.has(value)
+function isPropertyPlacement(value) {
+    return value instanceof PropertyPlacement
 }
 
 function capturePropertyVersion(origin) {
@@ -95,7 +98,7 @@ function resolvePropertyValue(origin) {
 }
 
 function resolvePropertyValueAtKey(owner, key) {
-    return resolvePropertyValue(getPropertyOrigin(owner, key))
+    return resolvePropertyValue(getPropertyPlacement(owner, key))
 }
 
 function getOrCreatePromiseMirror(owner, key, promise) {
@@ -369,11 +372,12 @@ function indexValueIfSourceIndexed(source, value) {
     )
 }
 
-function prepareImportedValue(value, importBoundary) {
+function prepareImportedValue(value, importBoundary, externalTreeSetup) {
     return importPreparation.prepareImportedData(
         value,
         importBoundary,
         installImportedPromise,
+        externalTreeSetup,
     )
 }
 
@@ -425,11 +429,11 @@ export {
     continuePromiseVersion,
     deleteProperty,
     getOrCreatePromiseMirror,
-    getPropertyOrigin,
+    getPropertyPlacement,
     getPromiseMirror,
     hasPromiseMirrors,
     indexValueIfSourceIndexed,
-    isPropertyOrigin,
+    isPropertyPlacement,
     placePromiseVersion,
     prepareImportedValue,
     prepareRetainedArrayProperties,

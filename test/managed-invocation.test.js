@@ -33,7 +33,7 @@ describe("managed invocation", () => {
         }
         const chain = new Chain(value)
 
-        expect(run(chain, [], "increment", true)).to.be(2)
+        expect(run(chain, [], "increment", [], { mutationScopeDepth: 0 })).to.be(2)
         expect(chain._state.value).to.be(value)
         expect(value.count).to.be(2)
     })
@@ -48,7 +48,7 @@ describe("managed invocation", () => {
         }, "managed record receiver")
         const chain = new Chain(source)
 
-        expect(run(chain, [], "increaseBy", true, 2)).to.be(3)
+        expect(run(chain, [], "increaseBy", [2], { mutationScopeDepth: 0 })).to.be(3)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.count).to.be(3)
         expect(source.count).to.be(1)
@@ -61,7 +61,7 @@ describe("managed invocation", () => {
             },
         }
 
-        expect(run(new Chain(value), [], "toString", false)).to.be(
+        expect(run(new Chain(value), [], "toString", [], {})).to.be(
             "managed record",
         )
     })
@@ -78,7 +78,9 @@ describe("managed invocation", () => {
             new Chain(value),
             [],
             "constructor",
-            false,
+            [],
+            {},
+
         ).message).to.be("Method is not callable: constructor")
         expect(called).to.be(false)
     })
@@ -86,7 +88,7 @@ describe("managed invocation", () => {
     it("resolves a Promise-backed record method placement", async () => {
         const method = deferred()
         const value = { count: 2, read: method.promise }
-        const result = run(new Chain(value), [], "read", false, 3)
+        const result = run(new Chain(value), [], "read", [3], {})
 
         method.resolve(function (amount) {
             return this.count + amount
@@ -104,8 +106,8 @@ describe("managed invocation", () => {
             new Chain(receiver.promise),
             [],
             "read",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         argument.resolve(source)
@@ -131,8 +133,8 @@ describe("managed invocation", () => {
             new Chain(receiver.promise),
             [],
             "read",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         argument.resolve(3)
@@ -150,8 +152,8 @@ describe("managed invocation", () => {
             new Chain(receiver.promise),
             [],
             "missing",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         argument.resolve(source)
@@ -179,7 +181,9 @@ describe("managed invocation", () => {
             new Chain(new Value()),
             [],
             "toString",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
     })
 
@@ -192,12 +196,14 @@ describe("managed invocation", () => {
         `)
         managedStateClass(Foreign)
 
-        expect(run(new Chain(value), [], "read", false)).to.be(3)
+        expect(run(new Chain(value), [], "read", [], {})).to.be(3)
         expect(run(
             new Chain(value),
             [],
             "toString",
-            false,
+            [],
+            {},
+
         ) instanceof Error).to.be(true)
     })
 
@@ -208,7 +214,7 @@ describe("managed invocation", () => {
         const value = new Value()
         value.pending = pending.promise
 
-        const result = run(new Chain(value), [], "missing", false)
+        const result = run(new Chain(value), [], "missing", [], {})
 
         expect(result instanceof Promise).to.be(true)
         pending.resolve(1)
@@ -225,7 +231,7 @@ describe("managed invocation", () => {
         const value = new Value()
         value.read = () => 2
 
-        expect(run(new Chain(value), [], "read", false).message).to.be(
+        expect(run(new Chain(value), [], "read", [], {}).message).to.be(
             "Cannot call read because an own data property with that name " +
             "hides the method",
         )
@@ -247,7 +253,7 @@ describe("managed invocation", () => {
             },
         })
 
-        expect(run(new Chain(value), [], "read", false)).to.be(1)
+        expect(run(new Chain(value), [], "read", [], {})).to.be(1)
         expect(accessed).to.be(false)
     })
 
@@ -276,8 +282,9 @@ describe("managed invocation", () => {
             failed,
             [],
             "change",
-            true,
-            failure,
+            [failure],
+            { mutationScopeDepth: 0 },
+
         )).to.be(failure)
         expect(reflections).to.eql([])
 
@@ -286,7 +293,7 @@ describe("managed invocation", () => {
         invalid.failure = receiverFailure
         const invalidChain = new Chain(invalid)
         reflections.length = 0
-        expect(run(invalidChain, [], "change", true)).to.be(receiverFailure)
+        expect(run(invalidChain, [], "change", [], { mutationScopeDepth: 0 })).to.be(receiverFailure)
         expect(reflections).to.eql([])
 
         const value = new Proxy(new Value(), {
@@ -299,7 +306,7 @@ describe("managed invocation", () => {
         lookupPath(chain, [])
         reflections.length = 0
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(reflections).to.eql(["receiver", "method", "receiver"])
         expect(chain._state.value).not.to.be(value)
@@ -328,7 +335,9 @@ describe("managed invocation", () => {
             new Chain(new Value()),
             [],
             "read",
-            false,
+            [],
+            {},
+
         ))
         setFatalErrorReporter()
 
@@ -355,7 +364,9 @@ describe("managed invocation", () => {
             new Chain(new Value()),
             [],
             "read",
-            false,
+            [],
+            {},
+
         ))
         setFatalErrorReporter()
 
@@ -377,7 +388,7 @@ describe("managed invocation", () => {
         line.start = { x: pending.promise, y: 2 }
         const chain = new Chain(line)
 
-        const result = run(chain, [], "length", false)
+        const result = run(chain, [], "length", [], {})
         assignPath(chain, ["start", "y"], 5)
         pending.resolve(1)
 
@@ -398,7 +409,7 @@ describe("managed invocation", () => {
         const value = new Value()
         value.nested = { failure }
 
-        expect(run(new Chain(value), [], "read", false)).to.be(failure)
+        expect(run(new Chain(value), [], "read", [], {})).to.be(failure)
         expect(invoked).to.be(false)
     })
 
@@ -413,7 +424,7 @@ describe("managed invocation", () => {
         const source = new Vec()
         source.x = pending.promise
         importValue(source, "managed-class Promise state")
-        const result = run(new Chain(source), [], "value", false)
+        const result = run(new Chain(source), [], "value", [], {})
 
         pending.resolve(4)
 
@@ -433,7 +444,7 @@ describe("managed invocation", () => {
         source.x = 1
         const chain = new Chain(source)
 
-        const result = run(chain, [], "add", true, 2)
+        const result = run(chain, [], "add", [2], { mutationScopeDepth: 0 })
 
         expect(chain._state.value).to.be(source)
         expect(result).to.be(source)
@@ -454,7 +465,7 @@ describe("managed invocation", () => {
         importValue(source, "shared managed-class receiver")
         const chain = new Chain(source)
 
-        expect(run(chain, [], "add", true, 2)).to.be(3)
+        expect(run(chain, [], "add", [2], { mutationScopeDepth: 0 })).to.be(3)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value instanceof Vec).to.be(true)
         expect(chain._state.value.x).to.be(3)
@@ -474,7 +485,7 @@ describe("managed invocation", () => {
         lookupPath(new Chain(source), [])
         const chain = new Chain(source)
 
-        const result = run(chain, [], "add", true, 2)
+        const result = run(chain, [], "add", [2], { mutationScopeDepth: 0 })
 
         expect(result).to.be(chain._state.value)
         expect(result).not.to.be(source)
@@ -496,7 +507,7 @@ describe("managed invocation", () => {
         line.start = start
         const chain = new Chain(line)
 
-        run(chain, [], "move", true)
+        run(chain, [], "move", [], { mutationScopeDepth: 0 })
 
         expect(chain._state.value).to.be(line)
         expect(line.start).not.to.be(start)
@@ -517,7 +528,7 @@ describe("managed invocation", () => {
         lookupPath(new Chain(source), [])
         const chain = new Chain(source)
 
-        expect(run(chain, ["value"], "change", true)).to.be(2)
+        expect(run(chain, ["value"], "change", [], { mutationScopeDepth: 1 })).to.be(2)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).not.to.be(value)
         expect(chain._state.value.value.x).to.be(2)
@@ -537,7 +548,7 @@ describe("managed invocation", () => {
         const line = new Line()
         const chain = new Chain(line)
 
-        run(chain, [], "setStart", true, options)
+        run(chain, [], "setStart", [options], { mutationScopeDepth: 0 })
 
         expect(line.start).not.to.be(point)
         expect(line.start).to.eql(point)
@@ -559,8 +570,8 @@ describe("managed invocation", () => {
         const line = new Line()
         const chain = new Chain(line)
 
-        run(chain, [], "setStart", true, start)
-        run(chain, [], "move", true)
+        run(chain, [], "setStart", [start], { mutationScopeDepth: 0 })
+        run(chain, [], "move", [], { mutationScopeDepth: 0 })
 
         expect(chain._state.value.start).not.to.be(start)
         expect(chain._state.value.start.x).to.be(2)
@@ -580,7 +591,7 @@ describe("managed invocation", () => {
         const holder = new Holder()
         const chain = new Chain(holder)
 
-        const result = run(chain, [], "setValue", true, argument)
+        const result = run(chain, [], "setValue", [argument], { mutationScopeDepth: 0 })
         pending.resolve(3)
         await result
 
@@ -603,7 +614,7 @@ describe("managed invocation", () => {
         line.start = point
         const chain = new Chain(line)
 
-        run(chain, [], "move", true, options)
+        run(chain, [], "move", [options], { mutationScopeDepth: 0 })
 
         expect(line.same).to.be(false)
         expect(line.start).to.be(point)
@@ -627,10 +638,10 @@ describe("managed invocation", () => {
         const source = new Value()
         source.child = { failure }
 
-        expect(run(new Chain(source), [], "read", false)).to.be(failure)
+        expect(run(new Chain(source), [], "read", [], {})).to.be(failure)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
         const chain = new Chain(source)
-        expect(run(chain, [], "change", true)).to.be(failure)
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
         expect(chain._state.value).to.be(failure)
         expect(source.changed).to.be(undefined)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
@@ -656,8 +667,8 @@ describe("managed invocation", () => {
             new Chain(source),
             [],
             "read",
-            false,
-            { error: argumentError },
+            [{ error: argumentError }],
+            {},
         )
 
         expect(result.errors).to.have.length(2)
@@ -678,8 +689,8 @@ describe("managed invocation", () => {
             new Chain(source),
             [],
             "read",
-            false,
-            { failure: argumentValue.promise },
+            [{ failure: argumentValue.promise }],
+            {},
         )
 
         argumentValue.resolve(argumentFailure)
@@ -710,7 +721,9 @@ describe("managed invocation", () => {
             invalidChain,
             [],
             "leavePromise",
-            true,
+            [],
+            { mutationScopeDepth: 0 },
+
         ) instanceof Error).to.be(true)
         expect(invalidChain._state.value instanceof Error).to.be(true)
 
@@ -721,7 +734,8 @@ describe("managed invocation", () => {
             validChain,
             [],
             "returnPromise",
-            true,
+            [],
+            { mutationScopeDepth: 0 },
         )
         expect(result instanceof Promise).to.be(true)
         expect(validChain._state.value instanceof Promise).to.be(true)
@@ -743,7 +757,7 @@ describe("managed invocation", () => {
         value.value = 1
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", true)).to.be(resultError)
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(resultError)
         expect(chain._state.value).to.be(value)
         expect(value.value).to.be(2)
     })
@@ -764,8 +778,8 @@ describe("managed invocation", () => {
             chain,
             [],
             "change",
-            true,
-            () => completion.promise,
+            [() => completion.promise],
+            { mutationScopeDepth: 0 },
         )
         expect(chain._state.value instanceof Promise).to.be(true)
         completion.resolve(resultError)
@@ -795,9 +809,11 @@ describe("managed invocation", () => {
             chain,
             [],
             "change",
-            true,
-            argument.promise,
-            () => completion.promise,
+            [
+                argument.promise,
+                () => completion.promise,
+            ],
+            { mutationScopeDepth: 0 },
         )
         argument.resolve("ready")
         await flushMicrotasks()
@@ -824,8 +840,8 @@ describe("managed invocation", () => {
             chain,
             [],
             "read",
-            false,
-            () => completion.promise,
+            [() => completion.promise],
+            {},
         )
 
         expect(metaOf(value).readLeaseCount).to.be(1)
@@ -862,10 +878,10 @@ describe("managed invocation", () => {
             chain,
             [],
             "change",
-            true,
-            () => completion.promise,
+            [() => completion.promise],
+            { mutationScopeDepth: 0 },
         )
-        const second = run(chain, [], "add", true, 10)
+        const second = run(chain, [], "add", [10], { mutationScopeDepth: 0 })
         completion.resolve()
 
         const firstReceiver = await first
@@ -891,8 +907,8 @@ describe("managed invocation", () => {
             chain,
             [],
             "change",
-            true,
-            () => completion.promise,
+            [() => completion.promise],
+            { mutationScopeDepth: 0 },
         )
         completion.resolve("done")
         const failure = await result
@@ -920,7 +936,7 @@ describe("managed invocation", () => {
         value.state = state
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", true)).to.be(failure)
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
         expect(chain._state.value).to.be(failure)
     })
 
@@ -936,7 +952,7 @@ describe("managed invocation", () => {
         const source = new Value()
         const chain = new Chain(source)
 
-        expect(run(chain, [], "change", true)).to.be(failure)
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
         expect(chain._state.value).to.be(failure)
     })
 
@@ -958,7 +974,7 @@ describe("managed invocation", () => {
         const holder = new Holder()
         holder.point = new Point(1)
 
-        const result = run(new Chain(holder), [], "result", false)
+        const result = run(new Chain(holder), [], "result", [], {})
 
         expect(result.self).to.be(result)
         expect(result.point).to.be(holder.point)
@@ -981,11 +997,11 @@ describe("managed invocation", () => {
         holder.point = { x: 1 }
         const chain = new Chain(holder)
 
-        const result = run(chain, [], "change", true)
+        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(result).to.be(holder.point)
         expect(result.x).to.be(2)
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
         expect(result.x).to.be(2)
         expect(chain._state.value.point).not.to.be(result)
         expect(chain._state.value.point.x).to.be(3)
@@ -1010,10 +1026,10 @@ describe("managed invocation", () => {
         holder.wrapper = { branch: { child } }
         const chain = new Chain(holder)
 
-        const result = run(chain, [], "detach", true)
+        const result = run(chain, [], "detach", [], { mutationScopeDepth: 0 })
         expect(result.branch.child).to.be(chain._state.value.child)
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(result.branch.child).not.to.be(chain._state.value.child)
         expect(result.branch.child.value).to.be(1)
@@ -1032,12 +1048,12 @@ describe("managed invocation", () => {
         value.x = 1
         const chain = new Chain(value)
 
-        const result = run(chain, [], "change", true)
+        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(result.me).to.be(value)
         expect(result.me instanceof Value).to.be(true)
         expect(result.me.x).to.be(2)
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
         expect(result.me.x).to.be(2)
         expect(chain._state.value).not.to.be(result.me)
         expect(chain._state.value.x).to.be(3)
@@ -1057,7 +1073,7 @@ describe("managed invocation", () => {
         holder.external = external
         holder.fn = fn
 
-        const result = run(new Chain(holder), [], "result", false)
+        const result = run(new Chain(holder), [], "result", [], {})
 
         expect(result.external).to.be(external)
         expect(result.fn).to.be(fn)
@@ -1081,7 +1097,7 @@ describe("managed invocation", () => {
         value.value = 1
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", true)).to.be(failure)
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
         expect(chain._state.value).to.be(value)
         expect(value.value).to.be(2)
     })
@@ -1099,15 +1115,15 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const chain = new Chain(new Value())
 
-        expect(await run(chain, [], "direct", false)).to.be(1)
-        const nested = run(chain, [], "nested", false)
+        expect(await run(chain, [], "direct", [], {})).to.be(1)
+        const nested = run(chain, [], "nested", [], {})
         expect(nested instanceof Promise).to.be(false)
         expect(await readPath(new Chain(nested), ["value"])).to.be(1)
     })
 
     it("materializes logical Arrays before managed host code", () => {
         const source = [1, , 3]
-        const view = run(new Chain(source), [], "slice", false, 0, 3)
+        const view = run(new Chain(source), [], "slice", [0, 3], {})
         class Holder {
             inspect() {
                 return Array.isArray(this.items) && !(1 in this.items)
@@ -1124,15 +1140,15 @@ describe("managed invocation", () => {
         const sibling = {}
         holder.sibling = sibling
 
-        expect(run(new Chain(holder), [], "inspect", false)).to.be(true)
+        expect(run(new Chain(holder), [], "inspect", [], {})).to.be(true)
         expect(metaOf(sibling).shared).to.be(undefined)
         const chain = new Chain(holder)
-        run(chain, [], "append", true)
+        run(chain, [], "append", [], { mutationScopeDepth: 0 })
 
         expect(holder.native).to.be(true)
         expect(Array.isArray(holder.items)).to.be(true)
         expect(holder.items).to.eql([1, , 3, 4])
-        expect(run(new Chain(view), [], "join", false, ",")).to.be("1,,3")
+        expect(run(new Chain(view), [], "join", [","], {})).to.be("1,,3")
     })
 
     it("replaces an indexed receiver with an unindexed working copy", () => {
@@ -1148,7 +1164,7 @@ describe("managed invocation", () => {
         buildRefIndex(source)
         const chain = new Chain(source)
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(chain._state.value).not.to.be(source)
         expect(source.value).to.be(1)
@@ -1167,7 +1183,7 @@ describe("managed invocation", () => {
         const source = new Value()
         source.pending = pending.promise
         const chain = new Chain(source)
-        const result = run(chain, [], "change", true)
+        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         pending.resolve(1)
         await result
@@ -1192,7 +1208,7 @@ describe("managed invocation", () => {
         holder.later = later
         const chain = new Chain(holder)
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         expect(holder.earlier).to.be(holder.later.child)
         expect(holder.earlier).not.to.be(child)
@@ -1213,7 +1229,7 @@ describe("managed invocation", () => {
         lookupPath(new Chain(child), [])
         const chain = new Chain(holder)
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         const copy = chain._state.value
         expect(copy).not.to.be(holder)
@@ -1236,7 +1252,7 @@ describe("managed invocation", () => {
         lookupPath(new Chain(source), [])
         const chain = new Chain(source)
 
-        run(chain, [], "change", true)
+        run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
         const copy = chain._state.value
         expect(copy).not.to.be(source)
@@ -1259,8 +1275,8 @@ describe("managed invocation", () => {
         const chain = new Chain(counter)
         const pending = deferred()
 
-        const first = run(chain, [], "add", true, pending.promise)
-        const second = run(chain, [], "add", true, 1)
+        const first = run(chain, [], "add", [pending.promise], { mutationScopeDepth: 0 })
+        const second = run(chain, [], "add", [1], { mutationScopeDepth: 0 })
         pending.resolve(1)
 
         expect(await first).to.be(1)
@@ -1291,8 +1307,8 @@ describe("managed invocation", () => {
             new Chain(receiver),
             [],
             "read",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         receiverValue.resolve(broken)
@@ -1334,8 +1350,8 @@ describe("managed invocation", () => {
             chain,
             [],
             "read",
-            false,
-            argument.promise,
+            [argument.promise],
+            {},
         )
 
         argument.resolve(broken)

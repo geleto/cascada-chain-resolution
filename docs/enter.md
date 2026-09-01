@@ -33,7 +33,7 @@ If the callback returns `T`, the result shapes are:
 enter(..., onEntered) -> T | Error | Promise<Awaited<T> | Error>
 ```
 
-`mutates` must be exactly `true` or `false`, and `onEntered` must be callable. The compiler passes the Boolean analysis fact directly; `enter` validates it and selects an encapsulated mutating or read-only path. These internal paths, completion routines, and abort routines are not APIs and no other operation calls them. Expected language Errors are returned as values. An unexpected callback throw or completion-Promise rejection closes the entered Chain before reporting the fatal failure. Read-only abort releases its read entry; mutating abort leaves the gate unresolved rather than publishing potentially corrupted private state.
+The compiler passes `mutates` and `onEntered` as trusted runtime facts. `enter` selects an encapsulated mutating or read-only path. These internal paths, completion routines, and abort routines are not APIs and no other operation calls them. Expected language Errors are returned as values. An unexpected callback throw or completion-Promise rejection closes the entered Chain before reporting the fatal failure. Read-only abort releases its read entry; mutating abort leaves the gate unresolved rather than publishing potentially corrupted private state.
 
 Mutating `enter` uses `walkMutationPath` to perform COW and install a public gate as soon as the target's owning parent exists. After reconstruction it invokes `onEntered` immediately with a private Chain rooted at the direct target or the target Promise. Read-only `enter` uses `walkObservationPath` to resolve the complete target, then starts a counted read entry before invoking the callback; a target or path Error bypasses it. Imported targets already carry their own import status, while runtime-owned targets inherit none from their path. A pending ancestor delays either mode through the selected walker's Promise, without a separate readiness Promise.
 
@@ -43,9 +43,9 @@ Mutating `enter` uses `walkMutationPath` to perform COW and install a public gat
 
 `enter` does not prepare result ownership. Before returning a direct graph-identity result or fulfilling with one, the callback's consumer applies the ordinary ownership rules. Any result identity that also has another language owner, including reachability from the entered `state.value` at scope completion, must become shared; a newly owned result ceded to the caller need not.
 
-The callback's Chain is rooted at the property version captured at `enter`'s exact program position, which may still hold a Promise. Before publication, a mutating Chain owns that data; afterward, already-issued continuations and the public world operate on the same graph through their established mirror positions. Completion removes the Chain's capability, preventing new issuance.
+The callback's Chain is rooted at the property version captured at `enter`'s exact program position, which may still hold a Promise. Before publication, a mutating entry owns that data; afterward, already-issued continuations and the public world operate on the same graph through their established mirror positions. Completion closes the entry, preventing new issuance.
 
-`new Chain(value, mutates = true)` stores an exact Boolean capability in `_mutates` on the host Chain: ordinary and mutating entered Chains use `true`, while read-only entered Chains use `false`. The Chain is outside the language graph; its `_state` holder contains only the language root. `chain.close()` deletes the capability, preventing new issuance without cancelling work already issued through the Chain. Closing is one-shot and does not publish an entered mutation; `enter` owns automatic closure and publication after its callback completes. The mutating setup and completion closures retain the gate resolver; the gate itself already lives at the public placement, so neither belongs in the Chain state. After setup, no entry-specific lifecycle state retains the source Chain, captured placement, or an import boundary; imported targets carry their ordinary direct boundary in metadata. Only `enter` is exported from `src/enter.js` for compiler/runtime use, not from the package entry module.
+Entry uses an ordinary `Chain` with an `entryMutable` restriction and one-shot closed state. When entry reaches an external-mutation-tree node, that Chain also carries the reached node as `_externalMutationTree`. Root and entered contexts therefore use the same `ExternalMutationTree` branch and boundary queries. Nested entry continues from that root, and entry below an external leaf remains clamped to the leaf. A Chain constructed normally has no entry restriction or active close lifecycle. `enter` closes its Chain automatically after the callback completes without cancelling issued work. The entered Chain inherits the source execution without retaining the source Chain or copying the tree. The stable `_state` holder still contains only the language root.
 
 ## Mutating entries
 
@@ -213,7 +213,7 @@ If `onEntered` throws or its returned Promise rejects, `enter` aborts before rep
 
 Imported-data validation produces a language Error with the existing attribution rules. Compiler misuse, host-contract violations, and invariant failures are fatal. Fatal cases include:
 
-- a non-Boolean `mutates` or non-callable `onEntered`;
+- a non-callable `onEntered`;
 - mutation through a read-only Chain;
 - new issuance through a closed Chain;
 - invalid property descriptors during gate installation or publication; and
@@ -230,11 +230,11 @@ src/property-versions.js
 test/enter.test.js
 ```
 
-`src/index.js` re-exports `Chain` from `src/chain.js`, preserving its package identity while allowing `enter.js` to create private Chains without importing the package entry module. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains only the language root in `value`; the host Chain owns its non-language issuance capability. A root value may be primitive, shared, or replaced, while a mirror may be absent or detached, so neither identity metadata nor `PromiseMirror` owns this lifecycle.
+`src/index.js` re-exports the public Chain types, while `enter.js` creates an ordinary `Chain` with internal entry facts. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains only the language root in `value`; entered capability and closure remain outside the language graph.
 
-### Chain capability and read entries
+### Entered capability and read entries
 
-A Chain can issue operations while it owns one exact-Boolean `_mutates` capability. Ordinary Chains initialize it to `true`, and an entered Chain receives the value validated by `enter`. `walkObservationPath` accepts either Boolean; `walkMutationPath` requires `true`. Both reject a Chain without its own capability, which means it can no longer issue operations. Already-issued recursive continuations do not recheck. `walkMutationPath` accepts the Chain, performs this assertion, and derives `chain._state` internally so assignment, deletion, and mutating entry share one boundary.
+A normally constructed Chain can always issue observations and mutations. A Chain created by `enter` additionally owns the trusted `entryMutable` Boolean; the mutation walker rejects a read-only entry, and every walker rejects a closed entry. Already-issued recursive continuations do not recheck. `walkMutationPath` accepts the Chain, performs this assertion, and derives `chain._state` internally so assignment, deletion, and mutating entry share one boundary.
 
 Read-only entry setup reuses observation-path capture. The captured value retains its direct import status when entry creates its Chain. Entry then increments the identity's read lease; primitives need no metadata. Completion decrements the same value and deletes its counter at zero. `enter` and `run` share the symmetric metadata lease operations, while each operation balances only its own acquisitions. The mutation walk's single `requiresCopyOnWrite` predicate combines permanent sharing with a positive `readLeaseCount`. Completing the last read entry removes only the temporary COW condition and never clears permanent protection.
 

@@ -14,7 +14,8 @@
 // Later resolvers use onLaterPromiseReady and read the state published by that
 // first FIFO reaction instead of consuming the raw settlement again.
 
-export { Chain } from "./chain.js"
+export { Chain, ContextChain } from "./chain.js"
+export { Execution } from "./execution.js"
 
 export {
     assignPath, deletePath,

@@ -36,6 +36,16 @@ function propertyValidationError(parent, message) {
     return errorUtils.validationError(message, errorContextOf(parent))
 }
 
+function normalizePathSegment(segment) {
+    return typeof segment === "string"
+        ? segment
+        : typeof segment === "number"
+            ? String(segment)
+            : errorUtils.validationError(
+                "Path segments must be Strings or Numbers",
+            )
+}
+
 function isDataPlacement(descriptor) {
     return descriptor?.enumerable === true && "value" in descriptor
 }
@@ -248,6 +258,7 @@ export {
     getLanguagePropertyDescriptor,
     getLanguagePlacementDescriptor,
     hasLanguageProperty,
+    normalizePathSegment,
     propertyMutationRequiresCopy,
     propertyValidationError,
     readLanguageProperty,

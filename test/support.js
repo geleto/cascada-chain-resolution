@@ -52,6 +52,7 @@ function thrownBy(fn) {
 
 export {
     Chain,
+    ContextChain,
     assignPath,
     deletePath,
     externalState,
@@ -62,6 +63,7 @@ export {
     managedState,
     managedStateClass,
     run,
+    Execution,
 } from "../src/index.js"
 
 export { enter } from "../src/index.js"

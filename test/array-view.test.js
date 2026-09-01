@@ -42,7 +42,7 @@ describe("ArrayView", () => {
             writable: true,
             configurable: true,
         })
-        const view = run(new Chain(source), [], "push", false, 3)
+        const view = run(new Chain(source), [], "push", [3], {})
 
         expect(arrayViews.isArrayView(view)).to.be(true)
         expect(Object.keys(view)).to.eql([])
@@ -69,7 +69,7 @@ describe("ArrayView", () => {
 
     it("uses an attached projection when iterating the source identity", () => {
         const source = [1, , 3]
-        const view = run(new Chain(source), [], "push", false, 4)
+        const view = run(new Chain(source), [], "push", [4], {})
 
         expect(arrayViews.isArrayView(
             arrayViews.projectionOf(source),
@@ -87,7 +87,7 @@ describe("ArrayView", () => {
         const tail = new arrayViews.ArrayView(original, 1, 3)
         const last = new arrayViews.ArrayView(tail, 1, 2)
         const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
-        const extended = run(new Chain(original), [], "unshift", false, 0)
+        const extended = run(new Chain(original), [], "unshift", [0], {})
 
         expect([...tail]).to.eql([2, 3])
         expect([...last]).to.eql([3])
@@ -107,13 +107,13 @@ describe("ArrayView", () => {
             "0",
             pending.promise,
         )
-        const pushed = run(new Chain(source), [], "push", false, 3)
+        const pushed = run(new Chain(source), [], "push", [3], {})
         const grownChain = new Chain(pushed)
         assignPath(grownChain, ["4"], 5)
         const grown = grownChain._state.value
-        const prepended = run(new Chain(pushed), [], "unshift", false, 0)
-        const shifted = run(new Chain(prepended), [], "shift", false)
-        const popped = run(new Chain(shifted), [], "pop", false)
+        const prepended = run(new Chain(pushed), [], "unshift", [0], {})
+        const shifted = run(new Chain(prepended), [], "shift", [], {})
+        const popped = run(new Chain(shifted), [], "pop", [], {})
 
         expect(arrayViews.isArrayView(pushed)).to.be(true)
         const mirrors = [
@@ -145,8 +145,8 @@ describe("ArrayView", () => {
             new Chain([pending.promise]),
             [],
             "push",
-            false,
-            2,
+            [2],
+            {},
         )
         buildRefIndex(view)
 
@@ -161,7 +161,7 @@ describe("ArrayView", () => {
     it("forks mirrors when endpoint extension adds no values", async () => {
         const pending = deferred()
         const chain = new Chain([pending.promise])
-        const derived = run(chain, [], "push", false)
+        const derived = run(chain, [], "push", [], {})
 
         expect(
             propertyVersions.getPromiseMirror(chain._state.value, "0") ===
@@ -176,13 +176,13 @@ describe("ArrayView", () => {
 
     it("shares traversable values retained by another view", () => {
         const retained = { value: 1 }
-        const first = run(new Chain([0]), [], "push", false)
+        const first = run(new Chain([0]), [], "push", [], {})
         const extendedChain = new Chain(first)
         assignPath(extendedChain, ["1"], retained)
         const extended = extendedChain._state.value
 
         expect(metaOf(retained)?.shared).not.to.be(true)
-        const second = run(new Chain(extended), [], "push", false, 2)
+        const second = run(new Chain(extended), [], "push", [2], {})
 
         expect(metaOf(retained).shared).to.be(true)
         const changed = new Chain(retained)
@@ -197,7 +197,7 @@ describe("ArrayView", () => {
         const pending = deferred()
         const error = new Error("view error")
         const source = [{ error }, pending.promise]
-        const view = run(new Chain(source), [], "push", false, 3)
+        const view = run(new Chain(source), [], "push", [3], {})
         const chain = new Chain(view)
 
         expect(hasError(chain, [])).to.be(true)
@@ -217,7 +217,7 @@ describe("ArrayView", () => {
         const sourceChain = new Chain([pending.promise])
 
         assignPath(sourceChain, ["0", "before"], 1)
-        const view = run(sourceChain, [], "push", false, 2)
+        const view = run(sourceChain, [], "push", [2], {})
         const changed = new Chain(view)
         assignPath(changed, ["0", "after"], 2)
 
@@ -240,8 +240,8 @@ describe("ArrayView", () => {
         const pending = deferred()
         const source = [pending.promise, 1]
 
-        run(new Chain(source), [], "shift", false)
-        const retained = run(new Chain(source), [], "push", false, 2)
+        run(new Chain(source), [], "shift", [], {})
+        const retained = run(new Chain(source), [], "push", [2], {})
         const sourceMirror = propertyVersions.getPromiseMirror(source, "0")
         const retainedMirror = propertyVersions.getPromiseMirror(retained, "0")
 
@@ -264,14 +264,15 @@ describe("ArrayView", () => {
             new Chain(source),
             [],
             "push",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
         const contracted = run(
             new Chain(extended),
             [],
             "pop",
-            false,
+            [],
+            {},
         )
 
         expect(arrayViews.isArrayView(extended)).to.be(true)
@@ -289,10 +290,10 @@ describe("ArrayView", () => {
             new Chain([1]),
             [],
             "push",
-            false,
-            pending.promise,
+            [pending.promise],
+            {},
         )
-        const retained = run(new Chain(original), [], "push", false, 3)
+        const retained = run(new Chain(original), [], "push", [3], {})
         const changed = new Chain(original)
 
         assignPath(changed, ["length"], 1)
@@ -306,7 +307,7 @@ describe("ArrayView", () => {
     it("materializes imported non-extensible physical extensions", () => {
         const source = Object.preventExtensions([1, 2])
         importValue(source, "non-extensible extension")
-        const result = run(new Chain(source), [], "push", false, 3)
+        const result = run(new Chain(source), [], "push", [3], {})
 
         expect(Array.isArray(result)).to.be(true)
         expect(result).to.eql([1, 2, 3])
@@ -333,7 +334,7 @@ describe("ArrayView", () => {
             configurable: true,
         })
 
-        const result = run(new Chain(source), [], "unshift", false, 0)
+        const result = run(new Chain(source), [], "unshift", [0], {})
 
         expect(Array.isArray(result)).to.be(true)
         expect(result.length).to.be(2)
@@ -350,7 +351,7 @@ describe("ArrayView", () => {
     it("materializes an imported frozen contraction", () => {
         const source = Object.freeze([1, 2])
         importValue(source, "frozen contraction")
-        const result = run(new Chain(source), [], "pop", false)
+        const result = run(new Chain(source), [], "pop", [], {})
 
         expect(Array.isArray(result)).to.be(true)
         expect(arrayViews.isArrayView(result)).to.be(false)
@@ -360,10 +361,10 @@ describe("ArrayView", () => {
 
     it("derives an empty extension without writing the backing length", () => {
         const source = [1]
-        const view = run(new Chain(source), [], "push", false, 2)
+        const view = run(new Chain(source), [], "push", [2], {})
         Object.defineProperty(source, "length", { writable: false })
 
-        const result = run(new Chain(view), [], "push", false)
+        const result = run(new Chain(view), [], "push", [], {})
 
         expect(arrayViews.isArrayView(result)).to.be(true)
         expect([...result]).to.eql([1, 2])
@@ -379,7 +380,7 @@ describe("ArrayView", () => {
         })
         const source = new Chain(backing)
 
-        const result = run(source, [], "push", false, 2)
+        const result = run(source, [], "push", [2], {})
 
         expect(result).to.be(failure)
         expect(exportValue(source, [])).to.eql([1])
@@ -395,11 +396,11 @@ describe("ArrayView", () => {
             },
         })
         const source = new Chain(backing)
-        const view = run(source, [], "push", false, 2)
+        const view = run(source, [], "push", [2], {})
         const chain = new Chain(view)
         failPlacement = true
 
-        const result = run(chain, [], "push", true, 3)
+        const result = run(chain, [], "push", [3], { mutationScopeDepth: 0 })
 
         expect(result).to.be(failure)
         expect(chain._state.value).to.be(failure)
@@ -415,7 +416,7 @@ describe("ArrayView", () => {
         })
         Object.setPrototypeOf(source, prototype)
         const sourceChain = new Chain(source)
-        const view = run(sourceChain, [], "push", false, 3)
+        const view = run(sourceChain, [], "push", [3], {})
         const chain = new Chain(view)
 
         expect(assignPath(chain, ["5"], 6)).to.be(undefined)
@@ -432,7 +433,7 @@ describe("ArrayView", () => {
     it("materializes indexed growth away from the physical end", () => {
         const source = [1, 2]
         const sourceChain = new Chain(source)
-        const extended = run(sourceChain, [], "push", false, 3)
+        const extended = run(sourceChain, [], "push", [3], {})
         const changed = new Chain(source)
 
         expect(assignPath(changed, ["2"], 9)).to.be(undefined)
@@ -445,7 +446,7 @@ describe("ArrayView", () => {
 
     it("installs a Promise mirror when indexed growth adds a Promise", async () => {
         const pending = deferred()
-        const view = run(new Chain([1]), [], "push", false, 2)
+        const view = run(new Chain([1]), [], "push", [2], {})
         const chain = new Chain(view)
 
         expect(assignPath(chain, ["2"], pending.promise)).to.be(undefined)
@@ -459,7 +460,7 @@ describe("ArrayView", () => {
 
     it("keeps delayed indexed growth in FIFO order", async () => {
         const pending = deferred()
-        const view = run(new Chain([1]), [], "push", false, 2)
+        const view = run(new Chain([1]), [], "push", [2], {})
         const chain = new Chain({ list: pending.promise })
 
         assignPath(chain, ["list", "2"], 3)

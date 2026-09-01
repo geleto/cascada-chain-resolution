@@ -10,14 +10,14 @@ Managed state uses COW, leases, and transition gates. Mutation-eligible external
 
 An external boundary is a context root or the first external identity reached from managed state. It guards the host suffix below that identity for one operation. Cascada never scans an external graph or compares its hidden descendants for aliases.
 
-## Static context tree
+## Static external mutation tree
 
-Constructing a `ContextChain` imports its raw host root. `ContextChain` extends the ordinary `Chain` operation surface and owns the context anchor and optional static tree; it adds no separate walker or invocation path. The compiler supplies two String/Number path Arrays:
+Constructing a root `ContextChain` imports its raw host value. `ContextChain` carries its external mutation tree without adding a separate walker or invocation path. The compiler supplies two String/Number path Arrays:
 
 - `scopeMutationPaths` contains each prefix before `!`;
 - `propertyMutationPaths` contains each complete assignment or deletion target.
 
-Two empty Arrays import the context but build no external tree. Ordinary `Chain` construction admits existing Cascada data without importing it. Both classes use the same importer and execution representation.
+Two empty Arrays import the context but build no external mutation tree. Ordinary `Chain` construction admits existing Cascada data without importing it. Both classes use the same importer and execution representation.
 
 Property discovery starts at the context root. For `propertyMutationPaths: [["status"]]`, the empty containing path therefore records the root when the root is external. An empty property mutation path is different: it replaces the Chain's root value and has no containing graph placement, so it discovers nothing. An empty scope mutation path searches the root scope.
 
@@ -25,7 +25,7 @@ During the initial synchronous root import, follow only those paths. A property 
 
 Import and tree construction form one transaction for each synchronous segment. A supported boundary or host-reflection failure returns a language Error and commits none of the segment's admission, origin, sharing, mirrors, leaves, or new identity entries. An existing Error remains data; an internal failure is fatal. A later Promise fulfillment is a separate segment and cannot add tree leaves.
 
-The compiler paths are discovery inputs, not the tree leaves. The tree stores each discovered first external boundary at its complete normalized context path. Each leaf refers to the execution entry keyed by that exact identity; the owning Chain and leaf position provide the candidate location. Discovery leaves the entry's actual-use location unset. Several leaves or context Chains may therefore initially refer to one entry without selecting a location. An external identity absent from every tree is observation-only.
+The compiler paths are discovery inputs, not the tree leaves. The tree stores each discovered first external boundary at its complete normalized context path. The leaf itself is the location: it is unique to that root ContextChain and path and remains the same through entered contextual Chains. Each leaf refers to the execution entry keyed by its exact external identity. Discovery leaves the entry's actual-use location unset, so several leaves may initially refer to one entry without selecting one. An external identity absent from every tree is observation-only.
 
 The tree is a fixed positive index, not a copy of the managed graph:
 
@@ -45,7 +45,7 @@ Every context-path call or property operation, including an unmarked observation
 One execution-scoped `WeakMap` accounts for every external identity recorded in any static tree, including later references to that identity outside the tree. Tree construction creates or reuses the identity's entry, while actual use changes only its `use` field:
 
 - unset before first use;
-- `ONE(location)`, where `location` is one Chain and normalized path; or
+- `ONE(location)`, where `location` is one live tree leaf; or
 - `CONFLICT(reason)`, after actual use from more than one location or any use incompatible with an indexed mutation location. Keep only the first stable reason, not operation history.
 
 The entry also owns the identity's phase and repairable poison. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
@@ -109,7 +109,7 @@ Pruning deliberately prevents a conflicting sibling from disabling later broad s
 
 A mutating entry's ordinary branch gate prevents outside operations from reaching the entered branch until publication. Operations on the private Chain may therefore run at any time behind that gate and select ordinary external phases only to order themselves. A read-only entry cannot mutate, and the containing Cascada runtime preserves its command ordering.
 
-`enter` creates an internal `EnteredChain` that inherits the ordinary Chain operation surface, source execution, and context anchor. It alone owns the exact read-only/mutating capability and one-shot close lifecycle. Closing is available only to the `enter` implementation, not as an instance method exposed to the callback. Its operations query the original tree through the anchored prefix; it neither retains a semantic parent relation nor copies a subtree. Mutating `enter` may publish only state that preserves every live external leaf at its original identity and path.
+`enter` always creates an ordinary `Chain`. When its path reaches the source external mutation tree, the entered Chain carries that node as `_externalMutationTree`. The internal `ExternalMutationTree` owns all branch and boundary queries, so root and entered contexts use the same tree operation surface. Nested entry walks from that node; entry below an external leaf remains clamped to the leaf. The entered Chain inherits the source execution without retaining a semantic parent or copying a subtree. Mutating `enter` may publish only state that preserves every live external leaf at its original identity and path.
 
 ## Poison and repair
 
@@ -142,4 +142,4 @@ A closed continuation completes shared settlement but performs no later host acc
 
 ## Scope
 
-External ordering adds one static external tree per ContextChain with non-empty scope or property mutation paths and one identity use-and-phase map per execution. It reuses import, export, invocation, readers-writer phases, operation lifetime, managed COW, leases, gates, mirrors, and publication.
+External ordering adds one static external mutation tree per ContextChain with non-empty scope or property mutation paths and one identity use-and-phase map per execution. It reuses import, export, invocation, readers-writer phases, operation lifetime, managed COW, leases, gates, mirrors, and publication.

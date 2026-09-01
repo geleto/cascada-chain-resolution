@@ -394,7 +394,7 @@ describe("promise mirrors and lookupPath", () => {
         const settled = failsClassification(failure)
         const chain = new Chain([])
 
-        expect(run(chain, [], "push", true, pending.promise)).to.be(1)
+        expect(run(chain, [], "push", [pending.promise], { mutationScopeDepth: 0 })).to.be(1)
         pending.resolve(settled)
         await flushMicrotasks()
 

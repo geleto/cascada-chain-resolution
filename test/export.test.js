@@ -43,6 +43,8 @@ describe("export", () => {
     it("exposes the native ESM package API", () => {
         expect(Object.keys(packageRuntime).sort()).to.eql([
             "Chain",
+            "ContextChain",
+            "Execution",
             "assignPath",
             "deletePath",
             "enter",

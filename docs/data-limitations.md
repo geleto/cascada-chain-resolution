@@ -36,10 +36,10 @@ Do not place semantic managed state outside graph-visible properties. Cascada ma
 
 Records and Arrays default to managed. Class instances default to external.
 
-- Call `externalState(value)` before admission to make one exact record, Array, or class instance external. The declaration is shallow and overrides `managedStateClass` for that identity.
-- Call `managedState(value)` before admission to make a class instance managed. When given unadmitted managed data, it also declares reachable class instances until it reaches existing managed or external boundaries.
+- Call `externalState(value)` before passing the value to Cascada to make one exact record, Array, or class instance external. The declaration is shallow and overrides `managedStateClass` for that identity.
+- Call `managedState(value)` before passing the value to Cascada to make a class instance managed. When given undeclared managed data, it also declares reachable class instances until it reaches declared external or uninspectable boundaries.
 - Call `managedStateClass(...classes)` to make subsequently admitted instances of those exact classes managed. The rule is not inherited by subclasses.
-- Classification becomes permanent at first admission. Later declarations and class-registry changes cannot reclassify an identity.
+- Classification becomes permanent at first admission within one execution. Later declarations and class-registry changes cannot reclassify that execution's identity, but another execution admits the same host identity independently.
 - Repeating the same declaration is allowed. A conflicting declaration returns a validation Error without changing the established category.
 - Declaration APIs are synchronous and never await. Do not pass them a Promise or callable thenable. `externalState` also rejects Functions and primitives. Passing an Error returns that exact Error unchanged.
 
@@ -50,6 +50,8 @@ Declare a managed class before ordinary admission of its instances. A detached p
 After host-owned managed data is passed to Cascada, application and host code must not mutate any original identity reachable from it. Cascada borrows that storage and preserves its logical value through copy-on-write; it does not make concurrent host mutation safe.
 
 This restriction follows the original identities even if Cascada later copies them. Mutate managed data through Cascada operations or mutate a host-ready copy produced by export.
+
+Values move between independent Cascada executions only through export followed by import. Do not pass an execution's internal managed identity directly into another execution.
 
 ## Runtime primordials
 
@@ -132,11 +134,11 @@ One external identity that Cascada may mutate must be available under a compiler
 - A later Cascada gate may temporarily hide the original path without changing it.
 - Passing an exact external identity as a host argument, external write value, or controlled-callback input is use at its captured source location. Source provenance belongs to the captured value; Cascada never substitutes a later value from that path.
 - Import, managed-graph assignment, storage, export copying, and return do not count as use or transfer authority. Actual use of a stored alias still conflicts when reached.
-- An identity reached only after waiting acquires no late phase. If it was not already selected from the static context tree, it returns an Error before host access when it conflicts with a mutation-capable identity.
-- External identities never recorded in a context tree are observation-only and may be observed from any location. Their aliases are the developer's responsibility because Cascada provides no mutation ordering for them.
-- Public `import(value, errorContext)` creates no context tree or mutation authority. External identities entering through it remain observation-only even if its result later becomes an ordinary Chain root. Mutation-capable context state must enter through `ContextChain` initialization.
+- An identity reached only after waiting acquires no late phase. If it was not already selected from the static external mutation tree, it returns an Error before host access when it conflicts with a mutation-capable identity.
+- External identities never recorded in an external mutation tree are observation-only and may be observed from any location. Their aliases are the developer's responsibility because Cascada provides no mutation ordering for them.
+- Public `import(value, errorContext, execution)` creates no external mutation tree or mutation authority. External identities entering through it remain observation-only even if its result later becomes an ordinary Chain root in that execution. Mutation-capable context state must enter through `ContextChain` initialization.
 
-A `!` prefix declares the complete mutation scope. An external host operation may affect only the live external-tree leaves selected beneath that prefix. A conflicted leaf is removed lazily when queried and no longer disables broad operations on its siblings; host code must not mutate that removed identity. A managed method receives no authority over external descendants.
+A `!` prefix declares the complete mutation scope. An external host operation may affect only the live external-mutation-tree leaves selected beneath that prefix. A conflicted leaf is removed lazily when queried and no longer disables broad operations on its siblings; host code must not mutate that removed identity. A managed method receives no authority over external descendants.
 
 A `!` attached to a method call selects that method's receiver. Moving it to an earlier receiver prefix broadens the scope; the method Function itself is not graph state or a separate ordering scope.
 

@@ -236,13 +236,19 @@ function walkObservationPath(
     onResolved,
     onUserCodeFailure = error => error,
 ) {
-    chain.assertState()
+    chain._assertOpen()
     const state = chain._state
     const targetPath = ["value", ...path]
     return runTraversal(() => walkFromParent(state, 0))
 
     function walkFromParent(parent, index) {
-        const key = targetPath[index]
+        const key = languageProperties.normalizePathSegment(
+            targetPath[index],
+        )
+        if (languageValues.isError(key)) {
+            languageValues.admitReadyValue(key)
+            return onResolved(key, false)
+        }
         const present = languageProperties.hasLanguageProperty(parent, key)
         const value = languageProperties.readLanguageProperty(parent, key)
         if (languageValues.isPromise(value)) {
@@ -265,14 +271,17 @@ function walkObservationPath(
         ) {
             return onResolved(value, present)
         }
-        if (
-            typeof value === "string" &&
-            languageProperties.hasLanguageProperty(
-                value,
+        if (typeof value === "string") {
+            const key = languageProperties.normalizePathSegment(
                 targetPath[index + 1],
             )
-        ) {
-            return walkFromParent(value, index + 1)
+            if (languageValues.isError(key)) {
+                languageValues.admitReadyValue(key)
+                return onResolved(key, false)
+            }
+            if (languageProperties.hasLanguageProperty(value, key)) {
+                return walkFromParent(value, index + 1)
+            }
         }
         if (!languageValues.isTraversable(value)) {
             const failure = errorUtils.pathAccessError()

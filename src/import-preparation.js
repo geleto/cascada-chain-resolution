@@ -1,17 +1,31 @@
 import * as errorUtils from "./error.js"
+import { ExternalMutationTree } from "./external-mutation-tree.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-function prepareImportedData(root, importBoundary, installPromise) {
+function prepareImportedData(root, importBoundary, installPromise, externalTreeSetup) {
     if (!metadata.isObjectLike(root)) return root
 
     const shareGraph = importBoundary.shareGraph === true
     const admitted = new Map()
     const retained = new Set()
     const promises = []
+    let preparedTree
     const failure = errorUtils.catchUserCodeFailure(
-        () => walk(root),
+        () => {
+            const failure = walk(root)
+            if (failure) return failure
+            if (externalTreeSetup) {
+                preparedTree = ExternalMutationTree.prepare(
+                    root,
+                    factsOf,
+                    externalTreeSetup.scopeMutationPaths,
+                    externalTreeSetup.propertyMutationPaths,
+                )
+            }
+            return undefined
+        },
         error => error,
     )
     if (failure) {
@@ -31,7 +45,18 @@ function prepareImportedData(root, importBoundary, installPromise) {
     for (const { owner, key, promise } of promises) {
         installPromise(owner, key, promise, importBoundary)
     }
+    if (externalTreeSetup) {
+        externalTreeSetup.externalMutationTree = preparedTree?.commit(
+            externalTreeSetup.execution,
+        )
+    }
     return root
+
+    // Tree discovery repeats the occurrence walk before commit, so it must
+    // see both existing metadata and admissions staged by this import.
+    function factsOf(value) {
+        return metadata.metaOf(value) ?? admitted.get(value)
+    }
 
     function walk(value) {
         if (!metadata.isObjectLike(value)) return undefined

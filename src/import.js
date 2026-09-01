@@ -12,19 +12,23 @@ function importManagedMutationResult(value, errorContext) {
     return importData(value, errorContext, true)
 }
 
-function importData(value, errorContext, shareGraph) {
+function importContext(value, errorContext, externalTreeSetup) {
+    return importData(value, errorContext, false, externalTreeSetup)
+}
+
+function importData(value, errorContext, shareGraph, externalTreeSetup = undefined) {
     return errorUtils.runFatal(() => {
         if (!errorContext) {
             throw new Error("import requires an error context")
         }
         if (!metadata.isObjectLike(value)) return value
-        const importBoundary = shareGraph
-            ? { errorContext, shareGraph: true }
-            : { errorContext }
+        const importBoundary = { errorContext }
+        if (shareGraph) importBoundary.shareGraph = true
         if (!languageValues.isPromise(value)) {
             return propertyVersions.prepareImportedValue(
                 value,
                 importBoundary,
+                externalTreeSetup,
             )
         }
         return languageValues.continuePromise(
@@ -43,6 +47,7 @@ function importData(value, errorContext, shareGraph) {
 }
 
 export {
+    importContext,
     importManagedMutationResult,
     importValue as import,
 }
