@@ -117,7 +117,8 @@ const ARRAY_METHODS = {
     },
 }
 
-function observeAt(thisValue, [index = 0], invocationContext) {
+function observeAt([index = 0], invocationContext) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     index = index >= 0 ? index : length + index
     if (index < 0 || index >= length) return undefined
@@ -148,11 +149,12 @@ function stringInput(value, invocationContext) {
     })
 }
 
-function slice(thisValue, args, invocationContext) {
+function slice(args, invocationContext) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     const start = toRelativeIndex(args[0], length, 0)
     const end = Math.max(start, toRelativeIndex(args[1], length, length))
-    return deriveArrayView(thisValue, start, end, invocationContext.operationContext) ??
+    return deriveArrayView(start, end, invocationContext) ??
         arrayRemaps.createArrayFromRemap(
             arrayRemaps.createRemap(thisValue, invocationContext.operationContext, start, end),
             invocationContext.operationContext,
@@ -199,7 +201,8 @@ function retainElement(element, invocationContext) {
     )
 }
 
-function getFirstElementPlacement(thisValue, _view, invocationContext) {
+function getFirstElementPlacement(_view, invocationContext) {
+    const thisValue = invocationContext.receiver
     return propertyVersions.getPropertyPlacement(
         thisValue,
         "0",
@@ -207,7 +210,8 @@ function getFirstElementPlacement(thisValue, _view, invocationContext) {
     )
 }
 
-function getLastElementPlacement(thisValue, _view, invocationContext) {
+function getLastElementPlacement(_view, invocationContext) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     return length === 0
         ? undefined
@@ -218,11 +222,12 @@ function getLastElementPlacement(thisValue, _view, invocationContext) {
         )
 }
 
-function getViewLength(_thisValue, view) {
+function getViewLength(view) {
     return view.length
 }
 
-function prepareConcatArguments(args, invocationContext) {
+function prepareConcatArguments(invocationContext) {
+    const { args } = invocationContext
     const parts = args.map(item => operationLifecycle.continueInitial(
         invocationContext,
         item,
@@ -247,19 +252,27 @@ function captureRemap(array, operationContext) {
     return remap
 }
 
-function createConcatRemap(thisValue, parts, invocationContext) {
+function createConcatRemap(parts, invocationContext) {
     return invocation.invokeHostFunction(
         arrayConcat,
-        captureRemap(thisValue, invocationContext.operationContext),
+        captureRemap(
+            invocationContext.receiver,
+            invocationContext.operationContext,
+        ),
         parts,
     )
 }
 
-function flatRemap(thisValue, [depth = 1], invocationContext) {
+function flatRemap([depth = 1], invocationContext) {
     depth = Math.max(depth, 0)
     return operationLifecycle.continuePrepared(
         invocationContext,
-        prepareFlatArray(thisValue, depth, undefined, invocationContext),
+        prepareFlatArray(
+            invocationContext.receiver,
+            depth,
+            undefined,
+            invocationContext,
+        ),
         prepared => invocation.invokeHostFunction(
             arrayFlat,
             prepared,
@@ -320,7 +333,8 @@ function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
     )
 }
 
-function prepareSearchArguments(args, invocationContext) {
+function prepareSearchArguments(invocationContext) {
+    const { args } = invocationContext
     const searchResult = operationLifecycle.continueInitial(
         invocationContext,
         args[0],
@@ -336,16 +350,17 @@ function prepareSearchArguments(args, invocationContext) {
     )
 }
 
-function join(thisValue, [separator], invocationContext) {
+function join([separator], invocationContext) {
     return conversion.joinLogicalArray(
-        thisValue,
+        invocationContext.receiver,
         separator,
         undefined,
         invocationContext,
     )
 }
 
-function prepareSortArguments(args, invocationContext) {
+function prepareSortArguments(invocationContext) {
+    const { args } = invocationContext
     if (args[0] === undefined) return undefined
     return operationLifecycle.continueInitial(invocationContext, args[0], value => {
         if (value === undefined || typeof value === "function") return value
@@ -355,16 +370,16 @@ function prepareSortArguments(args, invocationContext) {
     })
 }
 
-function prepareToSortedRemap(thisValue, comparator, invocationContext) {
-    return prepareSortedRemap(thisValue, comparator, invocationContext, true)
+function prepareToSortedRemap(comparator, invocationContext) {
+    return prepareSortedRemap(comparator, invocationContext, true)
 }
 
 function prepareSortedRemap(
-    thisValue,
     comparator,
     invocationContext,
     denseHoles = false,
 ) {
+    const thisValue = invocationContext.receiver
     const source = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
     const records = []
     for (const placement of source) {
@@ -492,10 +507,10 @@ function compareExported(comparator, left, right, operationContext) {
 }
 
 function includes(
-    thisValue,
     { searchValue, fromIndex = 0 },
     invocationContext,
 ) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     if (length === 0) return false
     const start = normalizeForwardStart(fromIndex, length)
@@ -560,20 +575,20 @@ function includes(
     }
 }
 
-function indexOf(thisValue, prepared, invocationContext) {
-    return orderedIndexSearch(thisValue, prepared, false, invocationContext)
+function indexOf(prepared, invocationContext) {
+    return orderedIndexSearch(prepared, false, invocationContext)
 }
 
-function lastIndexOf(thisValue, prepared, invocationContext) {
-    return orderedIndexSearch(thisValue, prepared, true, invocationContext)
+function lastIndexOf(prepared, invocationContext) {
+    return orderedIndexSearch(prepared, true, invocationContext)
 }
 
 function orderedIndexSearch(
-    thisValue,
     { searchValue, fromIndex },
     backwards,
     invocationContext,
 ) {
+    const thisValue = invocationContext.receiver
     fromIndex ??= backwards ? Infinity : 0
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     if (length === 0) return -1
@@ -638,27 +653,28 @@ function toRelativeIndex(value, length, defaultValue) {
         : Math.min(value, length)
 }
 
-function tryShiftArrayView(thisValue, _args, invocationContext) {
+function tryShiftArrayView(_args, invocationContext) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     return deriveArrayView(
-        thisValue,
         Math.min(1, length),
         length,
-        invocationContext.operationContext,
+        invocationContext,
     )
 }
 
-function tryPopArrayView(thisValue, _args, invocationContext) {
+function tryPopArrayView(_args, invocationContext) {
+    const thisValue = invocationContext.receiver
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     return deriveArrayView(
-        thisValue,
         0,
         Math.max(0, length - 1),
-        invocationContext.operationContext,
+        invocationContext,
     )
 }
 
-function deriveArrayView(thisValue, start, end, operationContext) {
+function deriveArrayView(start, end, invocationContext) {
+    const { operationContext, receiver: thisValue } = invocationContext
     if (start === end) return arrayRemaps.createArrayFromRemap([], operationContext)
     const projection = arrayViews.ArrayView.tryAttachTo(thisValue, operationContext)
     if (!projection) return undefined
@@ -675,12 +691,13 @@ function deriveArrayView(thisValue, start, end, operationContext) {
     return view
 }
 
-function tryConcatArrayView(thisValue, parts, invocationContext) {
+function tryConcatArrayView(parts, invocationContext) {
     const suffix = invocation.invokeHostFunction(arrayConcat, [], parts)
-    return tryAppendArrayView(thisValue, suffix, invocationContext)
+    return tryAppendArrayView(suffix, invocationContext)
 }
 
-function tryAppendArrayView(thisValue, suffix, invocationContext) {
+function tryAppendArrayView(suffix, invocationContext) {
+    const thisValue = invocationContext.receiver
     const view = arrayViews.ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,

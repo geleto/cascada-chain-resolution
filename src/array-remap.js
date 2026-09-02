@@ -31,69 +31,191 @@ function createRemap(
     return remap
 }
 
-function traceMutation(array, operationContext) {
-    const operations = []
-    const deleted = new Set()
-    let sourceLength = arrayViews.logicalArrayLength(array, operationContext)
-    const remap = new Array(sourceLength)
-    const working = new Proxy(remap, {
-        has(target, key) {
-            if (!arrayViews.isArrayIndex(key)) {
-                return Reflect.has(target, key)
-            }
-            if (Object.hasOwn(target, key)) return true
-            if (deleted.has(key) || Number(key) >= sourceLength) return false
-            return languageProperties.hasLanguageProperty(array, key, operationContext)
-        },
-        get(target, key, receiver) {
-            if (!arrayViews.isArrayIndex(key)) {
-                return Reflect.get(target, key, receiver)
-            }
-            if (Object.hasOwn(target, key)) return target[key]
-            if (deleted.has(key) || Number(key) >= sourceLength) return undefined
-            // Assignment could invoke an inherited numeric setter.
-            const placement = propertyVersions.getPropertyPlacement(
-                array,
-                key,
-                operationContext,
-            )
-            if (placement) languageProperties.writeLanguageProperty(
-                target,
-                key,
-                placement,
-                operationContext,
-            )
-            return placement
-        },
-        set(target, key, value) {
-            if (key === "length") {
-                record({ kind: KIND_LENGTH, value })
-                sourceLength = Math.min(sourceLength, value)
-            } else if (arrayViews.isArrayIndex(key)) {
-                record(createPlacementOperation(value, Number(key)))
-            }
-            return Reflect.set(target, key, value, target)
-        },
-        deleteProperty(target, key) {
-            if (arrayViews.isArrayIndex(key)) {
-                deleted.add(key)
-                record({
-                    kind: KIND_DELETE,
-                    index: Number(key),
-                })
-            }
-            return Reflect.deleteProperty(target, key)
-        },
-    })
-    return { remap, working, operations }
+class ArrayMutation {
+    #array
+    #operationContext
+    // Present for a traced partial remap that must be replayed against the
+    // source; absent when the supplied remap is already complete.
+    #operations
 
-    function record(operation) {
-        languageProperties.writeLanguageProperty(
-            operations,
-            String(operations.length),
-            operation,
+    constructor(array, remap, operationContext, operations = undefined) {
+        this.#array = array
+        this.#operationContext = operationContext
+        this.#operations = operations
+        this.remap = remap
+        this.working = remap
+    }
+
+    static trace(array, operationContext) {
+        const operations = []
+        const deleted = new Set()
+        let sourceLength = arrayViews.logicalArrayLength(array, operationContext)
+        const remap = new Array(sourceLength)
+        const mutation = new ArrayMutation(
+            array,
+            remap,
             operationContext,
+            operations,
         )
+        mutation.working = new Proxy(remap, {
+            has(target, key) {
+                if (!arrayViews.isArrayIndex(key)) {
+                    return Reflect.has(target, key)
+                }
+                if (Object.hasOwn(target, key)) return true
+                if (deleted.has(key) || Number(key) >= sourceLength) return false
+                return languageProperties.hasLanguageProperty(
+                    array,
+                    key,
+                    operationContext,
+                )
+            },
+            get(target, key, receiver) {
+                if (!arrayViews.isArrayIndex(key)) {
+                    return Reflect.get(target, key, receiver)
+                }
+                if (Object.hasOwn(target, key)) return target[key]
+                if (deleted.has(key) || Number(key) >= sourceLength) {
+                    return undefined
+                }
+                // Assignment could invoke an inherited numeric setter.
+                const placement = propertyVersions.getPropertyPlacement(
+                    array,
+                    key,
+                    operationContext,
+                )
+                if (placement) languageProperties.writeLanguageProperty(
+                    target,
+                    key,
+                    placement,
+                    operationContext,
+                )
+                return placement
+            },
+            set(target, key, value) {
+                if (key === "length") {
+                    record({ kind: KIND_LENGTH, value })
+                    sourceLength = Math.min(sourceLength, value)
+                } else if (arrayViews.isArrayIndex(key)) {
+                    record(createPlacementOperation(value, Number(key)))
+                }
+                return Reflect.set(target, key, value, target)
+            },
+            deleteProperty(target, key) {
+                if (arrayViews.isArrayIndex(key)) {
+                    deleted.add(key)
+                    record({
+                        kind: KIND_DELETE,
+                        index: Number(key),
+                    })
+                }
+                return Reflect.deleteProperty(target, key)
+            },
+        })
+        return mutation
+
+        function record(operation) {
+            languageProperties.writeLanguageProperty(
+                operations,
+                String(operations.length),
+                operation,
+                operationContext,
+            )
+        }
+    }
+
+    requiresCopy() {
+        // ArrayView receivers are materialized or handled by a view transition
+        // before this preflight; this method considers only the native Array.
+        const operations = this.#operations ?? operationsForRemap(this.remap)
+        for (const operation of operations) {
+            const requiresCopy = operation.kind === KIND_LENGTH
+                ? languageProperties.arrayLengthMutationRequiresCopy(
+                    this.#array,
+                    operation.value,
+                    this.#operationContext,
+                )
+                : languageProperties.propertyMutationRequiresCopy(
+                    this.#array,
+                    String(operation.kind === KIND_DELETE
+                        ? operation.index
+                        : operation.newIndex),
+                    this.#operationContext,
+                    operation.kind === KIND_DELETE,
+                )
+            if (requiresCopy) return true
+        }
+        return false
+    }
+
+    materialize() {
+        if (!this.#operations) return this.remap
+        const remap = createRemap(this.#array, this.#operationContext)
+        for (const operation of this.#operations) {
+            if (operation.kind === KIND_LENGTH) {
+                remap.length = operation.value
+            } else if (operation.kind === KIND_DELETE) {
+                delete remap[operation.index]
+            } else {
+                languageProperties.writeLanguageProperty(
+                    remap,
+                    String(operation.newIndex),
+                    operation.kind === KIND_MOVE
+                        ? operation.placement
+                        : operation.value,
+                    this.#operationContext,
+                )
+            }
+        }
+        this.remap = remap
+        return remap
+    }
+
+    apply() {
+        const operations = this.#operations ?? operationsForRemap(this.remap)
+        const placementCount = new Map()
+        this.remap.forEach(placement => {
+            if (!propertyVersions.isPropertyPlacement(placement)) return
+            placementCount.set(
+                placement,
+                (placementCount.get(placement) ?? 0) + 1,
+            )
+        })
+        for (const operation of operations) {
+            if (operation.kind === KIND_MOVE) operation.placement.captureVersion()
+        }
+
+        for (const operation of operations) {
+            if (operation.kind === KIND_LENGTH) {
+                propertyVersions.commitArrayLength(
+                    this.#array,
+                    operation.value,
+                    this.#operationContext,
+                )
+                continue
+            }
+            if (operation.kind === KIND_DELETE) {
+                propertyVersions.deleteProperty(
+                    this.#array,
+                    String(operation.index),
+                    this.#operationContext,
+                )
+                continue
+            }
+            const key = String(operation.newIndex)
+            const entry = operation.kind === KIND_MOVE
+                ? operation.placement
+                : operation.value
+            const retained = operation.kind === KIND_ADD ||
+                (placementCount.get(entry) ?? 0) > 1
+            placeEntry(
+                this.#array,
+                key,
+                entry,
+                retained,
+                this.#operationContext,
+            )
+        }
     }
 }
 
@@ -107,103 +229,12 @@ function createPlacementOperation(entry, newIndex) {
         : { kind: KIND_ADD, newIndex, value: entry }
 }
 
-function mutationRequiresCopy(array, remap, operations, operationContext) {
-    // ArrayView receivers are materialized or handled by a view transition
-    // before this preflight; this function decides only whether the selected
-    // operations fit the physical native Array receiver.
-    operations ??= operationsForRemap(remap)
-    for (const operation of operations) {
-        const requiresCopy = operation.kind === KIND_LENGTH
-            ? languageProperties.arrayLengthMutationRequiresCopy(
-                array,
-                operation.value,
-                operationContext,
-            )
-            : languageProperties.propertyMutationRequiresCopy(
-                array,
-                String(operation.kind === KIND_DELETE
-                    ? operation.index
-                    : operation.newIndex),
-                operationContext,
-                operation.kind === KIND_DELETE,
-            )
-        if (requiresCopy) return true
-    }
-    return false
-}
-
 function operationsForRemap(remap) {
     return Array.from({ length: remap.length }, (_, newIndex) => {
         return newIndex in remap
             ? createPlacementOperation(remap[newIndex], newIndex)
             : { kind: KIND_DELETE, index: newIndex }
     })
-}
-
-function materializeMutationRemap(array, operations, operationContext) {
-    const remap = createRemap(array, operationContext)
-    for (const operation of operations) {
-        if (operation.kind === KIND_LENGTH) {
-            remap.length = operation.value
-        } else if (operation.kind === KIND_DELETE) {
-            delete remap[operation.index]
-        } else {
-            languageProperties.writeLanguageProperty(
-                remap,
-                String(operation.newIndex),
-                operation.kind === KIND_MOVE
-                    ? operation.placement
-                    : operation.value,
-                operationContext,
-            )
-        }
-    }
-    return remap
-}
-
-function applyRemapToArray(array, remap, operations, operationContext) {
-    // The invocation layer calls this only for an in-place native Array.
-    // ArrayView receivers take a view transition or a materialized copy.
-    operations ??= operationsForRemap(remap)
-    const placementCount = new Map()
-    remap.forEach(placement => {
-        if (!propertyVersions.isPropertyPlacement(placement)) return
-        placementCount.set(
-            placement,
-            (placementCount.get(placement) ?? 0) + 1,
-        )
-    })
-    for (const operation of operations) {
-        if (operation.kind === KIND_MOVE) {
-            operation.placement.captureVersion()
-        }
-    }
-
-    for (const operation of operations) {
-        if (operation.kind === KIND_LENGTH) {
-            propertyVersions.commitArrayLength(
-                array,
-                operation.value,
-                operationContext,
-            )
-            continue
-        }
-        if (operation.kind === KIND_DELETE) {
-            propertyVersions.deleteProperty(
-                array,
-                String(operation.index),
-                operationContext,
-            )
-            continue
-        }
-        const key = String(operation.newIndex)
-        const entry = operation.kind === KIND_MOVE
-            ? operation.placement
-            : operation.value
-        const retained = operation.kind === KIND_ADD ||
-            (placementCount.get(entry) ?? 0) > 1
-        placeEntry(array, key, entry, retained, operationContext)
-    }
 }
 
 function createArrayFromRemap(
@@ -289,11 +320,8 @@ function placePlacement(
 }
 
 export {
-    applyRemapToArray,
+    ArrayMutation,
     createArrayFromRemap,
     createRemap,
-    materializeMutationRemap,
-    mutationRequiresCopy,
     placeRemap,
-    traceMutation,
 }

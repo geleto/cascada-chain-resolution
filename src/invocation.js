@@ -7,12 +7,16 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 
 class InvocationContext {
     open = true
+    receiverReached = false
     #argumentsAwaitingReceiverLeases
     #argumentLeases
     #receiverLeases
 
-    constructor(operationContext) {
+    constructor(operationContext, method, mutation, args) {
         this.operationContext = operationContext
+        this.method = method
+        this.mutation = mutation
+        this.args = args
         this.#argumentsAwaitingReceiverLeases = createLeaseLedger(operationContext)
         this.#argumentLeases = createLeaseLedger(operationContext)
         this.#receiverLeases = createLeaseLedger(operationContext)
@@ -22,8 +26,19 @@ class InvocationContext {
         this.releaseReceivers = this.#receiverLeases.release
     }
 
-    retainArgumentsUntilReceiverReached(args) {
-        for (const value of args) {
+    setReceiver(receiver, present, preserve = false) {
+        this.receiverReached = true
+        this.receiver = receiver
+        this.receiverPresent = present
+        this.preserveReceiver = preserve
+    }
+
+    exportArguments() {
+        return exportManyValues(this.args, this)
+    }
+
+    retainArgumentsUntilReceiverReached() {
+        for (const value of this.args) {
             if (!languageValues.isPromise(value, this.operationContext)) {
                 this.#argumentsAwaitingReceiverLeases.retain(value)
                 continue
@@ -53,6 +68,8 @@ class InvocationContext {
         this.#argumentsAwaitingReceiverLeases.release()
         this.releaseArguments()
         this.releaseReceivers()
+        this.args = undefined
+        this.receiver = undefined
     }
 }
 
@@ -70,15 +87,18 @@ function invokeHostFunction(callable, thisValue, args) {
     )
 }
 
-function getHostMethodDescription(callable, thisValue) {
+function getHostMethodDescription(callable, invocationContext) {
     return {
-        admitResult: (value, invocationContext) => imports.import(
+        admitResult: value => imports.import(
             value,
             invocationContext.operationContext,
         ),
-        invoke: args => invokeHostFunction(callable, thisValue, args),
-        prepareArguments: (args, invocationContext) =>
-            exportManyValues(args, invocationContext),
+        invoke: args => invokeHostFunction(
+            callable,
+            invocationContext.receiver,
+            args,
+        ),
+        prepareArguments: () => invocationContext.exportArguments(),
     }
 }
 
@@ -96,38 +116,35 @@ function invokeMethod(
     getMethodDescription,
     accessReceiver,
 ) {
-    const invocationContext = new InvocationContext(operationContext)
-    let receiverReached = false
+    const invocationContext = new InvocationContext(
+        operationContext,
+        method,
+        mutation,
+        args,
+    )
     const result = operationLifecycle.run(
         invocationContext,
         () => accessReceiver(invokeWithReceiver),
     )
 
-    if (!receiverReached && languageValues.isPromise(result, operationContext)) {
-        invocationContext.retainArgumentsUntilReceiverReached(args)
+    if (
+        !invocationContext.receiverReached &&
+        languageValues.isPromise(result, operationContext)
+    ) {
+        invocationContext.retainArgumentsUntilReceiverReached()
     }
     return operationLifecycle.closeWhenDone(invocationContext, result)
 
-    function invokeWithReceiver(receiver, present, mutationContext) {
-        receiverReached = true
+    function invokeWithReceiver(receiver, present, preserveReceiver = false) {
+        invocationContext.setReceiver(receiver, present, preserveReceiver)
         let methodDescription
         let preparedArguments
         try {
-            methodDescription = getMethodDescription(
-                receiver,
-                method,
-                mutation,
-                present,
-                mutationContext,
-                invocationContext,
-            )
+            methodDescription = getMethodDescription(invocationContext)
             if (languageValues.isError(methodDescription)) {
                 return methodDescription
             }
-            preparedArguments = methodDescription.prepareArguments(
-                args,
-                invocationContext,
-            )
+            preparedArguments = methodDescription.prepareArguments()
             invocationContext.retainReceiver(methodDescription.receiverToLease)
         } finally {
             invocationContext.releaseArgumentsAwaitingReceiver()
@@ -161,7 +178,6 @@ function invokeMethod(
 
                 const callResult = methodDescription.invoke(
                     readyArguments,
-                    invocationContext,
                     callable,
                 )
                 if (
@@ -172,10 +188,7 @@ function invokeMethod(
                 }
                 if (!methodDescription.admitResult) return callResult
 
-                const admittedResult = methodDescription.admitResult(
-                    callResult,
-                    invocationContext,
-                )
+                const admittedResult = methodDescription.admitResult(callResult)
                 if (languageValues.isPromise(admittedResult, operationContext)) {
                     receiverLeaseContinues = true
                 }

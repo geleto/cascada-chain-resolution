@@ -64,7 +64,7 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
                 (receiver, _prepared, mutationContext) => invokeWithReceiver(
                     receiver,
                     mutationContext.present,
-                    mutationContext,
+                    mutationContext.mustPreserveValue,
                 ),
             )
         },
@@ -72,16 +72,15 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
     )
 }
 
-function getMethodDescription(
-    receiver,
-    method,
-    mutation,
-    present,
-    mutationContext,
-    invocationContext,
-) {
+function getMethodDescription(invocationContext) {
+    const {
+        method,
+        mutation,
+        receiver,
+        receiverPresent,
+    } = invocationContext
     if (languageValues.isError(receiver)) return receiver
-    if (!present) {
+    if (!receiverPresent) {
         return errorUtils.validationError(
             "run receiver path does not exist",
         )
@@ -92,25 +91,13 @@ function getMethodDescription(
 
     const type = languageValues.typeOf(receiver, invocationContext.operationContext)
     if (type === languageValues.TYPE_ARRAY) {
-        return arrayInvocation.getArrayMethodDescription(
-            receiver,
-            method,
-            mutation,
-            mutationContext,
-            invocationContext,
-        )
+        return arrayInvocation.getArrayMethodDescription(invocationContext)
     }
     if (
         type === languageValues.TYPE_RECORD ||
         type === languageValues.TYPE_MANAGED_CLASS
     ) {
-        return managedInvocation.getManagedMethodDescription(
-            receiver,
-            method,
-            mutation,
-            mutationContext,
-            invocationContext,
-        )
+        return managedInvocation.getManagedMethodDescription(invocationContext)
     }
     if (mutation) {
         return errorUtils.validationError(
@@ -120,10 +107,7 @@ function getMethodDescription(
     if (type === languageValues.TYPE_STRING) {
         const callable = getStringMethod(method)
         if (languageValues.isError(callable)) return callable
-        return invocation.getHostMethodDescription(
-            callable,
-            receiver,
-        )
+        return invocation.getHostMethodDescription(callable, invocationContext)
     }
     return errorUtils.validationError(
         "run receiver does not support methods",

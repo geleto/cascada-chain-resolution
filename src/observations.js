@@ -22,6 +22,55 @@ class ErrorQueryContext {
         this.resolveFound = undefined
         this.visited = undefined
     }
+
+    run(chain, path, onResolved) {
+        return errorUtils.runFatal(this.operationContext, () => {
+            chain._assertOperationContext(this.operationContext)
+            return this.runTransition(() => {
+                const result = walkObservationPath(
+                    chain,
+                    path,
+                    this.operationContext,
+                    value => onResolved(value, this),
+                    error => this.fail(error),
+                )
+                return operationLifecycle.observeFatal(this, result)
+            })
+        })
+    }
+
+    runTransition(transition) {
+        return operationLifecycle.run(this, () => {
+            return errorUtils.catchUserCodeFailure(
+                transition,
+                error => this.fail(error),
+            )
+        })
+    }
+
+    found(error) {
+        if (!this.open) return
+        if (this.errors !== undefined) {
+            this.errors.add(error)
+            return
+        }
+
+        const resolve = this.resolveFound
+        operationLifecycle.close(this)
+        if (resolve) resolve(true)
+    }
+
+    fail(error) {
+        // Query reflection is neither a Boolean result nor graph Error data.
+        // An asynchronous path failure has no enclosing query transition.
+        operationLifecycle.close(this)
+        return errorUtils.reportFatalError(error)
+    }
+
+    finish(result) {
+        operationLifecycle.close(this)
+        return result
+    }
 }
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
@@ -59,13 +108,13 @@ function exportPath(chain, path, operationContext) {
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext) {
     const queryContext = new ErrorQueryContext(operationContext)
-    return runErrorQuery(chain, path, queryContext, hasErrorAtPathValue)
+    return queryContext.run(chain, path, hasErrorAtPathValue)
 }
 
 function hasErrorAtPathValue(value, queryContext) {
-    if (languageValues.isError(value)) return finishQuery(queryContext, true)
+    if (languageValues.isError(value)) return queryContext.finish(true)
     if (!languageValues.isTraversable(value, queryContext.operationContext)) {
-        return finishQuery(queryContext, false)
+        return queryContext.finish(false)
     }
     return searchForFirstError(value, queryContext)
 }
@@ -76,7 +125,7 @@ function searchForFirstError(value, queryContext) {
     const readiness = collectFencedErrorWaits(value, queryContext)
     // The fenced walk's only non-throwing close is an Error proof.
     if (!queryContext.open) return true
-    if (!readiness) return finishQuery(queryContext, false)
+    if (!readiness) return queryContext.finish(false)
 
     const foundPromise = new Promise(resolve => {
         queryContext.resolveFound = resolve
@@ -87,10 +136,7 @@ function searchForFirstError(value, queryContext) {
         operationLifecycle.continueInternal(
             queryContext,
             readiness,
-            () => runQueryTransition(
-                queryContext,
-                () => finishQuery(queryContext, false),
-            ),
+            () => queryContext.runTransition(() => queryContext.finish(false)),
         ),
     ])
 }
@@ -98,22 +144,22 @@ function searchForFirstError(value, queryContext) {
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext) {
     const queryContext = new ErrorQueryContext(operationContext, true)
-    return runErrorQuery(chain, path, queryContext, getErrorsAtPathValue)
+    return queryContext.run(chain, path, getErrorsAtPathValue)
 }
 
 function getErrorsAtPathValue(value, queryContext) {
     let readiness
     if (languageValues.isError(value)) {
-        foundQueryError(queryContext, value)
+        queryContext.found(value)
     } else if (languageValues.isTraversable(value, queryContext.operationContext)) {
         readiness = collectFencedErrorWaits(value, queryContext)
     }
-    if (!readiness) return finishErrors(queryContext)
+    if (!readiness) return queryContext.finish([...queryContext.errors])
 
     return operationLifecycle.continueInternal(
         queryContext,
         readiness,
-        () => finishErrors(queryContext),
+        () => queryContext.finish([...queryContext.errors]),
     )
 }
 
@@ -140,7 +186,7 @@ function collectFencedErrorWaits(value, queryContext) {
         const counter = refcounts.getRequiredRefCounter(node, queryContext.operationContext)
         // hasError needs only this proof; getErrors needs Error identities.
         if (queryContext.errors === undefined && counter.errorCount > 0) {
-            foundQueryError(queryContext)
+            queryContext.found()
             return
         }
         if (!counterHasErrorSearchWork(counter)) return
@@ -163,7 +209,7 @@ function collectFencedErrorWaits(value, queryContext) {
             ) {
                 walk(child)
             } else if (languageValues.isError(child)) {
-                foundQueryError(queryContext, child)
+                queryContext.found(child)
             } else if (languageValues.isPromise(child, queryContext.operationContext)) {
                 waits.push(collectPromiseErrors(node, key, child))
             } else if (languageValues.isTraversable(child, queryContext.operationContext)) {
@@ -178,9 +224,9 @@ function collectFencedErrorWaits(value, queryContext) {
             key,
             promise,
             queryContext.operationContext,
-            value => runQueryTransition(queryContext, () => {
+            value => queryContext.runTransition(() => {
                 if (languageValues.isError(value)) {
-                    foundQueryError(queryContext, value)
+                    queryContext.found(value)
                     return undefined
                 }
                 if (!languageValues.isTraversable(value, queryContext.operationContext)) {
@@ -192,59 +238,6 @@ function collectFencedErrorWaits(value, queryContext) {
         )
         return operationLifecycle.observeFatal(queryContext, result)
     }
-}
-
-function foundQueryError(queryContext, error) {
-    if (!queryContext.open) return
-    if (queryContext.errors !== undefined) {
-        queryContext.errors.add(error)
-        return
-    }
-
-    const resolve = queryContext.resolveFound
-    operationLifecycle.close(queryContext)
-    if (resolve) resolve(true)
-}
-
-function runErrorQuery(chain, path, queryContext, onResolved) {
-    return errorUtils.runFatal(queryContext.operationContext, () => {
-        chain._assertOperationContext(queryContext.operationContext)
-        return runQueryTransition(queryContext, () => {
-            const result = walkObservationPath(
-                chain,
-                path,
-                queryContext.operationContext,
-                value => onResolved(value, queryContext),
-                error => failQuery(queryContext, error),
-            )
-            return operationLifecycle.observeFatal(queryContext, result)
-        })
-    })
-}
-
-function runQueryTransition(queryContext, transition) {
-    return operationLifecycle.run(queryContext, () => {
-        return errorUtils.catchUserCodeFailure(
-            transition,
-            error => failQuery(queryContext, error),
-        )
-    })
-}
-
-function failQuery(queryContext, error) {
-    // Query reflection is neither a Boolean result nor graph Error data.
-    // An asynchronous path failure has no enclosing query transition.
-    operationLifecycle.close(queryContext)
-    return errorUtils.reportFatalError(error)
-}
-
-function finishErrors(queryContext) {
-    return finishQuery(queryContext, [...queryContext.errors])
-}
-
-function finishQuery(queryContext, result) {
-    operationLifecycle.close(queryContext)
-    return result
 }
 
 function counterHasErrorSearchWork(counter) {

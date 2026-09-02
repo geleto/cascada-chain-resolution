@@ -9,13 +9,8 @@ import {
     PASS_AS_PAYLOAD,
 } from "./array-methods.js"
 
-function getArrayMethodDescription(
-    receiver,
-    method,
-    mutation,
-    mutationContext,
-    invocationContext,
-) {
+function getArrayMethodDescription(invocationContext) {
+    const { method, mutation, receiver } = invocationContext
     const methodDefinition = ARRAY_METHODS[method]
     if (!methodDefinition) {
         return errorUtils.validationError(`Unsupported Array method: ${method}`)
@@ -29,29 +24,20 @@ function getArrayMethodDescription(
         receiverToLease: mutation ? undefined : receiver,
         leaseReceiverThroughResult: !mutation &&
             methodDefinition.leaseReceiverThroughResult,
-        prepareArguments: (args, invocationContext) =>
+        prepareArguments: () =>
             prepareArrayMethodArguments(
                 methodDefinition,
-                args,
                 invocationContext,
             ),
-        invoke(preparedArguments, invocationContext) {
+        invoke(preparedArguments) {
             if (!mutation) return invokeArrayObservationMethod(
-                receiver,
                 methodDefinition,
                 preparedArguments,
                 invocationContext,
             )
-            const sourceSurvives = mutationContext.mustPreserveValue ||
-                arrayViews.requiresArrayMaterialization(
-                    receiver,
-                    invocationContext.operationContext,
-                )
             return invokeArrayMutationMethod(
-                receiver,
                 methodDefinition,
                 preparedArguments,
-                sourceSurvives,
                 invocationContext,
             )
         },
@@ -60,11 +46,11 @@ function getArrayMethodDescription(
 
 function prepareArrayMethodArguments(
     methodDefinition,
-    args,
     invocationContext,
 ) {
+    const { args } = invocationContext
     if (methodDefinition.prepare) {
-        return methodDefinition.prepare(args, invocationContext)
+        return methodDefinition.prepare(invocationContext)
     }
 
     const inputs = methodDefinition.inputs ?? []
@@ -104,23 +90,23 @@ function prepareArrayMethodArguments(
 // view, observe, remap, and intrinsic fallback are distinct because each avoids
 // progressively more representation work.
 function invokeArrayObservationMethod(
-    thisValue,
     methodDefinition,
     preparedArgs,
     invocationContext,
 ) {
     if (methodDefinition.view) {
-        const view = methodDefinition.view(thisValue, preparedArgs, invocationContext)
+        const view = methodDefinition.view(preparedArgs, invocationContext)
         if (view !== undefined) return view
     }
     if (methodDefinition.observe) {
-        return methodDefinition.observe(thisValue, preparedArgs, invocationContext)
+        return methodDefinition.observe(preparedArgs, invocationContext)
     }
 
     let remap
     if (methodDefinition.remap) {
-        remap = methodDefinition.remap(thisValue, preparedArgs, invocationContext)
+        remap = methodDefinition.remap(preparedArgs, invocationContext)
     } else {
+        const thisValue = invocationContext.receiver
         remap = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
         const result = invocation.invokeHostFunction(
             methodDefinition.intrinsic,
@@ -141,15 +127,18 @@ function invokeArrayObservationMethod(
 }
 
 function invokeArrayMutationMethod(
-    thisValue,
     methodDefinition,
     preparedArguments,
-    sourceSurvives,
     invocationContext,
 ) {
+    const thisValue = invocationContext.receiver
+    const sourceSurvives = invocationContext.preserveReceiver ||
+        arrayViews.requiresArrayMaterialization(
+            thisValue,
+            invocationContext.operationContext,
+        )
     if (sourceSurvives && methodDefinition.view) {
         const view = methodDefinition.view(
-            thisValue,
             preparedArguments,
             invocationContext,
         )
@@ -158,7 +147,6 @@ function invokeArrayMutationMethod(
                 mutatedValue: view,
                 result: methodDefinition.mutationResult(
                     methodDefinition.viewOperationResult(
-                        thisValue,
                         view,
                         invocationContext,
                     ),
@@ -172,39 +160,35 @@ function invokeArrayMutationMethod(
     if (methodDefinition.remap) {
         return operationLifecycle.continuePrepared(
             invocationContext,
-            methodDefinition.remap(thisValue, preparedArguments, invocationContext),
-            remap => finishMutation(remap, undefined, remap),
+            methodDefinition.remap(preparedArguments, invocationContext),
+            remap => finishMutation(
+                new arrayRemaps.ArrayMutation(
+                    thisValue,
+                    remap,
+                    invocationContext.operationContext,
+                ),
+                remap,
+            ),
         )
     }
 
-    const { remap, working, operations } = arrayRemaps.traceMutation(
+    const mutation = arrayRemaps.ArrayMutation.trace(
         thisValue,
         invocationContext.operationContext,
     )
     const nativeResult = invocation.invokeHostFunction(
         methodDefinition.intrinsic,
-        working,
+        mutation.working,
         preparedArguments,
     )
-    return finishMutation(remap, operations, nativeResult)
+    return finishMutation(mutation, nativeResult)
 
-    function finishMutation(remap, operations, nativeResult) {
+    function finishMutation(mutation, nativeResult) {
         const representationCopy = sourceSurvives
             ? false
-            : arrayRemaps.mutationRequiresCopy(
-                thisValue,
-                remap,
-                operations,
-                invocationContext.operationContext,
-            )
+            : mutation.requiresCopy()
         const copiesReceiver = sourceSurvives || representationCopy
-        if (copiesReceiver && operations) {
-            remap = arrayRemaps.materializeMutationRemap(
-                thisValue,
-                operations,
-                invocationContext.operationContext,
-            )
-        }
+        if (copiesReceiver) mutation.materialize()
         const returnsReceiver = methodDefinition.mutationResult === RETURN_RECEIVER
         // Capture removed property versions before committing the receiver.
         const result = returnsReceiver
@@ -217,20 +201,13 @@ function invokeArrayMutationMethod(
 
         const mutatedValue = copiesReceiver
             ? arrayRemaps.createArrayFromRemap(
-                remap,
+                mutation.remap,
                 invocationContext.operationContext,
                 undefined,
                 sourceSurvives,
             )
             : thisValue
-        if (!copiesReceiver) {
-            arrayRemaps.applyRemapToArray(
-                thisValue,
-                remap,
-                operations,
-                invocationContext.operationContext,
-            )
-        }
+        if (!copiesReceiver) mutation.apply()
         return {
             mutatedValue,
             result: returnsReceiver ? mutatedValue : result,

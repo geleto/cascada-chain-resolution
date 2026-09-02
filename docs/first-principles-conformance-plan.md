@@ -1361,6 +1361,10 @@ Change the existing implementation at its semantic boundaries rather than adding
 - mutation and observation use their own context for path normalization, missing-path Errors, property validation, representation reflection, and publication failures. Encountering an existing Error preserves it.
 - state declarations remain the context-free host-configuration exception established in Phase 9B. Contextless declaration fatals use the explicit sentinel; ordinary declaration validation remains ordinary host-API Error behavior.
 
+### 4. Trial atomic import transactions
+
+While changing import attribution and placement versions, trial one `ImportTransaction` per synchronously reached import segment. It shares the boundary's operation context and import policy and owns Promise-placement installation, external-mutation-tree setup, staged admissions and retentions, and that segment's commit-or-discard state. Promise fulfillment starts a fresh transaction; no staged state or commit waits across settlement. The class must replace the forwarded arguments and make the segment's atomic commit visible in one place rather than wrap the existing walk. Retain it only if it removes more state and helper concepts than it adds; otherwise revert it and keep the explicit import walk.
+
 ### Verification
 
 - `isError` remains context-free and excludes `RuntimeError`; `instanceof CascadaError` is not used as the language-Error predicate.
@@ -1398,6 +1402,8 @@ Managed COW, leases, and gates cannot order exact host state. Add one compact id
 Mutation-capable external APIs are stable context resources. One identity may be stored elsewhere, but every actual use must occur through one normalized path of one context Chain. Authority is local to one execution; independently scheduled executions must not share one mutable host resource.
 
 ### Design
+
+Represent one external operation with an `ExternalOperationContext`. It owns the selected boundaries, proposed identity-use transitions, phase entries, mutation scopes, repair intent, and the current operation's outcome awaiting publication while reusing the ordinary operation context for execution and source attribution. Durable and predecessor poison remain in execution-scoped phase state; the context only references them and publishes its own outcome. Selection, invocation, and completion receive this context instead of forwarding those facts independently. It must replace the parallel arguments and temporary collections rather than wrap them or duplicate phase state.
 
 ### 1. Record actual use by identity
 

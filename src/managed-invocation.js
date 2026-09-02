@@ -1,6 +1,5 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import { exportManyValues } from "./export.js"
 import * as imports from "./import.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
@@ -11,13 +10,8 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import * as refcounts from "./refcounts.js"
 
-function getManagedMethodDescription(
-    receiver,
-    method,
-    mutation,
-    mutationContext,
-    invocationContext,
-) {
+function getManagedMethodDescription(invocationContext) {
+    const { mutation, receiver } = invocationContext
     const receiverType = languageValues.typeOf(receiver, invocationContext.operationContext)
     // Preparation resolves receiver contents but never changes its admitted type.
     const getMethod = receiverType === languageValues.TYPE_RECORD
@@ -25,23 +19,16 @@ function getManagedMethodDescription(
         : getManagedClassMethod
     return {
         leaseReceiverThroughResult: !mutation,
-        prepareArguments: (args, invocationContext) =>
-            prepareManagedReceiverAndArguments(
-                receiver,
-                args,
-                invocationContext,
-            ),
+        prepareArguments: () =>
+            prepareManagedReceiverAndArguments(invocationContext),
         getMethod: prepared => getMethod(
             prepared.receiver,
-            method,
-            invocationContext.operationContext,
+            invocationContext,
         ),
-        invoke(prepared, invocationContext, callable) {
+        invoke(prepared, callable) {
             const workingReceiver = prepareMethodReceiver(
                 prepared.receiver,
-                mutation,
                 invocationContext,
-                mutationContext?.mustPreserveValue === true,
             )
             if (languageValues.isError(workingReceiver)) {
                 return workingReceiver
@@ -63,12 +50,12 @@ function getManagedMethodDescription(
     }
 }
 
-function prepareManagedReceiverAndArguments(receiver, args, invocationContext) {
+function prepareManagedReceiverAndArguments(invocationContext) {
     return operationLifecycle.continuePreparedAll(
         invocationContext,
         [
-            resolveAndLeaseReceiverGraph(receiver, invocationContext),
-            exportManyValues(args, invocationContext),
+            resolveAndLeaseReceiverGraph(invocationContext),
+            invocationContext.exportArguments(),
         ],
         ([preparedReceiver, exportedArgs]) => ({
             receiver: preparedReceiver,
@@ -77,7 +64,8 @@ function prepareManagedReceiverAndArguments(receiver, args, invocationContext) {
     )
 }
 
-function resolveAndLeaseReceiverGraph(receiver, invocationContext) {
+function resolveAndLeaseReceiverGraph(invocationContext) {
+    const { receiver } = invocationContext
     const preparation = {
         errors: new Set(),
         receiver: undefined,
@@ -204,18 +192,19 @@ function combineReadiness(invocationContext, waits) {
 }
 
 // Common dispatch rejects `constructor` before either managed policy runs.
-function getManagedRecordMethod(receiver, method, operationContext) {
+function getManagedRecordMethod(receiver, invocationContext) {
     const callable = languageProperties.readLanguageProperty(
         receiver,
-        method,
-        operationContext,
+        invocationContext.method,
+        invocationContext.operationContext,
     )
     return typeof callable === "function"
         ? callable
-        : invocation.methodNotCallableError(method)
+        : invocation.methodNotCallableError(invocationContext.method)
 }
 
-function getManagedClassMethod(receiver, method, operationContext) {
+function getManagedClassMethod(receiver, invocationContext) {
+    const { method, operationContext } = invocationContext
     if (languageProperties.hasLanguageProperty(receiver, method, operationContext)) {
         return errorUtils.validationError(
             `Cannot call ${method} because an own data property ` +
@@ -254,19 +243,16 @@ function getManagedClassMethod(receiver, method, operationContext) {
 // Mutation isolation copies complete protected subgraphs before arbitrary writes.
 function prepareMethodReceiver(
     receiver,
-    mutation,
     invocationContext,
-    preserveReceiver,
 ) {
     return errorUtils.catchUserCodeFailure(
         () => {
-            if (!mutation) {
+            if (!invocationContext.mutation) {
                 return materializeObservationReceiver(receiver, invocationContext)
             }
             invocationContext.releaseReceivers()
             return isolateMutationReceiver(
                 receiver,
-                preserveReceiver,
                 invocationContext,
             )
         },
@@ -361,7 +347,7 @@ function materializeObservationReceiver(receiver, invocationContext) {
     }
 }
 
-function isolateMutationReceiver(receiver, preserveReceiver, invocationContext) {
+function isolateMutationReceiver(receiver, invocationContext) {
     const { operationContext } = invocationContext
     const copies = new Map()
     const placements = new Map()
@@ -389,7 +375,7 @@ function isolateMutationReceiver(receiver, preserveReceiver, invocationContext) 
         if (copies.has(source) || visited.has(source)) return
         visited.add(source)
         if (
-            (parent === undefined && preserveReceiver) ||
+            (parent === undefined && invocationContext.preserveReceiver) ||
             requiresIsolation(source, operationContext)
         ) {
             copyCompleteGraph(source, operationContext, copies)
