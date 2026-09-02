@@ -40,7 +40,7 @@ class ExportContext {
 function exportValue(value, operationContext) {
     return exportValues(
         [value],
-        operationLifecycle.createOwner(operationContext),
+        new operationLifecycle.OperationOwner(operationContext),
         firstValue,
         true,
     )
@@ -50,80 +50,80 @@ function exportManyValues(values, owner) {
     return exportValues(values, owner, keepValues, false)
 }
 
-function exportValues(values, owner, selectResult, standalone) {
+function exportValues(values, owner, resultFromValues, ownsOwner) {
     const operationContext = owner.operationContext
-    const state = new ExportContext(values.length, owner)
+    const exportContext = new ExportContext(values.length, owner)
     let result
     try {
         const readiness = values.map((value, position) =>
-            prepareValue(value, position, state))
+            prepareExportValue(value, position, exportContext))
         result = operationLifecycle.continueInternalAll(
             owner,
             readiness,
-            () => finishExport(state, selectResult),
+            () => finishExport(exportContext, resultFromValues),
         )
     } catch (error) {
-        state.release()
+        exportContext.release()
         operationLifecycle.close(owner)
         throw error
     }
     if (languageValues.isPromise(result, operationContext)) {
-        state.unregisterRelease = operationLifecycle.registerRelease(
+        exportContext.unregisterRelease = operationLifecycle.registerRelease(
             owner,
-            () => state.release(),
+            () => exportContext.release(),
         )
     }
-    return standalone
+    return ownsOwner
         ? operationLifecycle.closeWhenDone(owner, result)
         : result
 }
 
-function prepareValue(value, position, state) {
-    return operationLifecycle.resolveInitial(state.owner, value, resolved => {
-        return runExportTransition(state, position, () => {
+function prepareExportValue(value, position, exportContext) {
+    return operationLifecycle.resolveInitial(exportContext.owner, value, resolved => {
+        return runExportTransition(exportContext, position, () => {
             if (languageValues.isError(resolved)) {
-                collectError(state, position, resolved)
+                collectError(exportContext, position, resolved)
                 return undefined
             }
-            const readiness = walkValue(resolved, state, position)
-            if (state.copyBySource) {
-                state.exportedValues[position] = copiedValue(resolved, state)
+            const readiness = walkExportValue(resolved, exportContext, position)
+            if (exportContext.copyBySource) {
+                exportContext.exportedValues[position] = outputValueOf(resolved, exportContext)
             }
             return readiness
         })
     })
 }
 
-function walkValue(value, state, position) {
+function walkExportValue(value, exportContext, position) {
     if (languageValues.isError(value)) {
-        collectError(state, position, value)
+        collectError(exportContext, position, value)
         return undefined
     }
-    if (!languageValues.isTraversable(value, state.owner.operationContext)) {
+    if (!languageValues.isTraversable(value, exportContext.owner.operationContext)) {
         return undefined
     }
 
-    const visited = state.visited[position]
+    const visited = exportContext.visited[position]
     if (visited.has(value)) return undefined
     visited.add(value)
 
-    if (state.copyBySource && !state.copyBySource.has(value)) {
+    if (exportContext.copyBySource && !exportContext.copyBySource.has(value)) {
         const output = runExportStep(
-            state,
+            exportContext,
             position,
-            () => createOutput(value, state.owner.operationContext),
+            () => createOutputContainer(value, exportContext.owner.operationContext),
         )
         if (!languageValues.isError(output)) {
-            state.copyBySource.set(value, output)
+            exportContext.copyBySource.set(value, output)
         }
     }
 
     const keys = runExportStep(
-        state,
+        exportContext,
         position,
         () => languageProperties.enumerableLanguageKeys(
             value,
-            state.owner.operationContext,
+            exportContext.owner.operationContext,
         ),
     )
     if (languageValues.isError(keys)) return undefined
@@ -131,97 +131,97 @@ function walkValue(value, state, position) {
     const waits = []
     for (const key of keys) {
         const child = runExportStep(
-            state,
+            exportContext,
             position,
             () => languageProperties.readLanguageProperty(
                 value,
                 key,
-                state.owner.operationContext,
+                exportContext.owner.operationContext,
             ),
         )
         if (languageValues.isError(child)) continue
-        if (languageValues.isPromise(child, state.owner.operationContext)) {
+        if (languageValues.isPromise(child, exportContext.owner.operationContext)) {
             // Reserve the key before settlement can reorder it.
-            if (state.copyBySource) writeOutput(
-                state.copyBySource.get(value),
+            if (exportContext.copyBySource) writeOutputProperty(
+                exportContext.copyBySource.get(value),
                 key,
                 undefined,
             )
             const readiness = runExportStep(
-                state,
+                exportContext,
                 position,
-                () => walkPromise(value, key, child, state, position),
+                () => walkExportPromise(value, key, child, exportContext, position),
             )
             if (!languageValues.isError(readiness)) waits.push(readiness)
             continue
         }
 
-        const readiness = walkValue(child, state, position)
-        if (state.copyBySource) writeOutput(
-            state.copyBySource.get(value),
+        const readiness = walkExportValue(child, exportContext, position)
+        if (exportContext.copyBySource) writeOutputProperty(
+            exportContext.copyBySource.get(value),
             key,
-            copiedValue(child, state),
+            outputValueOf(child, exportContext),
         )
         if (readiness) waits.push(readiness)
     }
     return waits.length === 0
         ? undefined
         : operationLifecycle.continueInternal(
-            state.owner,
+            exportContext.owner,
             Promise.all(waits),
             () => undefined,
         )
 }
 
-function runExportStep(state, position, step) {
+function runExportStep(exportContext, position, step) {
     // Only the exact user-code boundary becomes language Error data.
     const result = errorUtils.catchUserCodeFailure(step, error => error)
-    if (languageValues.isError(result)) collectError(state, position, result)
+    if (languageValues.isError(result)) collectError(exportContext, position, result)
     return result
 }
 
-function walkPromise(parent, key, promise, state, position) {
+function walkExportPromise(parent, key, promise, exportContext, position) {
     const result = propertyVersions.continuePropertyValue(
         parent,
         key,
         promise,
-        state.owner.operationContext,
+        exportContext.owner.operationContext,
         value => {
-            if (!operationLifecycle.mayContinue(state.owner)) return undefined
-            return runExportTransition(state, position, () => {
-                const readiness = walkValue(value, state, position)
-                if (state.copyBySource) writeOutput(
-                    state.copyBySource.get(parent),
+            if (!operationLifecycle.mayContinue(exportContext.owner)) return undefined
+            return runExportTransition(exportContext, position, () => {
+                const readiness = walkExportValue(value, exportContext, position)
+                if (exportContext.copyBySource) writeOutputProperty(
+                    exportContext.copyBySource.get(parent),
                     key,
-                    copiedValue(value, state),
+                    outputValueOf(value, exportContext),
                 )
                 return readiness
             })
         },
     )
-    return operationLifecycle.observeFatal(state.owner, result)
+    return operationLifecycle.observeFatal(exportContext.owner, result)
 }
 
-function runExportTransition(state, position, transition) {
-    return operationLifecycle.run(state.owner, () => {
-        return runExportStep(state, position, transition)
+function runExportTransition(exportContext, position, transition) {
+    return operationLifecycle.run(exportContext.owner, () => {
+        return runExportStep(exportContext, position, transition)
     })
 }
 
-function createOutput(value, operationContext) {
+function createOutputContainer(value, operationContext) {
     const meta = metadata.requireMeta(value, operationContext)
     return meta.type === metadata.TYPE_ARRAY
         ? new Array(arrayViews.logicalArrayLength(value, operationContext))
         : Object.create(meta.admittedPrototype)
 }
 
-function copiedValue(value, state) {
-    return languageValues.isTraversable(value, state.owner.operationContext)
-        ? state.copyBySource.get(value)
+function outputValueOf(value, exportContext) {
+    return languageValues.isTraversable(value, exportContext.owner.operationContext)
+        ? exportContext.copyBySource.get(value)
         : value
 }
 
-function writeOutput(parent, key, value) {
+function writeOutputProperty(parent, key, value) {
     // Never let an inherited __proto__ setter change the copy's prototype.
     Object.defineProperty(parent, key, {
         value,
@@ -231,28 +231,28 @@ function writeOutput(parent, key, value) {
     })
 }
 
-function collectError(state, position, error) {
-    const errors = state.collectedErrors[position] ??= new Set()
+function collectError(exportContext, position, error) {
+    const errors = exportContext.collectedErrors[position] ??= new Set()
     errors.add(error)
-    state.discardCopies()
+    exportContext.discardCopies()
 }
 
-function finishExport(state, selectResult) {
-    const errors = state.collectedErrors
+function finishExport(exportContext, resultFromValues) {
+    const errors = exportContext.collectedErrors
         .map(errors => errors && errorUtils.combineErrors(
             errors,
             "export: branch contains errors",
         ))
         .filter(languageValues.isError)
-    const exportedValues = state.exportedValues
-    state.release()
+    const exportedValues = exportContext.exportedValues
+    exportContext.release()
     if (errors.length > 0) {
         return errorUtils.combineErrors(
             errors,
             "Operation received multiple Errors",
         )
     }
-    return selectResult(exportedValues)
+    return resultFromValues(exportedValues)
 }
 
 export { exportManyValues, exportValue }

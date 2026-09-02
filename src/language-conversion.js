@@ -14,7 +14,7 @@ function toStringValue(value, ancestry, operation) {
     return operationLifecycle.continuePrepared(
         operation,
         toPrimitiveValue(value, ancestry, operation),
-        primitive => invocation.invokeDataFunction(
+        primitive => invocation.invokeHostFunction(
             stringConcat,
             "",
             [primitive],
@@ -129,7 +129,7 @@ function joinLogicalArray(
     return operationLifecycle.continuePreparedAll(
         operation,
         conversions,
-        values => invocation.invokeDataFunction(
+        values => invocation.invokeHostFunction(
             arrayJoin,
             values,
             [separator],

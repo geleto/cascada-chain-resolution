@@ -98,7 +98,7 @@ function managedState(value) {
                 return undefined
             }
 
-            for (const descriptor of declarationProperties(identity)) {
+            for (const descriptor of getDeclarationChildDescriptors(identity)) {
                 const childFailure = walk(descriptor.value)
                 if (childFailure) return childFailure
             }
@@ -177,7 +177,7 @@ function declarationBoundary(fn) {
     return errorUtils.runContextlessFatal(fn)
 }
 
-function declarationProperties(value) {
+function getDeclarationChildDescriptors(value) {
     const descriptors = []
     const array = errorUtils.runUserCode(() => Array.isArray(value))
     for (const key of errorUtils.runUserCode(() => Reflect.ownKeys(value))) {

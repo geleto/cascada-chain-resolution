@@ -4,17 +4,16 @@ import * as resolution from "./resolution.js"
 
 const ignore = () => {}
 
-function createOwner(operationContext, state = {}) {
-    state.operationContext = operationContext
-    state.open = true
-    state.close = closeDefaultOwner
-    return state
-}
+class OperationOwner {
+    open = true
 
-// Installed as owner.close(), so `this` is that owner. Sharing this method
-// avoids allocating one closure per owner.
-function closeDefaultOwner() {
-    this.open = false
+    constructor(operationContext) {
+        this.operationContext = operationContext
+    }
+
+    close() {
+        this.open = false
+    }
 }
 
 // An owner supplies `open` and idempotent `close()`. Existing operation-work
@@ -207,7 +206,7 @@ export {
     continueInternalAll,
     continuePrepared,
     continuePreparedAll,
-    createOwner,
+    OperationOwner,
     mayContinue,
     observeFatal,
     registerRelease,

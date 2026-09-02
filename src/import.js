@@ -12,21 +12,26 @@ function importManagedMutationResult(value, operationContext) {
     return importData(value, operationContext, true)
 }
 
-function importContext(value, operationContext, externalTreeSetup) {
-    return importData(value, operationContext, false, externalTreeSetup)
+function importContext(value, operationContext, externalMutationTreeSetup) {
+    return importData(value, operationContext, false, externalMutationTreeSetup)
 }
 
-function importData(value, operationContext, shareGraph, externalTreeSetup = undefined) {
+function importData(
+    value,
+    operationContext,
+    shareAdmittedGraph,
+    externalMutationTreeSetup = undefined,
+) {
     return errorUtils.runFatal(operationContext, () => {
         if (!metadata.isObjectLike(value)) return value
         const importBoundary = { errorContext: operationContext.errorContext }
-        if (shareGraph) importBoundary.shareGraph = true
+        if (shareAdmittedGraph) importBoundary.shareAdmittedGraph = true
         if (!languageValues.isPromise(value, operationContext)) {
             return propertyVersions.prepareImportedValue(
                 value,
                 operationContext,
                 importBoundary,
-                externalTreeSetup,
+                externalMutationTreeSetup,
             )
         }
         return languageValues.continuePromise(

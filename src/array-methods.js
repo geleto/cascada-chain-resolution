@@ -20,7 +20,7 @@ const arraySort = Array.prototype.sort
 // captured intrinsic on a property remap. mutationResult is absent for pure
 // observations, RETURN_RECEIVER for receiver-returning mutators, or a result
 // publisher. viewOperationResult reconstructs a view mutation's result.
-// leaseReceiverThroughResult protects origins captured by delayed observations.
+// leaseReceiverThroughResult protects placements captured by delayed observations.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 const ARRAY_METHODS = {
     __proto__: null,
@@ -61,7 +61,7 @@ const ARRAY_METHODS = {
         intrinsic: Array.prototype.pop,
         mutationResult: publishElement,
         view: tryPopArrayView,
-        viewOperationResult: getLastElementOrigin,
+        viewOperationResult: getLastElementPlacement,
     },
     push: {
         intrinsic: Array.prototype.push,
@@ -78,13 +78,13 @@ const ARRAY_METHODS = {
         intrinsic: Array.prototype.shift,
         mutationResult: publishElement,
         view: tryShiftArrayView,
-        viewOperationResult: getFirstElementOrigin,
+        viewOperationResult: getFirstElementPlacement,
     },
     slice: { inputs: [numericInput, numericInput], observe: slice },
     sort: {
         leaseReceiverThroughResult: true,
         prepare: prepareSortArguments,
-        remap: prepareAndSortAndRemap,
+        remap: prepareSortedRemap,
         mutationResult: RETURN_RECEIVER,
     },
     splice: {
@@ -180,14 +180,14 @@ function publishArray(remap, sourceSurvives, invocationContext) {
 
 function transferElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
-        ? propertyVersions.resolvePropertyValue(element)
+        ? element.resolveValue()
         : element
     return operationLifecycle.continueInternal(invocationContext, result, value => value)
 }
 
 function retainElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
-        ? propertyVersions.resolvePropertyValue(element)
+        ? element.resolveValue()
         : element
     return operationLifecycle.continueInternal(
         invocationContext,
@@ -199,7 +199,7 @@ function retainElement(element, invocationContext) {
     )
 }
 
-function getFirstElementOrigin(thisValue, _view, invocationContext) {
+function getFirstElementPlacement(thisValue, _view, invocationContext) {
     return propertyVersions.getPropertyPlacement(
         thisValue,
         "0",
@@ -207,7 +207,7 @@ function getFirstElementOrigin(thisValue, _view, invocationContext) {
     )
 }
 
-function getLastElementOrigin(thisValue, _view, invocationContext) {
+function getLastElementPlacement(thisValue, _view, invocationContext) {
     const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     return length === 0
         ? undefined
@@ -243,12 +243,12 @@ function prepareConcatArguments(args, invocationContext) {
 
 function captureRemap(array, operationContext) {
     const remap = arrayRemaps.createRemap(array, operationContext)
-    remap.forEach(propertyVersions.capturePropertyVersion)
+    remap.forEach(placement => placement?.captureVersion())
     return remap
 }
 
 function createConcatRemap(thisValue, parts, invocationContext) {
-    return invocation.invokeDataFunction(
+    return invocation.invokeHostFunction(
         arrayConcat,
         captureRemap(thisValue, invocationContext.operationContext),
         parts,
@@ -260,7 +260,7 @@ function flatRemap(thisValue, [depth = 1], invocationContext) {
     return operationLifecycle.continuePrepared(
         invocationContext,
         prepareFlatArray(thisValue, depth, undefined, invocationContext),
-        prepared => invocation.invokeDataFunction(
+        prepared => invocation.invokeHostFunction(
             arrayFlat,
             prepared,
             [depth],
@@ -284,10 +284,10 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
         ? { array, parent: ancestry }
         : undefined
     for (let index = 0; index < source.length; index++) {
-        const origin = source[index]
-        if (!origin) continue
+        const placement = source[index]
+        if (!placement) continue
         const prepared = prepareFlatProperty(
-            origin,
+            placement,
             depth,
             nestedAncestry,
             invocationContext,
@@ -309,14 +309,14 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
     })
 }
 
-function prepareFlatProperty(origin, depth, ancestry, invocationContext) {
-    if (depth === 0) return origin
+function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
+    if (depth === 0) return placement
     return operationLifecycle.continueInternal(
         invocationContext,
-        propertyVersions.resolvePropertyValue(origin),
+        placement.resolveValue(),
         value => arrayViews.isLogicalArray(value, invocationContext.operationContext)
             ? prepareFlatArray(value, depth - 1, ancestry, invocationContext)
-            : origin,
+            : placement,
     )
 }
 
@@ -356,10 +356,10 @@ function prepareSortArguments(args, invocationContext) {
 }
 
 function prepareToSortedRemap(thisValue, comparator, invocationContext) {
-    return prepareAndSortAndRemap(thisValue, comparator, invocationContext, true)
+    return prepareSortedRemap(thisValue, comparator, invocationContext, true)
 }
 
-function prepareAndSortAndRemap(
+function prepareSortedRemap(
     thisValue,
     comparator,
     invocationContext,
@@ -367,20 +367,20 @@ function prepareAndSortAndRemap(
 ) {
     const source = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
     const records = []
-    for (const origin of source) {
-        if (!origin) continue
+    for (const placement of source) {
+        if (!placement) continue
         records.push(operationLifecycle.continueInternal(
             invocationContext,
-            propertyVersions.resolvePropertyValue(origin),
-            value => ({ origin, value }),
+            placement.resolveValue(),
+            value => ({ placement, value }),
         ))
     }
     return operationLifecycle.continueInternalAll(invocationContext, records, ready => {
         const sortable = []
-        const undefinedOrigins = []
+        const undefinedPlacements = []
         for (const record of ready) {
             if (record.value === undefined) {
-                undefinedOrigins.push(record.origin)
+                undefinedPlacements.push(record.placement)
             } else {
                 sortable.push(record)
             }
@@ -393,7 +393,7 @@ function prepareAndSortAndRemap(
         function finish(sorted) {
             return finishSortedRemap(
                 sorted,
-                undefinedOrigins,
+                undefinedPlacements,
                 denseHoles,
                 source.length,
             )
@@ -441,7 +441,7 @@ function prepareAndSortRecords(sortable, comparator, invocationContext, finish) 
 }
 
 function sortRecords(sortable, compare, finish) {
-    const sorted = invocation.invokeDataFunction(
+    const sorted = invocation.invokeHostFunction(
         arraySort,
         sortable,
         [compare],
@@ -451,14 +451,14 @@ function sortRecords(sortable, compare, finish) {
 
 function finishSortedRemap(
     sorted,
-    undefinedOrigins,
+    undefinedPlacements,
     denseHoles,
     length,
 ) {
     const remap = new Array(length)
     let index = 0
-    for (const record of sorted) remap[index++] = record.origin
-    for (const origin of undefinedOrigins) remap[index++] = origin
+    for (const record of sorted) remap[index++] = record.placement
+    for (const placement of undefinedPlacements) remap[index++] = placement
     if (denseHoles) {
         while (index < length) remap[index++] = undefined
     }
@@ -472,7 +472,7 @@ function comparePreparedKeys(left, right) {
 }
 
 function compareExported(comparator, left, right, operationContext) {
-    const result = invocation.invokeDataFunction(
+    const result = invocation.invokeHostFunction(
         comparator,
         undefined,
         [left, right],
@@ -676,7 +676,7 @@ function deriveArrayView(thisValue, start, end, operationContext) {
 }
 
 function tryConcatArrayView(thisValue, parts, invocationContext) {
-    const suffix = invocation.invokeDataFunction(arrayConcat, [], parts)
+    const suffix = invocation.invokeHostFunction(arrayConcat, [], parts)
     return tryAppendArrayView(thisValue, suffix, invocationContext)
 }
 

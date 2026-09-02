@@ -456,6 +456,6 @@ are validation Errors and are never awaited.
 A `sort` or `toSorted` comparator remains executable control outside the graph.
 When comparison is possible, the wrapper exports every sortable value as one
 dense snapshot, preserving aliases and cycles across calls, then sorts internal
-origin records. The comparator may mutate or retain exported managed copies but
+placement records. The comparator may mutate or retain exported managed copies but
 must treat exact Functions and external identities as read-only. It must return
 a synchronous Number; an Error, Promise, or other result aborts sorting.

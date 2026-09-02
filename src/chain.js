@@ -12,22 +12,22 @@ class Chain {
     ) {
         errorUtils.runFatal(operationContext, () => {
             languageValues.admitValue(initialValue, operationContext)
-            const state = { value: initialValue }
+            const rootState = { value: initialValue }
             languageValues.admitReadyValue(
-                state,
+                rootState,
                 operationContext,
                 languageValues.TYPE_RECORD,
                 Object.prototype,
             )
             if (languageValues.isPromise(initialValue, operationContext)) {
                 propertyVersions.getOrCreatePromiseMirror(
-                    state,
+                    rootState,
                     "value",
                     initialValue,
                     operationContext,
                 )
             }
-            this._state = state
+            this._state = rootState
             this._execution = operationContext.execution
             // Entry-only tri-state: absent on ordinary Chains, false for a
             // read-only entry, and true for a mutable entry.
@@ -73,20 +73,20 @@ class ContextChain extends Chain {
         scopeMutationPaths = [],
         propertyMutationPaths = [],
     ) {
-        const externalTreeSetup = {
+        const externalMutationTreeSetup = {
             scopeMutationPaths,
             propertyMutationPaths,
         }
-        const imported = importContext(
+        const importedValue = importContext(
             initialValue,
             operationContext,
-            externalTreeSetup,
+            externalMutationTreeSetup,
         )
         super(
-            imported,
+            importedValue,
             operationContext,
             undefined,
-            externalTreeSetup.externalMutationTree,
+            externalMutationTreeSetup.externalMutationTree,
         )
     }
 }

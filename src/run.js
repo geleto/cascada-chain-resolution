@@ -18,25 +18,25 @@ function run(chain, path, method, args, operationContext, facts) {
         args = [...args]
         const mutation = mutationScopeDepth !== undefined
 
-        return invocation.invokeCall(
+        return invocation.invokeMethod(
             operationContext,
             method,
             mutation,
             args,
             getMethodDescription,
-            invokeReceiver => mutation
-                ? runMutation(chain, path, operationContext, invokeReceiver)
+            invokeWithReceiver => mutation
+                ? runMutation(chain, path, operationContext, invokeWithReceiver)
                 : walkObservationPath(
                     chain,
                     path,
                     operationContext,
-                    invokeReceiver,
+                    invokeWithReceiver,
                 ),
         )
     })
 }
 
-function runMutation(chain, path, operationContext, invokeReceiver) {
+function runMutation(chain, path, operationContext, invokeWithReceiver) {
     return walkMutationPath(
         chain,
         path,
@@ -61,7 +61,7 @@ function runMutation(chain, path, operationContext, invokeReceiver) {
                 target.attachmentRoot,
                 operationContext,
                 () => undefined,
-                (receiver, _prepared, mutationContext) => invokeReceiver(
+                (receiver, _prepared, mutationContext) => invokeWithReceiver(
                     receiver,
                     mutationContext.present,
                     mutationContext,

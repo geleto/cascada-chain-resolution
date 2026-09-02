@@ -15,7 +15,7 @@ function enter(chain, path, operationContext, entryMutable, onEntered) {
     return errorUtils.runFatal(operationContext, () => {
         chain._assertOperationContext(operationContext)
         path = [...path]
-        const externalMutationTree = chain._externalMutationTree?.branch(path)
+        const externalMutationTree = chain._externalMutationTree?.findBranch(path)
         const enterOperation = entryMutable ? enterMutating : enterReadOnly
         return enterOperation(
             chain,
@@ -28,15 +28,15 @@ function enter(chain, path, operationContext, entryMutable, onEntered) {
 }
 
 function runEnteredCallback(
-    callback,
-    entered,
+    onEntered,
+    enteredChain,
     operationContext,
     onFulfilled,
     onRejected,
 ) {
     let result
     try {
-        result = callback(entered)
+        result = onEntered(enteredChain)
     } catch (error) {
         onRejected(error)
         throw error
@@ -65,7 +65,7 @@ function enterReadOnly(
     return walkObservationPath(chain, path, operationContext, value => {
         if (languageValues.isError(value)) return value
 
-        const entered = new Chain(
+        const enteredChain = new Chain(
             value,
             operationContext,
             false,
@@ -76,7 +76,7 @@ function enterReadOnly(
             operationContext,
         )
         const close = () => {
-            entered._closeEntry()
+            enteredChain._closeEntry()
             if (leased) metadata.decrementReadLease(
                 value,
                 operationContext,
@@ -84,7 +84,7 @@ function enterReadOnly(
         }
         return runEnteredCallback(
             onEntered,
-            entered,
+            enteredChain,
             operationContext,
             result => {
                 close()
@@ -102,7 +102,7 @@ function enterMutating(
     onEntered,
     externalMutationTree,
 ) {
-    let entered
+    let enteredChain
     let resolveGate
 
     return walkMutationPath(
@@ -128,7 +128,7 @@ function enterMutating(
                 key,
                 operationContext,
             )
-            const privateChain = new Chain(
+            enteredChain = new Chain(
                 value,
                 operationContext,
                 true,
@@ -163,7 +163,7 @@ function enterMutating(
                 propertyVersions.placePromiseVersion(
                     sourceMirror,
                     value,
-                    privateChain._state,
+                    enteredChain._state,
                     "value",
                     operationContext,
                     Boolean(attachmentRoot),
@@ -171,22 +171,20 @@ function enterMutating(
             } else if (attachmentRoot) {
                 metadata.markShared(value, operationContext)
             }
-
-            entered = privateChain
         },
         entryError => {
             if (entryError) return entryError
             const close = () => {
-                entered._closeEntry()
+                enteredChain._closeEntry()
             }
             return runEnteredCallback(
                 onEntered,
-                entered,
+                enteredChain,
                 operationContext,
                 result => {
                     close()
                     publishEnteredValue(
-                        entered._state,
+                        enteredChain._state,
                         resolveGate,
                         operationContext,
                     )
@@ -199,9 +197,9 @@ function enterMutating(
     )
 }
 
-function publishEnteredValue(state, resolveGate, operationContext) {
+function publishEnteredValue(rootState, resolveGate, operationContext) {
     const value = languageProperties.readLanguageProperty(
-        state,
+        rootState,
         "value",
         operationContext,
     )
@@ -211,9 +209,13 @@ function publishEnteredValue(state, resolveGate, operationContext) {
     }
 
     // Registration happens only after callback issuance has stopped. The root
-    // mirror and all earlier private commands therefore update state.value
+    // mirror and all earlier private commands therefore update rootState.value
     // first in the same canonical FIFO batch.
-    const mirror = propertyVersions.getPromiseMirror(state, "value", operationContext)
+    const mirror = propertyVersions.getPromiseMirror(
+        rootState,
+        "value",
+        operationContext,
+    )
     if (!mirror) {
         // Preserve publication ordering for corrupt raw Promise state: issuance
         // is already closed; report the invariant failure from this FIFO slot.

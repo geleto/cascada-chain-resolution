@@ -58,38 +58,38 @@ function exportPath(chain, path, operationContext) {
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext) {
-    const query = new ErrorQueryContext(operationContext)
-    return runErrorQuery(chain, path, query, hasErrorAtPathValue)
+    const queryContext = new ErrorQueryContext(operationContext)
+    return runErrorQuery(chain, path, queryContext, hasErrorAtPathValue)
 }
 
-function hasErrorAtPathValue(value, query) {
-    if (languageValues.isError(value)) return finishQuery(query, true)
-    if (!languageValues.isTraversable(value, query.operationContext)) {
-        return finishQuery(query, false)
+function hasErrorAtPathValue(value, queryContext) {
+    if (languageValues.isError(value)) return finishQuery(queryContext, true)
+    if (!languageValues.isTraversable(value, queryContext.operationContext)) {
+        return finishQuery(queryContext, false)
     }
-    return searchForFirstError(value, query)
+    return searchForFirstError(value, queryContext)
 }
 
 // The first discovered Error becomes a synchronous true, an unfindable one
 // false, and a pending frontier a first-error-versus-completion race.
-function searchForFirstError(value, query) {
-    const readiness = collectFencedErrorWaits(value, query)
+function searchForFirstError(value, queryContext) {
+    const readiness = collectFencedErrorWaits(value, queryContext)
     // The fenced walk's only non-throwing close is an Error proof.
-    if (!query.open) return true
-    if (!readiness) return finishQuery(query, false)
+    if (!queryContext.open) return true
+    if (!readiness) return finishQuery(queryContext, false)
 
     const foundPromise = new Promise(resolve => {
-        query.resolveFound = resolve
+        queryContext.resolveFound = resolve
     })
     // Every non-fatal close resolves foundPromise before readiness can finish.
     return Promise.race([
         foundPromise,
         operationLifecycle.continueInternal(
-            query,
+            queryContext,
             readiness,
             () => runQueryTransition(
-                query,
-                () => finishQuery(query, false),
+                queryContext,
+                () => finishQuery(queryContext, false),
             ),
         ),
     ])
@@ -97,50 +97,50 @@ function searchForFirstError(value, query) {
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext) {
-    const query = new ErrorQueryContext(operationContext, true)
-    return runErrorQuery(chain, path, query, getErrorsAtPathValue)
+    const queryContext = new ErrorQueryContext(operationContext, true)
+    return runErrorQuery(chain, path, queryContext, getErrorsAtPathValue)
 }
 
-function getErrorsAtPathValue(value, query) {
+function getErrorsAtPathValue(value, queryContext) {
     let readiness
     if (languageValues.isError(value)) {
-        foundQueryError(query, value)
-    } else if (languageValues.isTraversable(value, query.operationContext)) {
-        readiness = collectFencedErrorWaits(value, query)
+        foundQueryError(queryContext, value)
+    } else if (languageValues.isTraversable(value, queryContext.operationContext)) {
+        readiness = collectFencedErrorWaits(value, queryContext)
     }
-    if (!readiness) return finishErrors(query)
+    if (!readiness) return finishErrors(queryContext)
 
     return operationLifecycle.continueInternal(
-        query,
+        queryContext,
         readiness,
-        () => finishErrors(query),
+        () => finishErrors(queryContext),
     )
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
-function collectFencedErrorWaits(value, query) {
-    propertyVersions.buildRefIndex(value, query.operationContext)
-    query.visited ??= new WeakSet()
+function collectFencedErrorWaits(value, queryContext) {
+    propertyVersions.buildRefIndex(value, queryContext.operationContext)
+    queryContext.visited ??= new WeakSet()
     const waits = []
     walk(value)
     // A synchronous Error proof abandons observed waits, not an aggregate.
-    if (!query.open || waits.length === 0) return undefined
+    if (!queryContext.open || waits.length === 0) return undefined
     return operationLifecycle.continueInternal(
-        query,
+        queryContext,
         Promise.all(waits),
         () => undefined,
     )
 
     function walk(node) {
-        if (!query.open || query.visited.has(node)) return
-        query.visited.add(node)
+        if (!queryContext.open || queryContext.visited.has(node)) return
+        queryContext.visited.add(node)
 
-        const counter = refcounts.getRequiredRefCounter(node, query.operationContext)
+        const counter = refcounts.getRequiredRefCounter(node, queryContext.operationContext)
         // hasError needs only this proof; getErrors needs Error identities.
-        if (query.errors === undefined && counter.errorCount > 0) {
-            foundQueryError(query)
+        if (queryContext.errors === undefined && counter.errorCount > 0) {
+            foundQueryError(queryContext)
             return
         }
         if (!counterHasErrorSearchWork(counter)) return
@@ -148,25 +148,25 @@ function collectFencedErrorWaits(value, query) {
         const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of languageProperties.enumerableLanguageKeys(
             node,
-            query.operationContext,
+            queryContext.operationContext,
         )) {
-            if (!query.open) break
+            if (!queryContext.open) break
             const child = languageProperties.readLanguageProperty(
                 node,
                 key,
-                query.operationContext,
+                queryContext.operationContext,
             )
 
             if (
                 hasCycleCuts &&
-                refcounts.hasCycleCut(node, key, query.operationContext)
+                refcounts.hasCycleCut(node, key, queryContext.operationContext)
             ) {
                 walk(child)
             } else if (languageValues.isError(child)) {
-                foundQueryError(query, child)
-            } else if (languageValues.isPromise(child, query.operationContext)) {
+                foundQueryError(queryContext, child)
+            } else if (languageValues.isPromise(child, queryContext.operationContext)) {
                 waits.push(collectPromiseErrors(node, key, child))
-            } else if (languageValues.isTraversable(child, query.operationContext)) {
+            } else if (languageValues.isTraversable(child, queryContext.operationContext)) {
                 walk(child)
             }
         }
@@ -177,73 +177,73 @@ function collectFencedErrorWaits(value, query) {
             parent,
             key,
             promise,
-            query.operationContext,
-            value => runQueryTransition(query, () => {
+            queryContext.operationContext,
+            value => runQueryTransition(queryContext, () => {
                 if (languageValues.isError(value)) {
-                    foundQueryError(query, value)
+                    foundQueryError(queryContext, value)
                     return undefined
                 }
-                if (!languageValues.isTraversable(value, query.operationContext)) {
+                if (!languageValues.isTraversable(value, queryContext.operationContext)) {
                     return undefined
                 }
 
-                return collectFencedErrorWaits(value, query)
+                return collectFencedErrorWaits(value, queryContext)
             }),
         )
-        return operationLifecycle.observeFatal(query, result)
+        return operationLifecycle.observeFatal(queryContext, result)
     }
 }
 
-function foundQueryError(query, error) {
-    if (!query.open) return
-    if (query.errors !== undefined) {
-        query.errors.add(error)
+function foundQueryError(queryContext, error) {
+    if (!queryContext.open) return
+    if (queryContext.errors !== undefined) {
+        queryContext.errors.add(error)
         return
     }
 
-    const resolve = query.resolveFound
-    operationLifecycle.close(query)
+    const resolve = queryContext.resolveFound
+    operationLifecycle.close(queryContext)
     if (resolve) resolve(true)
 }
 
-function runErrorQuery(chain, path, query, onResolved) {
-    return errorUtils.runFatal(query.operationContext, () => {
-        chain._assertOperationContext(query.operationContext)
-        return runQueryTransition(query, () => {
+function runErrorQuery(chain, path, queryContext, onResolved) {
+    return errorUtils.runFatal(queryContext.operationContext, () => {
+        chain._assertOperationContext(queryContext.operationContext)
+        return runQueryTransition(queryContext, () => {
             const result = walkObservationPath(
                 chain,
                 path,
-                query.operationContext,
-                value => onResolved(value, query),
-                error => failQuery(query, error),
+                queryContext.operationContext,
+                value => onResolved(value, queryContext),
+                error => failQuery(queryContext, error),
             )
-            return operationLifecycle.observeFatal(query, result)
+            return operationLifecycle.observeFatal(queryContext, result)
         })
     })
 }
 
-function runQueryTransition(query, transition) {
-    return operationLifecycle.run(query, () => {
+function runQueryTransition(queryContext, transition) {
+    return operationLifecycle.run(queryContext, () => {
         return errorUtils.catchUserCodeFailure(
             transition,
-            error => failQuery(query, error),
+            error => failQuery(queryContext, error),
         )
     })
 }
 
-function failQuery(query, error) {
+function failQuery(queryContext, error) {
     // Query reflection is neither a Boolean result nor graph Error data.
     // An asynchronous path failure has no enclosing query transition.
-    operationLifecycle.close(query)
+    operationLifecycle.close(queryContext)
     return errorUtils.reportFatalError(error)
 }
 
-function finishErrors(query) {
-    return finishQuery(query, [...query.errors])
+function finishErrors(queryContext) {
+    return finishQuery(queryContext, [...queryContext.errors])
 }
 
-function finishQuery(query, result) {
-    operationLifecycle.close(query)
+function finishQuery(queryContext, result) {
+    operationLifecycle.close(queryContext)
     return result
 }
 
@@ -261,9 +261,9 @@ function walkObservationPath(
     onResolved,
     onUserCodeFailure = error => error,
 ) {
-    const state = chain._state
+    const rootState = chain._state
     const targetPath = ["value", ...path]
-    return runTraversal(() => walkFromParent(state, 0))
+    return runTraversal(() => walkFromParent(rootState, 0))
 
     function walkFromParent(parent, index) {
         const key = languageProperties.normalizePathSegment(

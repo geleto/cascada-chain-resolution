@@ -9,26 +9,26 @@ function prepareImportedData(
     operationContext,
     importBoundary,
     installPromise,
-    externalTreeSetup,
+    externalMutationTreeSetup,
 ) {
     if (!metadata.isObjectLike(root)) return root
 
-    const shareGraph = importBoundary.shareGraph === true
-    const admitted = new Map()
-    const retained = new Set()
-    const promises = []
-    let preparedTree
+    const shareAdmittedGraph = importBoundary.shareAdmittedGraph === true
+    const stagedAdmissions = new Map()
+    const stagedRetentions = new Set()
+    const promisePlacements = []
+    let preparedExternalMutationTree
     const failure = errorUtils.catchUserCodeFailure(
         () => {
             const failure = walk(root)
             if (failure) return failure
-            if (externalTreeSetup) {
-                preparedTree = ExternalMutationTree.prepare(
+            if (externalMutationTreeSetup) {
+                preparedExternalMutationTree = ExternalMutationTree.prepare(
                     root,
                     operationContext,
                     factsOf,
-                    externalTreeSetup.scopeMutationPaths,
-                    externalTreeSetup.propertyMutationPaths,
+                    externalMutationTreeSetup.scopeMutationPaths,
+                    externalMutationTreeSetup.propertyMutationPaths,
                 )
             }
             return undefined
@@ -40,7 +40,7 @@ function prepareImportedData(
         return failure
     }
 
-    for (const [value, facts] of admitted) {
+    for (const [value, facts] of stagedAdmissions) {
         metadata.getOrCreateMeta(
             value,
             operationContext,
@@ -49,23 +49,22 @@ function prepareImportedData(
         )
         metadata.markImported(value, importBoundary, operationContext)
     }
-    for (const value of retained) {
+    for (const value of stagedRetentions) {
         metadata.markShared(value, operationContext)
     }
-    for (const { owner, key, promise } of promises) {
+    for (const { owner, key, promise } of promisePlacements) {
         installPromise(owner, key, promise, importBoundary)
     }
-    if (externalTreeSetup) {
-        externalTreeSetup.externalMutationTree = preparedTree?.commit(
-            operationContext,
-        )
+    if (externalMutationTreeSetup) {
+        externalMutationTreeSetup.externalMutationTree =
+            preparedExternalMutationTree?.commit(operationContext)
     }
     return root
 
     // Tree discovery repeats the occurrence walk before commit, so it must
     // see both existing metadata and admissions staged by this import.
     function factsOf(value) {
-        return metadata.metaOf(value, operationContext) ?? admitted.get(value)
+        return metadata.metaOf(value, operationContext) ?? stagedAdmissions.get(value)
     }
 
     function walk(value) {
@@ -76,18 +75,18 @@ function prepareImportedData(
                 importBoundary.errorContext,
             )
         }
-        if (admitted.has(value) || retained.has(value)) return undefined
+        if (stagedAdmissions.has(value) || stagedRetentions.has(value)) return undefined
 
         const existing = metadata.metaOf(value, operationContext)
         if (existing) {
-            retained.add(value)
+            stagedRetentions.add(value)
             if (
-                !shareGraph ||
+                !shareAdmittedGraph ||
                 !languageValues.isTraversableType(existing.type)
             ) return undefined
         } else {
             const facts = metadata.inspectMetaFacts(value)
-            admitted.set(value, facts)
+            stagedAdmissions.set(value, facts)
             if (!languageValues.isTraversableType(facts.type)) return undefined
         }
 
@@ -100,7 +99,7 @@ function prepareImportedData(
             if (!descriptor) continue
             const child = descriptor.value
             if (languageValues.isPromise(child, operationContext)) {
-                promises.push({ owner: value, key, promise: child })
+                promisePlacements.push({ owner: value, key, promise: child })
                 continue
             }
             const childFailure = walk(child)

@@ -13,6 +13,42 @@ class PropertyPlacement {
         this.key = key
         this.operationContext = operationContext
     }
+
+    captureVersion() {
+        if (Object.hasOwn(this, "value")) return
+        const { owner, key, operationContext } = this
+        const value = languageProperties.readLanguageProperty(
+            owner,
+            key,
+            operationContext,
+        )
+        this.value = value
+        if (languageValues.isPromise(value, operationContext)) {
+            this.mirror = getOrCreatePromiseMirror(
+                owner,
+                key,
+                value,
+                operationContext,
+            )
+        }
+    }
+
+    resolveValue() {
+        this.captureVersion()
+        if (!languageValues.isPromise(this.value, this.operationContext)) {
+            return this.value
+        }
+        return continuePromiseVersion(
+            this.value,
+            this.mirror,
+            this.operationContext,
+            value => {
+                this.value = value
+                delete this.mirror
+                return value
+            },
+        )
+    }
 }
 
 function getPromiseMirror(owner, key, operationContext) {
@@ -60,7 +96,7 @@ function continuePropertyValue(owner, key, promise, operationContext, onValue) {
 }
 
 // Fix presence and key order when structure is observed; capture the value and
-// its exact version only when the operation reaches this origin.
+// its exact version only when the operation reaches this placement.
 function getPropertyPlacement(owner, key, operationContext) {
     key = String(key)
     if (!languageProperties.hasLanguageProperty(owner, key, operationContext)) {
@@ -73,38 +109,8 @@ function isPropertyPlacement(value) {
     return value instanceof PropertyPlacement
 }
 
-function capturePropertyVersion(origin) {
-    if (
-        !origin ||
-        Object.hasOwn(origin, "value")
-    ) return
-    const { owner, key, operationContext } = origin
-    const value = languageProperties.readLanguageProperty(owner, key, operationContext)
-    origin.value = value
-    if (languageValues.isPromise(value, operationContext)) {
-        origin.mirror = getOrCreatePromiseMirror(owner, key, value, operationContext)
-    }
-}
-
-function resolvePropertyValue(origin) {
-    capturePropertyVersion(origin)
-    if (!origin || !languageValues.isPromise(origin.value, origin.operationContext)) {
-        return origin?.value
-    }
-    return continuePromiseVersion(
-        origin.value,
-        origin.mirror,
-        origin.operationContext,
-        value => {
-            origin.value = value
-            delete origin.mirror
-            return value
-        },
-    )
-}
-
 function resolvePropertyValueAtKey(owner, key, operationContext) {
-    return resolvePropertyValue(getPropertyPlacement(owner, key, operationContext))
+    return getPropertyPlacement(owner, key, operationContext)?.resolveValue()
 }
 
 function getOrCreatePromiseMirror(owner, key, promise, operationContext) {
@@ -429,7 +435,7 @@ function prepareImportedValue(
     value,
     operationContext,
     importBoundary,
-    externalTreeSetup,
+    externalMutationTreeSetup,
 ) {
     return importPreparation.prepareImportedData(
         value,
@@ -442,7 +448,7 @@ function prepareImportedValue(
             operationContext,
             boundary,
         ),
-        externalTreeSetup,
+        externalMutationTreeSetup,
     )
 }
 
@@ -496,7 +502,6 @@ export {
     advancePromiseVersion,
     assignProperty,
     buildRefIndex,
-    capturePropertyVersion,
     commitArrayLength,
     continuePropertyValue,
     continuePromiseVersion,
@@ -510,6 +515,5 @@ export {
     placePromiseVersion,
     prepareImportedValue,
     prepareRetainedArrayProperties,
-    resolvePropertyValue,
     resolvePropertyValueAtKey,
 }

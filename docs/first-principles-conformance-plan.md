@@ -663,22 +663,22 @@ Implement `at` directly from the prepared index and captured property placement;
 Comparator readiness and validation precede element collection. Default and comparator sorting then share these steps:
 
 1. Capture every present property placement and resolve its top-level value through the captured version.
-2. Partition the records, in source order, into sortable non-`undefined` records and explicit-`undefined` origins. Count holes separately.
+2. Partition the records, in source order, into sortable non-`undefined` records and explicit-`undefined` placements. Count holes separately.
 3. When fewer than two sortable records remain, perform no comparison conversion, comparator export, or comparator call.
 4. Otherwise prepare only the sortable records:
    - Default sort converts each occurrence once to its logical string key.
-   - A supplied comparator creates one dense runtime Array containing all sortable values and passes it as one root to `exportValue`. Pair the exported snapshot values with the dense origin records by position.
-5. Stable-sort only the sortable origin records with a runtime comparator, then append explicit-`undefined` origins. Preserve holes for `sort`; append ordinary `undefined` values for those holes in `toSorted`.
+   - A supplied comparator creates one dense runtime Array containing all sortable values and passes it as one root to `exportManyValues`. Pair the exported snapshot values with the dense placement records by position.
+5. Stable-sort only the sortable placement records with a runtime comparator, then append explicit-`undefined` placements. Preserve holes for `sort`; append ordinary `undefined` values for those holes in `toSorted`.
 
 Exporting the dense comparator snapshot once preserves aliases and cycles across every future comparison without copying the receiver or walking its indexes twice. Keep it as one export root and one Error domain: `exportManyValues` would give each candidate a separate visited set and may repeatedly traverse an aliased graph. If export reaches an Error anywhere in the host-visible graph, abort before invoking the comparator.
 
 Comparison count intentionally determines Error consumption. With zero or one sortable record, neither default conversion nor comparator export runs, so an Error remains retained Array data. With at least two sortable records, default conversion consumes an Error as its conversion outcome, while comparator export consumes every Error it reaches before host code. This also removes the current eager conversion failure for a lone unconvertible value and matches the absence of a native comparison.
 
-The native sorter receives only internal origin records. Its wrapper passes paired exported values to the exact comparator Function with `undefined` as `this`; repeated comparisons reuse the same exported identities. The comparator runs synchronously, may mutate or retain exported managed values, treats exact Functions and external identities as read-only, and must not reenter Cascada. Phase 9E later rejects mutation-capable external identities before they reach a controlled callback; observation-only identities remain exact and read-only.
+The native sorter receives only internal placement records. Its wrapper passes paired exported values to the exact comparator Function with `undefined` as `this`; repeated comparisons reuse the same exported identities. The comparator runs synchronously, may mutate or retain exported managed values, treats exact Functions and external identities as read-only, and must not reenter Cascada. Phase 9E later rejects mutation-capable external identities before they reach a controlled callback; observation-only identities remain exact and read-only.
 
 Consume the comparator result directly without import or coercion. An Error is the callback Error outcome. A Promise or any other non-Number result is a validation Error. A ready Number, including `NaN`, reaches the sorter. The snapshot is neither the receiver nor the result; final ordering moves the original property placements.
 
-Lazy or per-comparison export cannot work because export may wait while a native comparator must return synchronously. Sorting exported values directly would lose the exact source origins for duplicates and aliases. The eager dense snapshot and origin records are therefore load-bearing, but no controlled Array method otherwise exports logical input data.
+Lazy or per-comparison export cannot work because export may wait while a native comparator must return synchronously. Sorting exported values directly would lose the exact source placements for duplicates and aliases. The eager dense snapshot and placement records are therefore load-bearing, but no controlled Array method otherwise exports logical input data.
 
 ### 5. Close abandoned Array work
 
@@ -704,7 +704,7 @@ The lifetime covers input preparation, logical conversion, recursive `flat`, sea
 - Indexes, bounds, separators, stored payload, search values, and `concat` use only their declared logical preparation. Omitted, explicit-`undefined`, and ignored extra arguments retain their native distinctions.
 - Object-valued scalar inputs follow Cascada logical conversion. External identities invoke no native conversion hook and produce a validation Error.
 - Direct `at` matches native negative, fractional, `NaN`, infinite, out-of-range, omitted, and explicit-`undefined` index behavior.
-- Identity-only Array search values are not leased. Retained payloads, captured logical Array `concat` items, and delayed `flat`, observation-mode `sort`, and `toSorted` origins remain protected until publication or failure. Resumed ordered searches keep their receiver lease.
+- Identity-only Array search values are not leased. Retained payloads, captured logical Array `concat` items, and delayed `flat`, observation-mode `sort`, and `toSorted` placements remain protected until publication or failure. Resumed ordered searches keep their receiver lease.
 - After a final result or fatal failure, late settlement performs shared bookkeeping only and no abandoned Array work. `includes` early success and recursive `flat` failure cover this outside argument preparation.
 - Controlled `concat` captures and protects each logical Array item before another item can delay publication, combines those remaps with internally wrapped retained items, enforces the Array-length limit, and neither exports retained contents nor consults their `Symbol.isConcatSpreadable` protocol.
 - Generic `splice` and specialized `flat` retain native-equivalent plain-Array results under the trusted species and primordial assumptions.
@@ -865,7 +865,7 @@ The pre-call sequence remains:
 
 A fatal failure in either preparation abandons operation-specific work in both. A language Error keeps the operation open until both finish required Error handling, then closes the combined outcome. Guarded continuations still settle shared mirrors, property versions, and refcounts after closure, but perform no further traversal, reflection, copying, or lease acquisition. The two preparations never receive separate lifetimes.
 
-Selection must also protect an argument whose root Promise fulfills before the receiver is available. In `invokeCall`, immediately after receiver traversal reports pending selection and before returning to the caller, register one guarded FIFO root-resolution continuation per Promise argument. Lease a traversable fulfillment until argument export starts; a non-traversable fulfillment is a no-op. If receiver selection starts first, normal export registration supplies the protection. Do not export or traverse arguments before receiver category selection, and release every selection lease on success or failure. If the receiver is ready and internal dispatch rejects the call, attach no argument continuation. Once receiver selection is pending, provisional root capture is required even if selection later fails; it performs no argument traversal or export.
+Selection must also protect an argument whose root Promise fulfills before the receiver is available. In `invokeMethod`, immediately after receiver traversal reports pending selection and before returning to the caller, register one guarded FIFO root-resolution continuation per Promise argument. Lease a traversable fulfillment until argument export starts; a non-traversable fulfillment is a no-op. If receiver selection starts first, normal export registration supplies the protection. Do not export or traverse arguments before receiver category selection, and release every selection lease on success or failure. If the receiver is ready and internal dispatch rejects the call, attach no argument continuation. Once receiver selection is pending, provisional root capture is required even if selection later fails; it performs no argument traversal or export.
 
 ### 2. Add managed-record method selection
 

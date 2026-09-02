@@ -157,11 +157,25 @@ class ArrayView {
         const growth = length - this.length
         if (growth > 0) {
             // The view itself is already the resolved internal projection.
-            if (!canGrowProjectedEnd(this, growth)) return false
+            if (!this.#canGrowEnd(growth)) return false
             extendPhysicalArray(this._backing, growth)
         }
         this._end = this._start + length
         return true
+    }
+
+    #canGrowEnd(count) {
+        if (count === 0) return true
+        const backingLength = physicalArrayLength(this._backing)
+        if (this._end !== backingLength) return false
+        if (backingLength + count > 0xffffffff) return false
+        if (!errorUtils.runUserCode(() => Object.isExtensible(this._backing))) {
+            return false
+        }
+        const descriptor = errorUtils.runUserCode(
+            () => Object.getOwnPropertyDescriptor(this._backing, "length"),
+        )
+        return descriptor?.writable === true
     }
 
     *[Symbol.iterator]() {
@@ -255,10 +269,10 @@ function enumerableProjectedArrayKeys(projection, start = 0, end = undefined) {
     const view = projection instanceof ArrayView ? projection : undefined
     const backing = view ? view._backing : projection
     const backingLength = physicalArrayLength(backing)
-    const origin = view ? view._start : 0
+    const offset = view ? view._start : 0
     const extent = view ? view.length : backingLength
-    start = origin + Math.max(0, start)
-    end = origin + Math.min(extent, end ?? extent)
+    start = offset + Math.max(0, start)
+    end = offset + Math.min(extent, end ?? extent)
 
     // Avoid inherited numeric setters while preserving numeric key order.
     const keys = Object.create(null)
@@ -281,26 +295,11 @@ function enumerableProjectedArrayKeys(projection, start = 0, end = undefined) {
                 () => Object.getOwnPropertyDescriptor(backing, String(index)),
             )
             if (isDataPlacement(descriptor)) {
-                keys[index - origin] = true
+                keys[index - offset] = true
             }
         }
     }
     return Object.keys(keys)
-}
-
-function canGrowProjectedEnd(projection, count) {
-    if (count === 0) return true
-    const backing = projection._backing
-    const backingLength = physicalArrayLength(backing)
-    if (projection._end !== backingLength) return false
-    if (backingLength + count > 0xffffffff) return false
-    if (!errorUtils.runUserCode(() => Object.isExtensible(backing))) {
-        return false
-    }
-    const descriptor = errorUtils.runUserCode(
-        () => Object.getOwnPropertyDescriptor(backing, "length"),
-    )
-    return descriptor?.writable === true
 }
 
 function isDataPlacement(descriptor) {

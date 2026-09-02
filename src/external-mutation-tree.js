@@ -155,7 +155,7 @@ class ExternalMutationTree {
         }
     }
 
-    branch(path) {
+    findBranch(path) {
         return this._reach(path)?.node
     }
 
@@ -170,7 +170,7 @@ class ExternalMutationTree {
             : undefined
     }
 
-    findDescendants(path) {
+    findDescendantBoundaries(path) {
         const reached = this._reach(path)
         if (!reached) return []
         if (reached.boundary && !reached.complete) {

@@ -25,11 +25,12 @@ function getManagedMethodDescription(
         : getManagedClassMethod
     return {
         leaseReceiverThroughResult: !mutation,
-        prepareInputs: (args, invocationContext) => prepareManagedInputs(
-            receiver,
-            args,
-            invocationContext,
-        ),
+        prepareArguments: (args, invocationContext) =>
+            prepareManagedReceiverAndArguments(
+                receiver,
+                args,
+                invocationContext,
+            ),
         getMethod: prepared => getMethod(
             prepared.receiver,
             method,
@@ -62,7 +63,7 @@ function getManagedMethodDescription(
     }
 }
 
-function prepareManagedInputs(receiver, args, invocationContext) {
+function prepareManagedReceiverAndArguments(receiver, args, invocationContext) {
     return operationLifecycle.continuePreparedAll(
         invocationContext,
         [
@@ -471,13 +472,13 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
 
 function invokeObservation(callable, receiver, args, operationContext) {
     return imports.import(
-        invocation.invokeDataFunction(callable, receiver, args),
+        invocation.invokeHostFunction(callable, receiver, args),
         operationContext,
     )
 }
 
 function invokeMutation(callable, receiver, args, operationContext) {
-    const result = invocation.invokeDataFunction(callable, receiver, args)
+    const result = invocation.invokeHostFunction(callable, receiver, args)
     if (result === receiver) return finishMutation(receiver, receiver, operationContext)
 
     // A mutation may detach an admitted result while retaining one of its

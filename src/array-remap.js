@@ -52,18 +52,18 @@ function traceMutation(array, operationContext) {
             if (Object.hasOwn(target, key)) return target[key]
             if (deleted.has(key) || Number(key) >= sourceLength) return undefined
             // Assignment could invoke an inherited numeric setter.
-            const origin = propertyVersions.getPropertyPlacement(
+            const placement = propertyVersions.getPropertyPlacement(
                 array,
                 key,
                 operationContext,
             )
-            if (origin) languageProperties.writeLanguageProperty(
+            if (placement) languageProperties.writeLanguageProperty(
                 target,
                 key,
-                origin,
+                placement,
                 operationContext,
             )
-            return origin
+            return placement
         },
         set(target, key, value) {
             if (key === "length") {
@@ -101,7 +101,7 @@ function createPlacementOperation(entry, newIndex) {
     return propertyVersions.isPropertyPlacement(entry)
         ? {
             kind: KIND_MOVE,
-            origin: entry,
+            placement: entry,
             newIndex,
         }
         : { kind: KIND_ADD, newIndex, value: entry }
@@ -152,7 +152,7 @@ function materializeMutationRemap(array, operations, operationContext) {
                 remap,
                 String(operation.newIndex),
                 operation.kind === KIND_MOVE
-                    ? operation.origin
+                    ? operation.placement
                     : operation.value,
                 operationContext,
             )
@@ -166,16 +166,16 @@ function applyRemapToArray(array, remap, operations, operationContext) {
     // ArrayView receivers take a view transition or a materialized copy.
     operations ??= operationsForRemap(remap)
     const placementCount = new Map()
-    remap.forEach(origin => {
-        if (!propertyVersions.isPropertyPlacement(origin)) return
+    remap.forEach(placement => {
+        if (!propertyVersions.isPropertyPlacement(placement)) return
         placementCount.set(
-            origin,
-            (placementCount.get(origin) ?? 0) + 1,
+            placement,
+            (placementCount.get(placement) ?? 0) + 1,
         )
     })
     for (const operation of operations) {
         if (operation.kind === KIND_MOVE) {
-            propertyVersions.capturePropertyVersion(operation.origin)
+            operation.placement.captureVersion()
         }
     }
 
@@ -198,7 +198,7 @@ function applyRemapToArray(array, remap, operations, operationContext) {
         }
         const key = String(operation.newIndex)
         const entry = operation.kind === KIND_MOVE
-            ? operation.origin
+            ? operation.placement
             : operation.value
         const retained = operation.kind === KIND_ADD ||
             (placementCount.get(entry) ?? 0) > 1
@@ -244,7 +244,7 @@ function placeRemap(
 
 function placeEntry(destination, key, entry, retained, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        placeOrigin(destination, key, entry, operationContext, retained)
+        placePlacement(destination, key, entry, operationContext, retained)
         return
     }
     propertyVersions.assignProperty(
@@ -256,20 +256,20 @@ function placeEntry(destination, key, entry, retained, operationContext) {
     )
 }
 
-function placeOrigin(
+function placePlacement(
     destination,
     key,
-    origin,
+    placement,
     operationContext,
     retained = true,
 ) {
-    propertyVersions.capturePropertyVersion(origin)
+    placement.captureVersion()
     const stringKey = String(key)
 
-    const value = origin.value
+    const value = placement.value
     if (languageValues.isPromise(value, operationContext)) {
         propertyVersions.placePromiseVersion(
-            origin.mirror,
+            placement.mirror,
             value,
             destination,
             stringKey,

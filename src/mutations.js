@@ -138,17 +138,16 @@ function transformProperty(
     transform,
     returnResultPromise = true,
 ) {
-    const origin = propertyVersions.getPropertyPlacement(
+    const placement = propertyVersions.getPropertyPlacement(
         parent,
         key,
         operationContext,
     )
-    propertyVersions.capturePropertyVersion(origin)
-    const operation = operationLifecycle.createOwner(operationContext, {
-        present: origin !== undefined,
-    })
+    placement?.captureVersion()
+    const operation = new operationLifecycle.OperationOwner(operationContext)
+    operation.present = placement !== undefined
     return transformValue(
-        propertyVersions.resolvePropertyValue(origin),
+        placement?.resolveValue(),
         attachmentRoot,
         prepareInput(operation),
         transform,
@@ -312,7 +311,7 @@ function assignPath(
                     undefined,
                     transformArrayLength,
                     target.replaceReceiver,
-                    operationLifecycle.createOwner(operationContext),
+                    new operationLifecycle.OperationOwner(operationContext),
                     false,
                 )
             },
@@ -416,10 +415,10 @@ function walkMutationPath(
             new Error("Cannot mutate through a read-only Chain"),
         )
     }
-    const state = chain._state
+    const rootState = chain._state
     const targetPath = ["value", ...path]
     let attachmentRoot
-    return walk(state, 0, () => {})
+    return walk(rootState, 0, () => {})
 
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it

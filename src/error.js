@@ -84,9 +84,9 @@ function catchUserCodeFailure(fn, onFailure) {
     }
 }
 
-function validationError(message, errorContext = undefined) {
-    if (errorContext === undefined) return new Error(message)
-    return new Error(`${message} (imported at: ${String(errorContext)})`)
+function validationError(message, importErrorContext = undefined) {
+    if (importErrorContext === undefined) return new Error(message)
+    return new Error(`${message} (imported at: ${String(importErrorContext)})`)
 }
 
 function pathAccessError() {

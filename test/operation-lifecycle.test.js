@@ -3,7 +3,9 @@ import * as operationLifecycle from "../src/operation-lifecycle.js"
 
 describe("operation lifecycle", () => {
     it("releases only resources still registered when the owner closes", () => {
-        const owner = operationLifecycle.createOwner(testOperationContext())
+        const owner = new operationLifecycle.OperationOwner(
+            testOperationContext(),
+        )
         const released = []
         const unregister = operationLifecycle.registerRelease(
             owner,

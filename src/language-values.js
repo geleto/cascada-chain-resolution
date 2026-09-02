@@ -129,6 +129,8 @@ function isTraversable(value, operationContext) {
 }
 
 function createPromiseProbe() {
+    // One declaration may reach an identity through validation and aliases.
+    // Sample an effectful `then` only once without entering an execution cache.
     const thenables = new WeakMap()
     return value => !isError(value) &&
         captureThenable(value, thenables) !== undefined

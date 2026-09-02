@@ -933,7 +933,7 @@ describe("run", () => {
         verifyRefCounts(chain._state.value)
     })
 
-    it("tracks duplicate Promise origins by index during remapping", async () => {
+    it("tracks duplicate Promise placements by index during remapping", async () => {
         const pending = deferred()
         const chain = new Chain([pending.promise, pending.promise])
         const source = chain._state.value
@@ -2239,7 +2239,7 @@ describe("run", () => {
         expect(await result).to.be(0)
     })
 
-    it("protects delayed flat and sort origins until publication", async () => {
+    it("protects delayed flat and sort placements until publication", async () => {
         const cases = [
             { method: "flat", args: [], ready: [3] },
             { method: "sort", args: [() => 0], ready: { value: 3 } },

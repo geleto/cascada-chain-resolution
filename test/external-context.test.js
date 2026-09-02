@@ -117,10 +117,11 @@ describe("context external foundations", () => {
             [[], ["left"], ["left"]],
         )
 
-        const paths = chain._externalMutationTree.findDescendants([])
+        const boundaryPaths = chain._externalMutationTree
+            .findDescendantBoundaries([])
             .map(boundary => boundary.path.join("."))
             .sort()
-        expect(paths).to.eql(["left", "right"])
+        expect(boundaryPaths).to.eql(["left", "right"])
         const left = chain._externalMutationTree.findExactBoundary(["left"])
         const right = chain._externalMutationTree.findExactBoundary(["right"])
         expect(left.entry).to.be(right.entry)
@@ -333,14 +334,14 @@ describe("context external foundations", () => {
         )
         const rootBoundary = chain._externalMutationTree
             .findExactBoundary(["apis", "service"])
-        const enteredTree = chain._externalMutationTree.branch([
+        const enteredTree = chain._externalMutationTree.findBranch([
             "apis",
             "service",
             "client",
         ])
         const enteredBoundary = enteredTree.findBoundary([])
 
-        const descendants = chain._externalMutationTree.findDescendants([
+        const descendants = chain._externalMutationTree.findDescendantBoundaries([
             "apis",
             "service",
             "client",
@@ -364,7 +365,7 @@ describe("context external foundations", () => {
             new Execution(),
             [[]],
         )
-        const boundaries = chain._externalMutationTree.findDescendants([])
+        const boundaries = chain._externalMutationTree.findDescendantBoundaries([])
 
         expect(boundaries.map(boundary => boundary.identity)).to.eql([
             visible,
