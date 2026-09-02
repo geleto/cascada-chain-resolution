@@ -7,7 +7,7 @@
 ## Contract
 
 ```js
-run(chain, path, method, args, { mutationScopeDepth })
+run(chain, path, method, args, operationContext, { mutationScopeDepth })
 ```
 
 `args` is the required Array of explicit arguments. `mutationScopeDepth` is `undefined` for observation; otherwise it is the depth of the selected `!` prefix, where `0` selects the root. Runtime-owned containers and facts are trusted, and retained Arrays are copied before the receiver or any argument settles. Language path segments are validated only when traversal consumes them. After the receiver is classified, internal dispatch rejects `constructor`, an unsupported controlled method, or an unsupported mode without preparing arguments. An observational rejection leaves the receiver unchanged; a mutation rejection publishes the Error through the normal receiver transition.

@@ -1,10 +1,8 @@
 import { runInNewContext } from "node:vm"
 
-import * as propertyVersions from "../src/property-versions.js"
-import * as arrayViews from "../src/array-view.js"
-import * as languageValues from "../src/language-values.js"
 import {
     Chain,
+    arrayViews,
     assignPath,
     buildRefIndex,
     countPromiseRegistrations,
@@ -16,8 +14,10 @@ import {
     flushMicrotasks,
     getRefCounter,
     hasError,
+    languageValues,
     importValue,
     lookupPath,
+    propertyVersions,
     readPath,
     reportFatalError,
     metaOf,
@@ -1830,7 +1830,7 @@ describe("run", () => {
 
         const result = run(chain, [], "splice", [start.promise, 1], { mutationScopeDepth: 0 })
 
-        expect(receiverCount() > initialReceiverCount).to.be(true)
+        expect(receiverCount()).to.be(initialReceiverCount)
         expect(startCount() > initialStartCount).to.be(true)
         expect(chain._state.value instanceof Promise).to.be(true)
 

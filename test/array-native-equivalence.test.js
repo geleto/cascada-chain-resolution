@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 
 import { ARRAY_METHODS } from "../src/array-methods.js"
-import * as arrayViews from "../src/array-view.js"
 import {
     Chain,
     assignPath,
@@ -11,6 +10,7 @@ import {
     lookupPath,
     run,
     verifyRefCounts,
+    arrayViews,
 } from "./support.js"
 import {
     VALUES,

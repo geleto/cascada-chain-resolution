@@ -13,6 +13,7 @@ class ExternalMutationTree {
 
     static prepare(
         root,
+        operationContext,
         factsOf,
         scopeMutationPaths,
         propertyMutationPaths,
@@ -59,7 +60,7 @@ class ExternalMutationTree {
                 request._children,
             )) {
                 const child = languageProperties
-                    .getLanguagePlacementDescriptor(value, key)
+                    .getLanguagePlacementDescriptor(value, key, operationContext)
                 if (child) {
                     walkRequests(child.value, childRequest, [...path, key])
                 }
@@ -86,9 +87,10 @@ class ExternalMutationTree {
             let cyclic = false
             for (const key of languageProperties.enumerableLanguageKeys(
                 value,
+                operationContext,
             )) {
                 const child = languageProperties
-                    .getLanguagePlacementDescriptor(value, key)
+                    .getLanguagePlacementDescriptor(value, key, operationContext)
                 if (!child) continue
                 const result = scanScope(child.value, ancestors, completed)
                 cyclic ||= result.cyclic
@@ -108,7 +110,7 @@ class ExternalMutationTree {
 
         function admittedTypeOf(value) {
             if (!metadata.isObjectLike(value)) return undefined
-            if (languageValues.isPromise(value)) return undefined
+            if (languageValues.isPromise(value, operationContext)) return undefined
             const facts = factsOf(value)
             if (!facts) {
                 errorUtils.reportFatalError(
@@ -130,15 +132,18 @@ class ExternalMutationTree {
         }
     }
 
-    commit(execution) {
+    commit(operationContext) {
+        const externalIdentities = operationContext.execution._externalIdentities
         visit(this)
         return this
 
         function visit(node) {
             if (node._identity) {
-                const entry = execution._getOrCreateExternalIdentityEntry(
-                    node._identity,
-                )
+                let entry = externalIdentities.get(node._identity)
+                if (!entry) {
+                    entry = {}
+                    externalIdentities.set(node._identity, entry)
+                }
                 node._boundaryRecord = Object.freeze({
                     entry,
                     identity: node._identity,

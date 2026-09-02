@@ -10,6 +10,7 @@ import {
     verifyRefCounts,
     assignPath,
     deletePath,
+    hasCycleCut,
     hasError,
     lookupPath,
     readPath,
@@ -19,7 +20,6 @@ import {
     expectCounts,
     thrownBy,
 } from "./support.js"
-import { hasCycleCut } from "../src/refcounts.js"
 
 function keyScanProbe(target) {
     let count = 0

@@ -10,6 +10,7 @@ import {
     assignPath,
     deletePath,
     getErrors,
+    hasCycleCut,
     hasError,
     lookupPath,
     readPath,
@@ -20,31 +21,27 @@ import {
     flushMicrotasks,
     expectCounts,
 } from "./support.js"
-import { hasCycleCut } from "../src/refcounts.js"
 
 describe("import", () => {
-    it("requires a truthy error context", () => {
-        for (const context of [undefined, null, "", 0, false]) {
-            const root = {}
-            let reported
-            let caught
+    it("requires an operation context", () => {
+        const root = {}
+        let reported
+        let caught
 
-            setFatalErrorReporter(error => {
-                reported = error
-            })
-            try {
-                runtime.import(root, context)
-            } catch (error) {
-                caught = error
-            } finally {
-                setFatalErrorReporter()
-            }
-
-            expect(reported).to.be(caught)
-            expect(caught instanceof Error).to.be(true)
-            expect(caught.message).to.be("import requires an error context")
-            expect(metaOf(root)).to.be(undefined)
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            runtime.import(root)
+        } catch (error) {
+            caught = error
+        } finally {
+            setFatalErrorReporter()
         }
+
+        expect(reported).to.be(caught)
+        expect(caught instanceof Error).to.be(true)
+        expect(metaOf(root)).to.be(undefined)
     })
 
     it("protects imported managed roots", () => {
@@ -1047,7 +1044,7 @@ describe("import", () => {
         verifyRefCounts(parent, child)
     })
 
-    it("keeps the first context across asynchronous imports", async () => {
+    it("keeps the first operation context across asynchronous imports", async () => {
         const pending = deferred()
         const first = importValue(pending.promise, "first async import")
         const second = importValue(pending.promise, "second async import")

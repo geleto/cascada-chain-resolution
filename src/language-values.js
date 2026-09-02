@@ -13,35 +13,39 @@ const {
     isTraversableType,
 } = metadata
 
-const CAPTURED_THENABLES = new WeakMap()
-
-function isPromise(value) {
-    return !isError(value) && capturedThenableOf(value) !== undefined
+function isPromise(value, operationContext) {
+    return !isError(value) && capturedThenableOf(value, operationContext) !== undefined
 }
 
 // Reading `then` may invoke a getter or Proxy trap. The first sample
 // permanently fixes this object's Promise behavior; acquisition failure is a
 // rejection, and a callable is captured exactly once.
-function capturedThenableOf(value) {
+function capturedThenableOf(value, operationContext) {
     if (!metadata.isObjectLike(value)) return undefined
-    if (metadata.metaOf(value)) return undefined
+    if (metadata.metaOf(value, operationContext)) return undefined
+    return captureThenable(value, operationContext.execution._thenables, operationContext)
+}
 
-    if (CAPTURED_THENABLES.has(value)) return CAPTURED_THENABLES.get(value)
+function captureThenable(value, thenables, operationContext = undefined) {
+    if (!metadata.isObjectLike(value)) return undefined
+    if (thenables.has(value)) return thenables.get(value)
     const captured = errorUtils.catchUserCodeFailure(
         () => {
             const then = errorUtils.runUserCode(() => value.then)
             return typeof then === "function" ? { then } : undefined
         },
         rejection => ({
+            // Acquisition failure belongs to the operation that first sampled it.
+            acquisitionOperationContext: operationContext,
             then: (_resolve, reject) => reject(rejection),
         }),
     )
-    CAPTURED_THENABLES.set(value, captured)
+    thenables.set(value, captured)
     return captured
 }
 
-function continuePromise(value, onFulfilled, onRejected) {
-    const captured = capturedThenableOf(value)
+function continuePromise(value, operationContext, onFulfilled, onRejected) {
+    const captured = capturedThenableOf(value, operationContext)
     if (!captured) {
         errorUtils.reportFatalError(
             new TypeError("Value is not a captured Promise"),
@@ -67,6 +71,8 @@ function continuePromise(value, onFulfilled, onRejected) {
     if (captured.canonical === undefined) {
         const { promise, resolve, reject } = Promise.withResolvers()
         captured.canonical = promise
+        // Invocation failure belongs to the first operation that invokes it.
+        captured.invocationOperationContext = operationContext
         errorUtils.catchUserCodeFailure(
             () => errorUtils.runUserCode(() => Reflect.apply(
                 captured.then,
@@ -80,36 +86,35 @@ function continuePromise(value, onFulfilled, onRejected) {
 }
 
 function isError(value) {
-    const type = metadata.metaOf(value)?.type
-    return type === TYPE_ERROR || (
-        type === undefined && Error.isError(value)
-    )
+    return Error.isError(value)
 }
 
-function admitValue(value) {
-    if (!isPromise(value)) admitReadyValue(value)
+function admitValue(value, operationContext) {
+    if (!isPromise(value, operationContext)) admitReadyValue(value, operationContext)
 }
 
 // Thenability has already been sampled at this program position. Ready-value
 // admission always preserves the value and creates complete typed metadata.
 function admitReadyValue(
     value,
+    operationContext,
     knownType = undefined,
     knownAdmittedPrototype = undefined,
 ) {
     if (metadata.isObjectLike(value)) {
         metadata.getOrCreateMeta(
             value,
+            operationContext,
             knownType,
             knownAdmittedPrototype,
         )
     }
 }
 
-function typeOf(value) {
+function typeOf(value, operationContext) {
     if (typeof value === "string") return TYPE_STRING
     if (!metadata.isObjectLike(value)) return TYPE_PRIMITIVE
-    const type = metadata.metaOf(value)?.type
+    const type = metadata.metaOf(value, operationContext)?.type
     if (type === undefined) {
         errorUtils.reportFatalError(
             new TypeError("Value was not admitted"),
@@ -118,9 +123,15 @@ function typeOf(value) {
     return type
 }
 
-function isTraversable(value) {
-    const type = metadata.metaOf(value)?.type
+function isTraversable(value, operationContext) {
+    const type = metadata.metaOf(value, operationContext)?.type
     return isTraversableType(type)
+}
+
+function createPromiseProbe() {
+    const thenables = new WeakMap()
+    return value => !isError(value) &&
+        captureThenable(value, thenables) !== undefined
 }
 
 export {
@@ -135,6 +146,7 @@ export {
     admitReadyValue,
     admitValue,
     continuePromise,
+    createPromiseProbe,
     isError,
     isPromise,
     isTraversable,

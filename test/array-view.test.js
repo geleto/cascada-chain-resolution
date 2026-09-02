@@ -1,6 +1,3 @@
-import * as arrayViews from "../src/array-view.js"
-import * as propertyVersions from "../src/property-versions.js"
-import { hasCycleCut } from "../src/refcounts.js"
 import {
     Chain,
     assignPath,
@@ -15,6 +12,9 @@ import {
     metaOf,
     run,
     verifyRefCounts,
+    arrayViews,
+    propertyVersions,
+    hasCycleCut,
 } from "./support.js"
 
 describe("ArrayView", () => {

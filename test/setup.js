@@ -1,5 +1,6 @@
 import expect from "expect.js"
 import { setFatalErrorReporter } from "../src/error.js"
+import { resetTestExecution } from "./support.js"
 
 const unhandledRejections = []
 
@@ -10,6 +11,10 @@ function onUnhandledRejection(reason) {
 export const mochaHooks = {
     beforeAll() {
         process.on("unhandledRejection", onUnhandledRejection)
+    },
+
+    beforeEach() {
+        resetTestExecution()
     },
 
     async afterEach() {

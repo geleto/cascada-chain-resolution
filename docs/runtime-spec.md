@@ -38,13 +38,20 @@ runtime. Invocation is defined in [`run.md`](run.md) and
 
 ## Chain roots
 
+An `Execution` owns the metadata, Promise sampling, and external identity facts
+shared by related Chains. Each constructor and operation receives an operation
+context `{ execution, errorContext }`; its execution must match the Chain, while
+its error context identifies that operation's source.
+
 Every public path operation receives a `Chain`. Its private `_state.value`
 property is the mutable root location. The holder itself is runtime state, not
 language data; other `Chain` fields are never walked, copied, indexed, marked,
 or validated by the kernel.
 
 An empty path targets `_state.value`. This stable parent/key location lets a
-root Promise use the same Promise-mirror machinery as any nested property.
+root Promise use the same Promise-mirror machinery as any nested property. A
+pending initial root establishes that mirror with the initialization operation context;
+later operations reuse the captured version rather than becoming its source.
 
 Successful assignment and deletion change the `Chain` and return `undefined`.
 A ready failed mutation returns the Error it publishes. Values are
@@ -134,11 +141,11 @@ properties rather than cloned totals or parent links.
 Every host-provided root must pass through:
 
 ```js
-runtime.import(value, errorContext)
+runtime.import(value, operationContext)
 ```
 
-`errorContext` must be truthy. A missing or falsy context is a fatal
-integration error.
+`operationContext` carries the execution and source-error information. A missing operation context
+or execution mismatch is a fatal integration error.
 
 For a ready root, import returns its admitted logical value after one
 transactional synchronous walk. For a Promise root, one operation Promise
@@ -296,7 +303,7 @@ several fatal wrapper boundaries.
 
 ## Operations
 
-### `assignPath(chain, path, value)`
+### `assignPath(chain, path, value, operationContext, mutationScopeDepth = path.length)`
 
 Assigns or replaces the target. It creates a fresh mirror when `value` is a
 Promise, performs copy-on-write or representation materialization where
@@ -304,24 +311,24 @@ required, and updates existing refcounts. Success returns `undefined`; a ready
 failed transition publishes and returns its Error. A suspended call still
 returns `undefined`; any later failure is published only in the graph.
 
-### `deletePath(chain, path)`
+### `deletePath(chain, path, operationContext, mutationScopeDepth = path.length)`
 
 Deletes the target or replaces the root with `null` for an empty path. Missing
 targets are no-ops. It updates existing refcounts. Success returns `undefined`;
 a ready failed transition publishes and returns its Error. A suspended call
 still returns `undefined`; any later failure is published only in the graph.
 
-### `lookupPath(chain, path)`
+### `lookupPath(chain, path, operationContext)`
 
 Extracts the value captured at the path and marks a returned graph identity
 shared. The result is synchronous unless path resolution crosses a Promise.
 
-### `readPath(chain, path)`
+### `readPath(chain, path, operationContext)`
 
 Returns the value captured at the path without adding an owner. The caller must
 either use it temporarily or cede the prior ownership.
 
-### `run(chain, path, method, args, { mutationScopeDepth })`
+### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`
 
 Invokes a supported operation through one common lifecycle after classifying
 the receiver. `args` contains the ordered explicit arguments.
@@ -330,7 +337,7 @@ selects mutation and identifies the `!` prefix. Mutation publishes through the
 normal mutation path; observation preserves the receiver. See
 [`run.md`](run.md) for dispatch, argument, ordering, and result contracts.
 
-### `export(chain, path)`
+### `export(chain, path, operationContext)`
 
 Returns host-ready data for the branch captured at its issue position.
 
@@ -354,7 +361,7 @@ reflection failure returns its Error. Other unexpected traversal failures and
 rejected internal readiness are fatal. Rejected data Promises are converted to
 ordinary Error values before collection.
 
-### `hasError(chain, path)`
+### `hasError(chain, path, operationContext)`
 
 Returns whether an Error is reachable in the issue-time branch.
 
@@ -371,7 +378,7 @@ The operation never marks or pins the branch.
 
 `hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared mirror, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
 
-### `getErrors(chain, path)`
+### `getErrors(chain, path, operationContext)`
 
 Returns an array containing each reachable Error identity once.
 
@@ -410,7 +417,7 @@ The complete implementation is specified in
 
 The compiler and host layer must:
 
-- wrap every host-provided root with `import(value, errorContext)`;
+- wrap every host-provided root with `import(value, operationContext)`;
 - establish shared ownership whenever an existing graph identity gains another
   owner or escapes;
 - use non-sharing lookup only for internal inspection or proven final transfer;

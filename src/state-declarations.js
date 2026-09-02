@@ -1,20 +1,19 @@
 import * as errorUtils from "./error.js"
-import * as languageProperties from "./language-properties.js"
+import { isArrayIndex } from "./array-view.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
 function externalState(value) {
     return declarationBoundary(() => {
+        const isPromise = languageValues.createPromiseProbe()
         if (languageValues.isError(value)) return value
-        const failure = validateDeclarationTarget(value, "externalState")
+        const failure = validateDeclarationTarget(
+            value,
+            "externalState",
+            isPromise,
+        )
         if (failure) return failure
 
-        const admitted = metadata.metaOf(value)
-        if (admitted) {
-            return admitted.type === languageValues.TYPE_EXTERNAL
-                ? value
-                : conflictError("externalState", "managed")
-        }
         const declaration = metadata.identityDeclarationOf(value)
         if (declaration === metadata.DECLARATION_MANAGED) {
             return conflictError("externalState", "managed")
@@ -26,15 +25,14 @@ function externalState(value) {
 
 function managedState(value) {
     return declarationBoundary(() => {
+        const isPromise = languageValues.createPromiseProbe()
         if (languageValues.isError(value)) return value
-        const rootFailure = validateDeclarationTarget(value, "managedState")
+        const rootFailure = validateDeclarationTarget(
+            value,
+            "managedState",
+            isPromise,
+        )
         if (rootFailure) return rootFailure
-        const admittedRoot = metadata.metaOf(value)
-        if (admittedRoot) {
-            return languageValues.isTraversableType(admittedRoot.type)
-                ? value
-                : conflictError("managedState", "external")
-        }
         if (
             metadata.identityDeclarationOf(value) ===
             metadata.DECLARATION_EXTERNAL
@@ -59,7 +57,7 @@ function managedState(value) {
 
         function walk(identity, root = false) {
             if (languageValues.isError(identity)) return undefined
-            if (languageValues.isPromise(identity)) {
+            if (isPromise(identity)) {
                 return errorUtils.validationError(
                     "managedState cannot contain a Promise",
                 )
@@ -77,8 +75,6 @@ function managedState(value) {
             if (declaration === metadata.DECLARATION_EXTERNAL) {
                 return undefined
             }
-
-            if (metadata.metaOf(identity)) return undefined
 
             const facts = metadata.inspectMetaFacts(identity)
             if (facts.type === languageValues.TYPE_EXTERNAL) {
@@ -102,12 +98,7 @@ function managedState(value) {
                 return undefined
             }
 
-            for (const key of languageProperties.enumerableLanguageKeys(
-                identity,
-            )) {
-                const descriptor = languageProperties
-                    .getLanguagePlacementDescriptor(identity, key)
-                if (!descriptor) continue
+            for (const descriptor of declarationProperties(identity)) {
                 const childFailure = walk(descriptor.value)
                 if (childFailure) return childFailure
             }
@@ -162,14 +153,14 @@ function isConstructor(value) {
     }
 }
 
-function validateDeclarationTarget(value, api) {
+function validateDeclarationTarget(value, api, isPromise) {
     if (!metadata.isObjectLike(value)) {
         return errorUtils.validationError(`${api} requires an object`)
     }
     if (typeof value === "function") {
         return errorUtils.validationError(`${api} cannot declare a Function`)
     }
-    if (languageValues.isPromise(value)) {
+    if (isPromise(value)) {
         return errorUtils.validationError(`${api} cannot declare a Promise`)
     }
     return undefined
@@ -183,7 +174,25 @@ function conflictError(api, existing) {
 }
 
 function declarationBoundary(fn) {
-    return errorUtils.runFatal(fn)
+    return errorUtils.runContextlessFatal(fn)
+}
+
+function declarationProperties(value) {
+    const descriptors = []
+    const array = errorUtils.runUserCode(() => Array.isArray(value))
+    for (const key of errorUtils.runUserCode(() => Reflect.ownKeys(value))) {
+        if (
+            typeof key !== "string" ||
+            (array && !isArrayIndex(key))
+        ) continue
+        const descriptor = errorUtils.runUserCode(
+            () => Object.getOwnPropertyDescriptor(value, key),
+        )
+        if (descriptor?.enumerable && "value" in descriptor) {
+            descriptors.push(descriptor)
+        }
+    }
+    return descriptors
 }
 
 export { externalState, managedState, managedStateClass }

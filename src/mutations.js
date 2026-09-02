@@ -14,43 +14,51 @@ function setProperty(
     parent,
     key,
     value,
+    operationContext,
     attachmentRoot = undefined,
 ) {
-    if (attachmentRoot && containsPromise(value)) {
-        metadata.markShared(attachmentRoot)
+    if (attachmentRoot && containsPromise(value, operationContext)) {
+        metadata.markShared(attachmentRoot, operationContext)
     }
-    propertyVersions.assignProperty(parent, key, value)
+    propertyVersions.assignProperty(parent, key, value, operationContext)
 }
 
-function containsPromise(value, visited = new Set()) {
-    if (languageValues.isPromise(value)) return true
-    if (!languageValues.isTraversable(value) || visited.has(value)) return false
+function containsPromise(value, operationContext, visited = new Set()) {
+    if (languageValues.isPromise(value, operationContext)) return true
+    if (
+        !languageValues.isTraversable(value, operationContext) ||
+        visited.has(value)
+    ) return false
     visited.add(value)
 
-    const counter = refcounts.getRefCounter(value)
+    const counter = refcounts.getRefCounter(value, operationContext)
     if (counter?.promiseCount > 0) return true
     if (counter && counter.cycleCutCount === 0) return false
 
-    for (const key of languageProperties.enumerableLanguageKeys(value)) {
+    for (const key of languageProperties.enumerableLanguageKeys(
+        value,
+        operationContext,
+    )) {
         if (containsPromise(
-            languageProperties.readLanguageProperty(value, key),
+            languageProperties.readLanguageProperty(value, key, operationContext),
+            operationContext,
             visited,
         )) return true
     }
     return false
 }
 
-function mustPreserveValue(value, attachmentRoot) {
+function mustPreserveValue(value, attachmentRoot, operationContext) {
     return attachmentRoot !== undefined ||
-        metadata.requiresCopyOnWrite(value)
+        metadata.requiresCopyOnWrite(value, operationContext)
 }
 
-function createEmptyContainerCopy(source) {
-    const sourceMeta = metadata.requireMeta(source)
+function createEmptyContainerCopy(source, operationContext) {
+    const sourceMeta = metadata.requireMeta(source, operationContext)
     const type = sourceMeta.type
     let destination
     if (type === languageValues.TYPE_ARRAY) {
-        destination = new Array(arrayViews.logicalArrayLength(source))
+        destination = new Array(arrayViews.logicalArrayLength(source, operationContext))
     } else if (
         type === languageValues.TYPE_RECORD ||
         type === languageValues.TYPE_MANAGED_CLASS
@@ -63,43 +71,58 @@ function createEmptyContainerCopy(source) {
     }
     languageValues.admitReadyValue(
         destination,
+        operationContext,
         type,
         sourceMeta.admittedPrototype,
     )
     return destination
 }
 
-function shallowCopyPathContainer(source, pathKey, attachmentRoot) {
-    const destination = createEmptyContainerCopy(source)
+function shallowCopyPathContainer(source, pathKey, attachmentRoot, operationContext) {
+    const destination = createEmptyContainerCopy(source, operationContext)
     attachmentRoot ??= destination
 
     // Copy only language-visible own enumerable string keys. Metadata lives
     // outside that surface, so the source alone keeps its metadata.
     // Reused off-path children are marked shared because both copies retain
     // them. The path child is replaced or copied by the current walk.
-    for (const key of languageProperties.enumerableLanguageKeys(source)) {
+    for (const key of languageProperties.enumerableLanguageKeys(
+        source,
+        operationContext,
+    )) {
         const retainedOffPath = key !== pathKey
-        const value = languageProperties.readLanguageProperty(source, key)
-        if (languageValues.isPromise(value)) {
+        const value = languageProperties.readLanguageProperty(
+            source,
+            key,
+            operationContext,
+        )
+        if (languageValues.isPromise(value, operationContext)) {
             const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
                 source,
                 key,
                 value,
+                operationContext,
             )
             propertyVersions.placePromiseVersion(
                 sourceMirror,
                 value,
                 destination,
                 key,
+                operationContext,
                 retainedOffPath,
             )
             continue
         }
-        if (retainedOffPath) metadata.markShared(value)
+        if (retainedOffPath) metadata.markShared(value, operationContext)
         // The copy remains unobservable until its owning path is installed.
-        languageProperties.writeLanguageProperty(destination, key, value)
+        languageProperties.writeLanguageProperty(
+            destination,
+            key,
+            value,
+            operationContext,
+        )
     }
-    propertyVersions.indexValueIfSourceIndexed(source, destination)
+    propertyVersions.indexValueIfSourceIndexed(source, destination, operationContext)
     return {
         value: destination,
         attachmentRoot,
@@ -110,22 +133,33 @@ function transformProperty(
     parent,
     key,
     attachmentRoot,
+    operationContext,
     prepareInput,
     transform,
     returnResultPromise = true,
 ) {
-    const origin = propertyVersions.getPropertyPlacement(parent, key)
+    const origin = propertyVersions.getPropertyPlacement(
+        parent,
+        key,
+        operationContext,
+    )
     propertyVersions.capturePropertyVersion(origin)
-    const context = operationLifecycle.createOwner({
+    const operation = operationLifecycle.createOwner(operationContext, {
         present: origin !== undefined,
     })
     return transformValue(
         propertyVersions.resolvePropertyValue(origin),
         attachmentRoot,
-        prepareInput(context),
+        prepareInput(operation),
         transform,
-        value => setProperty(parent, key, value, attachmentRoot),
-        context,
+        value => setProperty(
+            parent,
+            key,
+            value,
+            operationContext,
+            attachmentRoot,
+        ),
+        operation,
         returnResultPromise,
     )
 }
@@ -136,27 +170,28 @@ function transformValue(
     preparedInput,
     transform,
     publishValue,
-    context,
+    operation,
     returnResultPromise,
 ) {
     let originalValue
     const readiness = operationLifecycle.continueInternalAll(
-        context,
+        operation,
         [value, preparedInput],
         values => recoverMutationFailure(
             () => {
                 const [resolvedTargetValue, preparedArguments] = values
                 originalValue = resolvedTargetValue
-                context.mustPreserveValue = mustPreserveValue(
+                operation.mustPreserveValue = mustPreserveValue(
                     resolvedTargetValue,
                     attachmentRoot,
+                    operation.operationContext,
                 )
                 return operationLifecycle.continueInternal(
-                    context,
+                    operation,
                     transform(
                         resolvedTargetValue,
                         preparedArguments,
-                        context,
+                        operation,
                     ),
                     normalizeMutationOutcome,
                 )
@@ -164,12 +199,12 @@ function transformValue(
         ),
     )
 
-    if (!languageValues.isPromise(readiness)) {
+    if (!languageValues.isPromise(readiness, operation.operationContext)) {
         const outcome = prepareMutationPublication(readiness)
         if (outcome.mutatedValue !== originalValue) {
             publishValue(outcome.mutatedValue)
         }
-        operationLifecycle.close(context)
+        operationLifecycle.close(operation)
         return outcome.result
     }
 
@@ -185,14 +220,14 @@ function transformValue(
         : undefined
     publishValue(mutatedValueGate)
     operationLifecycle.continueInternal(
-        context,
+        operation,
         readiness,
         outcome => {
             outcome = prepareMutationPublication(outcome)
             // This private publication gate has only a resolve capability.
-            operationLifecycle.continueInternal(context, mutatedValueGate, () => {
+            operationLifecycle.continueInternal(operation, mutatedValueGate, () => {
                 if (returnResultPromise) resolveResult(outcome.result)
-                operationLifecycle.close(context)
+                operationLifecycle.close(operation)
             })
             resolveMutatedValue(outcome.mutatedValue)
         },
@@ -220,7 +255,10 @@ function transformValue(
             if (
                 !languageValues.isError(outcome.result) &&
                 outcome.result === outcome.mutatedValue
-            ) metadata.markShared(outcome.mutatedValue)
+            ) metadata.markShared(
+                outcome.mutatedValue,
+                operation.operationContext,
+            )
             return outcome
         })
     }
@@ -231,14 +269,17 @@ function assignPath(
     chain,
     path,
     value,
+    operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runFatal(() => {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
-        languageValues.admitValue(value)
+        languageValues.admitValue(value, operationContext)
         return walkMutationPath(
             chain,
             preparedPath,
+            operationContext,
             target => {
                 if (
                     target.propertyKind ===
@@ -248,6 +289,7 @@ function assignPath(
                         target.parent,
                         target.key,
                         value,
+                        operationContext,
                         target.attachmentRoot,
                     )
                     return undefined
@@ -259,6 +301,7 @@ function assignPath(
                     const error = languageProperties.propertyValidationError(
                         target.receiver,
                         "String length is read-only",
+                        operationContext,
                     )
                     target.replaceReceiver(error)
                     return error
@@ -269,7 +312,7 @@ function assignPath(
                     undefined,
                     transformArrayLength,
                     target.replaceReceiver,
-                    operationLifecycle.createOwner(),
+                    operationLifecycle.createOwner(operationContext),
                     false,
                 )
             },
@@ -283,8 +326,8 @@ function assignPath(
         key,
         attachmentRoot,
     ) {
-        const projection = arrayViews.projectionOf(array)
-        if (!arrayViews.isArrayView(projection)) return undefined
+        const projection = arrayViews.projectionOf(array, operationContext)
+        if (!arrayViews.isArrayView(projection, operationContext)) return undefined
         const end = Number(key) + 1
         const growth = end - projection.length
         if (growth <= 0) return undefined
@@ -295,33 +338,37 @@ function assignPath(
             view => propertyVersions.prepareRetainedArrayProperties(
                 array,
                 view,
+                operationContext,
             ),
+            operationContext,
         )
         if (!extended) return undefined
-        setProperty(extended, key, value, attachmentRoot)
+        setProperty(extended, key, value, operationContext, attachmentRoot)
         return extended
     }
 
     function transformArrayLength(
         array,
         _input,
-        context,
+        operation,
     ) {
         return operationLifecycle.continuePrepared(
-            context,
-            toArrayLength(value, context),
+            operation,
+            toArrayLength(value, operation),
             length => {
                 let mutatedValue = array
                 const representationCopy =
                     languageProperties.arrayLengthMutationRequiresCopy(
                         array,
                         length,
+                        operation.operationContext,
                     )
-                if (context.mustPreserveValue || representationCopy) {
+                if (operation.mustPreserveValue || representationCopy) {
                     mutatedValue = arrayRemaps.createArrayFromRemap(
-                        arrayRemaps.createRemap(array),
+                        arrayRemaps.createRemap(array, operation.operationContext),
+                        operation.operationContext,
                         array,
-                        context.mustPreserveValue,
+                        operation.mustPreserveValue,
                     )
                 }
                 return {
@@ -329,6 +376,7 @@ function assignPath(
                     result: propertyVersions.commitArrayLength(
                         mutatedValue,
                         length,
+                        operation.operationContext,
                     ),
                 }
             },
@@ -355,6 +403,7 @@ function toArrayLength(value, operation) {
 function walkMutationPath(
     chain,
     path,
+    operationContext,
     onTarget,
     onComplete = undefined,
     {
@@ -362,7 +411,6 @@ function walkMutationPath(
         deletesTarget = false,
     } = {},
 ) {
-    chain._assertOpen()
     if (chain._entryMutable === false) {
         errorUtils.reportFatalError(
             new Error("Cannot mutate through a read-only Chain"),
@@ -377,7 +425,7 @@ function walkMutationPath(
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
     function complete(writeBack, next, targetResult = undefined) {
-        languageValues.admitValue(next)
+        languageValues.admitValue(next, operationContext)
         writeBack(next)
         const outcome = targetResult === undefined &&
             languageValues.isError(next)
@@ -406,18 +454,20 @@ function walkMutationPath(
             targetPath[index],
         )
         if (languageValues.isError(key)) {
-            languageValues.admitReadyValue(key)
+            languageValues.admitReadyValue(key, operationContext)
             return complete(writeBack, key, key)
         }
         const atTarget = index === targetPath.length - 1
         const propertyKind = languageProperties.classifyLanguageProperty(
             value,
             key,
+            operationContext,
         )
         if (propertyKind === languageProperties.INVALID_ARRAY_KEY) {
             const error = languageProperties.propertyValidationError(
                 value,
                 "Arrays support only indexes and length",
+                operationContext,
             )
             return complete(
                 writeBack,
@@ -442,13 +492,13 @@ function walkMutationPath(
                 return complete(writeBack, nextReceiver, targetResult)
             }
             return walk(
-                languageProperties.readLanguageProperty(value, key),
+                languageProperties.readLanguageProperty(value, key, operationContext),
                 index + 1,
                 () => writeBack(value),
                 { parent: value, key },
             )
         }
-        if (!languageValues.isTraversable(value)) {
+        if (!languageValues.isTraversable(value, operationContext)) {
             return complete(writeBack, errorUtils.pathAccessError())
         }
 
@@ -470,15 +520,17 @@ function walkMutationPath(
             languageProperties.propertyMutationRequiresCopy(
                 value,
                 key,
+                operationContext,
                 atTarget && deletesTarget,
             )
         const mustCopyParent = mustPreserveValue(
             value,
             attachmentRoot,
+            operationContext,
         ) ||
             // View materialization is the representation fallback before the
             // ordinary property-specific preflight can permit an in-place write.
-            arrayViews.requiresArrayMaterialization(value) ||
+            arrayViews.requiresArrayMaterialization(value, operationContext) ||
             representationCopy
 
         if (mustCopyParent) {
@@ -486,6 +538,7 @@ function walkMutationPath(
                 parent,
                 key,
                 attachmentRoot,
+                operationContext,
             )
             parent = copied.value
             attachmentRoot = copied.attachmentRoot
@@ -501,15 +554,20 @@ function walkMutationPath(
             return complete(writeBack, parent, targetResult)
         }
 
-        const present = languageProperties.hasLanguageProperty(parent, key)
+        const present = languageProperties.hasLanguageProperty(
+            parent,
+            key,
+            operationContext,
+        )
         const child = present
-            ? languageProperties.readLanguageProperty(parent, key)
+            ? languageProperties.readLanguageProperty(parent, key, operationContext)
             : undefined
-        if (languageValues.isPromise(child)) {
+        if (languageValues.isPromise(child, operationContext)) {
             const pending = propertyVersions.continuePropertyValue(
                 parent,
                 key,
                 child,
+                operationContext,
                 (propertyValue, mirror) => walk(
                     propertyValue,
                     index + 1,
@@ -522,6 +580,7 @@ function walkMutationPath(
                                 key,
                                 mirror,
                                 next,
+                                operationContext,
                             )
                         }
                     },
@@ -540,7 +599,7 @@ function walkMutationPath(
                     writeBack(value)
                     return
                 }
-                setProperty(parent, key, next)
+                setProperty(parent, key, next, operationContext)
                 writeBack(parent)
             },
             { parent, key },
@@ -549,16 +608,23 @@ function walkMutationPath(
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------
-function deletePath(chain, path, mutationScopeDepth = path.length) {
-    return errorUtils.runFatal(() => {
+function deletePath(
+    chain,
+    path,
+    operationContext,
+    mutationScopeDepth = path.length,
+) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         const deletesRoot = preparedPath.length === 0
         return walkMutationPath(
             chain,
             preparedPath,
+            operationContext,
             target => {
                 if (deletesRoot) {
-                    setProperty(target.parent, target.key, null)
+                    setProperty(target.parent, target.key, null, operationContext)
                     return undefined
                 }
                 if (
@@ -568,19 +634,28 @@ function deletePath(chain, path, mutationScopeDepth = path.length) {
                     const error = languageProperties.propertyValidationError(
                         target.receiver,
                         "Cannot delete length",
+                        operationContext,
                     )
                     target.replaceReceiver(error)
                     return error
                 }
 
-                propertyVersions.deleteProperty(target.parent, target.key)
+                propertyVersions.deleteProperty(
+                    target.parent,
+                    target.key,
+                    operationContext,
+                )
                 return undefined
             },
             undefined,
             deletesRoot ? undefined : {
                 deletesTarget: true,
                 tryTargetMutation(parent, key) {
-                    return languageProperties.hasLanguageProperty(parent, key)
+                    return languageProperties.hasLanguageProperty(
+                        parent,
+                        key,
+                        operationContext,
+                    )
                         ? undefined
                         : parent
                 },

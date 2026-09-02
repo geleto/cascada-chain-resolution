@@ -1,10 +1,10 @@
 # Imported data
 
-`import(value, errorContext)` is the inbound host-data boundary. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
+`import(value, operationContext)` is the inbound host-data boundary. `operationContext` carries the execution and source-error information. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
 
 ## Context roots
 
-The public import API remains unchanged. Ordinary `Chain` construction admits existing Cascada data without importing it. `ContextChain(initialValue, errorContext, execution, scopeMutationPaths, propertyMutationPaths)` sends its raw host root once through the same importer. Two empty path Arrays import the context but build no external mutation tree.
+Ordinary `Chain(initialValue, operationContext)` construction admits existing Cascada data without importing it. `ContextChain(initialValue, operationContext, scopeMutationPaths, propertyMutationPaths)` sends its raw host root once through the same importer. Two empty path Arrays import the context but build no external mutation tree.
 
 `apis.data!.write()` contributes `["apis", "data"]` to `scopeMutationPaths`. `apis.data.status = value` and `delete apis.data.status` contribute `["apis", "data", "status"]` to `propertyMutationPaths`.
 
@@ -24,7 +24,7 @@ The walk inspects only own enumerable string-keyed data properties. It neither i
 
 An already admitted identity keeps its category and origin and is not rescanned. When importing it adds another owner, an admitted managed identity is marked shared. Import builds no refcount index.
 
-Public `import(value, errorContext)` creates no static external mutation tree. External identities admitted through it remain observation-only even when its result later becomes an ordinary Chain root; only initial ContextChain import may establish mutation authority.
+Public `import(value, operationContext)` creates no static external mutation tree. External identities admitted through it remain observation-only even when its result later becomes an ordinary Chain root; only initial ContextChain import may establish mutation authority.
 
 ## Promise boundaries
 

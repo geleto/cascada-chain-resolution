@@ -4,7 +4,8 @@ import * as resolution from "./resolution.js"
 
 const ignore = () => {}
 
-function createOwner(state = {}) {
+function createOwner(operationContext, state = {}) {
+    state.operationContext = operationContext
     state.open = true
     state.close = closeDefaultOwner
     return state
@@ -16,8 +17,8 @@ function closeDefaultOwner() {
     this.open = false
 }
 
-// An owner supplies `open` and idempotent `close()`. Existing operation
-// contexts implement this directly. Shared Promise and property settlement
+// An owner supplies `open` and idempotent `close()`. Existing operation-work
+// owners implement this directly. Shared Promise and property settlement
 // remains outside it and always finishes. Callers close owners only through
 // close() below so registered resources are released in the same transition.
 function mayContinue(operation) {
@@ -60,9 +61,10 @@ function registerRelease(operation, release) {
 }
 
 function observeFatal(operation, result, onFatal = ignore) {
-    if (!languageValues.isPromise(result)) return result
+    if (!languageValues.isPromise(result, operation.operationContext)) return result
     resolution.observeResultPromise(
         result,
+        operation.operationContext,
         ignore,
         reason => {
             close(operation)
@@ -100,6 +102,7 @@ function resolveInitial(operation, value, onReady) {
         onReady,
         (input, next) => resolution.resolveInitialValueOrPoison(
             input,
+            operation.operationContext,
             next,
             () => mayContinue(operation),
         ),
@@ -121,7 +124,11 @@ function continueInternal(operation, result, onReady) {
         operation,
         result,
         onReady,
-        resolution.continueInternalPromiseOrFatal,
+        (input, next) => resolution.continueInternalPromiseOrFatal(
+            input,
+            operation.operationContext,
+            next,
+        ),
     )
 }
 
@@ -138,7 +145,7 @@ function continueInternalAll(operation, results, onReady) {
     const waits = []
     for (let index = 0; index < results.length; index++) {
         const result = results[index]
-        if (!languageValues.isPromise(result)) {
+        if (!languageValues.isPromise(result, operation.operationContext)) {
             values[index] = result
             continue
         }
@@ -179,12 +186,13 @@ function continuePreparedAll(operation, results, onReady) {
 
 function closeWhenDone(operation, result) {
     // Unlike observeFatal, final fulfillment also closes the operation.
-    if (!languageValues.isPromise(result)) {
+    if (!languageValues.isPromise(result, operation.operationContext)) {
         close(operation)
         return result
     }
     resolution.observeResultPromise(
         result,
+        operation.operationContext,
         () => close(operation),
         () => close(operation),
     )

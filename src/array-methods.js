@@ -2,7 +2,7 @@ import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
-import { exportValue } from "./export.js"
+import { exportManyValues } from "./export.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -117,40 +117,45 @@ const ARRAY_METHODS = {
     },
 }
 
-function observeAt(thisValue, [index = 0], operation) {
-    const length = arrayViews.logicalArrayLength(thisValue)
+function observeAt(thisValue, [index = 0], invocationContext) {
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     index = index >= 0 ? index : length + index
     if (index < 0 || index >= length) return undefined
     return retainElement(
-        propertyVersions.getPropertyPlacement(thisValue, String(index)),
-        operation,
+        propertyVersions.getPropertyPlacement(
+            thisValue,
+            String(index),
+            invocationContext.operationContext,
+        ),
+        invocationContext,
     )
 }
 
-function numericInput(value, operation) {
-    return operationLifecycle.continueInitial(operation, value, resolved => {
+function numericInput(value, invocationContext) {
+    return operationLifecycle.continueInitial(invocationContext, value, resolved => {
         // Let each position apply its own undefined default.
         return resolved === undefined
             ? undefined
-            : conversion.toIntegerOrInfinity(resolved, operation)
+            : conversion.toIntegerOrInfinity(resolved, invocationContext)
     })
 }
 
-function stringInput(value, operation) {
-    return operationLifecycle.continueInitial(operation, value, resolved => {
+function stringInput(value, invocationContext) {
+    return operationLifecycle.continueInitial(invocationContext, value, resolved => {
         return resolved === undefined
             ? undefined
-            : conversion.toStringValue(resolved, undefined, operation)
+            : conversion.toStringValue(resolved, undefined, invocationContext)
     })
 }
 
-function slice(thisValue, args) {
-    const length = arrayViews.logicalArrayLength(thisValue)
+function slice(thisValue, args, invocationContext) {
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     const start = toRelativeIndex(args[0], length, 0)
     const end = Math.max(start, toRelativeIndex(args[1], length, length))
-    return deriveArrayView(thisValue, start, end) ??
+    return deriveArrayView(thisValue, start, end, invocationContext.operationContext) ??
         arrayRemaps.createArrayFromRemap(
-            arrayRemaps.createRemap(thisValue, start, end),
+            arrayRemaps.createRemap(thisValue, invocationContext.operationContext, start, end),
+            invocationContext.operationContext,
         )
 }
 
@@ -158,90 +163,103 @@ function publishValue(value) {
     return value
 }
 
-function publishElement(element, sourceSurvives, operation) {
+function publishElement(element, sourceSurvives, invocationContext) {
     return sourceSurvives
-        ? retainElement(element, operation)
-        : transferElement(element, operation)
+        ? retainElement(element, invocationContext)
+        : transferElement(element, invocationContext)
 }
 
-function publishArray(remap, sourceSurvives) {
-    return arrayRemaps.createArrayFromRemap(remap, undefined, sourceSurvives)
+function publishArray(remap, sourceSurvives, invocationContext) {
+    return arrayRemaps.createArrayFromRemap(
+        remap,
+        invocationContext.operationContext,
+        undefined,
+        sourceSurvives,
+    )
 }
 
-function transferElement(element, operation) {
+function transferElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
-    return operationLifecycle.continueInternal(operation, result, value => value)
+    return operationLifecycle.continueInternal(invocationContext, result, value => value)
 }
 
-function retainElement(element, operation) {
+function retainElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? propertyVersions.resolvePropertyValue(element)
         : element
     return operationLifecycle.continueInternal(
-        operation,
+        invocationContext,
         result,
         value => {
-            metadata.markShared(value)
+            metadata.markShared(value, invocationContext.operationContext)
             return value
         },
     )
 }
 
-function getFirstElementOrigin(thisValue) {
-    return propertyVersions.getPropertyPlacement(thisValue, "0")
+function getFirstElementOrigin(thisValue, _view, invocationContext) {
+    return propertyVersions.getPropertyPlacement(
+        thisValue,
+        "0",
+        invocationContext.operationContext,
+    )
 }
 
-function getLastElementOrigin(thisValue) {
-    const length = arrayViews.logicalArrayLength(thisValue)
+function getLastElementOrigin(thisValue, _view, invocationContext) {
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     return length === 0
         ? undefined
-        : propertyVersions.getPropertyPlacement(thisValue, String(length - 1))
+        : propertyVersions.getPropertyPlacement(
+            thisValue,
+            String(length - 1),
+            invocationContext.operationContext,
+        )
 }
 
 function getViewLength(_thisValue, view) {
     return view.length
 }
 
-function prepareConcatArguments(args, invocation) {
+function prepareConcatArguments(args, invocationContext) {
     const parts = args.map(item => operationLifecycle.continueInitial(
-        invocation,
+        invocationContext,
         item,
         value => {
-            if (arrayViews.isLogicalArray(value)) {
-                invocation.retainArgument(value)
-                return captureRemap(value)
+            if (arrayViews.isLogicalArray(value, invocationContext.operationContext)) {
+                invocationContext.retainArgument(value)
+                return captureRemap(value, invocationContext.operationContext)
             }
-            return [invocation.retainArgument(value)]
+            return [invocationContext.retainArgument(value)]
         },
     ))
     return operationLifecycle.continuePreparedAll(
-        invocation,
+        invocationContext,
         parts,
         values => values,
     )
 }
 
-function captureRemap(array) {
-    const remap = arrayRemaps.createRemap(array)
+function captureRemap(array, operationContext) {
+    const remap = arrayRemaps.createRemap(array, operationContext)
     remap.forEach(propertyVersions.capturePropertyVersion)
     return remap
 }
 
-function createConcatRemap(thisValue, parts) {
+function createConcatRemap(thisValue, parts, invocationContext) {
     return invocation.invokeDataFunction(
         arrayConcat,
-        captureRemap(thisValue),
+        captureRemap(thisValue, invocationContext.operationContext),
         parts,
     )
 }
 
-function flatRemap(thisValue, [depth = 1], operation) {
+function flatRemap(thisValue, [depth = 1], invocationContext) {
     depth = Math.max(depth, 0)
     return operationLifecycle.continuePrepared(
-        operation,
-        prepareFlatArray(thisValue, depth, undefined, operation),
+        invocationContext,
+        prepareFlatArray(thisValue, depth, undefined, invocationContext),
         prepared => invocation.invokeDataFunction(
             arrayFlat,
             prepared,
@@ -250,7 +268,7 @@ function flatRemap(thisValue, [depth = 1], operation) {
     )
 }
 
-function prepareFlatArray(array, depth, ancestry, operation) {
+function prepareFlatArray(array, depth, ancestry, invocationContext) {
     if (
         depth === Infinity &&
         arrayViews.hasArrayAncestor(ancestry, array)
@@ -259,7 +277,7 @@ function prepareFlatArray(array, depth, ancestry, operation) {
             "Cannot flat an Array cycle to unlimited depth",
         )
     }
-    const source = arrayRemaps.createRemap(array)
+    const source = arrayRemaps.createRemap(array, invocationContext.operationContext)
     const output = new Array(source.length)
     const pending = []
     const nestedAncestry = depth === Infinity
@@ -272,12 +290,12 @@ function prepareFlatArray(array, depth, ancestry, operation) {
             origin,
             depth,
             nestedAncestry,
-            operation,
+            invocationContext,
         )
         if (languageValues.isError(prepared)) return prepared
-        if (languageValues.isPromise(prepared)) {
+        if (languageValues.isPromise(prepared, invocationContext.operationContext)) {
             pending.push(operationLifecycle.continuePrepared(
-                operation,
+                invocationContext,
                 prepared,
                 value => ({ index, value }),
             ))
@@ -285,51 +303,51 @@ function prepareFlatArray(array, depth, ancestry, operation) {
             output[index] = prepared
         }
     }
-    return operationLifecycle.continuePreparedAll(operation, pending, entries => {
+    return operationLifecycle.continuePreparedAll(invocationContext, pending, entries => {
         for (const { index, value } of entries) output[index] = value
         return output
     })
 }
 
-function prepareFlatProperty(origin, depth, ancestry, operation) {
+function prepareFlatProperty(origin, depth, ancestry, invocationContext) {
     if (depth === 0) return origin
     return operationLifecycle.continueInternal(
-        operation,
+        invocationContext,
         propertyVersions.resolvePropertyValue(origin),
-        value => arrayViews.isLogicalArray(value)
-            ? prepareFlatArray(value, depth - 1, ancestry, operation)
+        value => arrayViews.isLogicalArray(value, invocationContext.operationContext)
+            ? prepareFlatArray(value, depth - 1, ancestry, invocationContext)
             : origin,
     )
 }
 
-function prepareSearchArguments(args, invocation) {
+function prepareSearchArguments(args, invocationContext) {
     const searchResult = operationLifecycle.continueInitial(
-        invocation,
+        invocationContext,
         args[0],
         value => value,
     )
     const fromResult = args.length > 1
-        ? conversion.toIntegerOrInfinity(args[1], invocation)
+        ? conversion.toIntegerOrInfinity(args[1], invocationContext)
         : undefined
     return operationLifecycle.continuePreparedAll(
-        invocation,
+        invocationContext,
         [searchResult, fromResult],
         ([searchValue, fromIndex]) => ({ searchValue, fromIndex }),
     )
 }
 
-function join(thisValue, [separator], operation) {
+function join(thisValue, [separator], invocationContext) {
     return conversion.joinLogicalArray(
         thisValue,
         separator,
         undefined,
-        operation,
+        invocationContext,
     )
 }
 
-function prepareSortArguments(args, invocation) {
+function prepareSortArguments(args, invocationContext) {
     if (args[0] === undefined) return undefined
-    return operationLifecycle.continueInitial(invocation, args[0], value => {
+    return operationLifecycle.continueInitial(invocationContext, args[0], value => {
         if (value === undefined || typeof value === "function") return value
         return errorUtils.validationError(
             "Array sort comparator must be callable or undefined",
@@ -337,27 +355,27 @@ function prepareSortArguments(args, invocation) {
     })
 }
 
-function prepareToSortedRemap(thisValue, comparator, operation) {
-    return prepareAndSortAndRemap(thisValue, comparator, operation, true)
+function prepareToSortedRemap(thisValue, comparator, invocationContext) {
+    return prepareAndSortAndRemap(thisValue, comparator, invocationContext, true)
 }
 
 function prepareAndSortAndRemap(
     thisValue,
     comparator,
-    operation,
+    invocationContext,
     denseHoles = false,
 ) {
-    const source = arrayRemaps.createRemap(thisValue)
+    const source = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
     const records = []
     for (const origin of source) {
         if (!origin) continue
         records.push(operationLifecycle.continueInternal(
-            operation,
+            invocationContext,
             propertyVersions.resolvePropertyValue(origin),
             value => ({ origin, value }),
         ))
     }
-    return operationLifecycle.continueInternalAll(operation, records, ready => {
+    return operationLifecycle.continueInternalAll(invocationContext, records, ready => {
         const sortable = []
         const undefinedOrigins = []
         for (const record of ready) {
@@ -370,7 +388,7 @@ function prepareAndSortAndRemap(
         if (sortable.length < 2) {
             return finish(sortable)
         }
-        return prepareAndSortRecords(sortable, comparator, operation, finish)
+        return prepareAndSortRecords(sortable, comparator, invocationContext, finish)
 
         function finish(sorted) {
             return finishSortedRemap(
@@ -383,18 +401,18 @@ function prepareAndSortAndRemap(
     })
 }
 
-function prepareAndSortRecords(sortable, comparator, operation, finish) {
+function prepareAndSortRecords(sortable, comparator, invocationContext, finish) {
     if (comparator === undefined) {
         const records = sortable.map(record => operationLifecycle.continuePrepared(
-            operation,
-            conversion.toStringValue(record.value, undefined, operation),
+            invocationContext,
+            conversion.toStringValue(record.value, undefined, invocationContext),
             key => {
                 record.key = key
                 return record
             },
         ))
         return operationLifecycle.continuePreparedAll(
-            operation,
+            invocationContext,
             records,
             ready => sortRecords(ready, comparePreparedKeys, finish),
         )
@@ -402,9 +420,9 @@ function prepareAndSortRecords(sortable, comparator, operation, finish) {
 
     const snapshot = sortable.map(record => record.value)
     return operationLifecycle.continuePrepared(
-        operation,
-        exportValue(snapshot, operation),
-        exported => {
+        invocationContext,
+        exportManyValues([snapshot], invocationContext),
+        ([exported]) => {
             for (let index = 0; index < sortable.length; index++) {
                 sortable[index].exported = exported[index]
             }
@@ -414,6 +432,7 @@ function prepareAndSortRecords(sortable, comparator, operation, finish) {
                     comparator,
                     left.exported,
                     right.exported,
+                    invocationContext.operationContext,
                 ),
                 finish,
             )
@@ -452,14 +471,14 @@ function comparePreparedKeys(left, right) {
     return 0
 }
 
-function compareExported(comparator, left, right) {
+function compareExported(comparator, left, right, operationContext) {
     const result = invocation.invokeDataFunction(
         comparator,
         undefined,
         [left, right],
     )
     if (languageValues.isError(result)) throw result
-    if (languageValues.isPromise(result)) {
+    if (languageValues.isPromise(result, operationContext)) {
         throw errorUtils.validationError(
             "Promise-returning Array sort comparators are unsupported",
         )
@@ -475,21 +494,29 @@ function compareExported(comparator, left, right) {
 function includes(
     thisValue,
     { searchValue, fromIndex = 0 },
-    operation,
+    invocationContext,
 ) {
-    const length = arrayViews.logicalArrayLength(thisValue)
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     if (length === 0) return false
     const start = normalizeForwardStart(fromIndex, length)
     if (start >= length) return false
     const pending = []
     for (let index = start; index < length; index++) {
         const key = String(index)
-        if (!languageProperties.hasLanguageProperty(thisValue, key)) {
+        if (!languageProperties.hasLanguageProperty(
+            thisValue,
+            key,
+            invocationContext.operationContext,
+        )) {
             if (searchValue === undefined) return true
             continue
         }
-        const value = languageProperties.readLanguageProperty(thisValue, key)
-        if (languageValues.isPromise(value)) {
+        const value = languageProperties.readLanguageProperty(
+            thisValue,
+            key,
+            invocationContext.operationContext,
+        )
+        if (languageValues.isPromise(value, invocationContext.operationContext)) {
             pending.push(key)
         } else if (matches(value)) {
             return true
@@ -506,21 +533,25 @@ function includes(
     })
     for (const key of pending) {
         const branch = operationLifecycle.continueInternal(
-            operation,
-            propertyVersions.resolvePropertyValueAtKey(thisValue, key),
+            invocationContext,
+            propertyVersions.resolvePropertyValueAtKey(
+                thisValue,
+                key,
+                invocationContext.operationContext,
+            ),
             value => {
                 if (matches(value)) return finish(true)
                 if (--remaining === 0) finish(false)
             },
         )
-        if (languageValues.isPromise(branch)) {
-            operationLifecycle.observeFatal(operation, branch, rejectResult)
+        if (languageValues.isPromise(branch, invocationContext.operationContext)) {
+            operationLifecycle.observeFatal(invocationContext, branch, rejectResult)
         }
     }
     return result
 
     function finish(value) {
-        operationLifecycle.close(operation)
+        operationLifecycle.close(invocationContext)
         resolveResult(value)
     }
 
@@ -529,28 +560,28 @@ function includes(
     }
 }
 
-function indexOf(thisValue, prepared, operation) {
-    return orderedIndexSearch(thisValue, prepared, false, operation)
+function indexOf(thisValue, prepared, invocationContext) {
+    return orderedIndexSearch(thisValue, prepared, false, invocationContext)
 }
 
-function lastIndexOf(thisValue, prepared, operation) {
-    return orderedIndexSearch(thisValue, prepared, true, operation)
+function lastIndexOf(thisValue, prepared, invocationContext) {
+    return orderedIndexSearch(thisValue, prepared, true, invocationContext)
 }
 
 function orderedIndexSearch(
     thisValue,
     { searchValue, fromIndex },
     backwards,
-    operation,
+    invocationContext,
 ) {
     fromIndex ??= backwards ? Infinity : 0
-    const length = arrayViews.logicalArrayLength(thisValue)
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
     if (length === 0) return -1
     let index = backwards
         ? normalizeBackwardStart(fromIndex, length)
         : normalizeForwardStart(fromIndex, length)
     const result = next()
-    if (!languageValues.isPromise(result)) return result
+    if (!languageValues.isPromise(result, invocationContext.operationContext)) return result
 
     return result
 
@@ -559,17 +590,26 @@ function orderedIndexSearch(
             const current = index
             index += backwards ? -1 : 1
             const key = String(current)
-            if (!languageProperties.hasLanguageProperty(thisValue, key)) {
+            if (!languageProperties.hasLanguageProperty(
+                thisValue,
+                key,
+                invocationContext.operationContext,
+            )) {
                 continue
             }
             const value = languageProperties.readLanguageProperty(
                 thisValue,
                 key,
+                invocationContext.operationContext,
             )
-            if (languageValues.isPromise(value)) {
+            if (languageValues.isPromise(value, invocationContext.operationContext)) {
                 return operationLifecycle.continueInternal(
-                    operation,
-                    propertyVersions.resolvePropertyValueAtKey(thisValue, key),
+                    invocationContext,
+                    propertyVersions.resolvePropertyValueAtKey(
+                        thisValue,
+                        key,
+                        invocationContext.operationContext,
+                    ),
                     resolved => resolved === searchValue ? current : next(),
                 )
             }
@@ -598,25 +638,36 @@ function toRelativeIndex(value, length, defaultValue) {
         : Math.min(value, length)
 }
 
-function tryShiftArrayView(thisValue) {
-    const length = arrayViews.logicalArrayLength(thisValue)
-    return deriveArrayView(thisValue, Math.min(1, length), length)
+function tryShiftArrayView(thisValue, _args, invocationContext) {
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+    return deriveArrayView(
+        thisValue,
+        Math.min(1, length),
+        length,
+        invocationContext.operationContext,
+    )
 }
 
-function tryPopArrayView(thisValue) {
-    const length = arrayViews.logicalArrayLength(thisValue)
-    return deriveArrayView(thisValue, 0, Math.max(0, length - 1))
+function tryPopArrayView(thisValue, _args, invocationContext) {
+    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+    return deriveArrayView(
+        thisValue,
+        0,
+        Math.max(0, length - 1),
+        invocationContext.operationContext,
+    )
 }
 
-function deriveArrayView(thisValue, start, end) {
-    if (start === end) return arrayRemaps.createArrayFromRemap([])
-    const projection = arrayViews.ArrayView.tryAttachTo(thisValue)
+function deriveArrayView(thisValue, start, end, operationContext) {
+    if (start === end) return arrayRemaps.createArrayFromRemap([], operationContext)
+    const projection = arrayViews.ArrayView.tryAttachTo(thisValue, operationContext)
     if (!projection) return undefined
 
-    const view = new arrayViews.ArrayView(projection, start, end)
+    const view = new arrayViews.ArrayView(projection, operationContext, start, end)
     propertyVersions.prepareRetainedArrayProperties(
         thisValue,
         view,
+        operationContext,
         start,
         end,
         -start,
@@ -624,23 +675,25 @@ function deriveArrayView(thisValue, start, end) {
     return view
 }
 
-function tryConcatArrayView(thisValue, parts) {
+function tryConcatArrayView(thisValue, parts, invocationContext) {
     const suffix = invocation.invokeDataFunction(arrayConcat, [], parts)
-    return tryAppendArrayView(thisValue, suffix)
+    return tryAppendArrayView(thisValue, suffix, invocationContext)
 }
 
-function tryAppendArrayView(thisValue, suffix) {
+function tryAppendArrayView(thisValue, suffix, invocationContext) {
     const view = arrayViews.ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,
         derived => propertyVersions.prepareRetainedArrayProperties(
             thisValue,
             derived,
+            invocationContext.operationContext,
         ),
+        invocationContext.operationContext,
     )
     if (!view) return undefined
     const start = view.length - suffix.length
-    arrayRemaps.placeRemap(view, suffix, start)
+    arrayRemaps.placeRemap(view, suffix, invocationContext.operationContext, start)
     return view
 }
 

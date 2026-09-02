@@ -1,13 +1,6 @@
 import * as path from "path"
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
-import { hasCycleCut } from "../src/refcounts.js"
-import { markShared } from "../src/meta.js"
-import {
-    advancePromiseVersion,
-    getPromiseMirror,
-} from "../src/property-versions.js"
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 function failsClassification(failure) {
@@ -19,6 +12,7 @@ function failsClassification(failure) {
 }
 
 import {
+    advancePromiseVersion,
     Chain,
     expect,
     reportFatalError,
@@ -29,7 +23,10 @@ import {
     runFatal,
     buildRefIndex,
     getRefCounts,
+    getPromiseMirror,
+    hasCycleCut,
     metaOf,
+    markShared,
     verifyRefCounts,
     assignPath,
     deletePath,

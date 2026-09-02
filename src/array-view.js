@@ -5,10 +5,10 @@ import * as metadata from "./meta.js"
 // An Array operand or backing may be a Proxy, so physical reflection and
 // writes can invoke its traps.
 class ArrayView {
-    constructor(arrayOrArrayView, start = 0, end) {
-        languageValues.admitValue(arrayOrArrayView)
-        const source = projectionOf(arrayOrArrayView)
-        const sourceView = isArrayView(source) ? source : undefined
+    constructor(arrayOrArrayView, operationContext, start = 0, end) {
+        languageValues.admitValue(arrayOrArrayView, operationContext)
+        const source = projectionOf(arrayOrArrayView, operationContext)
+        const sourceView = isArrayView(source, operationContext) ? source : undefined
         const sourceStart = sourceView?._start ?? 0
         if (end === undefined) {
             end = sourceView ? sourceView.length : physicalArrayLength(source)
@@ -21,31 +21,35 @@ class ArrayView {
                 writable: true,
             },
         })
-        languageValues.admitReadyValue(this, languageValues.TYPE_ARRAY)
-        metadata.requireMeta(this).arrayView = this
+        languageValues.admitReadyValue(
+            this,
+            operationContext,
+            languageValues.TYPE_ARRAY,
+        )
+        metadata.requireMeta(this, operationContext).arrayView = this
     }
 
-    static tryAttachTo(arrayOrArrayView) {
-        const projection = projectionOf(arrayOrArrayView)
-        const backing = backingOf(projection)
+    static tryAttachTo(arrayOrArrayView, operationContext) {
+        const projection = projectionOf(arrayOrArrayView, operationContext)
+        const backing = backingOf(projection, operationContext)
         if (
-            metadata.importBoundaryOf(arrayOrArrayView) ||
-            metadata.importBoundaryOf(backing)
+            metadata.importBoundaryOf(arrayOrArrayView, operationContext) ||
+            metadata.importBoundaryOf(backing, operationContext)
         ) return undefined
-        if (isArrayView(projection)) return projection
+        if (isArrayView(projection, operationContext)) return projection
 
-        const view = new ArrayView(projection)
-        metadata.requireMeta(projection).arrayView = view
+        const view = new ArrayView(projection, operationContext)
+        metadata.requireMeta(projection, operationContext).arrayView = view
         return view
     }
 
-    static canGrowEnd(source, count) {
+    static canGrowEnd(source, count, operationContext) {
         if (count === 0) return true
-        const projection = projectionOf(source)
-        const backing = backingOf(projection)
+        const projection = projectionOf(source, operationContext)
+        const backing = backingOf(projection, operationContext)
         const backingLength = physicalArrayLength(backing)
         if (
-            isArrayView(projection) &&
+            isArrayView(projection, operationContext) &&
             projection._end !== backingLength
         ) return false
         if (backingLength + count > 0xffffffff) return false
@@ -58,11 +62,11 @@ class ArrayView {
         return descriptor?.writable === true
     }
 
-    static tryExtendEnd(source, count, beforeWrite) {
-        if (!ArrayView.canGrowEnd(source, count)) return
-        const view = ArrayView.tryAttachTo(source)
+    static tryExtendEnd(source, count, beforeWrite, operationContext) {
+        if (!ArrayView.canGrowEnd(source, count, operationContext)) return
+        const view = ArrayView.tryAttachTo(source, operationContext)
         if (!view) return
-        const next = new ArrayView(view, 0, view.length + count)
+        const next = new ArrayView(view, operationContext, 0, view.length + count)
         beforeWrite(next)
         if (count > 0) extendPhysicalArray(view._backing, count)
         return next
@@ -146,13 +150,14 @@ class ArrayView {
     }
 
     keys() {
-        return enumerableArrayKeys(this)
+        return enumerableProjectedArrayKeys(this)
     }
 
     setLength(length) {
         const growth = length - this.length
         if (growth > 0) {
-            if (!ArrayView.canGrowEnd(this, growth)) return false
+            // The view itself is already the resolved internal projection.
+            if (!canGrowProjectedEnd(this, growth)) return false
             extendPhysicalArray(this._backing, growth)
         }
         this._end = this._start + length
@@ -166,12 +171,13 @@ class ArrayView {
     }
 }
 
-function isArrayView(value) {
-    return metadata.metaOf(value)?.arrayView === value
+function isArrayView(value, operationContext) {
+    return metadata.metaOf(value, operationContext)?.arrayView === value
 }
 
-function isLogicalArray(value) {
-    return metadata.metaOf(value)?.type === languageValues.TYPE_ARRAY
+function isLogicalArray(value, operationContext) {
+    return metadata.metaOf(value, operationContext)?.type ===
+        languageValues.TYPE_ARRAY
 }
 
 function hasArrayAncestor(ancestry, array) {
@@ -181,20 +187,20 @@ function hasArrayAncestor(ancestry, array) {
     return false
 }
 
-function attachedViewOf(value) {
+function attachedViewOf(value, operationContext) {
     return Array.isArray(value)
-        ? metadata.metaOf(value)?.arrayView
+        ? metadata.metaOf(value, operationContext)?.arrayView
         : undefined
 }
 
-function projectionOf(value) {
-    if (isArrayView(value)) return value
-    return attachedViewOf(value) ?? value
+function projectionOf(value, operationContext) {
+    if (isArrayView(value, operationContext)) return value
+    return attachedViewOf(value, operationContext) ?? value
 }
 
-function backingOf(value) {
-    const projection = projectionOf(value)
-    return isArrayView(projection)
+function backingOf(value, operationContext) {
+    const projection = projectionOf(value, operationContext)
+    return isArrayView(projection, operationContext)
         ? projection._backing
         : projection
 }
@@ -209,15 +215,15 @@ function extendPhysicalArray(array, count) {
     })
 }
 
-function logicalArrayLength(value) {
-    const projection = projectionOf(value)
-    return isArrayView(projection)
+function logicalArrayLength(value, operationContext) {
+    const projection = projectionOf(value, operationContext)
+    return isArrayView(projection, operationContext)
         ? projection.length
         : physicalArrayLength(projection)
 }
 
-function requiresArrayMaterialization(value) {
-    return isArrayView(projectionOf(value))
+function requiresArrayMaterialization(value, operationContext) {
+    return isArrayView(projectionOf(value, operationContext), operationContext)
 }
 
 function isArrayIndex(key) {
@@ -232,9 +238,21 @@ function isArrayIndex(key) {
 // Logical keys of a logical Array range. A range spanning the complete
 // backing pays only for present keys; a strict subrange inspects exactly its
 // selected indexes, so its cost may include the selected holes.
-function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
-    const projection = projectionOf(arrayOrView)
-    const view = isArrayView(projection) ? projection : undefined
+function enumerableArrayKeys(
+    arrayOrView,
+    operationContext,
+    start = 0,
+    end = undefined,
+) {
+    return enumerableProjectedArrayKeys(
+        projectionOf(arrayOrView, operationContext),
+        start,
+        end,
+    )
+}
+
+function enumerableProjectedArrayKeys(projection, start = 0, end = undefined) {
+    const view = projection instanceof ArrayView ? projection : undefined
     const backing = view ? view._backing : projection
     const backingLength = physicalArrayLength(backing)
     const origin = view ? view._start : 0
@@ -268,6 +286,21 @@ function enumerableArrayKeys(arrayOrView, start = 0, end = undefined) {
         }
     }
     return Object.keys(keys)
+}
+
+function canGrowProjectedEnd(projection, count) {
+    if (count === 0) return true
+    const backing = projection._backing
+    const backingLength = physicalArrayLength(backing)
+    if (projection._end !== backingLength) return false
+    if (backingLength + count > 0xffffffff) return false
+    if (!errorUtils.runUserCode(() => Object.isExtensible(backing))) {
+        return false
+    }
+    const descriptor = errorUtils.runUserCode(
+        () => Object.getOwnPropertyDescriptor(backing, "length"),
+    )
+    return descriptor?.writable === true
 }
 
 function isDataPlacement(descriptor) {

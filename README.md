@@ -22,15 +22,17 @@ See [`docs/data-limitations.md`](docs/data-limitations.md) before passing applic
 ```js
 import * as cascada from "cascada-chain-resolution"
 
+const execution = new cascada.Execution()
+const operationContext = { execution, errorContext: "example" }
 const input = cascada.import(
     { profile: Promise.resolve({ name: "Ada" }) },
-    "application input",
+    operationContext,
 )
-const chain = new cascada.Chain(input)
+const chain = new cascada.Chain(input, operationContext)
 
-cascada.assignPath(chain, ["profile", "active"], true)
+cascada.assignPath(chain, ["profile", "active"], true, operationContext)
 
-console.log(await cascada.export(chain, []))
+console.log(await cascada.export(chain, [], operationContext))
 // { profile: { name: "Ada", active: true } }
 ```
 
@@ -74,17 +76,23 @@ Arrays default to managed; class instances default to external.
 
 ### `new Execution()`
 
-Creates execution-scoped runtime state shared by related Chains. Omitting an
-execution from a Chain constructor creates a private one.
+Creates runtime state shared by related Chains. Every operation context in one
+execution carries this exact identity.
 
-### `new Chain(initialValue, execution = new Execution())`
+### Operation context
+
+Every Chain constructor and graph operation receives
+`{ execution, errorContext }`. `execution` must match the Chain. `errorContext`
+identifies the source operation and may differ for every call.
+
+### `new Chain(initialValue, operationContext)`
 
 Creates a mutation-capable Chain rooted at an existing Cascada value. It admits
 the value but does not import host data; pass host-provided roots through
 `import` first. Read-only and automatically closed Chains exist only inside
 `enter`.
 
-### `new ContextChain(initialValue, errorContext, execution = new Execution(), scopeMutationPaths = [], propertyMutationPaths = [])`
+### `new ContextChain(initialValue, operationContext, scopeMutationPaths = [], propertyMutationPaths = [])`
 
 Imports a raw host context root and builds its initial external-mutation index
 from compiler-provided paths. Scope paths contain each prefix selected by `!`;
@@ -92,10 +100,9 @@ property paths contain complete assignment and deletion targets. When both
 path Arrays are empty, the context is imported without external authority. An
 empty property path replaces the root and likewise creates no authority.
 
-### `import(value, errorContext)`
+### `import(value, operationContext)`
 
-Admits externally owned data and returns its logical root. `errorContext` is a
-required truthy value used to attribute failures.
+Admits externally owned data and returns its logical root.
 
 For an available root, the original root is returned synchronously after its
 reachable graph is classified. A Promise root returns a Promise for the
@@ -104,7 +111,7 @@ Imported identities are protected by copy-on-write, so Cascada mutations never
 modify their host representation. Application code must not mutate the imported
 graph after admission.
 
-### `assignPath(chain, path, value, mutationScopeDepth = path.length)`
+### `assignPath(chain, path, value, operationContext, mutationScopeDepth = path.length)`
 
 Assigns `value` to the selected property, creating a missing final property when
 needed. An empty path replaces the root. Assignment uses copy-on-write whenever
@@ -117,7 +124,7 @@ after a Promise. A failure found synchronously is published at the failed
 mutation location and returned as an `Error`; a failure found later is published
 to the graph.
 
-### `deletePath(chain, path, mutationScopeDepth = path.length)`
+### `deletePath(chain, path, operationContext, mutationScopeDepth = path.length)`
 
 Deletes the selected property. A missing final property is a no-op, deleting an
 Array index preserves its length, and an empty path replaces the root with
@@ -127,26 +134,26 @@ Its return behavior matches `assignPath`: success and suspended issuance return
 `undefined`, while a synchronous failed mutation publishes and returns its
 `Error`.
 
-### `lookupPath(chain, path)`
+### `lookupPath(chain, path, operationContext)`
 
 Returns the value captured at `path`. A returned traversable identity gains an
 owner and is marked shared, ensuring later mutation through either owner is
 isolated by copy-on-write. The result is direct unless path traversal crosses a
 Promise.
 
-### `enter(chain, path, mutates, onEntered)`
+### `enter(chain, path, operationContext, entryMutable, onEntered)`
 
 Enters the value captured at `path` and passes a temporary Chain to
-`onEntered`. The compiler supplies the exact `mutates` Boolean and callback as
+`onEntered`. The compiler supplies the exact `entryMutable` Boolean and callback as
 trusted runtime facts. The temporary Chain is closed automatically when the
 callback's direct result or Promise completes.
 
-With `mutates: false`, the callback receives a read-only Chain and the captured
+With `entryMutable: false`, the callback receives a read-only Chain and the captured
 value is protected from concurrent Cascada mutation for the callback's complete
 lifetime. The public path is not gated, so unrelated operations continue
 normally.
 
-With `mutates: true`, the callback receives a private mutable Chain. The target
+With `entryMutable: true`, the callback receives a private mutable Chain. The target
 placement is replaced with a Promise gate before target-dependent callback work
 runs. Later operations on that placement wait while the callback issues its
 private operations. When the callback fulfills, its final private root is
@@ -157,7 +164,7 @@ If path resolution produces a language `Error`, the callback is not invoked and
 the Error is returned. A callback throw or rejected callback Promise is fatal,
 closes the temporary Chain, and does not publish its private state.
 
-### `export(chain, path)`
+### `export(chain, path, operationContext)`
 
 Returns a host-ready snapshot of the branch captured at the operation's issue
 position. Traversable data is deep-copied without runtime metadata while
@@ -171,14 +178,14 @@ contains them. The result is a Promise when the complete snapshot or Error set
 depends on pending data. An `Error` keeps the full scan running; a fatal runtime
 failure stops it.
 
-### `hasError(chain, path)`
+### `hasError(chain, path, operationContext)`
 
 Returns `true` when an `Error` is reachable from the captured path value and
 `false` otherwise. A broken required path counts as an Error. The result is
 direct when it can be decided immediately and otherwise a Promise for a
 Boolean.
 
-### `getErrors(chain, path)`
+### `getErrors(chain, path, operationContext)`
 
 Returns each distinct reachable `Error` identity once. A broken required path
 contributes its path-access Error; a missing or primitive final value contributes
@@ -198,13 +205,15 @@ instance while preserving aliases and cycles.
 instances admitted later and returns `undefined`. Class declarations are not
 inherited, and an exact `externalState` declaration takes precedence.
 
-Declarations must precede admission and never wait. A matching request for
-admitted state returns it without another walk; invalid or conflicting input
-returns a validation `Error`. Managed classes keep semantic state in own
-enumerable string-keyed data properties and cannot require prototype accessors,
-private fields, Symbols, hidden mutable state, or native internal slots.
+Declarations must precede admission and never wait. Repeating the same
+declaration is harmless; invalid or conflicting input returns a validation
+`Error`. A late declaration never reclassifies an admitted identity and is
+unsupported because it can affect that identity's admission in a later
+execution. Managed classes keep semantic state in own enumerable string-keyed
+data properties and cannot require prototype accessors, private fields, Symbols,
+hidden mutable state, or native internal slots.
 
-### `run(chain, path, method, args, { mutationScopeDepth })`
+### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`
 
 Invokes a supported method on the receiver at `path`. `args` is the ordered
 Array of explicit arguments. An absent or `undefined` `mutationScopeDepth`

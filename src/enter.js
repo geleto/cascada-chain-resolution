@@ -11,35 +11,42 @@ import { walkObservationPath } from "./observations.js"
 import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
-function enter(chain, path, mutates, onEntered) {
-    return errorUtils.runFatal(() => {
+function enter(chain, path, operationContext, entryMutable, onEntered) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
         path = [...path]
-        const execution = chain.execution
         const externalMutationTree = chain._externalMutationTree?.branch(path)
-        const enterOperation = mutates ? enterMutating : enterReadOnly
+        const enterOperation = entryMutable ? enterMutating : enterReadOnly
         return enterOperation(
             chain,
             path,
+            operationContext,
             onEntered,
-            execution,
             externalMutationTree,
         )
     })
 }
 
-function runEnteredCallback(callback, entered, onFulfilled, onRejected) {
+function runEnteredCallback(
+    callback,
+    entered,
+    operationContext,
+    onFulfilled,
+    onRejected,
+) {
     let result
     try {
         result = callback(entered)
     } catch (error) {
-        errorUtils.runFatal(onRejected, error)
-        return errorUtils.reportFatalError(error)
+        onRejected(error)
+        throw error
     }
-    if (!languageValues.isPromise(result)) {
-        return errorUtils.runFatal(onFulfilled, result)
+    if (!languageValues.isPromise(result, operationContext)) {
+        return onFulfilled(result)
     }
     return resolution.observeResultPromise(
         result,
+        operationContext,
         onFulfilled,
         reason => {
             onRejected(reason)
@@ -51,27 +58,34 @@ function runEnteredCallback(callback, entered, onFulfilled, onRejected) {
 function enterReadOnly(
     chain,
     path,
+    operationContext,
     onEntered,
-    execution,
     externalMutationTree,
 ) {
-    return walkObservationPath(chain, path, value => {
+    return walkObservationPath(chain, path, operationContext, value => {
         if (languageValues.isError(value)) return value
 
         const entered = new Chain(
             value,
-            execution,
+            operationContext,
             false,
             externalMutationTree,
         )
-        const leased = metadata.incrementReadLease(value)
+        const leased = metadata.incrementReadLease(
+            value,
+            operationContext,
+        )
         const close = () => {
             entered._closeEntry()
-            if (leased) metadata.decrementReadLease(value)
+            if (leased) metadata.decrementReadLease(
+                value,
+                operationContext,
+            )
         }
         return runEnteredCallback(
             onEntered,
             entered,
+            operationContext,
             result => {
                 close()
                 return result
@@ -84,8 +98,8 @@ function enterReadOnly(
 function enterMutating(
     chain,
     path,
+    operationContext,
     onEntered,
-    execution,
     externalMutationTree,
 ) {
     let entered
@@ -94,6 +108,7 @@ function enterMutating(
     return walkMutationPath(
         chain,
         path,
+        operationContext,
         target => {
             if (
                 target.propertyKind !==
@@ -102,23 +117,29 @@ function enterMutating(
                 const error = languageProperties.propertyValidationError(
                     target.receiver,
                     "Cannot enter length for mutation",
+                    operationContext,
                 )
                 target.replaceReceiver(error)
                 return error
             }
             const { parent, key, attachmentRoot } = target
-            const value = languageProperties.readLanguageProperty(parent, key)
+            const value = languageProperties.readLanguageProperty(
+                parent,
+                key,
+                operationContext,
+            )
             const privateChain = new Chain(
                 value,
-                execution,
+                operationContext,
                 true,
                 externalMutationTree,
             )
-            const sourceMirror = languageValues.isPromise(value)
+            const sourceMirror = languageValues.isPromise(value, operationContext)
                 ? propertyVersions.getOrCreatePromiseMirror(
                     parent,
                     key,
                     value,
+                    operationContext,
                 )
                 : undefined
 
@@ -134,6 +155,7 @@ function enterMutating(
                 parent,
                 key,
                 gate,
+                operationContext,
                 attachmentRoot,
             )
 
@@ -143,10 +165,11 @@ function enterMutating(
                     value,
                     privateChain._state,
                     "value",
+                    operationContext,
                     Boolean(attachmentRoot),
                 )
             } else if (attachmentRoot) {
-                metadata.markShared(value)
+                metadata.markShared(value, operationContext)
             }
 
             entered = privateChain
@@ -159,9 +182,14 @@ function enterMutating(
             return runEnteredCallback(
                 onEntered,
                 entered,
+                operationContext,
                 result => {
                     close()
-                    publishEnteredValue(entered._state, resolveGate)
+                    publishEnteredValue(
+                        entered._state,
+                        resolveGate,
+                        operationContext,
+                    )
                     return result
                 },
                 // A fatal callback outcome must not publish private state.
@@ -171,9 +199,13 @@ function enterMutating(
     )
 }
 
-function publishEnteredValue(state, resolveGate) {
-    const value = languageProperties.readLanguageProperty(state, "value")
-    if (!languageValues.isPromise(value)) {
+function publishEnteredValue(state, resolveGate, operationContext) {
+    const value = languageProperties.readLanguageProperty(
+        state,
+        "value",
+        operationContext,
+    )
+    if (!languageValues.isPromise(value, operationContext)) {
         resolveGate(value)
         return
     }
@@ -181,25 +213,30 @@ function publishEnteredValue(state, resolveGate) {
     // Registration happens only after callback issuance has stopped. The root
     // mirror and all earlier private commands therefore update state.value
     // first in the same canonical FIFO batch.
-    const mirror = propertyVersions.getPromiseMirror(state, "value")
+    const mirror = propertyVersions.getPromiseMirror(state, "value", operationContext)
     if (!mirror) {
         // Preserve publication ordering for corrupt raw Promise state: issuance
         // is already closed; report the invariant failure from this FIFO slot.
-        resolution.onLaterPromiseReady(value, () => {
+        resolution.onLaterPromiseReady(value, operationContext, () => {
             errorUtils.reportFatalError(
                 new Error("Entered root remained pending at publication"),
             )
         })
         return
     }
-    propertyVersions.continuePromiseVersion(value, mirror, publishedValue => {
-        if (languageValues.isPromise(publishedValue)) {
-            errorUtils.reportFatalError(
-                new Error("Entered root remained pending at publication"),
-            )
-        }
-        resolveGate(publishedValue)
-    })
+    propertyVersions.continuePromiseVersion(
+        value,
+        mirror,
+        operationContext,
+        publishedValue => {
+            if (languageValues.isPromise(publishedValue, operationContext)) {
+                errorUtils.reportFatalError(
+                    new Error("Entered root remained pending at publication"),
+                )
+            }
+            resolveGate(publishedValue)
+        },
+    )
 }
 
 export { enter }

@@ -125,7 +125,7 @@ Assignment replaces, and deletion removes, an Error at the final managed graph p
 
 External property access and calls operate on exact host state. Observation-only property reads and call results use ordinary import. A property read inside mutable external state copies the reached ready graph into managed state with export's synchronous copy core. A direct property-result Promise completes before copying; the copy walk rejects nested Promises. Every explicit argument and property-write value is exported. A native setter completes synchronously.
 
-Public `import(value, errorContext)` never creates a static tree or external mutation authority. External identities admitted through it remain observation-only even when the imported value is later used as a Chain root. Only initial `ContextChain` import can establish possible authority.
+Public `import(value, operationContext)` never creates a static tree or external mutation authority. External identities admitted through it remain observation-only even when the imported value is later used as a Chain root. Only initial `ContextChain` import can establish possible authority.
 
 An external operation follows the common lifecycle:
 

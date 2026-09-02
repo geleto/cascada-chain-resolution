@@ -9,6 +9,7 @@ import {
     flushMicrotasks,
     getErrors,
     getRefCounter,
+    hasCycleCut,
     hasError,
     importValue,
     lookupPath,
@@ -19,7 +20,6 @@ import {
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
-import { hasCycleCut } from "../src/refcounts.js"
 
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)

@@ -16,7 +16,7 @@ The mechanisms below preserve these contracts. Reuse them before adding state or
 
 - synchronous transitions make all available progress immediately;
 - FIFO continuations preserve program order across Promise settlement;
-- property versions and mirrors preserve captured logical values;
+- property versions and placement overlays preserve captured logical values;
 - ownership and copy-on-write preserve values held elsewhere;
 - leases protect managed values without blocking later mutation;
 - transition gates order unfinished managed mutation;
@@ -26,15 +26,29 @@ The mechanisms below preserve these contracts. Reuse them before adding state or
 Core contracts, type capabilities, execution boundaries, and Error/fatal classification are semantic architecture: implementation work must not change them silently, while an explicit architecture revision may correct them. Metadata layout, helper boundaries, refcount projections, and counter totals are implementation choices.
 
 - Prefer one general transition over parallel paths, flags, adapters, or deferred cleanup when cases share the same state change. Split only when behavior or invariants differ, and remove the superseded path in the same change.
-- Keep facts at their natural scope: admitted identity facts on the execution and identity, host declarations on host identities, property-version facts on mirrors, parent-key facts on placements, path facts on paths, and operation facts within the operation.
+- Keep facts at their natural scope: admitted identity facts on the execution and identity, host declarations on host identities, property-version facts on placement overlays, parent-key facts on placements, path facts on paths, and operation facts within the operation.
 - Derive a fact where it is used. Persist it only when it cannot be recovered correctly or repeated derivation has a demonstrated material cost, and then at the narrowest correct scope.
 - Validate application and host inputs, and validate language values when their semantics require it. Compiler-generated and runtime-internal control facts are trusted: copy them when retained, but do not add defensive shape checks or tests for malformed internal calls. An invalid internal fact is a runtime bug and remains fatal if ordinary processing encounters it.
 
 ## Execution Scope
 
-Every Chain has an explicit execution, and related Chains share one. Admission, ownership, leases, mirrors, refcounts, and Promise-continuation state belong to that execution; an independent execution importing the same host identity creates independent graph state. Values cross between executions only through export followed by import. There is no ambient current execution, implicit private execution, or direct transfer of internal managed identities.
+Every source operation has an explicit execution, and each Chain is initialized and used within one execution. Related Chains and operations share it. Admission, ownership, leases, placement versions, refcounts, and Promise-continuation state belong to that execution; an independent execution importing the same host identity creates independent graph state. Managed values move between executions only through export followed by import. Host code may independently supply an exact external identity to several executions, but those executions do not coordinate it; a mutation-capable external identity must therefore belong to only one execution. There is no ambient current execution, implicit private execution, or direct transfer of internal managed identities.
 
 Identity declarations and managed-class registration are runtime-wide host configuration applied independently by each execution. Fatal reporting and the host-code re-entry guard are runtime-wide contracts. Immutable definitions and operation-local work do not belong to an execution.
+
+## Operation Context
+
+Every semantic source operation carries one immutable operation context containing its execution and source-error context; nested operations may have different contexts even on one source line. Chain initialization and boundaries without a Chain receive one too. Attribute a raw failure to the exact operation boundary that caused it, including after deferred work completes. Once contextualized, an Error keeps that causal source when propagated or combined; a later consumer contributes its context only to a new failure it causes. Reusing one raw host Error at another causal boundary creates another contextualized occurrence; Error identity alone never fixes source attribution. Async diagnostic-route information may supplement this source but never replace it.
+
+The source-error context is opaque runtime data. The compiler may represent it as source path, line, column, operation, and other diagnostic facts without graph code depending on that shape. Pass the operation context through operation work. Unwrap its execution only to access execution-owned state or validate a Chain's execution binding. Mutable invocation, export, query, and mutation state belongs to the operation work lifetime below; it is not the operation context.
+
+Operation contexts are used by:
+
+- Chain and context-root initialization;
+- import and every path, call, entry, export, and Error-query operation;
+- first thenability sampling and captured-then invocation;
+- host-boundary result and rejection handling; and
+- continuations registered by those operations.
 
 ## Immutable Chain Outputs
 
@@ -74,7 +88,7 @@ Any graph root or placement may contain a Promise. Pending and ready values use 
 
 Admission is the first classification of an available identity within one execution. The same host identity imported by another execution is admitted independently. Resolve callable thenables through their captured versions before admission. Acquisition or invocation failure is that captured Promise's rejection unless already fatal. Classification preserves Error and Function semantics first. An identity imported from observation-only external property state remains external, including a record or Array. A detached copy read from mutable external state is new managed data instead. An explicit external identity declaration may likewise make a record, Array, or class instance external. Otherwise logical Arrays retain Array semantics, records default to managed, and a class instance follows its explicit managed declaration, the managed-class registry, or the external default. Promise subclasses keep Promise semantics. An uninspectable object is admitted unchanged as external.
 
-Declarations do not modify or admit an identity. They are persistent runtime-wide configuration for future admission in every execution and never reclassify an identity already admitted in an execution. Sampling a declaration input captures its thenability once; this availability fact is not category admission. Repeating a declaration is idempotent, while a conflicting declaration fails. Declaration APIs are used before their data enters Cascada. An external identity declaration overrides the managed record or Array default and any class rule; a managed identity declaration overrides the external class default. Records and Arrays passed to `managedState` are traversal roots and receive no redundant declaration. Declared external and uninspectable identities stop its walk; requesting managed state for one as the root fails. A declaration does not bind a prototype; each execution's admission records the prototype then present and fixes it with the category. Passing an Error to a declaration API preserves that exact Error without declaring it; an Error reached during a managed declaration walk ends only that branch. A managed copy inherits the source category and prototype within its execution without adding a declaration.
+Declarations do not modify or admit an identity. They are persistent runtime-wide configuration for future admission in every execution and never reclassify an identity already admitted in an execution. A declaration operation samples each reached identity's thenability once; the sample is local to that operation and is not category admission. Repeating a declaration is idempotent, while a conflicting declaration fails. Declaration APIs are used before their data enters Cascada. An external identity declaration overrides the managed record or Array default and any class rule; a managed identity declaration overrides the external class default. Records and Arrays passed to `managedState` are traversal roots and receive no redundant declaration. Declared external and uninspectable identities stop its walk; requesting managed state for one as the root fails. A declaration does not bind a prototype; each execution's admission records the prototype then present and fixes it with the category. Passing an Error to a declaration API preserves that exact Error without declaring it; an Error reached during a managed declaration walk ends only that branch. A managed copy inherits the source category and prototype within its execution without adding a declaration.
 
 A controlled method consumes logical Cascada values. A host call crosses argument-export and result-admission boundaries. Observation-only external identities remain exact and are not graph-traversed; mutation-capable external identities remain receiver-only capabilities.
 
@@ -223,14 +237,15 @@ Operation work lifetimes are used by:
 - external boundary preparation; and
 - Promise-valued path operations.
 
-## Property Versions and Mirrors
+## Property Versions
 
-A property version is the exact logical state captured at one placement. A mirror tracks a Promise-backed version as it changes or resolves.
+A property version is the exact logical state captured at one placement. When physical storage must remain unchanged, one placement overlay holds its logical version. A Promise mirror is the changing overlay for a Promise-backed version; a contextualized Error over imported physical storage is a fixed overlay.
 
 - Every Promise placement creates a new mirror. Different placements and versions never share one, even when they contain the same Promise.
-- A live mirror determines logical presence and value. Physical writeback may keep runtime-owned storage current, but correctness never depends on it.
+- One live overlay determines logical presence and value. Physical writeback may keep runtime-owned storage current, but correctness never depends on it.
 - Imported storage retains its physical Promise while the mirror holds the resolved logical value.
-- Replacing or deleting a placement detaches its mirror. The mirror continues serving operations that captured that version.
+- Imported storage retains a physical native Error while its fixed overlay holds that occurrence's contextualized Error.
+- Replacing or deleting a placement detaches its live overlay. A captured version continues serving operations that retained it.
 - Settlement alone changes no language state. The first resolver advances the captured version; later resolvers ignore the payload and continue from the value earlier resolvers left.
 
 ## External Boundary
@@ -253,9 +268,9 @@ Promise fulfillment continues its original import boundary; it is not another bo
 
 When importing a context root, its Chain may supply the compiler's complete mutation-path set for all code that may use that Chain to the same boundary internally. The paths are String/Number prefixes selected by `!` and String/Number assignment and deletion targets. An absent or empty set performs ordinary import and builds no external mutation tree.
 
-Chain construction from an existing Cascada value, assignment, lookup, and internal transfer within one execution do not cross the boundary and therefore do not import; they preserve admission and origin. Values move between independent executions only through export followed by import.
+Chain construction from an existing Cascada value, assignment, lookup, and internal transfer within one execution do not cross the boundary and therefore do not import; they preserve admission and origin. Managed values move between independent executions only through export followed by import. Independently supplied external identities remain exact host values and follow the execution-isolation restriction above.
 
-- Validate each reached synchronous import segment before committing origin, sharing, or Promise mirrors. A boundary failure commits none of that segment.
+- Validate each reached synchronous import segment before committing origin, sharing, or placement versions. A boundary failure commits none of that segment.
 - Traverse managed state once while preserving aliases and cycles; stop at Errors, Functions, and external identities. Containment neither grants nor removes origin.
 - Metadata in the current execution identifies an already admitted value. Ordinary import retains such a managed result without traversing it again and marks its root shared when the result adds an owner. Metadata from another execution is invisible. A managed mutation result is different: arbitrary receiver mutation may detach an admitted container while retaining its descendants, so its import traverses the retained managed graph and marks every reached managed identity shared. A new host-produced managed identity becomes imported and shared.
 - A property read through observation-only external state uses ordinary import, so a newly reached identity remains external even when it is a record or Array. A read inside mutable external state instead copies the ready reached graph under its observation phase using export's synchronous graph-copy semantics and admits the copies as managed data. A direct property-result Promise completes before that copy; a nested Promise is invalid. Traversable source identities and external authority never escape; prototypes and Functions are preserved. External state may contain only external state. If property traversal encounters an already admitted managed identity, poison that external container without replacing either value. Do not scan external state to search for this violation. A host call may instead return admitted managed data because its result crosses a separate import boundary rather than remaining external property state.
@@ -423,7 +438,7 @@ These constrain implementation cost. A mechanism that inherently exceeds them sh
 - Prefer integration tests through public operations across meaningful synchronous and Promise interleavings.
 - Cover sequential equivalence and owner isolation; immutable Chain outputs; lease and gate lifetimes; overlapping observations and mutation barriers; external ancestor, descendant, and sibling guards; mutable-external extraction rejection and property snapshots; and Promise fulfillment and rejection.
 - Verify that ready and Promise-backed boundary results have identical admission outcomes, including admission Errors.
-- Verify that ordinary import of a result already admitted in the current execution skips graph traversal. Verify that metadata from another execution is invisible and that export/import is the only supported crossing. Verify separately that managed mutation-result import protects descendants still reachable from the receiver.
+- Verify that ordinary import of a result already admitted in the current execution skips graph traversal. Verify that metadata from another execution is invisible and that export/import is the only supported managed-data crossing. Verify that independently supplied external identities receive isolated state without implying cross-execution mutation safety. Verify separately that managed mutation-result import protects descendants still reachable from the receiver.
 - Verify that export collects synchronous and Promise-revealed Errors at every depth, loses no distinct Error identity, combines within each root and then across failed argument roots, and never invokes host code with an Error.
 - Verify every immutable-output route: managed results gain independent ownership; mutation-capable external identities fail direct extraction, host-input export, callback exposure, external assignment, and script return; and mutable-external property copies preserve Arrays, aliases, cycles, prototypes, and Functions while admitting every copied traversable identity as managed data. A direct property Promise resolves before copying, while a nested Promise fails the copy without creating a mirror.
 - Verify that controlled operations retain uninspected payload without needless export, while every callback- or host-visible value uses export.

@@ -3,14 +3,11 @@ import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
 import { Chain as InternalChain } from "../src/chain.js"
 import {
-    decrementReadLease,
-    incrementReadLease,
-} from "../src/meta.js"
-import {
     Chain,
     assignPath,
     buildRefIndex,
     deletePath,
+    decrementReadLease,
     deferred,
     enter,
     expect,
@@ -20,11 +17,13 @@ import {
     expectCounts,
     hasError,
     importValue,
+    incrementReadLease,
     lookupPath,
     readPath,
     metaOf,
     setFatalErrorReporter,
     thrownBy,
+    testOperationContext,
     verifyRefCounts,
 } from "./support.js"
 
@@ -69,7 +68,10 @@ describe("enter", () => {
         let entered
 
         enter(
-            new packageRuntime.Chain({ target: {} }),
+            new packageRuntime.Chain(
+                { target: {} },
+                testOperationContext("package Chain initialization"),
+            ),
             ["target"],
             false,
             privateChain => {

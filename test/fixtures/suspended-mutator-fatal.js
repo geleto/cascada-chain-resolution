@@ -16,7 +16,11 @@ function suspendedRoot() {
         writable: true,
         configurable: true,
     })
-    return { chain: new runtime.Chain(promise), resolve, root }
+    const operationContext = {
+        execution: new runtime.Execution(),
+        errorContext: "fixture",
+    }
+    return { chain: new runtime.Chain(promise, operationContext), operationContext, resolve, root }
 }
 
 setFatalErrorReporter(error => {
@@ -28,8 +32,17 @@ process.on("unhandledRejection", error => {
 
 const assigned = suspendedRoot()
 const deleted = suspendedRoot()
-const assignResult = runtime.assignPath(assigned.chain, ["hidden"], 1)
-const deleteResult = runtime.deletePath(deleted.chain, ["hidden"])
+const assignResult = runtime.assignPath(
+    assigned.chain,
+    ["hidden"],
+    1,
+    assigned.operationContext,
+)
+const deleteResult = runtime.deletePath(
+    deleted.chain,
+    ["hidden"],
+    deleted.operationContext,
+)
 assigned.resolve(assigned.root)
 deleted.resolve(deleted.root)
 

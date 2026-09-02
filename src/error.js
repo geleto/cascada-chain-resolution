@@ -26,13 +26,22 @@ function setFatalErrorReporter(reporter = () => {}) {
     fatalReporter = reporter
 }
 
-function runFatal(fn, value = undefined) {
+function runFatal(operationContext, fn, value = undefined) {
+    return runFatalWork(fn, value, () => operationContext.execution)
+}
+
+function runContextlessFatal(fn, value = undefined) {
+    return runFatalWork(fn, value)
+}
+
+function runFatalWork(fn, value, requireOperationContext = undefined) {
     if (userCodeDepth > 0) {
         reportFatalError(
             new Error("Cascada cannot be re-entered from supported user code"),
         )
     }
     try {
+        requireOperationContext?.()
         return fn(value)
     } catch (error) {
         if (error instanceof UserCodeFailure) return error.error
@@ -76,7 +85,7 @@ function catchUserCodeFailure(fn, onFailure) {
 }
 
 function validationError(message, errorContext = undefined) {
-    if (!errorContext) return new Error(message)
+    if (errorContext === undefined) return new Error(message)
     return new Error(`${message} (imported at: ${String(errorContext)})`)
 }
 
@@ -86,7 +95,7 @@ function pathAccessError() {
 
 function combineErrors(errors, message) {
     // A compound Error is one supplied Error. Keep it intact so combining
-    // input outcomes preserves their grouping and context.
+    // input outcomes preserves their grouping and source context.
     const distinct = [...new Set(errors)]
     if (distinct.length < 2) return distinct[0]
 
@@ -110,6 +119,7 @@ export {
     pathAccessError,
     catchUserCodeFailure,
     reportFatalError,
+    runContextlessFatal,
     runFatal,
     runUserCode,
     setFatalErrorReporter,

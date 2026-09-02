@@ -5,13 +5,13 @@ import * as languageValues from "./language-values.js"
 
 const COMMIT_UNINDEXED_EDGE = updateProperty => updateProperty()
 
-function getRefCounter(node) {
-    const meta = metadata.metaOf(node)
+function getRefCounter(node, operationContext) {
+    const meta = metadata.metaOf(node, operationContext)
     return meta?.parents ? meta : undefined
 }
 
-function getRequiredRefCounter(node) {
-    const counter = getRefCounter(node)
+function getRequiredRefCounter(node, operationContext) {
+    const counter = getRefCounter(node, operationContext)
     if (!counter) {
         errorUtils.reportFatalError(
             new Error("Ref counts require a ref-indexed value"),
@@ -20,22 +20,23 @@ function getRequiredRefCounter(node) {
     return counter
 }
 
-function hasCycleCut(parent, key) {
-    return metadata.metaOf(parent)?.cycleCuts?.has(key) === true
+function hasCycleCut(parent, key, operationContext) {
+    return metadata.metaOf(parent, operationContext)
+        ?.cycleCuts?.has(key) === true
 }
 
-function setCycleCut(parent, key) {
-    updateCycleCut(metadata.requireMeta(parent), key, true)
+function setCycleCut(parent, key, operationContext) {
+    updateCycleCut(metadata.requireMeta(parent, operationContext), key, true)
 }
 
-function getRefCounts(value) {
+function getRefCounts(value, operationContext) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
-    if (languageValues.isPromise(value)) promiseCount = 1
+    if (languageValues.isPromise(value, operationContext)) promiseCount = 1
     else if (languageValues.isError(value)) errorCount = 1
-    else if (languageValues.isTraversable(value)) {
-        const counter = getRequiredRefCounter(value)
+    else if (languageValues.isTraversable(value, operationContext)) {
+        const counter = getRequiredRefCounter(value, operationContext)
         promiseCount = counter.promiseCount
         errorCount = counter.errorCount
         cycleCutCount = counter.cycleCutCount
@@ -43,19 +44,19 @@ function getRefCounts(value) {
     return { promiseCount, errorCount, cycleCutCount }
 }
 
-function getValueRefState(child, cycleCut = false) {
+function getValueRefState(child, operationContext, cycleCut = false) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
     let childCounter
-    if (languageValues.isPromise(child)) {
+    if (languageValues.isPromise(child, operationContext)) {
         promiseCount = 1
     } else if (cycleCut) {
         cycleCutCount = 1
     } else if (languageValues.isError(child)) {
         errorCount = 1
-    } else if (languageValues.isTraversable(child)) {
-        childCounter = getRequiredRefCounter(child)
+    } else if (languageValues.isTraversable(child, operationContext)) {
+        childCounter = getRequiredRefCounter(child, operationContext)
         promiseCount = childCounter.promiseCount
         errorCount = childCounter.errorCount
         cycleCutCount = childCounter.cycleCutCount
@@ -63,35 +64,51 @@ function getValueRefState(child, cycleCut = false) {
     return { childCounter, promiseCount, errorCount, cycleCutCount }
 }
 
-function buildRefIndex(value, preparePromiseProperty) {
-    if (!languageValues.isTraversable(value) || getRefCounter(value)) {
+function buildRefIndex(value, operationContext, preparePromiseProperty) {
+    if (
+        !languageValues.isTraversable(value, operationContext) ||
+        getRefCounter(value, operationContext)
+    ) {
         return value
     }
 
     const cutTargetQueue = []
-    indexComponent(value, cutTargetQueue, preparePromiseProperty)
+    indexComponent(value, operationContext, cutTargetQueue, preparePromiseProperty)
 
     // A cut blocks count propagation, not indexing. Defer its target until the
     // current component is published so a closing back edge cannot re-enter an
     // active recursive frame.
     for (let index = 0; index < cutTargetQueue.length; index++) {
         const target = cutTargetQueue[index]
-        if (!getRefCounter(target)) {
-            indexComponent(target, cutTargetQueue, preparePromiseProperty)
+        if (!getRefCounter(target, operationContext)) {
+            indexComponent(target, operationContext, cutTargetQueue, preparePromiseProperty)
         }
     }
     return value
 }
 
-function indexValueIfSourceIndexed(source, value, preparePromiseProperty) {
-    if (getRefCounter(source)) buildRefIndex(value, preparePromiseProperty)
+function indexValueIfSourceIndexed(
+    source,
+    value,
+    operationContext,
+    preparePromiseProperty,
+) {
+    if (getRefCounter(source, operationContext)) {
+        buildRefIndex(value, operationContext, preparePromiseProperty)
+    }
 }
 
 // Index the prospective child, then ask the maintained reverse-edge DAG
 // whether adding parent -> child would close a cycle.
-function prepareRefEdge(parent, parentCounter, child, preparePromiseProperty) {
-    if (!languageValues.isTraversable(child)) return false
-    buildRefIndex(child, preparePromiseProperty)
+function prepareRefEdge(
+    parent,
+    parentCounter,
+    child,
+    operationContext,
+    preparePromiseProperty,
+) {
+    if (!languageValues.isTraversable(child, operationContext)) return false
+    buildRefIndex(child, operationContext, preparePromiseProperty)
 
     const visited = new Set()
     return reachesChild(parent, parentCounter)
@@ -101,7 +118,10 @@ function prepareRefEdge(parent, parentCounter, child, preparePromiseProperty) {
         if (visited.has(node)) return false
         visited.add(node)
         for (const ancestor of counter.parents.keys()) {
-            if (reachesChild(ancestor, getRequiredRefCounter(ancestor))) {
+            if (reachesChild(
+                ancestor,
+                getRequiredRefCounter(ancestor, operationContext),
+            )) {
                 return true
             }
         }
@@ -113,11 +133,12 @@ function prepareRefEdge(parent, parentCounter, child, preparePromiseProperty) {
 // later components in the same build.
 function indexComponent(
     node,
+    operationContext,
     cutTargetQueue,
     preparePromiseProperty,
     active = new Set(),
 ) {
-    const existing = getRefCounter(node)
+    const existing = getRefCounter(node, operationContext)
     if (existing) return existing
 
     let promiseCount = 0
@@ -126,15 +147,15 @@ function indexComponent(
     const childNodes = []
     active.add(node)
 
-    for (const key of languageProperties.enumerableLanguageKeys(node)) {
-        const child = languageProperties.readLanguageProperty(node, key)
-        if (hasCycleCut(node, key)) {
+    for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
+        const child = languageProperties.readLanguageProperty(node, key, operationContext)
+        if (hasCycleCut(node, key, operationContext)) {
             cycleCutCount++
             cutTargetQueue.push(child)
             continue
         }
 
-        if (languageValues.isPromise(child)) {
+        if (languageValues.isPromise(child, operationContext)) {
             preparePromiseProperty(node, key, child)
             promiseCount++
             continue
@@ -144,10 +165,10 @@ function indexComponent(
             errorCount++
             continue
         }
-        if (!languageValues.isTraversable(child)) continue
+        if (!languageValues.isTraversable(child, operationContext)) continue
 
         if (active.has(child)) {
-            setCycleCut(node, key)
+            setCycleCut(node, key, operationContext)
             cycleCutCount++
             cutTargetQueue.push(child)
             continue
@@ -155,6 +176,7 @@ function indexComponent(
 
         const childCounts = indexComponent(
             child,
+            operationContext,
             cutTargetQueue,
             preparePromiseProperty,
             active,
@@ -166,14 +188,14 @@ function indexComponent(
     }
     active.delete(node)
 
-    const counter = metadata.requireMeta(node)
+    const counter = metadata.requireMeta(node, operationContext)
     counter.promiseCount = promiseCount
     counter.errorCount = errorCount
     counter.cycleCutCount = cycleCutCount
     // Publish `parents` last. Mirror discovery uses its presence to distinguish
     // a complete index, where every Promise property must already have a mirror.
     counter.parents = new Map()
-    for (const child of childNodes) addParentEdge(child, node)
+    for (const child of childNodes) addParentEdge(child, node, operationContext)
     return counter
 }
 
@@ -183,27 +205,31 @@ function prepareLiveEdge(
     owner,
     key,
     value,
+    operationContext,
     preparePromiseProperty,
 ) {
-    const counter = getRefCounter(owner)
+    const counter = getRefCounter(owner, operationContext)
     if (!counter) return COMMIT_UNINDEXED_EDGE
 
     const cycleCut = prepareRefEdge(
         owner,
         counter,
         value,
+        operationContext,
         preparePromiseProperty,
     )
     const previousState = getValueRefState(
-        languageProperties.readLanguageProperty(owner, key),
+        languageProperties.readLanguageProperty(owner, key, operationContext),
+        operationContext,
         counter.cycleCuts?.has(key) === true,
     )
-    const nextState = getValueRefState(value, cycleCut)
+    const nextState = getValueRefState(value, operationContext, cycleCut)
     const applyCountUpdate = prepareCountUpdate(
         owner,
         counter,
         previousState,
         nextState,
+        operationContext,
     )
     return updateProperty => {
         updateProperty()
@@ -214,9 +240,9 @@ function prepareLiveEdge(
     }
 }
 
-function addParentEdge(value, parent) {
-    if (!languageValues.isTraversable(value)) return
-    addParentCounterEdge(getRequiredRefCounter(value), parent)
+function addParentEdge(value, parent, operationContext) {
+    if (!languageValues.isTraversable(value, operationContext)) return
+    addParentCounterEdge(getRequiredRefCounter(value, operationContext), parent)
 }
 
 function addParentCounterEdge(counter, parent) {
@@ -245,7 +271,13 @@ function updateCycleCut(counter, key, cut) {
     if (counter.cycleCuts.size === 0) delete counter.cycleCuts
 }
 
-function prepareCountUpdate(node, counter, previousState, nextState) {
+function prepareCountUpdate(
+    node,
+    counter,
+    previousState,
+    nextState,
+    operationContext,
+) {
     const promiseDelta = nextState.promiseCount - previousState.promiseCount
     const errorDelta = nextState.errorCount - previousState.errorCount
     const cycleCutDelta = nextState.cycleCutCount -
@@ -292,7 +324,7 @@ function prepareCountUpdate(node, counter, previousState, nextState) {
         }
         states.set(current, state)
         for (const parent of state.counter.parents.keys()) {
-            visit(parent, getRequiredRefCounter(parent))
+            visit(parent, getRequiredRefCounter(parent, operationContext))
         }
         state.complete = true
         ordered.push(state)

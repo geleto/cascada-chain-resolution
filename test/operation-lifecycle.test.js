@@ -1,9 +1,9 @@
-import { expect } from "./support.js"
+import { expect, testOperationContext } from "./support.js"
 import * as operationLifecycle from "../src/operation-lifecycle.js"
 
 describe("operation lifecycle", () => {
     it("releases only resources still registered when the owner closes", () => {
-        const owner = operationLifecycle.createOwner()
+        const owner = operationLifecycle.createOwner(testOperationContext())
         const released = []
         const unregister = operationLifecycle.registerRelease(
             owner,

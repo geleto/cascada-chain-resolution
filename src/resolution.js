@@ -7,25 +7,27 @@ import * as languageValues from "./language-values.js"
 // that predicate and always completes.
 function resolveInitialValueOrPoison(
     value,
+    operationContext,
     fn = value => value,
     shouldContinue = () => true,
 ) {
-    if (!languageValues.isPromise(value)) {
+    if (!languageValues.isPromise(value, operationContext)) {
         if (!shouldContinue()) return undefined
-        languageValues.admitReadyValue(value)
-        return errorUtils.runFatal(fn, value)
+        languageValues.admitReadyValue(value, operationContext)
+        return errorUtils.runFatal(operationContext, fn, value)
     }
     return languageValues.continuePromise(
         value,
+        operationContext,
         value => {
             if (!shouldContinue()) return undefined
-            languageValues.admitReadyValue(value)
-            return errorUtils.runFatal(fn, value)
+            languageValues.admitReadyValue(value, operationContext)
+            return errorUtils.runFatal(operationContext, fn, value)
         },
-        reason => errorUtils.runFatal(() => {
+        reason => errorUtils.runFatal(operationContext, () => {
             if (!shouldContinue()) return undefined
             const failure = errorUtils.toPoison(reason)
-            languageValues.admitReadyValue(failure)
+            languageValues.admitReadyValue(failure, operationContext)
             return fn(failure)
         }),
     )
@@ -33,9 +35,9 @@ function resolveInitialValueOrPoison(
 
 // The initial resolver has already published its value or Poison. A later
 // resolver uses the source only as readiness and reads the current mirror.
-function onLaterPromiseReady(promise, fn) {
-    const onReady = () => errorUtils.runFatal(fn)
-    return languageValues.continuePromise(promise, onReady, onReady)
+function onLaterPromiseReady(promise, operationContext, fn) {
+    const onReady = () => errorUtils.runFatal(operationContext, fn)
+    return languageValues.continuePromise(promise, operationContext, onReady, onReady)
 }
 
 // Promise inputs must already be native runtime readiness or continuation
@@ -43,13 +45,14 @@ function onLaterPromiseReady(promise, fn) {
 // graph or host thenable here. Continue directly; rejection is Fatal.
 function continueInternalPromiseOrFatal(
     result,
+    operationContext,
     onFulfilled,
 ) {
-    if (!languageValues.isPromise(result)) {
-        return errorUtils.runFatal(onFulfilled, result)
+    if (!languageValues.isPromise(result, operationContext)) {
+        return errorUtils.runFatal(operationContext, onFulfilled, result)
     }
     return result.then(
-        value => errorUtils.runFatal(onFulfilled, value),
+        value => errorUtils.runFatal(operationContext, onFulfilled, value),
         errorUtils.reportFatalError,
     )
 }
@@ -58,11 +61,17 @@ function continueInternalPromiseOrFatal(
 // Registering here ensures this work precedes later Cascada consumers of the
 // same thenable. The observer is internal, so consume any Fatal it has already
 // reported.
-function observeResultPromise(promise, onFulfilled, onRejected = onFulfilled) {
+function observeResultPromise(
+    promise,
+    operationContext,
+    onFulfilled,
+    onRejected = onFulfilled,
+) {
     const observer = languageValues.continuePromise(
         promise,
-        value => errorUtils.runFatal(onFulfilled, value),
-        reason => errorUtils.runFatal(onRejected, reason),
+        operationContext,
+        value => errorUtils.runFatal(operationContext, onFulfilled, value),
+        reason => errorUtils.runFatal(operationContext, onRejected, reason),
     )
     observer.then(undefined, () => {})
     return promise

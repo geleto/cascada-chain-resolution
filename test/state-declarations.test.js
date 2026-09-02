@@ -1,5 +1,3 @@
-import * as languageValues from "../src/language-values.js"
-import * as metadata from "../src/meta.js"
 import {
     Chain,
     deferred,
@@ -7,8 +5,10 @@ import {
     externalState,
     importValue,
     lookupPath,
+    languageValues,
     managedState,
     managedStateClass,
+    metadata,
 } from "./support.js"
 
 describe("state declarations", () => {
@@ -50,8 +50,12 @@ describe("state declarations", () => {
             languageValues.TYPE_EXTERNAL,
         )
         expect(metadata.metaOf(child).type).to.be(languageValues.TYPE_RECORD)
-        expect(metadata.identityDeclarationOf(record)).to.be(undefined)
-        expect(metadata.identityDeclarationOf(array)).to.be(undefined)
+        expect(metadata.identityDeclarationOf(record)).to.be(
+            metadata.DECLARATION_EXTERNAL,
+        )
+        expect(metadata.identityDeclarationOf(array)).to.be(
+            metadata.DECLARATION_EXTERNAL,
+        )
     })
 
     it("declares every currently reachable class instance managed", () => {
@@ -82,8 +86,12 @@ describe("state declarations", () => {
         expect(metadata.metaOf(point).type).to.be(
             languageValues.TYPE_MANAGED_CLASS,
         )
-        expect(metadata.identityDeclarationOf(line)).to.be(undefined)
-        expect(metadata.identityDeclarationOf(point)).to.be(undefined)
+        expect(metadata.identityDeclarationOf(line)).to.be(
+            metadata.DECLARATION_MANAGED,
+        )
+        expect(metadata.identityDeclarationOf(point)).to.be(
+            metadata.DECLARATION_MANAGED,
+        )
 
         const laterPoint = new Vec(2)
         new Chain(laterPoint)
@@ -192,7 +200,7 @@ describe("state declarations", () => {
         )
     })
 
-    it("never reclassifies an admitted identity", () => {
+    it("does not let later declarations reclassify admitted identities", () => {
         class Late {}
         const instance = new Late()
         new Chain(instance)
@@ -201,15 +209,15 @@ describe("state declarations", () => {
         expect(metadata.metaOf(instance).type).to.be(
             languageValues.TYPE_EXTERNAL,
         )
-        expect(managedState(instance)).to.be.an(Error)
+        expect(managedState(instance)).to.be(instance)
 
         const record = {}
         new Chain(record)
-        expect(externalState(record)).to.be.an(Error)
+        expect(externalState(record)).to.be(record)
         expect(metadata.metaOf(record).type).to.be(languageValues.TYPE_RECORD)
     })
 
-    it("does not rescan an already admitted managed container", () => {
+    it("walks declarations independently of execution admission", () => {
         class Candidate {}
         class ExistingExternal {}
         const candidate = new Candidate()
@@ -222,7 +230,7 @@ describe("state declarations", () => {
 
         new Chain(candidate)
         expect(metadata.metaOf(candidate).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE_MANAGED_CLASS,
         )
     })
 
@@ -266,7 +274,7 @@ describe("state declarations", () => {
         )
     })
 
-    it("samples thenability once before managed admission", () => {
+    it("samples thenability independently for declaration and admission", () => {
         class Managed {}
         const value = new Managed()
         let reads = 0
@@ -281,9 +289,10 @@ describe("state declarations", () => {
         expect(managedState(value)).to.be(value)
         new Chain(value)
 
-        expect(reads).to.be(1)
-        expect(metadata.metaOf(value).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+        expect(reads).to.be(2)
+        expect(metadata.metaOf(value)).to.be(undefined)
+        expect(metadata.identityDeclarationOf(value)).to.be(
+            metadata.DECLARATION_MANAGED,
         )
     })
 

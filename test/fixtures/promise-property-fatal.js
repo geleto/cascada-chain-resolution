@@ -10,9 +10,20 @@ function pendingProperty(changeDescriptor, settledValue = "settled") {
         resolve = settle
     })
     const root = {}
-    runtime.assignPath(new runtime.Chain(root), ["value"], promise)
+    const operationContext = {
+        execution: new runtime.Execution(),
+        errorContext: "fixture",
+    }
+    runtime.assignPath(
+        new runtime.Chain(root, operationContext),
+        ["value"],
+        promise,
+        operationContext,
+    )
     changeDescriptor(root)
-    resolve(settledValue)
+    resolve(typeof settledValue === "function"
+        ? settledValue(operationContext)
+        : settledValue)
     return root
 }
 
@@ -56,7 +67,7 @@ for (const changeDescriptor of descriptorChanges) {
 }
 pendingProperty(
     descriptorChanges[3],
-    runtime.import({}, "published value"),
+    operationContext => runtime.import({}, operationContext),
 )
 
 setImmediate(() => {

@@ -1,32 +1,43 @@
 import * as errorUtils from "./error.js"
-import { Execution } from "./execution.js"
 import { importContext } from "./import.js"
 import * as languageValues from "./language-values.js"
+import * as propertyVersions from "./property-versions.js"
 
 class Chain {
     constructor(
         initialValue,
-        execution = new Execution(),
+        operationContext,
         entryMutable = undefined,
         externalMutationTree = undefined,
     ) {
-        languageValues.admitValue(initialValue)
-        const state = { value: initialValue }
-        languageValues.admitReadyValue(
-            state,
-            languageValues.TYPE_RECORD,
-            Object.prototype,
-        )
-        this._state = state
-        this._execution = execution
-        // Entry-only tri-state: absent on ordinary Chains, false for a
-        // read-only entry, and true for a mutable entry.
-        if (entryMutable !== undefined) {
-            this._entryMutable = entryMutable
-        }
-        if (externalMutationTree !== undefined) {
-            this._externalMutationTree = externalMutationTree
-        }
+        errorUtils.runFatal(operationContext, () => {
+            languageValues.admitValue(initialValue, operationContext)
+            const state = { value: initialValue }
+            languageValues.admitReadyValue(
+                state,
+                operationContext,
+                languageValues.TYPE_RECORD,
+                Object.prototype,
+            )
+            if (languageValues.isPromise(initialValue, operationContext)) {
+                propertyVersions.getOrCreatePromiseMirror(
+                    state,
+                    "value",
+                    initialValue,
+                    operationContext,
+                )
+            }
+            this._state = state
+            this._execution = operationContext.execution
+            // Entry-only tri-state: absent on ordinary Chains, false for a
+            // read-only entry, and true for a mutable entry.
+            if (entryMutable !== undefined) {
+                this._entryMutable = entryMutable
+            }
+            if (externalMutationTree !== undefined) {
+                this._externalMutationTree = externalMutationTree
+            }
+        })
     }
 
     _assertOpen() {
@@ -37,9 +48,11 @@ class Chain {
         }
     }
 
-    get execution() {
+    _assertOperationContext(operationContext) {
         this._assertOpen()
-        return this._execution
+        if (operationContext.execution !== this._execution) {
+            throw new Error("Operation context execution does not match Chain")
+        }
     }
 
     _closeEntry() {
@@ -56,24 +69,22 @@ class Chain {
 class ContextChain extends Chain {
     constructor(
         initialValue,
-        errorContext,
-        execution = new Execution(),
+        operationContext,
         scopeMutationPaths = [],
         propertyMutationPaths = [],
     ) {
         const externalTreeSetup = {
-            execution,
             scopeMutationPaths,
             propertyMutationPaths,
         }
         const imported = importContext(
             initialValue,
-            errorContext,
+            operationContext,
             externalTreeSetup,
         )
         super(
             imported,
-            execution,
+            operationContext,
             undefined,
             externalTreeSetup.externalMutationTree,
         )

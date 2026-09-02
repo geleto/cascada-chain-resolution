@@ -10,24 +10,31 @@ const KIND_MOVE = 3
 
 function createRemap(
     array,
+    operationContext,
     start = 0,
-    end = arrayViews.logicalArrayLength(array),
+    end = arrayViews.logicalArrayLength(array, operationContext),
 ) {
     const remap = new Array(end - start)
-    for (const key of arrayViews.enumerableArrayKeys(array, start, end)) {
+    for (const key of arrayViews.enumerableArrayKeys(
+        array,
+        operationContext,
+        start,
+        end,
+    )) {
         languageProperties.writeLanguageProperty(
             remap,
             String(Number(key) - start),
-            propertyVersions.getPropertyPlacement(array, key),
+            propertyVersions.getPropertyPlacement(array, key, operationContext),
+            operationContext,
         )
     }
     return remap
 }
 
-function traceMutation(array) {
+function traceMutation(array, operationContext) {
     const operations = []
     const deleted = new Set()
-    let sourceLength = arrayViews.logicalArrayLength(array)
+    let sourceLength = arrayViews.logicalArrayLength(array, operationContext)
     const remap = new Array(sourceLength)
     const working = new Proxy(remap, {
         has(target, key) {
@@ -36,7 +43,7 @@ function traceMutation(array) {
             }
             if (Object.hasOwn(target, key)) return true
             if (deleted.has(key) || Number(key) >= sourceLength) return false
-            return languageProperties.hasLanguageProperty(array, key)
+            return languageProperties.hasLanguageProperty(array, key, operationContext)
         },
         get(target, key, receiver) {
             if (!arrayViews.isArrayIndex(key)) {
@@ -45,9 +52,16 @@ function traceMutation(array) {
             if (Object.hasOwn(target, key)) return target[key]
             if (deleted.has(key) || Number(key) >= sourceLength) return undefined
             // Assignment could invoke an inherited numeric setter.
-            const origin = propertyVersions.getPropertyPlacement(array, key)
+            const origin = propertyVersions.getPropertyPlacement(
+                array,
+                key,
+                operationContext,
+            )
             if (origin) languageProperties.writeLanguageProperty(
-                target, key, origin,
+                target,
+                key,
+                origin,
+                operationContext,
             )
             return origin
         },
@@ -78,6 +92,7 @@ function traceMutation(array) {
             operations,
             String(operations.length),
             operation,
+            operationContext,
         )
     }
 }
@@ -92,7 +107,7 @@ function createPlacementOperation(entry, newIndex) {
         : { kind: KIND_ADD, newIndex, value: entry }
 }
 
-function mutationRequiresCopy(array, remap, operations) {
+function mutationRequiresCopy(array, remap, operations, operationContext) {
     // ArrayView receivers are materialized or handled by a view transition
     // before this preflight; this function decides only whether the selected
     // operations fit the physical native Array receiver.
@@ -102,12 +117,14 @@ function mutationRequiresCopy(array, remap, operations) {
             ? languageProperties.arrayLengthMutationRequiresCopy(
                 array,
                 operation.value,
+                operationContext,
             )
             : languageProperties.propertyMutationRequiresCopy(
                 array,
                 String(operation.kind === KIND_DELETE
                     ? operation.index
                     : operation.newIndex),
+                operationContext,
                 operation.kind === KIND_DELETE,
             )
         if (requiresCopy) return true
@@ -123,8 +140,8 @@ function operationsForRemap(remap) {
     })
 }
 
-function materializeMutationRemap(array, operations) {
-    const remap = createRemap(array)
+function materializeMutationRemap(array, operations, operationContext) {
+    const remap = createRemap(array, operationContext)
     for (const operation of operations) {
         if (operation.kind === KIND_LENGTH) {
             remap.length = operation.value
@@ -137,13 +154,14 @@ function materializeMutationRemap(array, operations) {
                 operation.kind === KIND_MOVE
                     ? operation.origin
                     : operation.value,
+                operationContext,
             )
         }
     }
     return remap
 }
 
-function applyRemapToArray(array, remap, operations) {
+function applyRemapToArray(array, remap, operations, operationContext) {
     // The invocation layer calls this only for an in-place native Array.
     // ArrayView receivers take a view transition or a materialized copy.
     operations ??= operationsForRemap(remap)
@@ -166,6 +184,7 @@ function applyRemapToArray(array, remap, operations) {
             propertyVersions.commitArrayLength(
                 array,
                 operation.value,
+                operationContext,
             )
             continue
         }
@@ -173,6 +192,7 @@ function applyRemapToArray(array, remap, operations) {
             propertyVersions.deleteProperty(
                 array,
                 String(operation.index),
+                operationContext,
             )
             continue
         }
@@ -182,61 +202,90 @@ function applyRemapToArray(array, remap, operations) {
             : operation.value
         const retained = operation.kind === KIND_ADD ||
             (placementCount.get(entry) ?? 0) > 1
-        placeEntry(array, key, entry, retained)
+        placeEntry(array, key, entry, retained, operationContext)
     }
 }
 
 function createArrayFromRemap(
     remap,
+    operationContext,
     refIndexSource = undefined,
     retained = true,
 ) {
     const output = new Array(remap.length)
-    languageValues.admitReadyValue(output, languageValues.TYPE_ARRAY)
-    placeRemap(output, remap, 0, retained)
+    languageValues.admitReadyValue(
+        output,
+        operationContext,
+        languageValues.TYPE_ARRAY,
+    )
+    placeRemap(output, remap, operationContext, 0, retained)
     if (refIndexSource !== undefined) {
-        propertyVersions.indexValueIfSourceIndexed(refIndexSource, output)
+        propertyVersions.indexValueIfSourceIndexed(
+            refIndexSource,
+            output,
+            operationContext,
+        )
     }
     return output
 }
 
-function placeRemap(destination, remap, offset = 0, retained = true) {
+function placeRemap(
+    destination,
+    remap,
+    operationContext,
+    offset = 0,
+    retained = true,
+) {
     remap.forEach((entry, index) => {
         const key = String(offset + index)
-        placeEntry(destination, key, entry, retained)
+        placeEntry(destination, key, entry, retained, operationContext)
     })
 }
 
-function placeEntry(destination, key, entry, retained) {
+function placeEntry(destination, key, entry, retained, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        placeOrigin(destination, key, entry, retained)
+        placeOrigin(destination, key, entry, operationContext, retained)
         return
     }
-    propertyVersions.assignProperty(destination, key, entry, retained)
+    propertyVersions.assignProperty(
+        destination,
+        key,
+        entry,
+        operationContext,
+        retained,
+    )
 }
 
 function placeOrigin(
     destination,
     key,
     origin,
+    operationContext,
     retained = true,
 ) {
     propertyVersions.capturePropertyVersion(origin)
     const stringKey = String(key)
 
     const value = origin.value
-    if (languageValues.isPromise(value)) {
+    if (languageValues.isPromise(value, operationContext)) {
         propertyVersions.placePromiseVersion(
             origin.mirror,
             value,
             destination,
             stringKey,
+            operationContext,
             retained,
         )
         return
     }
 
-    propertyVersions.assignProperty(destination, stringKey, value, retained)
+    propertyVersions.assignProperty(
+        destination,
+        stringKey,
+        value,
+        operationContext,
+        retained,
+    )
 }
 
 export {

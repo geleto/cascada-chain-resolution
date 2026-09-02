@@ -9,7 +9,13 @@ import {
     PASS_AS_PAYLOAD,
 } from "./array-methods.js"
 
-function selectArrayCall(receiver, method, mutation, mutationContext) {
+function getArrayMethodDescription(
+    receiver,
+    method,
+    mutation,
+    mutationContext,
+    invocationContext,
+) {
     const definition = ARRAY_METHODS[method]
     if (!definition) {
         return errorUtils.validationError(`Unsupported Array method: ${method}`)
@@ -23,27 +29,30 @@ function selectArrayCall(receiver, method, mutation, mutationContext) {
         leaseReceiver: mutation ? undefined : receiver,
         leaseReceiverThroughResult: !mutation &&
             definition.leaseReceiverThroughResult,
-        prepareInputs: (args, invocation) =>
+        prepareInputs: (args, invocationContext) =>
             prepareArrayMethodArguments(
                 definition,
                 args,
-                invocation,
+                invocationContext,
             ),
-        invoke(preparedArguments, invocation) {
+        invoke(preparedArguments, invocationContext) {
             if (!mutation) return invokeArrayObservationMethod(
                 receiver,
                 definition,
                 preparedArguments,
-                invocation,
+                invocationContext,
             )
             const sourceSurvives = mutationContext.mustPreserveValue ||
-                arrayViews.requiresArrayMaterialization(receiver)
+                arrayViews.requiresArrayMaterialization(
+                    receiver,
+                    invocationContext.operationContext,
+                )
             return invokeArrayMutationMethod(
                 receiver,
                 definition,
                 preparedArguments,
                 sourceSurvives,
-                invocation,
+                invocationContext,
             )
         },
     }
@@ -52,10 +61,10 @@ function selectArrayCall(receiver, method, mutation, mutationContext) {
 function prepareArrayMethodArguments(
     definition,
     args,
-    invocation,
+    invocationContext,
 ) {
     if (definition.prepare) {
-        return definition.prepare(args, invocation)
+        return definition.prepare(args, invocationContext)
     }
 
     const inputs = definition.inputs ?? []
@@ -68,12 +77,12 @@ function prepareArrayMethodArguments(
     for (let index = 0; index < fixedCount; index++) {
         const input = inputs[index]
         if (input === PASS_AS_PAYLOAD) {
-            prepared[index] = invocation.retainArgument(args[index])
+            prepared[index] = invocationContext.retainArgument(args[index])
             continue
         }
-        const result = input(args[index], invocation)
+        const result = input(args[index], invocationContext)
         readiness.push(operationLifecycle.continuePrepared(
-            invocation,
+            invocationContext,
             result,
             value => {
                 prepared[index] = value
@@ -82,11 +91,11 @@ function prepareArrayMethodArguments(
     }
     if (definition.remainingArgsAsPayload) {
         for (let index = inputs.length; index < args.length; index++) {
-            prepared[index] = invocation.retainArgument(args[index])
+            prepared[index] = invocationContext.retainArgument(args[index])
         }
     }
     return operationLifecycle.continuePreparedAll(
-        invocation,
+        invocationContext,
         readiness,
         () => prepared,
     )
@@ -98,21 +107,21 @@ function invokeArrayObservationMethod(
     thisValue,
     definition,
     preparedArgs,
-    operation,
+    invocationContext,
 ) {
     if (definition.view) {
-        const view = definition.view(thisValue, preparedArgs)
+        const view = definition.view(thisValue, preparedArgs, invocationContext)
         if (view !== undefined) return view
     }
     if (definition.observe) {
-        return definition.observe(thisValue, preparedArgs, operation)
+        return definition.observe(thisValue, preparedArgs, invocationContext)
     }
 
     let remap
     if (definition.remap) {
-        remap = definition.remap(thisValue, preparedArgs, operation)
+        remap = definition.remap(thisValue, preparedArgs, invocationContext)
     } else {
-        remap = arrayRemaps.createRemap(thisValue)
+        remap = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
         const result = invocation.invokeDataFunction(
             definition.intrinsic,
             remap,
@@ -122,9 +131,12 @@ function invokeArrayObservationMethod(
         if (definition.mutationResult === undefined) remap = result
     }
     return operationLifecycle.continuePrepared(
-        operation,
+        invocationContext,
         remap,
-        arrayRemaps.createArrayFromRemap,
+        remap => arrayRemaps.createArrayFromRemap(
+            remap,
+            invocationContext.operationContext,
+        ),
     )
 }
 
@@ -133,17 +145,25 @@ function invokeArrayMutationMethod(
     definition,
     preparedArguments,
     sourceSurvives,
-    operation,
+    invocationContext,
 ) {
     if (sourceSurvives && definition.view) {
-        const view = definition.view(thisValue, preparedArguments)
+        const view = definition.view(
+            thisValue,
+            preparedArguments,
+            invocationContext,
+        )
         if (view !== undefined) {
             return {
                 mutatedValue: view,
                 result: definition.mutationResult(
-                    definition.viewOperationResult(thisValue, view),
+                    definition.viewOperationResult(
+                        thisValue,
+                        view,
+                        invocationContext,
+                    ),
                     sourceSurvives,
-                    operation,
+                    invocationContext,
                 ),
             }
         }
@@ -151,13 +171,16 @@ function invokeArrayMutationMethod(
 
     if (definition.remap) {
         return operationLifecycle.continuePrepared(
-            operation,
-            definition.remap(thisValue, preparedArguments, operation),
+            invocationContext,
+            definition.remap(thisValue, preparedArguments, invocationContext),
             remap => finishMutation(remap, undefined, remap),
         )
     }
 
-    const { remap, working, operations } = arrayRemaps.traceMutation(thisValue)
+    const { remap, working, operations } = arrayRemaps.traceMutation(
+        thisValue,
+        invocationContext.operationContext,
+    )
     const nativeResult = invocation.invokeDataFunction(
         definition.intrinsic,
         working,
@@ -172,12 +195,14 @@ function invokeArrayMutationMethod(
                 thisValue,
                 remap,
                 operations,
+                invocationContext.operationContext,
             )
         const copiesReceiver = sourceSurvives || representationCopy
         if (copiesReceiver && operations) {
             remap = arrayRemaps.materializeMutationRemap(
                 thisValue,
                 operations,
+                invocationContext.operationContext,
             )
         }
         const returnsReceiver = definition.mutationResult === RETURN_RECEIVER
@@ -187,18 +212,24 @@ function invokeArrayMutationMethod(
             : definition.mutationResult(
                 operationResult,
                 sourceSurvives,
-                operation,
+                invocationContext,
             )
 
         const mutatedValue = copiesReceiver
             ? arrayRemaps.createArrayFromRemap(
                 remap,
+                invocationContext.operationContext,
                 undefined,
                 sourceSurvives,
             )
             : thisValue
         if (!copiesReceiver) {
-            arrayRemaps.applyRemapToArray(thisValue, remap, operations)
+            arrayRemaps.applyRemapToArray(
+                thisValue,
+                remap,
+                operations,
+                invocationContext.operationContext,
+            )
         }
         return {
             mutatedValue,
@@ -207,4 +238,4 @@ function invokeArrayMutationMethod(
     }
 }
 
-export { selectArrayCall }
+export { getArrayMethodDescription }

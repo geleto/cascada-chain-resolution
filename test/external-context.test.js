@@ -291,7 +291,7 @@ describe("context external foundations", () => {
                 expect(nested instanceof ContextChain).to.be(false)
                 boundary = nested._externalMutationTree
                     .findExactBoundary(["service"])
-                enteredExecution = nested.execution
+                enteredExecution = nested._execution
             })
         })
 

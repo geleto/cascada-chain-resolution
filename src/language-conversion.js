@@ -41,7 +41,7 @@ function toPrimitiveValue(value, ancestry, operation) {
         operation,
         value,
         resolved => {
-            if (arrayViews.isLogicalArray(resolved)) {
+            if (arrayViews.isLogicalArray(resolved, operation.operationContext)) {
                 if (arrayViews.hasArrayAncestor(ancestry, resolved)) {
                     return ""
                 }
@@ -59,9 +59,12 @@ function toPrimitiveValue(value, ancestry, operation) {
                     typeof resolved !== "function"
                 )
             ) return resolved
-            const type = languageValues.typeOf(resolved)
+            const type = languageValues.typeOf(resolved, operation.operationContext)
             if (type === languageValues.TYPE_RECORD) {
-                return metadata.requireMeta(resolved).admittedPrototype === null
+                return metadata.requireMeta(
+                    resolved,
+                    operation.operationContext,
+                ).admittedPrototype === null
                     ? conversionError()
                     : "[object Object]"
             }
@@ -97,18 +100,26 @@ function joinLogicalArray(
     operation,
 ) {
     ancestry ??= { array, parent: undefined }
-    const length = arrayViews.logicalArrayLength(array)
+    const length = arrayViews.logicalArrayLength(array, operation.operationContext)
     if (length === 0) return ""
     const conversions = new Array(length)
     for (let index = 0; index < length; index++) {
         const key = String(index)
-        if (!languageProperties.hasLanguageProperty(array, key)) {
+        if (!languageProperties.hasLanguageProperty(
+            array,
+            key,
+            operation.operationContext,
+        )) {
             conversions[index] = ""
             continue
         }
         conversions[index] = operationLifecycle.continuePrepared(
             operation,
-            propertyVersions.resolvePropertyValueAtKey(array, key),
+            propertyVersions.resolvePropertyValueAtKey(
+                array,
+                key,
+                operation.operationContext,
+            ),
             value => {
                 if (value === undefined || value === null) return ""
                 return toStringValue(value, ancestry, operation)

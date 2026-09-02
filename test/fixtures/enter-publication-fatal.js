@@ -1,5 +1,6 @@
 import { Chain } from "../../src/chain.js"
 import { enter } from "../../src/enter.js"
+import { Execution } from "../../src/execution.js"
 import { setFatalErrorReporter } from "../../src/error.js"
 import { readPath } from "../../src/observations.js"
 
@@ -14,8 +15,9 @@ process.on("unhandledRejection", error => {
 })
 
 const root = { target: {} }
+const operationContext = { execution: new Execution(), errorContext: "fixture" }
 let entered
-enter(new Chain(root), ["target"], true, privateChain => {
+enter(new Chain(root, operationContext), ["target"], operationContext, true, privateChain => {
     entered = privateChain
     // Simulate compiler/host corruption that bypasses the root transition.
     privateChain._state.value = Promise.resolve({ invalid: true })
@@ -25,7 +27,7 @@ const gate = root.target
 let closed = false
 setFatalErrorReporter()
 try {
-    readPath(entered, [])
+    readPath(entered, [], operationContext)
 } catch {
     closed = true
 }

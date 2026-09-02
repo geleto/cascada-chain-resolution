@@ -1,15 +1,15 @@
-import * as languageValues from "../src/language-values.js"
-import * as metadata from "../src/meta.js"
-import { ArrayView } from "../src/array-view.js"
-import { resolveInitialValueOrPoison } from "../src/resolution.js"
 import {
+    ArrayView,
     Chain,
     assignPath,
     deferred,
     expect,
     importValue,
     lookupPath,
+    languageValues,
     managedStateClass,
+    metadata,
+    resolveInitialValueOrPoison,
     setFatalErrorReporter,
     thrownBy,
 } from "./support.js"

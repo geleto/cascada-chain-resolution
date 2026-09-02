@@ -10,7 +10,8 @@ import * as propertyVersions from "./property-versions.js"
 class ErrorQueryContext {
     open = true
 
-    constructor(collectErrors = false) {
+    constructor(operationContext, collectErrors = false) {
+        this.operationContext = operationContext
         if (collectErrors) this.errors = new Set()
     }
 
@@ -24,42 +25,48 @@ class ErrorQueryContext {
 }
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
-function lookupPath(chain, path) {
-    return errorUtils.runFatal(() => {
-        return walkObservationPath(chain, path, value => {
-            metadata.markShared(value)
+function lookupPath(chain, path, operationContext) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
+        return walkObservationPath(chain, path, operationContext, value => {
+            metadata.markShared(value, operationContext)
             return value
         })
     })
 }
 
 // A temporary read or ownership transfer does not create another owner.
-function readPath(chain, path) {
-    return errorUtils.runFatal(() => {
-        return walkObservationPath(chain, path, value => value)
+function readPath(chain, path, operationContext) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
+        return walkObservationPath(chain, path, operationContext, value => value)
     })
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------
-function exportPath(chain, path) {
-    return errorUtils.runFatal(() => {
+function exportPath(chain, path, operationContext) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
         return walkObservationPath(
             chain,
             path,
-            value => exportValue(value),
+            operationContext,
+            value => exportValue(value, operationContext),
         )
     })
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
-function hasError(chain, path) {
-    const query = new ErrorQueryContext()
+function hasError(chain, path, operationContext) {
+    const query = new ErrorQueryContext(operationContext)
     return runErrorQuery(chain, path, query, hasErrorAtPathValue)
 }
 
 function hasErrorAtPathValue(value, query) {
     if (languageValues.isError(value)) return finishQuery(query, true)
-    if (!languageValues.isTraversable(value)) return finishQuery(query, false)
+    if (!languageValues.isTraversable(value, query.operationContext)) {
+        return finishQuery(query, false)
+    }
     return searchForFirstError(value, query)
 }
 
@@ -89,8 +96,8 @@ function searchForFirstError(value, query) {
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
-function getErrors(chain, path) {
-    const query = new ErrorQueryContext(true)
+function getErrors(chain, path, operationContext) {
+    const query = new ErrorQueryContext(operationContext, true)
     return runErrorQuery(chain, path, query, getErrorsAtPathValue)
 }
 
@@ -98,7 +105,7 @@ function getErrorsAtPathValue(value, query) {
     let readiness
     if (languageValues.isError(value)) {
         foundQueryError(query, value)
-    } else if (languageValues.isTraversable(value)) {
+    } else if (languageValues.isTraversable(value, query.operationContext)) {
         readiness = collectFencedErrorWaits(value, query)
     }
     if (!readiness) return finishErrors(query)
@@ -114,7 +121,7 @@ function getErrorsAtPathValue(value, query) {
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
 function collectFencedErrorWaits(value, query) {
-    propertyVersions.buildRefIndex(value)
+    propertyVersions.buildRefIndex(value, query.operationContext)
     query.visited ??= new WeakSet()
     const waits = []
     walk(value)
@@ -130,7 +137,7 @@ function collectFencedErrorWaits(value, query) {
         if (!query.open || query.visited.has(node)) return
         query.visited.add(node)
 
-        const counter = refcounts.getRequiredRefCounter(node)
+        const counter = refcounts.getRequiredRefCounter(node, query.operationContext)
         // hasError needs only this proof; getErrors needs Error identities.
         if (query.errors === undefined && counter.errorCount > 0) {
             foundQueryError(query)
@@ -139,17 +146,27 @@ function collectFencedErrorWaits(value, query) {
         if (!counterHasErrorSearchWork(counter)) return
 
         const hasCycleCuts = counter.cycleCutCount > 0
-        for (const key of languageProperties.enumerableLanguageKeys(node)) {
+        for (const key of languageProperties.enumerableLanguageKeys(
+            node,
+            query.operationContext,
+        )) {
             if (!query.open) break
-            const child = languageProperties.readLanguageProperty(node, key)
+            const child = languageProperties.readLanguageProperty(
+                node,
+                key,
+                query.operationContext,
+            )
 
-            if (hasCycleCuts && refcounts.hasCycleCut(node, key)) {
+            if (
+                hasCycleCuts &&
+                refcounts.hasCycleCut(node, key, query.operationContext)
+            ) {
                 walk(child)
             } else if (languageValues.isError(child)) {
                 foundQueryError(query, child)
-            } else if (languageValues.isPromise(child)) {
+            } else if (languageValues.isPromise(child, query.operationContext)) {
                 waits.push(collectPromiseErrors(node, key, child))
-            } else if (languageValues.isTraversable(child)) {
+            } else if (languageValues.isTraversable(child, query.operationContext)) {
                 walk(child)
             }
         }
@@ -160,12 +177,15 @@ function collectFencedErrorWaits(value, query) {
             parent,
             key,
             promise,
+            query.operationContext,
             value => runQueryTransition(query, () => {
                 if (languageValues.isError(value)) {
                     foundQueryError(query, value)
                     return undefined
                 }
-                if (!languageValues.isTraversable(value)) return undefined
+                if (!languageValues.isTraversable(value, query.operationContext)) {
+                    return undefined
+                }
 
                 return collectFencedErrorWaits(value, query)
             }),
@@ -187,15 +207,19 @@ function foundQueryError(query, error) {
 }
 
 function runErrorQuery(chain, path, query, onResolved) {
-    return errorUtils.runFatal(() => runQueryTransition(query, () => {
-        const result = walkObservationPath(
-            chain,
-            path,
-            value => onResolved(value, query),
-            error => failQuery(query, error),
-        )
-        return operationLifecycle.observeFatal(query, result)
-    }))
+    return errorUtils.runFatal(query.operationContext, () => {
+        chain._assertOperationContext(query.operationContext)
+        return runQueryTransition(query, () => {
+            const result = walkObservationPath(
+                chain,
+                path,
+                query.operationContext,
+                value => onResolved(value, query),
+                error => failQuery(query, error),
+            )
+            return operationLifecycle.observeFatal(query, result)
+        })
+    })
 }
 
 function runQueryTransition(query, transition) {
@@ -233,10 +257,10 @@ function counterHasErrorSearchWork(counter) {
 function walkObservationPath(
     chain,
     path,
+    operationContext,
     onResolved,
     onUserCodeFailure = error => error,
 ) {
-    chain._assertOpen()
     const state = chain._state
     const targetPath = ["value", ...path]
     return runTraversal(() => walkFromParent(state, 0))
@@ -246,16 +270,25 @@ function walkObservationPath(
             targetPath[index],
         )
         if (languageValues.isError(key)) {
-            languageValues.admitReadyValue(key)
+            languageValues.admitReadyValue(key, operationContext)
             return onResolved(key, false)
         }
-        const present = languageProperties.hasLanguageProperty(parent, key)
-        const value = languageProperties.readLanguageProperty(parent, key)
-        if (languageValues.isPromise(value)) {
+        const present = languageProperties.hasLanguageProperty(
+            parent,
+            key,
+            operationContext,
+        )
+        const value = languageProperties.readLanguageProperty(
+            parent,
+            key,
+            operationContext,
+        )
+        if (languageValues.isPromise(value, operationContext)) {
             return propertyVersions.continuePropertyValue(
                 parent,
                 key,
                 value,
+                operationContext,
                 propertyValue => runTraversal(
                     () => walkValue(propertyValue, index, true),
                 ),
@@ -276,16 +309,16 @@ function walkObservationPath(
                 targetPath[index + 1],
             )
             if (languageValues.isError(key)) {
-                languageValues.admitReadyValue(key)
+                languageValues.admitReadyValue(key, operationContext)
                 return onResolved(key, false)
             }
-            if (languageProperties.hasLanguageProperty(value, key)) {
+            if (languageProperties.hasLanguageProperty(value, key, operationContext)) {
                 return walkFromParent(value, index + 1)
             }
         }
-        if (!languageValues.isTraversable(value)) {
+        if (!languageValues.isTraversable(value, operationContext)) {
             const failure = errorUtils.pathAccessError()
-            languageValues.admitReadyValue(failure)
+            languageValues.admitReadyValue(failure, operationContext)
             return onResolved(failure, false)
         }
         return walkFromParent(value, index + 1)

@@ -11,20 +11,21 @@ import {
     assignPath,
     deletePath,
     getErrors,
+    hasCycleCut,
     hasError,
     lookupPath,
     readPath,
     exportValue,
     importValue,
     managedStateClass,
+    testOperationContext,
     deferred,
     flushMicrotasks,
 } from "./support.js"
 import * as packageRuntime from "cascada-chain-resolution"
 import { export as packageExport } from "cascada-chain-resolution"
-import { exportValue as exportManagedValue } from "../src/export.js"
+import { exportManyValues } from "../src/export.js"
 import * as operationLifecycle from "../src/operation-lifecycle.js"
-import { hasCycleCut } from "../src/refcounts.js"
 
 function expectExportErrors(outcome, expected) {
     expect(outcome instanceof Error).to.be(true)
@@ -59,8 +60,7 @@ describe("export", () => {
             "run",
         ])
         expect(packageExport).to.be(packageRuntime.export)
-        expect(packageRuntime.export).to.be(exportValue)
-        expect(runtime.export).to.be(exportValue)
+        expect(runtime.export).to.be(packageRuntime.export)
         expect(runtime.normalize).to.be(undefined)
     })
 
@@ -92,6 +92,7 @@ describe("export", () => {
             "abandoned nested export",
         )
         const operation = {
+            operationContext: testOperationContext("abandoned nested export"),
             open: true,
             close() {
                 this.open = false
@@ -102,7 +103,7 @@ describe("export", () => {
             reported ??= error
         })
 
-        const result = exportManagedValue(source, operation)
+        const result = exportManyValues([source], operation)
         operationLifecycle.close(operation)
         pending.resolve(late)
 

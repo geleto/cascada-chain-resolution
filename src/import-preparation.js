@@ -4,7 +4,13 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-function prepareImportedData(root, importBoundary, installPromise, externalTreeSetup) {
+function prepareImportedData(
+    root,
+    operationContext,
+    importBoundary,
+    installPromise,
+    externalTreeSetup,
+) {
     if (!metadata.isObjectLike(root)) return root
 
     const shareGraph = importBoundary.shareGraph === true
@@ -19,6 +25,7 @@ function prepareImportedData(root, importBoundary, installPromise, externalTreeS
             if (externalTreeSetup) {
                 preparedTree = ExternalMutationTree.prepare(
                     root,
+                    operationContext,
                     factsOf,
                     externalTreeSetup.scopeMutationPaths,
                     externalTreeSetup.propertyMutationPaths,
@@ -29,25 +36,28 @@ function prepareImportedData(root, importBoundary, installPromise, externalTreeS
         error => error,
     )
     if (failure) {
-        languageValues.admitReadyValue(failure)
+        languageValues.admitReadyValue(failure, operationContext)
         return failure
     }
 
     for (const [value, facts] of admitted) {
         metadata.getOrCreateMeta(
             value,
+            operationContext,
             facts.type,
             facts.admittedPrototype,
         )
-        metadata.markImported(value, importBoundary)
+        metadata.markImported(value, importBoundary, operationContext)
     }
-    for (const value of retained) metadata.markShared(value)
+    for (const value of retained) {
+        metadata.markShared(value, operationContext)
+    }
     for (const { owner, key, promise } of promises) {
         installPromise(owner, key, promise, importBoundary)
     }
     if (externalTreeSetup) {
         externalTreeSetup.externalMutationTree = preparedTree?.commit(
-            externalTreeSetup.execution,
+            operationContext,
         )
     }
     return root
@@ -55,12 +65,12 @@ function prepareImportedData(root, importBoundary, installPromise, externalTreeS
     // Tree discovery repeats the occurrence walk before commit, so it must
     // see both existing metadata and admissions staged by this import.
     function factsOf(value) {
-        return metadata.metaOf(value) ?? admitted.get(value)
+        return metadata.metaOf(value, operationContext) ?? admitted.get(value)
     }
 
     function walk(value) {
         if (!metadata.isObjectLike(value)) return undefined
-        if (languageValues.isPromise(value)) {
+        if (languageValues.isPromise(value, operationContext)) {
             return errorUtils.validationError(
                 "A Promise must occupy a captured import boundary",
                 importBoundary.errorContext,
@@ -68,7 +78,7 @@ function prepareImportedData(root, importBoundary, installPromise, externalTreeS
         }
         if (admitted.has(value) || retained.has(value)) return undefined
 
-        const existing = metadata.metaOf(value)
+        const existing = metadata.metaOf(value, operationContext)
         if (existing) {
             retained.add(value)
             if (
@@ -81,12 +91,15 @@ function prepareImportedData(root, importBoundary, installPromise, externalTreeS
             if (!languageValues.isTraversableType(facts.type)) return undefined
         }
 
-        for (const key of languageProperties.enumerableLanguageKeys(value)) {
+        for (const key of languageProperties.enumerableLanguageKeys(
+            value,
+            operationContext,
+        )) {
             const descriptor = languageProperties
-                .getLanguagePlacementDescriptor(value, key)
+                .getLanguagePlacementDescriptor(value, key, operationContext)
             if (!descriptor) continue
             const child = descriptor.value
-            if (languageValues.isPromise(child)) {
+            if (languageValues.isPromise(child, operationContext)) {
                 promises.push({ owner: value, key, promise: child })
                 continue
             }

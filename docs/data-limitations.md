@@ -51,7 +51,7 @@ After host-owned managed data is passed to Cascada, application and host code mu
 
 This restriction follows the original identities even if Cascada later copies them. Mutate managed data through Cascada operations or mutate a host-ready copy produced by export.
 
-Values move between independent Cascada executions only through export followed by import. Do not pass an execution's internal managed identity directly into another execution.
+Managed values move between independent Cascada executions only through export followed by import. Do not pass an execution's internal managed identity directly into another execution. Host code can independently supply the same exact external identity to several executions, but Cascada cannot coordinate those executions. Share it only when it is observation-only; a mutation-capable external identity must belong to one execution.
 
 ## Runtime primordials
 
@@ -71,7 +71,7 @@ class Values extends Array {
 }
 
 // Unsupported through Cascada run:
-run(chain, [], "total", false)
+run(chain, [], "total", [], operationContext, {})
 ```
 
 - A supported method name always selects Cascada's controlled implementation. An own or inherited override cannot replace it.
@@ -136,7 +136,7 @@ One external identity that Cascada may mutate must be available under a compiler
 - Import, managed-graph assignment, storage, export copying, and return do not count as use or transfer authority. Actual use of a stored alias still conflicts when reached.
 - An identity reached only after waiting acquires no late phase. If it was not already selected from the static external mutation tree, it returns an Error before host access when it conflicts with a mutation-capable identity.
 - External identities never recorded in an external mutation tree are observation-only and may be observed from any location. Their aliases are the developer's responsibility because Cascada provides no mutation ordering for them.
-- Public `import(value, errorContext, execution)` creates no external mutation tree or mutation authority. External identities entering through it remain observation-only even if its result later becomes an ordinary Chain root in that execution. Mutation-capable context state must enter through `ContextChain` initialization.
+- Public `import(value, operationContext)` creates no external mutation tree or mutation authority. `operationContext` carries the execution and source-error information. External identities entering through import remain observation-only even if its result later becomes an ordinary Chain root in that execution. Mutation-capable context state must enter through `ContextChain` initialization.
 
 A `!` prefix declares the complete mutation scope. An external host operation may affect only the live external-mutation-tree leaves selected beneath that prefix. A conflicted leaf is removed lazily when queried and no longer disables broad operations on its siblings; host code must not mutate that removed identity. A managed method receives no authority over external descendants.
 

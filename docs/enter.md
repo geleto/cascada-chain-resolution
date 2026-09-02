@@ -22,7 +22,7 @@ A mutating entry makes `player.pos` pending before the condition is available. W
 The module-internal API is callback-based:
 
 ```js
-return enter(chain, path, mutates, entered =>
+return enter(chain, path, operationContext, entryMutable, entered =>
     operation(entered)
 )
 ```
@@ -33,7 +33,7 @@ If the callback returns `T`, the result shapes are:
 enter(..., onEntered) -> T | Error | Promise<Awaited<T> | Error>
 ```
 
-The compiler passes `mutates` and `onEntered` as trusted runtime facts. `enter` selects an encapsulated mutating or read-only path. These internal paths, completion routines, and abort routines are not APIs and no other operation calls them. Expected language Errors are returned as values. An unexpected callback throw or completion-Promise rejection closes the entered Chain before reporting the fatal failure. Read-only abort releases its read entry; mutating abort leaves the gate unresolved rather than publishing potentially corrupted private state.
+The compiler passes `entryMutable` and `onEntered` as trusted runtime facts. `enter` selects an encapsulated mutating or read-only path. These internal paths, completion routines, and abort routines are not APIs and no other operation calls them. Expected language Errors are returned as values. An unexpected callback throw or completion-Promise rejection closes the entered Chain before reporting the fatal failure. Read-only abort releases its read entry; mutating abort leaves the gate unresolved rather than publishing potentially corrupted private state.
 
 Mutating `enter` uses `walkMutationPath` to perform COW and install a public gate as soon as the target's owning parent exists. After reconstruction it invokes `onEntered` immediately with a private Chain rooted at the direct target or the target Promise. Read-only `enter` uses `walkObservationPath` to resolve the complete target, then starts a counted read entry before invoking the callback; a target or path Error bypasses it. Imported targets already carry their own import status, while runtime-owned targets inherit none from their path. A pending ancestor delays either mode through the selected walker's Promise, without a separate readiness Promise.
 
@@ -52,9 +52,9 @@ Entry uses an ordinary `Chain` with an `entryMutable` restriction and one-shot c
 For example:
 
 ```js
-return enter(player, ["pos"], true, entered => {
-    assignPath(entered, ["x"], 2)
-    assignPath(entered, ["y"], 2)
+return enter(player, ["pos"], operationContext, true, entered => {
+    assignPath(entered, ["x"], 2, operationContext)
+    assignPath(entered, ["y"], 2, operationContext)
 })
 ```
 
@@ -155,8 +155,8 @@ Every successful mutating entry uses a fresh gate and mirror. Awaiting its opera
 The callback must not wait through its own public gate:
 
 ```js
-return enter(player, ["items"], true, entered => {
-    const value = lookupPath(player, ["items", "0"])
+return enter(player, ["items"], operationContext, true, entered => {
+    const value = lookupPath(player, ["items", "0"], operationContext)
     // value depends on callback completion, which is waiting for value
     return value
 })
@@ -165,8 +165,8 @@ return enter(player, ["items"], true, entered => {
 It must use the entered Chain:
 
 ```js
-return enter(player, ["items"], true, entered => {
-    const value = lookupPath(entered, ["0"])
+return enter(player, ["items"], operationContext, true, entered => {
+    const value = lookupPath(entered, ["0"], operationContext)
     return operation(value)
 })
 ```
@@ -176,8 +176,8 @@ The compiler should reject a statically visible self-wait. Dynamic self-wait is 
 Disjoint entries proceed independently. A mutating callback's Chain may itself be passed to another mutating `enter`:
 
 ```js
-return enter(root, ["player"], true, outer =>
-    enter(outer, ["pos"], true, inner =>
+return enter(root, ["player"], operationContext, true, outer =>
+    enter(outer, ["pos"], operationContext, true, inner =>
         operation(inner)
     )
 )
@@ -196,10 +196,10 @@ A mutating entry captures a final Error like any other value and invokes `onEnte
 The Promise returned by `onEntered` describes control-flow completion; it is not a data Promise, and rejection is fatal. Compiler lowering must convert an expected data-Promise rejection to an Error value before it reaches this boundary. For example:
 
 ```js
-return enter(chain, path, true, entered =>
+return enter(chain, path, operationContext, true, entered =>
     resolution.resolveInitialValueOrPoison(calculate(item), value => {
         if (languageValues.isError(value)) {
-            assignPath(entered, [], value)
+            assignPath(entered, [], value, operationContext)
             return value
         }
         return operation(entered, value)
@@ -293,7 +293,7 @@ Core lifecycle and access:
 
 - isolated internal-module initialization, exact result shapes, validation, exactly-once callback invocation, Error bypass, and synchronous callback throws or returned callback-Promise rejection closing the Chain before fatal reporting;
 - callbacks running only after reconstruction, directly or within the existing ancestor helper continuation, with no readiness Promise or second same-source reaction;
-- `mutates: true`, `mutates: false`, closed-Chain issuance, continuations issued before closure, and use after completion;
+- `entryMutable: true`, `entryMutable: false`, closed-Chain issuance, continuations issued before closure, and use after completion;
 - synchronous and Promise callback lifetimes, successful closure and read release or publication, abnormal closure with read release but no mutating publication, and direct or `runEnteredCallback` result forwarding;
 - operation results never stored on the Chain and lexical gate-resolver retention adding no gate lifecycle fields; and
 - unchanged `Chain` package identity after moving its definition.

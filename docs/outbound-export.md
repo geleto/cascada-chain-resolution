@@ -38,7 +38,7 @@ Export captures only the selected path and the Promise frontier recursively expo
 
 ## Output lifetime
 
-Export operation work uses its containing operation's owner, or its own owner when export is standalone. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. A pending nested export registers that release with its owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. Fatal failure or closure by the owning operation abandons later export traversal after shared settlement.
+Export operation work uses its containing operation's owner, or its own owner when export is standalone. A nested export receives only that owner, whose operation context is therefore authoritative. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. A pending nested export registers that release with its owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. Fatal failure or closure by the owning operation abandons later export traversal after shared settlement.
 
 An already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication after operation closure.
 

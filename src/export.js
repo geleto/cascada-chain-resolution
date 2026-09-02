@@ -37,19 +37,21 @@ class ExportContext {
     }
 }
 
-function exportValue(value, containingOperation = undefined) {
-    return exportValues([value], containingOperation, firstValue)
+function exportValue(value, operationContext) {
+    return exportValues(
+        [value],
+        operationLifecycle.createOwner(operationContext),
+        firstValue,
+        true,
+    )
 }
 
-function exportManyValues(values, containingOperation = undefined) {
-    return exportValues(values, containingOperation, keepValues)
+function exportManyValues(values, owner) {
+    return exportValues(values, owner, keepValues, false)
 }
 
-function exportValues(values, containingOperation, selectResult) {
-    const standalone = containingOperation === undefined
-    const owner = standalone
-        ? operationLifecycle.createOwner()
-        : containingOperation
+function exportValues(values, owner, selectResult, standalone) {
+    const operationContext = owner.operationContext
     const state = new ExportContext(values.length, owner)
     let result
     try {
@@ -65,7 +67,7 @@ function exportValues(values, containingOperation, selectResult) {
         operationLifecycle.close(owner)
         throw error
     }
-    if (languageValues.isPromise(result)) {
+    if (languageValues.isPromise(result, operationContext)) {
         state.unregisterRelease = operationLifecycle.registerRelease(
             owner,
             () => state.release(),
@@ -97,7 +99,9 @@ function walkValue(value, state, position) {
         collectError(state, position, value)
         return undefined
     }
-    if (!languageValues.isTraversable(value)) return undefined
+    if (!languageValues.isTraversable(value, state.owner.operationContext)) {
+        return undefined
+    }
 
     const visited = state.visited[position]
     if (visited.has(value)) return undefined
@@ -107,7 +111,7 @@ function walkValue(value, state, position) {
         const output = runExportStep(
             state,
             position,
-            () => createOutput(value),
+            () => createOutput(value, state.owner.operationContext),
         )
         if (!languageValues.isError(output)) {
             state.copyBySource.set(value, output)
@@ -117,7 +121,10 @@ function walkValue(value, state, position) {
     const keys = runExportStep(
         state,
         position,
-        () => languageProperties.enumerableLanguageKeys(value),
+        () => languageProperties.enumerableLanguageKeys(
+            value,
+            state.owner.operationContext,
+        ),
     )
     if (languageValues.isError(keys)) return undefined
 
@@ -126,10 +133,14 @@ function walkValue(value, state, position) {
         const child = runExportStep(
             state,
             position,
-            () => languageProperties.readLanguageProperty(value, key),
+            () => languageProperties.readLanguageProperty(
+                value,
+                key,
+                state.owner.operationContext,
+            ),
         )
         if (languageValues.isError(child)) continue
-        if (languageValues.isPromise(child)) {
+        if (languageValues.isPromise(child, state.owner.operationContext)) {
             // Reserve the key before settlement can reorder it.
             if (state.copyBySource) writeOutput(
                 state.copyBySource.get(value),
@@ -174,6 +185,7 @@ function walkPromise(parent, key, promise, state, position) {
         parent,
         key,
         promise,
+        state.owner.operationContext,
         value => {
             if (!operationLifecycle.mayContinue(state.owner)) return undefined
             return runExportTransition(state, position, () => {
@@ -196,15 +208,15 @@ function runExportTransition(state, position, transition) {
     })
 }
 
-function createOutput(value) {
-    const meta = metadata.requireMeta(value)
+function createOutput(value, operationContext) {
+    const meta = metadata.requireMeta(value, operationContext)
     return meta.type === metadata.TYPE_ARRAY
-        ? new Array(arrayViews.logicalArrayLength(value))
+        ? new Array(arrayViews.logicalArrayLength(value, operationContext))
         : Object.create(meta.admittedPrototype)
 }
 
 function copiedValue(value, state) {
-    return languageValues.isTraversable(value)
+    return languageValues.isTraversable(value, state.owner.operationContext)
         ? state.copyBySource.get(value)
         : value
 }

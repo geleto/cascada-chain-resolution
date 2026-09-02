@@ -10,29 +10,37 @@ import {
 } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
 
-function run(chain, path, method, args, facts) {
-    return errorUtils.runFatal(() => {
+function run(chain, path, method, args, operationContext, facts) {
+    return errorUtils.runFatal(operationContext, () => {
+        chain._assertOperationContext(operationContext)
         const mutationScopeDepth = facts.mutationScopeDepth
         path = [...path]
         args = [...args]
         const mutation = mutationScopeDepth !== undefined
 
         return invocation.invokeCall(
+            operationContext,
             method,
             mutation,
             args,
-            selectCall,
+            getMethodDescription,
             invokeReceiver => mutation
-                ? runMutation(chain, path, invokeReceiver)
-                : walkObservationPath(chain, path, invokeReceiver),
+                ? runMutation(chain, path, operationContext, invokeReceiver)
+                : walkObservationPath(
+                    chain,
+                    path,
+                    operationContext,
+                    invokeReceiver,
+                ),
         )
     })
 }
 
-function runMutation(chain, path, invokeReceiver) {
+function runMutation(chain, path, operationContext, invokeReceiver) {
     return walkMutationPath(
         chain,
         path,
+        operationContext,
         target => {
             if (
                 target.propertyKind !==
@@ -42,6 +50,7 @@ function runMutation(chain, path, invokeReceiver) {
                     target.receiver,
                     "run cannot use an Array or String length property " +
                     "as a mutation receiver",
+                    operationContext,
                 )
                 target.replaceReceiver(error)
                 return error
@@ -50,11 +59,12 @@ function runMutation(chain, path, invokeReceiver) {
                 target.parent,
                 target.key,
                 target.attachmentRoot,
+                operationContext,
                 () => undefined,
-                (receiver, _prepared, context) => invokeReceiver(
+                (receiver, _prepared, mutationContext) => invokeReceiver(
                     receiver,
-                    context.present,
-                    context,
+                    mutationContext.present,
+                    mutationContext,
                 ),
             )
         },
@@ -62,7 +72,14 @@ function runMutation(chain, path, invokeReceiver) {
     )
 }
 
-function selectCall(receiver, method, mutation, present, mutationContext) {
+function getMethodDescription(
+    receiver,
+    method,
+    mutation,
+    present,
+    mutationContext,
+    invocationContext,
+) {
     if (languageValues.isError(receiver)) return receiver
     if (!present) {
         return errorUtils.validationError(
@@ -73,24 +90,26 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
         return invocation.methodNotCallableError(method)
     }
 
-    const type = languageValues.typeOf(receiver)
+    const type = languageValues.typeOf(receiver, invocationContext.operationContext)
     if (type === languageValues.TYPE_ARRAY) {
-        return arrayInvocation.selectArrayCall(
+        return arrayInvocation.getArrayMethodDescription(
             receiver,
             method,
             mutation,
             mutationContext,
+            invocationContext,
         )
     }
     if (
         type === languageValues.TYPE_RECORD ||
         type === languageValues.TYPE_MANAGED_CLASS
     ) {
-        return managedInvocation.selectManagedCall(
+        return managedInvocation.getManagedMethodDescription(
             receiver,
             method,
             mutation,
             mutationContext,
+            invocationContext,
         )
     }
     if (mutation) {
@@ -101,7 +120,7 @@ function selectCall(receiver, method, mutation, present, mutationContext) {
     if (type === languageValues.TYPE_STRING) {
         const callable = getStringMethod(method)
         if (languageValues.isError(callable)) return callable
-        return invocation.getHostMethodCallDescription(
+        return invocation.getHostMethodDescription(
             callable,
             receiver,
         )

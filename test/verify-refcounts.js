@@ -7,37 +7,43 @@ import * as propertyVersions from "../src/property-versions.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
 
-function verifyRefCounts(...roots) {
+function verifyRefCounts(operationContext, ...roots) {
     const seen = new Set()
-    for (const root of roots) verifyReachable(root, seen)
+    for (const root of roots) verifyReachable(root, seen, operationContext)
 
     const parentStates = new Map()
-    for (const node of seen) verifyParentGraph(node, parentStates)
+    for (const node of seen) verifyParentGraph(node, parentStates, operationContext)
 }
 
-function verifyReachable(node, seen) {
-    if (!languageValues.isTraversable(node) || seen.has(node)) return
+function verifyReachable(node, seen, operationContext) {
+    if (!languageValues.isTraversable(node, operationContext) || seen.has(node)) return
     seen.add(node)
-    verifyCycleCuts(node)
+    verifyCycleCuts(node, operationContext)
 
-    const counter = getRefCounter(node)
+    const counter = getRefCounter(node, operationContext)
     if (counter) {
         let promiseCount = 0
         let errorCount = 0
         let cycleCutCount = 0
         const childEdges = new Map()
 
-        for (const key of languageProperties.enumerableLanguageKeys(node)) {
-            const state = recountProperty(node, key)
+        for (const key of languageProperties.enumerableLanguageKeys(
+            node,
+            operationContext,
+        )) {
+            const state = recountProperty(node, key, operationContext)
             const { child } = state
-            if (languageValues.isTraversable(child) && !getRefCounter(child)) {
+            if (
+                languageValues.isTraversable(child, operationContext) &&
+                !getRefCounter(child, operationContext)
+            ) {
                 fatal("Ref-indexed parent contains non-ref-indexed child")
             }
 
             promiseCount += state.promiseCount
             errorCount += state.errorCount
             cycleCutCount += state.cycleCutCount
-            if (getRefCounter(child)) {
+            if (getRefCounter(child, operationContext)) {
                 childEdges.set(child, (childEdges.get(child) ?? 0) + 1)
             }
         }
@@ -48,33 +54,38 @@ function verifyReachable(node, seen) {
             fatal("Counter totals are inconsistent")
         }
         for (const [child, count] of childEdges) {
-            if (getRefCounter(child).parents.get(node) !== count) {
+            if (getRefCounter(child, operationContext).parents.get(node) !== count) {
                 fatal("Parent edge count is inconsistent")
             }
         }
-        verifyStoredParentEdges(node)
+        verifyStoredParentEdges(node, operationContext)
     }
 
     // Cuts omit parent edges and count propagation, but every traversable
     // target in a ref-indexed raw graph still owns an independent counter.
-    for (const key of languageProperties.enumerableLanguageKeys(node)) {
-        const child = readPropertyForRecount(node, key)
+    for (const key of languageProperties.enumerableLanguageKeys(
+        node,
+        operationContext,
+    )) {
+        const child = readPropertyForRecount(node, key, operationContext)
         if (
             counter &&
-            languageValues.isTraversable(child) &&
-            !getRefCounter(child)
+            languageValues.isTraversable(child, operationContext) &&
+            !getRefCounter(child, operationContext)
         ) {
             fatal("Ref-indexed parent contains non-ref-indexed child")
         }
-        verifyReachable(child, seen)
+        verifyReachable(child, seen, operationContext)
     }
     if (counter) {
-        for (const parent of counter.parents.keys()) verifyReachable(parent, seen)
+        for (const parent of counter.parents.keys()) {
+            verifyReachable(parent, seen, operationContext)
+        }
     }
 }
 
-function verifyCycleCuts(node) {
-    const meta = metadata.metaOf(node)
+function verifyCycleCuts(node, operationContext) {
+    const meta = metadata.metaOf(node, operationContext)
     const plainCuts = meta?.cycleCuts
     if (plainCuts && !(plainCuts instanceof Set)) {
         fatal("Plain cycle cuts must be stored in a Set")
@@ -85,16 +96,18 @@ function verifyCycleCuts(node) {
             if (typeof key !== "string") {
                 fatal("Cycle cut keys must be strings")
             }
-            if (!languageProperties.hasLanguageProperty(node, key)) {
+            if (!languageProperties.hasLanguageProperty(node, key, operationContext)) {
                 fatal("Cycle cut names a missing or non-enumerable property")
             }
             if (languageValues.isPromise(
-                languageProperties.readLanguageProperty(node, key),
+                languageProperties.readLanguageProperty(node, key, operationContext),
+                operationContext,
             )) {
                 fatal("Pending Promise property also has a cycle cut")
             }
             if (!languageValues.isTraversable(
-                languageProperties.readLanguageProperty(node, key),
+                languageProperties.readLanguageProperty(node, key, operationContext),
+                operationContext,
             )) {
                 fatal("Cycle cut must contain a traversable value")
             }
@@ -102,19 +115,25 @@ function verifyCycleCuts(node) {
     }
 
     for (const key of Object.keys(meta?.mirrors ?? {})) {
-        const mirror = propertyVersions.getPromiseMirror(node, key)
+        const mirror = propertyVersions.getPromiseMirror(node, key, operationContext)
         const descriptor = languageProperties.getLanguagePropertyDescriptor(
             node,
             key,
+            operationContext,
         )
-        const imported = metadata.importBoundaryOf(node) !== undefined
+        const imported = metadata.importBoundaryOf(
+            node,
+            operationContext,
+        ) !== undefined
         const validShape = mirror &&
             Object.hasOwn(mirror, "value") &&
             descriptor?.enumerable &&
             "value" in descriptor
         const physicalMatches = Object.is(descriptor?.value, mirror?.value)
-        const preservedPromise = !languageValues.isPromise(mirror?.value) &&
-            languageValues.isPromise(descriptor?.value)
+        const preservedPromise = !languageValues.isPromise(
+            mirror?.value,
+            operationContext,
+        ) && languageValues.isPromise(descriptor?.value, operationContext)
         const validStorage = (imported || descriptor?.writable) &&
             (physicalMatches || preservedPromise)
         if (!validShape || !validStorage) {
@@ -123,19 +142,24 @@ function verifyCycleCuts(node) {
     }
 }
 
-function verifyStoredParentEdges(node) {
-    const counter = getRefCounter(node)
+function verifyStoredParentEdges(node, operationContext) {
+    const counter = getRefCounter(node, operationContext)
     for (const [parent, count] of counter.parents) {
-        if (!languageValues.isTraversable(parent)) {
+        if (!languageValues.isTraversable(parent, operationContext)) {
             fatal("Parent edge points to a non-traversable value")
         }
-        if (!getRefCounter(parent)) {
+        if (!getRefCounter(parent, operationContext)) {
             fatal("Parent edge points to non-ref-indexed parent")
         }
 
         let actualCount = 0
-        for (const key of languageProperties.enumerableLanguageKeys(parent)) {
-            if (recountProperty(parent, key).child === node) actualCount++
+        for (const key of languageProperties.enumerableLanguageKeys(
+            parent,
+            operationContext,
+        )) {
+            if (recountProperty(parent, key, operationContext).child === node) {
+                actualCount++
+            }
         }
         if (actualCount !== count) {
             fatal("Parent edge count is inconsistent")
@@ -143,42 +167,42 @@ function verifyStoredParentEdges(node) {
     }
 }
 
-function verifyParentGraph(node, states) {
-    if (!getRefCounter(node)) return
+function verifyParentGraph(node, states, operationContext) {
+    if (!getRefCounter(node, operationContext)) return
     const state = states.get(node)
     if (state === "done") return
     if (state === "active") fatal("Ref-count parent graph contains a cycle")
 
     states.set(node, "active")
-    for (const parent of getRefCounter(node).parents.keys()) {
-        verifyParentGraph(parent, states)
+    for (const parent of getRefCounter(node, operationContext).parents.keys()) {
+        verifyParentGraph(parent, states, operationContext)
     }
     states.set(node, "done")
 }
 
 // Recount each property here instead of using the count helpers being checked.
-function recountProperty(node, key) {
-    const mirror = propertyVersions.getPromiseMirror(node, key)
-    let child = readPropertyForRecount(node, key)
+function recountProperty(node, key, operationContext) {
+    const mirror = propertyVersions.getPromiseMirror(node, key, operationContext)
+    let child = readPropertyForRecount(node, key, operationContext)
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
-    if (languageValues.isPromise(child)) {
+    if (languageValues.isPromise(child, operationContext)) {
         if (!mirror) {
             fatal("Indexed promise property has no mirror")
         }
-        if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
+        if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
             fatal("Pending Promise property also has a cycle cut")
         }
         child = undefined
         promiseCount = 1
-    } else if (metadata.metaOf(node)?.cycleCuts?.has(key)) {
+    } else if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
         child = undefined
         cycleCutCount = 1
     } else if (languageValues.isError(child)) {
         errorCount = 1
-    } else if (languageValues.isTraversable(child)) {
-        const counter = getRefCounter(child)
+    } else if (languageValues.isTraversable(child, operationContext)) {
+        const counter = getRefCounter(child, operationContext)
         if (counter) {
             promiseCount = counter.promiseCount
             errorCount = counter.errorCount
@@ -188,12 +212,12 @@ function recountProperty(node, key) {
     return { child, promiseCount, errorCount, cycleCutCount }
 }
 
-function readPropertyForRecount(node, key) {
-    return languageProperties.readLanguageProperty(node, key)
+function readPropertyForRecount(node, key, operationContext) {
+    return languageProperties.readLanguageProperty(node, key, operationContext)
 }
 
-function getRefCounter(node) {
-    const meta = metadata.metaOf(node)
+function getRefCounter(node, operationContext) {
+    const meta = metadata.metaOf(node, operationContext)
     return meta?.parents ? meta : undefined
 }
 

@@ -6,23 +6,31 @@ import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 
 class InvocationContext {
-    #selectionArgumentLeases = createLeaseLedger()
-    #argumentLeases = createLeaseLedger()
-    #receiverLeases = createLeaseLedger()
     open = true
-    retainArgument = this.#argumentLeases.retain
-    retainReceiver = this.#receiverLeases.retain
-    releaseArguments = this.#argumentLeases.release
-    releaseReceivers = this.#receiverLeases.release
+    #selectionArgumentLeases
+    #argumentLeases
+    #receiverLeases
+
+    constructor(operationContext) {
+        this.operationContext = operationContext
+        this.#selectionArgumentLeases = createLeaseLedger(operationContext)
+        this.#argumentLeases = createLeaseLedger(operationContext)
+        this.#receiverLeases = createLeaseLedger(operationContext)
+        this.retainArgument = this.#argumentLeases.retain
+        this.retainReceiver = this.#receiverLeases.retain
+        this.releaseArguments = this.#argumentLeases.release
+        this.releaseReceivers = this.#receiverLeases.release
+    }
 
     retainArgumentsUntilReceiverReached(args) {
         for (const value of args) {
-            if (!languageValues.isPromise(value)) {
+            if (!languageValues.isPromise(value, this.operationContext)) {
                 this.#selectionArgumentLeases.retain(value)
                 continue
             }
             const protection = languageValues.continuePromise(
                 value,
+                this.operationContext,
                 resolved => operationLifecycle.run(
                     this,
                     () => this.#selectionArgumentLeases.retain(resolved),
@@ -62,12 +70,15 @@ function invokeDataFunction(callable, thisValue, args) {
     )
 }
 
-function getHostMethodCallDescription(callable, thisValue) {
+function getHostMethodDescription(callable, thisValue) {
     return {
-        admitResult: value => imports.import(value, "run method result"),
+        admitResult: (value, invocationContext) => imports.import(
+            value,
+            invocationContext.operationContext,
+        ),
         invoke: args => invokeDataFunction(callable, thisValue, args),
-        prepareInputs: (args, invocation) =>
-            exportManyValues(args, invocation),
+        prepareInputs: (args, invocationContext) =>
+            exportManyValues(args, invocationContext),
     }
 }
 
@@ -77,34 +88,53 @@ function methodNotCallableError(method) {
 
 // Selection supplies category behavior; this owns the shared call transition
 // and its argument and receiver leases.
-function invokeCall(method, mutation, args, select, reachReceiver) {
-    const invocation = new InvocationContext()
+function invokeCall(
+    operationContext,
+    method,
+    mutation,
+    args,
+    getMethodDescription,
+    reachReceiver,
+) {
+    const invocationContext = new InvocationContext(operationContext)
     let receiverReached = false
     const reached = operationLifecycle.run(
-        invocation,
+        invocationContext,
         () => reachReceiver(invokeWithReceiver),
     )
 
-    if (!receiverReached && languageValues.isPromise(reached)) {
-        invocation.retainArgumentsUntilReceiverReached(args)
+    if (!receiverReached && languageValues.isPromise(reached, operationContext)) {
+        invocationContext.retainArgumentsUntilReceiverReached(args)
     }
-    return operationLifecycle.closeWhenDone(invocation, reached)
+    return operationLifecycle.closeWhenDone(invocationContext, reached)
 
-    function invokeWithReceiver(receiver, present, context) {
+    function invokeWithReceiver(receiver, present, mutationContext) {
         receiverReached = true
-        let selected
+        let methodDescription
         let preparedInputs
         try {
-            selected = select(receiver, method, mutation, present, context)
-            if (languageValues.isError(selected)) return selected
-            preparedInputs = selected.prepareInputs(args, invocation)
-            invocation.retainReceiver(selected.leaseReceiver)
+            methodDescription = getMethodDescription(
+                receiver,
+                method,
+                mutation,
+                present,
+                mutationContext,
+                invocationContext,
+            )
+            if (languageValues.isError(methodDescription)) {
+                return methodDescription
+            }
+            preparedInputs = methodDescription.prepareInputs(
+                args,
+                invocationContext,
+            )
+            invocationContext.retainReceiver(methodDescription.leaseReceiver)
         } finally {
-            invocation.releaseSelectionArguments()
+            invocationContext.releaseSelectionArguments()
         }
 
         const preparedResult = operationLifecycle.continueInternal(
-            invocation,
+            invocationContext,
             preparedInputs,
             readyInputs => new WrappedInvocationResult(
                 invokePrepared(readyInputs),
@@ -121,47 +151,51 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
 
                 // Application reflection belongs after clean input preparation
                 // and before category-specific isolation inside invoke.
-                const callable = selected.getMethod
+                const callable = methodDescription.getMethod
                     ? errorUtils.catchUserCodeFailure(
-                        () => selected.getMethod(readyInputs),
+                        () => methodDescription.getMethod(readyInputs),
                         failure => failure,
                     )
                     : undefined
                 if (languageValues.isError(callable)) return callable
 
-                const callResult = selected.invoke(
+                const callResult = methodDescription.invoke(
                     readyInputs,
-                    invocation,
+                    invocationContext,
                     callable,
                 )
                 if (
-                    selected.leaseReceiverThroughResult &&
-                    languageValues.isPromise(callResult)
+                    methodDescription.leaseReceiverThroughResult &&
+                    languageValues.isPromise(callResult, operationContext)
                 ) {
                     receiverLeaseContinues = true
                 }
-                if (!selected.admitResult) return callResult
+                if (!methodDescription.admitResult) return callResult
 
-                const admittedResult = selected.admitResult(callResult)
-                if (languageValues.isPromise(admittedResult)) {
+                const admittedResult = methodDescription.admitResult(
+                    callResult,
+                    invocationContext,
+                )
+                if (languageValues.isPromise(admittedResult, operationContext)) {
                     receiverLeaseContinues = true
                 }
                 return admittedResult
             } finally {
-                invocation.releaseArguments()
-                if (!receiverLeaseContinues) invocation.releaseReceivers()
+                invocationContext.releaseArguments()
+                if (!receiverLeaseContinues) invocationContext.releaseReceivers()
             }
         }
     }
 
     function unwrapInvocationResult(result) {
-        if (!languageValues.isPromise(result)) {
+        if (!languageValues.isPromise(result, operationContext)) {
             return result instanceof WrappedInvocationResult
                 ? result.value
                 : result
         }
         return languageValues.continuePromise(
             result,
+            operationContext,
             resolved => resolved instanceof WrappedInvocationResult
                 ? resolved.value
                 : resolved,
@@ -170,17 +204,17 @@ function invokeCall(method, mutation, args, select, reachReceiver) {
     }
 }
 
-function createLeaseLedger() {
+function createLeaseLedger(operationContext) {
     const values = new Set()
     let closed = false
     return { retain, release }
 
     function retain(value) {
         if (closed || values.has(value)) return value
-        languageValues.admitValue(value)
+        languageValues.admitValue(value, operationContext)
         if (
-            !languageValues.isPromise(value) &&
-            metadata.incrementReadLease(value)
+            !languageValues.isPromise(value, operationContext) &&
+            metadata.incrementReadLease(value, operationContext)
         ) values.add(value)
         return value
     }
@@ -188,13 +222,15 @@ function createLeaseLedger() {
     function release() {
         if (closed) return
         closed = true
-        for (const value of values) metadata.decrementReadLease(value)
+        for (const value of values) {
+            metadata.decrementReadLease(value, operationContext)
+        }
         values.clear()
     }
 }
 
 export {
-    getHostMethodCallDescription,
+    getHostMethodDescription,
     invokeCall,
     invokeDataFunction,
     methodNotCallableError,

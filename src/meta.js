@@ -12,20 +12,21 @@ const TYPE_EXTERNAL = 8
 const DECLARATION_MANAGED = 1
 const DECLARATION_EXTERNAL = 2
 
-const META_MAP = new WeakMap()
 const IDENTITY_DECLARATIONS = new WeakMap()
 const MANAGED_PROTOTYPES = new Set()
 
-function metaOf(value) {
-    return META_MAP.get(value)
+function metaOf(value, operationContext) {
+    return operationContext.execution._metadata.get(value)
 }
 
 function getOrCreateMeta(
     value,
+    operationContext,
     type = undefined,
     admittedPrototype = undefined,
 ) {
-    let meta = META_MAP.get(value)
+    const metadata = operationContext.execution._metadata
+    let meta = metadata.get(value)
     if (!meta) {
         meta = type === undefined
             ? inspectMetaFacts(value)
@@ -40,9 +41,7 @@ function getOrCreateMeta(
                 new TypeError("Managed container admission requires a prototype"),
             )
         }
-        META_MAP.set(value, meta)
-        // Admission consumes an identity-level classification override.
-        IDENTITY_DECLARATIONS.delete(value)
+        metadata.set(value, meta)
     } else if (type !== undefined && meta.type !== type) {
         errorUtils.reportFatalError(
             new TypeError("Admitted type cannot change"),
@@ -139,8 +138,8 @@ function isObjectLike(value) {
     )
 }
 
-function requireMeta(value) {
-    const meta = META_MAP.get(value)
+function requireMeta(value, operationContext) {
+    const meta = metaOf(value, operationContext)
     if (!meta) {
         errorUtils.reportFatalError(
             new TypeError("Value metadata requires prior admission"),
@@ -149,8 +148,9 @@ function requireMeta(value) {
     return meta
 }
 
-function requiresCopyOnWrite(value) {
-    return metaOf(value)?.shared === true || hasReadLease(value)
+function requiresCopyOnWrite(value, operationContext) {
+    return metaOf(value, operationContext)?.shared === true ||
+        hasReadLease(value, operationContext)
 }
 
 function isTraversableType(type) {
@@ -159,21 +159,21 @@ function isTraversableType(type) {
         type === TYPE_MANAGED_CLASS
 }
 
-function hasReadLease(value) {
-    return (metaOf(value)?.readLeaseCount ?? 0) > 0
+function hasReadLease(value, operationContext) {
+    return (metaOf(value, operationContext)?.readLeaseCount ?? 0) > 0
 }
 
-function incrementReadLease(value) {
+function incrementReadLease(value, operationContext) {
     if (!isObjectLike(value)) return false
-    const meta = requireMeta(value)
+    const meta = requireMeta(value, operationContext)
     if (!isTraversableType(meta.type)) return false
     meta.readLeaseCount = (meta.readLeaseCount ?? 0) + 1
     return true
 }
 
-function decrementReadLease(value) {
+function decrementReadLease(value, operationContext) {
     if (!isObjectLike(value)) return
-    const meta = requireMeta(value)
+    const meta = requireMeta(value, operationContext)
     const count = meta.readLeaseCount ?? 0
     if (count < 1) {
         errorUtils.reportFatalError(new Error("Read lease underflow"))
@@ -182,22 +182,22 @@ function decrementReadLease(value) {
     else meta.readLeaseCount = count - 1
 }
 
-function markShared(value) {
+function markShared(value, operationContext) {
     if (!isObjectLike(value)) return value
-    const meta = requireMeta(value)
+    const meta = requireMeta(value, operationContext)
     if (isTraversableType(meta.type)) meta.shared = true
     return value
 }
 
 // New identities admitted by one import share its origin token.
-function markImported(value, importBoundary) {
-    const meta = requireMeta(value)
+function markImported(value, importBoundary, operationContext) {
+    const meta = requireMeta(value, operationContext)
     meta.importBoundary ??= importBoundary
     if (isTraversableType(meta.type)) meta.shared = true
 }
 
-function importBoundaryOf(value) {
-    return metaOf(value)?.importBoundary
+function importBoundaryOf(value, operationContext) {
+    return metaOf(value, operationContext)?.importBoundary
 }
 
 export {
