@@ -34,7 +34,7 @@ The tree is a fixed positive index, not a copy of the managed graph:
 - It is not updated after COW, Array remapping, assignment, deletion, or `enter`.
 - Ordinary managed assignment creates another owner. Later mutation through either managed placement uses COW and cannot change the other placement or its live leaves.
 - External identities remain exact through a managed copy. Actual use through another Chain or path, or through a later alias elsewhere, is handled by the identity map and conflicts.
-- A controlled graph replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf returns a language Error before publication. Array changes that preserve every live leaf's exact path and identity remain valid. A managed host method must preserve every live leaf at its recorded path and identity; violating that trusted contract is fatal when detected.
+- A controlled graph replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf returns a language Error before publication. Array changes that preserve every live leaf's exact path and identity remain valid. Apply the same check to a managed host method's private completed receiver: failure is recoverable `InvalidManagedReceiver`, poisons the receiver and every selected external phase, and publishes none of the invalid managed state. Host behavior is fatal only if it has already changed external state without authority or made another runtime invariant untrustworthy.
 
 Tree lookup is the only tree-removal point. A leaf is always checked against the identity map before use. If its identity is already in permanent conflict, remove that leaf and report no live boundary. Other leaves remove themselves if later queried; no reverse identity-to-leaf index or tree scan is needed. Already-issued operations retain their captured identity state.
 
@@ -42,15 +42,14 @@ Every context-path call or property operation, including an unmarked observation
 
 ## Identity use map
 
-One execution-scoped `WeakMap` accounts for every external identity recorded in any static tree, including later references to that identity outside the tree. Tree construction creates or reuses the identity's entry, while actual use changes only its `use` field:
+One execution-scoped `WeakMap` accounts for every external identity recorded in any static tree, including later references to that identity outside the tree. Tree construction creates or reuses one durable entry with exactly two fields:
 
-- unset before first use;
-- `ONE(location)`, where `location` is one live tree leaf; or
-- `CONFLICT(reason)`, after actual use from more than one location or any use incompatible with an indexed mutation location. Keep only the first stable reason, not operation history.
+- `use`: unset before first use, `ONE(location)` for one live tree leaf, or `CONFLICT(reason)` after incompatible use;
+- `phase`: the readers-writer cursor whose completion payload is the sole repairable poison state.
 
-The entry also owns the identity's phase and repairable poison. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
+Keep only the first stable conflict reason, not operation history. There is no separate current-poison field. Conflict belongs to `use` and is permanent; repairable operation poison belongs only to phase-completion payloads. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
 
-Actual use means a call or property operation through an external boundary. Import, managed assignment, storage, return, and copying do not count. A direct lookup of a mutable external identity and any attempt to export one fail without recording use.
+Actual use means a call or property operation through an external boundary. Import, managed assignment, storage, return, and copying do not count. A direct lookup of a mutable external identity fails without recording use, but still joins that boundary's observation phase so it cannot overtake earlier mutation or miss predecessor poison. An attempt to export one fails without recording use or acquiring a phase.
 
 Apply actual-use transitions in operation order before host access:
 
@@ -66,7 +65,9 @@ Mutation additionally requires the current location to be a live tree leaf. An i
 
 Conflict is permanent. The conflicting operation performs no host access, publishes poison in operation order when a phase exists, and returns an Error explaining the first incompatible use. Repair may clear an ordinary operation failure but cannot clear conflict or grant another location. A late alias discovered behind a Promise is rejected when reached; it never acquires authority or causes tree growth.
 
-Evaluate one operation's proposed uses from one pre-operation state. If any conflict exists, commit every discovered permanent conflict but no compatible new location, because host access will not occur. Otherwise commit all new locations together immediately before host access. Report conflicts in deterministic receiver, argument, then path order; iteration order must not grant partial authority.
+One `ExternalOperationContext` owns one identity-keyed operation map. Each selected record contains the location, strongest access mode, proposed `use` transition, phase-completion handle, and repair intent for that operation. Durable identity entries contain none of those proposals.
+
+Evaluate the selected records from one pre-operation state. If any conflict exists, commit every discovered permanent conflict but no compatible new location, because host access will not occur. Otherwise commit all new locations together immediately before host access. Report conflicts in deterministic receiver and path order; iteration order must not grant partial authority.
 
 ## External phases
 
@@ -123,7 +124,7 @@ Assignment replaces, and deletion removes, an Error at the final managed graph p
 
 ## Host boundary
 
-External property access and calls operate on exact host state. Observation-only property reads and call results use ordinary import. A property read inside mutable external state copies the reached ready graph into managed state with export's synchronous copy core. A direct property-result Promise completes before copying; the copy walk rejects nested Promises. Every explicit argument and property-write value is exported. A native setter completes synchronously.
+External property access and calls operate on exact host state. Observation-only property reads and call results use ordinary import. A property read inside mutable external state uses a dedicated synchronous snapshot walk with the same visible copy semantics as export. It may share low-level container creation, enumerable-key reading, and safe property-definition helpers, but it does not invoke or parameterize export. A direct property-result Promise completes before copying; the copy walk rejects nested Promises. Every explicit argument and property-write value is exported. A native setter completes synchronously.
 
 Public `import(value, operationContext)` never creates a static tree or external mutation authority. External identities admitted through it remain observation-only even when the imported value is later used as a Chain root. Only initial `ContextChain` import can establish possible authority.
 

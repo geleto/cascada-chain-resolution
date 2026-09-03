@@ -72,6 +72,14 @@ A callable thenable is canonicalized once only when Cascada needs FIFO ordering
 among continuations on that source: to advance or consume a captured version,
 resume or finish a transition, or perform settlement bookkeeping before later
 Cascada use. Returning a result alone does not canonicalize or replace it.
+A genuine native Promise registers directly on its captured native `then`; its
+fulfilled value is checked for Error but not resampled for thenability. Custom
+thenable callbacks instead fulfill one cached Promise with a private
+non-thenable first-settlement record. Each causal boundary that introduced the
+thenable interprets that raw record with its retained operation context and
+processes a fulfilled nested thenable through execution-local capture. Later
+consumers preserve the boundary's contextualized Error. The record never escapes
+or receives a raw native Promise resolver.
 Every consumer of a Promise-backed property registers through that property's
 captured mirror, so its synchronous continuation observes all earlier
 consumers and none issued later.
@@ -279,23 +287,57 @@ wrapper rather than changing the earlier occurrence. The public `ERROR_KIND`
 object defines the shared Cascada failure-kind vocabulary.
 
 `CompoundPoisonError` flattens nested compounds, preserves logical collection
-order, and deduplicates leaves by `leaf.cause ?? leaf`. Each surviving leaf
-keeps its context and kind.
+order, and deduplicates occurrence wrappers only when their causes have identity.
+Equal primitive causes remain distinct. Each surviving leaf keeps its context
+and kind.
 
 Synchronous failures from supported user code and exact reflection hooks become
-language Errors at those boundaries. The boundary catches only the
-user-controlled invocation; adjacent runtime work remains outside it.
+language Errors at those boundaries. The exact interaction marks every nonfatal
+host throw, including poison; the owning semantic boundary preserves or
+contextualizes it and applies the boundary's graph effect. Adjacent runtime work
+remains outside both catches and is fatal.
+A direct Error result always means its boundary failed, whether returned,
+fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
+effect in every case; an Error cannot be a successful direct payload.
 Synchronous re-entry into Cascada from such code is a fatal host-contract
 violation.
 
+A raw data-Promise rejection is contextualized once in the first import,
+mirror, validation, or publication continuation already required by its causal
+boundary. Later native Promise propagation preserves that exact Error. No
+forwarding Promise exists only to attach attribution.
+
 Internal failures become `RuntimeError`, retain the owning operation's context,
-are reported once, and continue to throw or reject. They are never admitted or
-queried as language data. Continuation failures, invariant violations, and
-rejected internal aggregate waits follow this path.
+and are reported once. They are never admitted or queried as language data. A
+`RuntimeError` physically received by return, fulfillment, throw, rejection, or
+graph traversal is submitted to the current execution before success handling.
+Continuation failures, invariant violations, and rejected internal aggregate
+waits follow this path.
+
+Each execution accepts only its first `RuntimeError` as its authoritative fatal
+outcome. That transition rejects the execution's fatal Promise with the same
+Error, fails registered operation work and its pending public outcomes, prevents
+new host effects, and causes a still-pending root result and higher scheduler to
+stop with that Error. Operation-only work and resources are abandoned, while
+shared Promise settlement, required publication, bookkeeping, and cleanup
+continue. Already-observed Promises stay handled. Shutdown neither cancels
+native work nor undoes effects already begun. A later fatal failure cannot
+replace or reattribute the first.
+
+Normal root completion waits only for the returned value's required boundary
+processing and export, raced against the fatal Promise. It does not wait for
+unrelated operations, Chains, shared settlement, or cleanup. If the result
+completes first, that work may continue. A later fatal is stored in
+`execution.fatalError`, reported, and closes remaining work, but cannot change
+the delivered result. A missing `fatalError` while work remains is not proof that
+no later fatal will occur. The runtime provides no execution-idle counter or
+quiescence barrier.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
-The FIFO helpers register directly on a native Promise and otherwise share one
-canonical native Promise for each ordered thenable.
+The FIFO helpers register directly on a native Promise. For a custom thenable,
+they share one Promise containing its private non-thenable first-settlement
+record; each causal boundary that introduced it applies its retained attribution
+and nested capture, while later consumers preserve that contextualized outcome.
 `resolveInitialValueOrPoison` converts the first data result,
 `onLaterPromiseReady` runs later property resolvers without reconverting
 rejection, and `observeResultPromise` registers ordered admission or lease
@@ -304,13 +346,16 @@ continues an already-native intermediate wait directly and owns its rejection.
 An independent data result Promise is not operation work. The common helpers
 use ordinary native Promises and add no Promise subclass or per-consumer proxy.
 
-`src/operation-lifecycle.js` guards operation-specific continuations with one shared
-open/closed owner. Fatal failure closes the owner before an aggregate can run a
-late sibling; shared property settlement still completes before the closed
-check. Every owner has an explicit open fact and idempotent close operation;
-ready work allocates no release-registry state. Pending nested resources register synchronous release with the
-owner and unregister on completion; closing releases them without cancelling
-settlement.
+`src/operation-lifecycle.js` guards operation-specific continuations with one
+shared open/closed owner. A component submits fatal failure while that owner is
+still registered; execution shutdown rejects its pending public outcome and
+closes it before an aggregate can run a late sibling. Shared property settlement
+still completes before the closed check. Every owner has an explicit open fact
+and idempotent close operation; while its public outcome is pending, it also
+retains one fatal rejection action.
+Ready work allocates no release-registry state. Pending nested resources register
+synchronous release with the owner and unregister on completion; closing
+releases them without cancelling settlement.
 
 One `RuntimeError` reports at most once even when it crosses several fatal
 boundaries. Reusing a raw internal Error in another causal operation creates a
@@ -366,8 +411,8 @@ Returns host-ready data for the branch captured at its issue position.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
 - Several Errors return a `CompoundPoisonError`. Nested compounds are flattened
-  and leaves are deduplicated by native cause; order within one graph is not
-  semantic.
+  and occurrence wrappers are deduplicated only when their causes have identity;
+  equal primitive causes remain distinct. Order within one graph is not semantic.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
@@ -398,7 +443,8 @@ The operation never marks or pins the branch.
 Returns an array containing each reachable Error identity once.
 
 Separately contextualized occurrences of one native Error are distinct Error
-identities and are all returned. Export instead groups them by native cause.
+identities and are all returned. Export instead groups wrappers that share that
+identity-bearing cause.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and primitive terminals return `[]`.

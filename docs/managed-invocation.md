@@ -68,16 +68,16 @@ A Promise nested inside a synchronous result is ordinary imported data and does 
 
 - An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection leaves the receiver unchanged and preserves an existing contextual failure or wraps a raw reason at the invocation boundary.
 - A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection contextualizes the same way and poisons the receiver with that occurrence.
-- A fulfilled Error is contextualized as an explicit result and does not poison an otherwise valid mutation receiver.
-- A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
+- A direct Error is call failure whether it is returned, fulfilled, thrown, or rejected. An observation returns it; a mutation poisons its receiver with it after the defined graph effect.
+- A receiver validation failure poisons the receiver and becomes the operation result; pending transport rejects only after that graph effect is published.
 
-A synchronous method throw, explicit returned Error, direct-result rejection,
-nested result Error, and nested result rejection have distinct stable kinds but
-share the call's source context. Later operations preserve that attribution. A
-method throw poisons a mutation receiver; a deliberate Error return remains an
-independent result after a valid receiver is published.
+A synchronous method throw, explicit returned Error, direct Error fulfillment,
+and direct-result rejection follow the same causal and graph-effect rules for
+the failed call. A Promise nested inside a successful result is independent data;
+its later Error does not poison an already published valid receiver. Later
+operations preserve every contextualized Error's attribution.
 
-Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access, receiver exposure through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations. Exact external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access, receiver exposure through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
 
 ## Managed-code contract
 

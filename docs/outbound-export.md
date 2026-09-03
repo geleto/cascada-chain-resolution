@@ -23,7 +23,8 @@ Each batch root retains its own result position. Wrapping the roots in an ordina
 
 The walk collects every contextual Error reached beneath each root. One
 occurrence is preserved. Several produce a `CompoundPoisonError`; combination
-flattens nested compounds and deduplicates leaves by `leaf.cause ?? leaf`.
+flattens nested compounds and deduplicates occurrence wrappers only when their
+causes have identity. Equal primitive causes remain distinct.
 Order within one graph is not semantic, while failed batch roots retain root
 order. Any Error prevents host invocation or assignment. No Error is exported.
 

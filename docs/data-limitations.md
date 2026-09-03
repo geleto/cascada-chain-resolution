@@ -41,9 +41,10 @@ not replace its source. Reusing one native Error at another causal boundary
 creates another wrapper for that occurrence.
 
 `CompoundPoisonError` contains flattened leaves in `.errors`, preserves their
-logical order and individual attribution, and keeps one leaf per
-`leaf.cause ?? leaf`. `RuntimeError` represents a fatal runtime or host-contract
-failure. It is reported and rethrown, never treated as language data.
+logical order and individual attribution, and deduplicates occurrence wrappers
+only when their causes have identity. Equal primitive causes remain distinct.
+`RuntimeError` represents a fatal runtime defect, broken invariant, or unsafe
+host failure. It is reported and rethrown, never treated as language data.
 
 Imported host storage keeps nested native Error objects unchanged while Cascada
 exposes their contextual wrappers as the logical property values. Declaration
@@ -129,7 +130,8 @@ These restrictions allow records and class instances to share one managed invoca
 - Access nested external state through a separate Cascada operation that selects it as the external receiver. `api!.db.close()` is supported; a managed `api!.close()` must not call `this.db.close()` internally.
 - A completed mutation receiver contains no Promise or Error. Managed state may contain either between calls, because Cascada resolves or propagates them before the next managed invocation.
 - A managed method may complete synchronously or through one direct Promise. Later receiver access and any inspection of a read-only exact external input must belong to that Promise and finish before it settles.
-- Detached receiver or external-input work and Cascada reentry during the invocation are forbidden. A Promise nested in a synchronous result must not later access or expose the receiver, or inspect or mutate an exact external input; return that Promise directly when its completion needs such access. Exact external identities may be retained or returned inertly because this grants no authority. The managed structure of exported argument copies may be retained, used, or returned later; exact external leaves inside it follow the same rule.
+- A direct Error always reports method failure, whether returned, fulfilled, thrown, or rejected. A mutating call applies its receiver-failure behavior; returning an Error as successful payload is unsupported.
+- Detached receiver or external-input work and Cascada reentry during the invocation are forbidden. A Promise nested in a synchronous result must not later access or expose the receiver, or inspect or mutate an exact external input; return that Promise directly when its completion needs such access. Exact observation-only external identities may be retained or returned inertly because this grants no authority. The managed structure of exported argument copies may be retained, used, or returned later; exact external leaves inside it follow the same rule.
 
 Nested calls such as `this.increment()` are ordinary JavaScript calls on the already prepared receiver and follow the same outer invocation contract.
 
@@ -150,7 +152,7 @@ One external identity that Cascada may mutate must be available under a compiler
 - A Cascada replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf fails before publication. Array changes that leave every live leaf at the same index and path remain valid. Managed host methods must preserve every live leaf at its recorded path and identity; a detected violation is fatal.
 - Another reference may be stored elsewhere, including at another Array index, but actual external use through it creates permanent conflict.
 - A later Cascada gate may temporarily hide the original path without changing it.
-- Passing an exact external identity as a host argument, external write value, or controlled-callback input is use at its captured source location. Source provenance belongs to the captured value; Cascada never substitutes a later value from that path.
+- A mutation-capable external identity cannot be passed as a host argument, external write value, or controlled-callback input. Export returns an Error before host code runs and records no use. Observation-only external identities may cross unchanged and remain read-only.
 - Import, managed-graph assignment, storage, export copying, and return do not count as use or transfer authority. Actual use of a stored alias still conflicts when reached.
 - An identity reached only after waiting acquires no late phase. If it was not already selected from the static external mutation tree, it returns an Error before host access when it conflicts with a mutation-capable identity.
 - External identities never recorded in an external mutation tree are observation-only and may be observed from any location. Their aliases are the developer's responsibility because Cascada provides no mutation ordering for them.
@@ -176,8 +178,8 @@ An external identity is opaque. A `!` written deeper inside it still selects tha
 
 - An external observation must not mutate its receiver.
 - An external mutation may mutate state encapsulated by its selected exact receiver and live external siblings selected by an ancestor `!` scope. Every external argument must validate its source location. An argument grants no authority; only independent selection by the mutation scope makes the same identity mutable. All other exact external arguments and external state outside the scope remain read-only.
-- A property read crosses into Cascada through import. Observation-only external state retains its external result; mutable external state uses import's detached-copy policy instead. A property write crosses into host code and its value is exported first.
-- The detached copy uses export's synchronous graph-copy semantics: it preserves Arrays, aliases, cycles, prototypes, and Functions and may therefore expose supported managed methods without exposing the mutable external source. A Promise returned directly by the selected property may resolve before copying, but the copied graph itself must contain no Promise.
+- A property read crosses into Cascada through ordinary import when the external state is observation-only. A read inside mutable external state instead returns a detached managed snapshot. A property write crosses into host code and its value is exported first.
+- The detached copy has the same visible graph-copy semantics as export: it preserves Arrays, aliases, cycles, prototypes, and Functions and may therefore expose supported managed methods without exposing the mutable external source. A Promise returned directly by the selected property may resolve before copying, but the copied graph itself must contain no Promise.
 - Assignment and deletion are mutations even without `!`; their default mutation scope is the exact target placement. An explicit ancestor `!` broadens that scope, while a target inside external state clamps to its first external boundary.
 - Replacing `ctx.db` changes a managed placement even when its old value is external. Changing `ctx.db.name` is an external property operation when `ctx.db` is external.
 - A native setter must finish synchronously.
@@ -204,7 +206,7 @@ Host data entering Cascada's language graph is imported. Data leaving the graph 
 
 - Import is used for host roots, supported host-call and callback results that enter the graph, external-property reads, and later Promise fulfillment from those boundaries.
 - Export is used for native-call arguments, controlled callback inputs, external-property writes, and script results.
-- Export, `hasError`, and `getErrors` treat an external identity as a terminal graph value. Their paths do not inspect external properties or external guard poison. Read an external property through an ordinary Cascada lookup before exporting or querying the imported result.
+- Export, `hasError`, and `getErrors` treat an external identity as a terminal graph value. Their paths do not inspect external properties or external poison. Read an external property through an ordinary Cascada lookup before exporting or querying the imported result.
 - Exported managed records, Arrays, and class instances are independent host data. Class copies preserve their admitted prototypes without running constructors. Host code may mutate or retain the copies without changing their Cascada sources.
 - Functions and external identities cross exactly. Host code must treat them as read-only unless the exact external identity is independently covered by the active receiver mutation scope.
 - Export consumes Errors at any depth. If any argument or assigned value contains an Error, host code is not called and no Error crosses the boundary.

@@ -10,6 +10,8 @@ Ordinary `Chain(initialValue, operationContext)` construction admits existing Ca
 
 During the initial synchronous import segment, only those paths are searched. A property mutation path follows only its containing path; it never scans the old target. A scope mutation path follows its complete scope and searches the reached managed subtree. If traversal reaches external state while following either path, record that first boundary and stop the opaque suffix. Cut cycle backedges, preserve distinct finite acyclic alias occurrences, and add nothing for paths containing no external state. The tree grants the only possible external mutation locations.
 
+External-tree discovery remains an occurrence walk separate from identity admission. Admission inspects each identity once, while discovery must preserve every distinct finite alias path. Request-prefix merging and cached acyclic subtree results avoid repeated reflection. Both walks belong to the same import transaction, so failure commits neither admission facts nor tree leaves.
+
 ## Admission walk
 
 Each available synchronous segment uses one transactional identity walk:
@@ -32,6 +34,8 @@ A direct Promise root returns one operation Promise. Fulfillment completes the s
 
 A nested Promise belongs to its captured property version. Its fulfillment imports newly exposed data before publishing the logical value, while rejection publishes a contextual language Error attributed to this import boundary. Imported physical storage keeps the original Promise; the mirror stores its logical settlement without writeback. Runtime-owned Promise properties retain ordinary writeback.
 
+Import owns the processor for each newly available fulfillment segment. Property-version code owns its placement overlay and settlement, then delegates the fulfilled payload through that processor. Keep this boundary to one handoff; do not add an `ImportTransaction` class or forward separate installation callbacks.
+
 ## Ownership
 
 New imported managed identities are marked imported and shared, so mutation copy-on-writes before changing them. Copies are runtime-owned; reused imported children keep their origin. Frozen, sealed, and writable imported managed objects therefore have the same logical behavior.
@@ -41,6 +45,6 @@ Application code must not mutate managed data after passing it to Cascada. Exter
 ## Modules
 
 - `src/import.js` owns the public boundary and direct-Promise completion.
-- `src/import-preparation.js` owns the transactional admission walk.
+- `src/import-preparation.js` owns the transactional admission walk and the processor reused for imported Promise fulfillments.
 - `src/meta.js` owns declarations, admitted facts, and origin metadata.
-- `src/property-versions.js` owns placement overlays, captured Promise settlement, and fixed imported-Error versions.
+- `src/property-versions.js` owns placement overlays, captured Promise settlement, and fixed imported-Error versions; it delegates an imported fulfillment to the import-owned processor.

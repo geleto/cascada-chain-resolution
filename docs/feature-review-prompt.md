@@ -160,7 +160,7 @@ For every possible failure, classify the exact boundary that failed:
 - supported user/host-code failure;
 - validation failure;
 - representation limitation requiring materialization;
-- violated internal or host contract and therefore fatal failure.
+- violated internal contract or host behavior that makes runtime invariants untrustworthy and is therefore fatal.
 
 Verify that:
 
