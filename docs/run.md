@@ -188,7 +188,7 @@ A broken observation path returns its path-access Error. A broken mutation path 
 
 A synchronous supported-method, callback, accessor, or reflection throw becomes a `PoisonError` with that boundary's source and failure kind. A direct Error means the call failed whether returned, fulfilled, thrown, or rejected. A failed mutating call poisons its receiver placement; an observation leaves its receiver unchanged. An existing contextualized failure propagates unchanged. A raw direct method-Promise rejection is attributed to the call. Unlimited `flat` of a logical Array cycle has no finite result and returns an `InvalidArrayOperation` poison rather than relying on native stack overflow. An observational mutator discards its private working copy.
 
-A kernel invariant, bookkeeping failure, or unsafe host behavior that compromises runtime state or ordering becomes a fatal `RuntimeError` at the owning operation and is reported once. Synchronous Cascada re-entry from supported user code is such a failure. Safely rejectable host output validation instead produces poison. Descriptor restrictions are handled by representation preflight; any corresponding failure during commit is therefore fatal.
+A kernel invariant, bookkeeping failure, or unsafe host behavior that compromises runtime state or ordering becomes a fatal `RuntimeError` at the owning operation and is reported once by that execution. Safely rejectable host output validation instead produces poison. Descriptor restrictions are handled by representation preflight; any corresponding failure during commit is therefore fatal. Supported host code may synchronously issue nested Cascada operations through their explicit operation contexts and ordinary ordering.
 
 ## Implementation boundary
 

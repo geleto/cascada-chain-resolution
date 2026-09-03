@@ -77,7 +77,7 @@ the failed call. A Promise nested inside a successful result is independent data
 its later Error does not poison an already published valid receiver. Later
 operations preserve every contextualized Error's attribution.
 
-Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access, receiver exposure through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronously issued nested Cascada operations use their own explicit operation contexts and ordinary ordering.
 
 ## Managed-code contract
 

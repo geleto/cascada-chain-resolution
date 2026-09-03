@@ -24,7 +24,7 @@ This document defines how Cascada classifies, represents, attributes, propagates
 ## First principles
 
 - **Recoverable failure is language data.** It may be stored, returned, inspected, combined, replaced, or repaired.
-- **Unexpected runtime failure is fatal.** It is reported once and propagated, never admitted or reinterpreted as language data.
+- **Unexpected runtime failure is fatal.** It is reported once by each execution it closes and propagated, never admitted or reinterpreted as language data.
 - **The cause determines classification.** Classification depends on the action that failed, not whether failure arrived by return, throw, fulfillment, or rejection.
 - **Conversion is narrow and single-use.** Only a causal boundary converts an expected raw failure, and it does so once. Consumers preserve the result. Every other raw failure is fatal.
 - **Attribution is immutable.** Once poison has a source and kind, or a fatal Error has a source, delay, copying, publication, and later consumption preserve them.
@@ -48,7 +48,7 @@ Error
 
 - `PoisonError` directly extends native `Error`. It records a nonempty stable `kind`, originating `errorContext`, and optional exact `cause`.
 - `CompoundPoisonError` extends `PoisonError`. Its `.errors` contains flattened poison leaves.
-- `RuntimeError` directly extends native `Error`. It records its originating `errorContext`, exact cause, and private report-once state.
+- `RuntimeError` directly extends native `Error`. It records its originating `errorContext` and exact cause.
 
 There is no shared runtime `CascadaError` base. Such a base adds no capability and permits an ambiguous Error that is neither recoverable nor fatal. Cascada may retain a separate compile-time Error base.
 
@@ -153,16 +153,14 @@ Private `runUserCode` wraps exactly one supported synchronous host-controlled ac
 
 ~~~text
 runUserCode(action):
-    enter runtime-wide re-entry guard
     try action()
     on RuntimeError -> rethrow unchanged
     on any other throw -> throw private UserCodeFailure(exact reason)
-    finally leave guard
 ~~~
 
 The marker also transports an existing poison thrown by host code. The owning semantic boundary catches only `UserCodeFailure`, preserves a contained poison or contextualizes another reason with its operation context and kind, and then applies that boundary's graph effect. This keeps thrown poison recoverable without letting it bypass receiver poisoning or other boundary behavior. The split is deliberate: a low-level reflection helper knows that host code threw; its caller knows which boundary owns that interaction. The private marker avoids broad conversion catches and boundary-policy arguments throughout graph helpers.
 
-Keep receiver preparation, argument export, result import, publication, bookkeeping, and cleanup outside the host envelope. Any unmarked failure from that work is fatal. A synchronous Cascada re-entry while supported host code is active is also fatal.
+Keep receiver preparation, argument export, result import, publication, bookkeeping, and cleanup outside the host envelope. Any unmarked failure from that work is fatal. Supported host code may synchronously invoke Cascada again, including within the same execution, as required when one script loads or invokes another. The nested operations use their explicit operation contexts and ordinary ordering mechanisms.
 
 A direct host Promise settles after the synchronous envelope. Its first existing boundary continuation classifies a raw rejection using the source and kind recorded when the Promise was accepted. Do not recreate the envelope or allocate an attribution-only Promise.
 
@@ -272,15 +270,21 @@ await error                 -> rejects with error
 Promise result adopts error -> rejects with error
 ~~~
 
-Their `then` exists only for assimilation and `await`:
+Their `then` reuses Cascada's established sync-first poison behavior, applied directly to the Error rather than through a separate value wrapper. It exists only for assimilation and `await`:
 
 ~~~js
 then(_onFulfilled, onRejected) {
-    return typeof onRejected === "function" ? onRejected(this) : this
+    if (typeof onRejected !== "function") return this
+    try {
+        return onRejected(this)
+    } catch (error) {
+        if (error instanceof PoisonError) return error
+        throw error
+    }
 }
 ~~~
 
-It never fulfills or allocates another Error. It returns the rejection callback's value and propagates its throw synchronously. It needs no `catch`, `finally`, Promise-compatible chaining, Promise subclass, or wrapper. The kernel never calls it because Error recognition precedes thenability.
+It never fulfills or allocates another Error. It returns the rejection callback's value, preserves poison thrown by that callback as the synchronous poison value, and propagates any other throw. Because `PoisonError` itself is the value, Cascada's wrapper conversion, `catch`, `finally`, Promise-compatible chaining, and `RuntimePromise` are unnecessary. The kernel never calls `then` because Error recognition precedes thenability.
 
 Native assimilation still applies. `Promise.resolve(error)` rejects with that exact Error; returning it from a rejection callback causes the next native Promise to assimilate and reject with it again. A fulfilled inspection result must therefore be non-thenable. `RuntimeError` is not a language thenable, so host code can physically return or fulfill with one. Every ready, fulfilled, thrown, rejected, or traversed occurrence is submitted to the current execution before it could be admitted or exposed as language data.
 
@@ -379,7 +383,6 @@ A `RuntimeError` means language execution cannot safely continue. Causes include
 - malformed trusted runtime facts;
 - raw failure escaping a consumer or runtime-owned work;
 - rejected internal readiness or aggregate work;
-- synchronous Cascada re-entry from supported host code;
 - unsafe host behavior that compromises runtime state, ownership, ordering, publication, or cleanup; and
 - required cleanup or publication failure.
 
@@ -404,28 +407,26 @@ Each `Execution` owns:
 
 - one fatal latch and authoritative first `RuntimeError`;
 - one `fatalPromise`, marked handled at creation and observable by the root and scheduler;
-- its registered live operation work; and
+- its registered shutdown-relevant operation owners; and
 - a readable `fatalError`, which is `null` until the latch closes.
+
+Register only an open owner that must be woken or synchronously cleaned during fatal shutdown because it has a pending public outcome, a registered release, or equivalent operation-owned state. Purely synchronous work and bare Promise tasks are never registered. This is not task tracking, completion counting, or execution-idle detection.
 
 The first `Execution.fail(candidate)` performs one synchronous transition:
 
 1. Store the candidate and close the latch.
-2. Fail registered operation work with the stored Error. Each owner releases its resources and rejects its pending public outcome, when present.
+2. Fail each registered shutdown-relevant owner with the stored Error. Each owner releases its resources and rejects its pending public outcome, when present.
 3. Reject `fatalPromise` with the stored Error.
 4. Invoke the runtime-wide reporter after state and work closure are committed.
 5. Return the stored Error.
 
 No Promise continuation runs during this transition, so the internal order between owner failure and `fatalPromise` rejection is not semantic. Later candidates return the stored Error without replacing or reattributing it.
 
-A pending public outcome belongs to its existing operation owner. The owner keeps one idempotent fatal reject action until normal settlement or closure; fatal shutdown invokes it directly instead of racing every operation against `fatalPromise`. This extends the live-operation registry rather than creating another registry.
+A pending public outcome belongs to its existing operation owner. The owner keeps one idempotent fatal reject action until normal settlement or closure; fatal shutdown invokes it directly instead of racing every operation against `fatalPromise`. This uses the same shutdown-owner registry rather than creating another registry.
 
 A component must not close or unregister its owner before submitting a fatal failure. It enters the execution fatal path first; `Execution.fail` invokes the owner's fatal rejection and cleanup together. Otherwise that pending outcome could escape shutdown.
 
-The execution latch and Error report-once fact have different scopes:
-
-- `Execution.fail` selects one outcome and initiates shutdown for one execution.
-- `RuntimeError` suppresses another report if that occurrence crosses another reporting surface or execution.
-- Every receiving execution may still close.
+The execution latch owns report idempotence. `Execution.fail` selects and reports one outcome for that execution; later submissions do not report again. If the same `RuntimeError` reaches another execution, that execution independently closes and reports it once. The Error carries no mutable reporting state.
 
 Reporter failure cannot replace the outcome or block shutdown. Cleanup releases are synchronous, idempotent, and non-throwing by contract; if one violates that contract, preserve the first Error and finish the cleanup sweep.
 
@@ -454,8 +455,8 @@ Every runtime wait that could outlive abandoned work observes `fatalPromise` or 
 
 ## Component responsibilities
 
-- `execution.js` owns the fatal latch, readable `fatalError`, handled `fatalPromise`, live-operation registry, and `Execution.fail(candidate)`.
-- `error.js` owns concrete Error classes, `ERROR_KIND`, `UserCodeFailure`, `runUserCode`, hook-free contextualization, compound construction, fatal wrapping, report-once state, `runFatal`, and `runContextlessFatal`.
+- `execution.js` owns the fatal latch, readable `fatalError`, handled `fatalPromise`, shutdown-owner registry, and `Execution.fail(candidate)`.
+- `error.js` owns concrete Error classes, `ERROR_KIND`, `UserCodeFailure`, `runUserCode`, hook-free contextualization, compound construction, fatal wrapping, `runFatal`, and `runContextlessFatal`.
 - `language-values.js` owns context-free Error recognition, Error-before-Promise precedence, direct native-Promise registration, source-neutral custom-thenable settlement records, and per-boundary nested capture.
 - Causal boundaries contextualize ready failures and raw rejection in their first existing import, mirror, validation, or publication continuation.
 - `resolution.js` preserves FIFO order and distinguishes data rejection from internal failure. Publication and complete collection use their distinct transitions.
@@ -474,15 +475,15 @@ The graph kernel keeps Cascada's useful semantics, not its current interfaces. C
 - Move fatal authority from `RenderState` to `Execution`. The render and command-buffer scheduler observe the execution's outcome.
 - Keep shutdown authority out of diagnostic context. Coordination uses `operationContext.execution`; compact diagnostic representation remains behind opaque `errorContext`.
 - Commit fatal state and operation closure before invoking `onError` or another reporter.
-- Replace `PoisonedValue`, thrown `PoisonError`, `RuntimePromise`, and `PoisonErrorGroup` with rejecting-thenable `PoisonError` and `CompoundPoisonError`.
+- Reuse Cascada's proven sync-first rejecting-thenable poison behavior, but apply it directly to `PoisonError` and `CompoundPoisonError`. Remove `PoisonedValue`, `RuntimePromise`, and `PoisonErrorGroup`; their wrapper and chaining machinery is unnecessary when the Error is itself the language value.
 - Convert raw failure once at its causal boundary. Use the private host marker for every nonfatal synchronous host throw, including thrown poison, so the owning boundary applies the graph effect. Use an existing boundary continuation for raw rejection.
 - Treat every direct Error result as boundary failure. A mutating boundary applies the same failure effect whether the Error is returned, fulfilled, thrown, or rejected.
 - Keep direct registration for genuine native Promises. Cache a custom thenable's raw first-settlement record without native assimilation; each introducing boundary routes a fulfilled nested value through execution-local capture using its retained operation context.
 - Replace transport-specific `...Error` and `...Rejected` kinds with one `...Failed` kind per cause. Keep `Multiple` as a meta-kind.
-- Classify concrete recoverable and fatal branches rather than a common runtime Error base.
+- Replace Cascada's shared `CascadaError` / `RuntimeContextError` runtime ancestry with direct native-Error branches: `PoisonError` and `RuntimeError` directly extend `Error`, while `CompoundPoisonError` extends `PoisonError`. Share construction utilities rather than an inheritance base.
 - Normalize every fatal occurrence to `RuntimeError`, including contextless failure; keep the raw value as exact cause. Submit an existing `RuntimeError` unchanged to each receiving execution so its first fatal remains authoritative.
 - Preserve compound collection order, retain separate equal primitive causes, and use the first retained leaf as primary context. Presentation may sort a separate view.
-- Keep report idempotence on `RuntimeError`, independent of reporting surface.
+- Keep report idempotence on each execution's fatal latch, not on `RuntimeError`; the same occurrence may close and be reported by another execution.
 - Ignore legacy attribution properties such as `_errorContext`; the accepting operation supplies causal source.
 
 ### Recommended Cascada changes
@@ -562,18 +563,19 @@ The architecture adds no:
 - Safely rejectable host output validation produces poison; unsafe host behavior that compromises runtime invariants is fatal.
 - Complete independent-input collection finds every required poison before host work; unclassified or fatal rejection closes the operation.
 - Raw consumer and runtime-owned failures are fatal in ready and pending transitions.
-- Synchronous Cascada re-entry is fatal.
+- Synchronous Cascada re-entry, including within the same execution, uses explicit operation contexts and ordinary ordering rather than a global guard.
 - Contextless declaration and host-configuration behavior follows its explicit rules and never fabricates an operation context.
 
 ### Fatal behavior
 
 - An existing `PoisonError` bypasses fatal submission unchanged. Fatal submission preserves an existing `RuntimeError`, contextualizes a raw cause at the causing operation, and propagates the execution's authoritative first Error.
 - The first fatal fails operation-owned pending outcomes, rejects `fatalPromise`, and commits before reporting. Later candidates do not replace it.
-- The same occurrence reports once across outer boundaries and executions; each receiving execution may still close.
+- The same occurrence reports once within each execution it closes; another receiving execution closes and reports independently.
 - Fatal checkpoints prevent new work without interrupting synchronous transitions or shared cleanup.
 - A fatal from unrelated work fails the root while the root is pending. If the returned value completes first, unrelated and never-settling work does not delay it; a later fatal is recorded and reported without changing that delivered result.
 - `execution.fatalError` exposes the authoritative first fatal. It remains `null` before one occurs and makes no claim that unfinished work will succeed.
 - A fatal immediately rejects a pending public outcome even when its normal input never settles.
+- Only owners requiring fatal wake-up or synchronous cleanup enter the shutdown registry; synchronous work and bare tasks never do.
 - The scheduler and root observe the same handled Promise and exact Error; no competing fatal or cancellation state exists.
 - Release, reporter, or formatter failure cannot replace the committed outcome or strand cleanup.
 - Late native settlement remains handled and performs no abandoned operation work.

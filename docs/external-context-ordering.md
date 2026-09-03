@@ -139,7 +139,7 @@ An external operation follows the common lifecycle:
 7. Traverse the host suffix and invoke the selected callable exactly once.
 8. Import the result, publish mutation poison or repair, complete any managed scope, and release phases.
 
-A closed continuation completes shared settlement but performs no later host access or publication. Host code may not reenter Cascada while a direct invocation remains active. External identities reached below a selected boundary gain no tree leaf or independent mutation authority. A property value returned to Cascada is copied into managed state; call results still use ordinary import.
+A closed continuation completes shared settlement but performs no later host access or publication. Host code may synchronously issue nested Cascada operations, which use their own explicit operation contexts and ordinary ordering. External identities reached below a selected boundary gain no tree leaf or independent mutation authority. A property value returned to Cascada is copied into managed state; call results still use ordinary import.
 
 ## Scope
 

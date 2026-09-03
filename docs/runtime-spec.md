@@ -299,8 +299,9 @@ remains outside both catches and is fatal.
 A direct Error result always means its boundary failed, whether returned,
 fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
 effect in every case; an Error cannot be a successful direct payload.
-Synchronous re-entry into Cascada from such code is a fatal host-contract
-violation.
+Supported host code may synchronously issue nested Cascada operations, including
+within the same execution. They use their own explicit operation contexts and
+the ordinary ordering mechanisms.
 
 A raw data-Promise rejection is contextualized once in the first import,
 mirror, validation, or publication continuation already required by its causal
@@ -308,7 +309,8 @@ boundary. Later native Promise propagation preserves that exact Error. No
 forwarding Promise exists only to attach attribution.
 
 Internal failures become `RuntimeError`, retain the owning operation's context,
-and are reported once. They are never admitted or queried as language data. A
+and are reported once by each execution they close. They are never admitted or
+queried as language data. A
 `RuntimeError` physically received by return, fulfillment, throw, rejection, or
 graph traversal is submitted to the current execution before success handling.
 Continuation failures, invariant violations, and rejected internal aggregate
@@ -316,8 +318,8 @@ waits follow this path.
 
 Each execution accepts only its first `RuntimeError` as its authoritative fatal
 outcome. That transition rejects the execution's fatal Promise with the same
-Error, fails registered operation work and its pending public outcomes, prevents
-new host effects, and causes a still-pending root result and higher scheduler to
+Error, fails registered shutdown-relevant operation owners and their pending
+public outcomes, prevents new host effects, and causes a still-pending root result and higher scheduler to
 stop with that Error. Operation-only work and resources are abandoned, while
 shared Promise settlement, required publication, bookkeeping, and cleanup
 continue. Already-observed Promises stay handled. Shutdown neither cancels
@@ -352,14 +354,17 @@ still registered; execution shutdown rejects its pending public outcome and
 closes it before an aggregate can run a late sibling. Shared property settlement
 still completes before the closed check. Every owner has an explicit open fact
 and idempotent close operation; while its public outcome is pending, it also
-retains one fatal rejection action.
+retains one fatal rejection action. Only an owner that must be woken or cleaned
+during shutdown is registered; the execution tracks neither arbitrary tasks nor
+normal completion.
 Ready work allocates no release-registry state. Pending nested resources register
 synchronous release with the owner and unregister on completion; closing
 releases them without cancelling settlement.
 
-One `RuntimeError` reports at most once even when it crosses several fatal
-boundaries. Reusing a raw internal Error in another causal operation creates a
-new fatal occurrence.
+One `RuntimeError` reports at most once within one execution even when it crosses
+several fatal boundaries. If it reaches another execution, that execution closes
+and reports it independently. Reusing a raw internal Error in another causal
+operation creates a new fatal occurrence.
 
 ## Operations
 

@@ -1217,7 +1217,7 @@ Identity declarations and managed-class registration are host configuration, not
 - Rewrite declaration walks to use declarations, raw structure, operation-local thenability sampling, and class registration. They neither inspect nor stop at admitted metadata.
 - Declaration APIs are valid only before the declared data enters any execution. Late declaration remains unsupported and undetected; add no runtime-wide admission registry.
 
-The fatal reporter and synchronous host-code re-entry guard remain runtime-wide contracts. Phase 9C adds execution-owned first-fatal state and cooperative shutdown and moves report-once state onto each `RuntimeError`. Immutable method tables, captured primordials, and sentinel Symbols remain module constants. Traversal maps, releases, copies, and other temporary state remain operation-local.
+The fatal reporter and synchronous host-code re-entry guard remain runtime-wide at the end of this phase. Phase 9C adds execution-owned first-fatal state and cooperative shutdown and moves report idempotence to each execution. Phase 9D removes the re-entry guard. Immutable method tables, captured primordials, and sentinel Symbols remain module constants. Traversal maps, releases, copies, and other temporary state remain operation-local.
 
 ### 5. Preserve execution boundaries
 
@@ -1258,13 +1258,13 @@ Phase 9B gives every operation an execution and source context, but fatal failur
 
 ### Outcome
 
-Implement the fatal branch of [`error-handling.md`](error-handling.md). Each execution selects one `RuntimeError`, fails its live operation work, wakes its pending root and scheduler, and reports that exact occurrence once. A completed root remains completed. Keep the existing recoverable Error representation and attribution until Phase 9D replaces them atomically.
+Implement the fatal branch of [`error-handling.md`](error-handling.md). Each execution selects one `RuntimeError`, fails its shutdown-relevant operation work, wakes its pending root and scheduler, and reports that exact occurrence once for that execution. A completed root remains completed. Keep the existing recoverable Error representation and attribution until Phase 9D replaces them atomically.
 
 ### 1. Establish the fatal branch
 
 - Make `RuntimeError` a direct, non-thenable native Error branch. It is fatal and never admitted, combined, queried, repaired, or returned as language data.
 - Submit an existing `RuntimeError` unchanged to the receiving execution. Wrap any other raw internal failure with the causing operation's source context. Propagate an escaping `PoisonError` or `CompoundPoisonError` without fatal submission.
-- Give each `RuntimeError` one private report-once fact. It prevents duplicate reporting when the same occurrence crosses another reporting surface or execution; every receiving execution may still close.
+- Keep `RuntimeError` immutable after construction. It carries source and cause but no reporting state. Each execution's fatal latch prevents duplicate reporting within that execution; another execution receiving the same Error closes and reports independently.
 
 `runFatal(operationContext, work)` becomes the sole operation fatal entry:
 
@@ -1275,18 +1275,20 @@ Implement the fatal branch of [`error-handling.md`](error-handling.md). Each exe
 
 `runContextlessFatal(work)` is the sole executionless path. It uses one explicit contextless-source sentinel, reports directly, and closes no execution. Host-configuration validation may still throw an ordinary host API Error.
 
-Remove `reportFatalError`, the reported-fatal `WeakSet`, and every competing reporter or fatal-state path. Do not change poison representation, kinds, contextualization, or boundary recovery in this phase.
+Remove `reportFatalError`, `RuntimeError` report state and methods, and every competing reporter or fatal-state path. Do not change poison representation, kinds, contextualization, or boundary recovery in this phase.
 
 ### 2. Let Execution own the fatal outcome
 
 `Execution.fail` atomically:
 
 1. Keeps the first fatal candidate.
-2. Fails all live operation work. Each owner releases its resources and rejects its pending public outcome, when present.
+2. Fails every registered shutdown-relevant operation owner. Each releases its resources and rejects its pending public outcome, when present.
 3. Rejects the already-handled `fatalPromise` with that Error.
 4. Invokes the one runtime-wide reporter.
 
-`execution.js` owns the first-fatal latch, readable `fatalError`, handled `fatalPromise`, live operation registry, and atomic `fail`. Commit the fatal state before reporting. Later candidates neither replace nor reattribute it. The execution exposes that same handled Promise to its root and higher scheduler; do not add another fatal latch, Promise, or reporter.
+`execution.js` owns the first-fatal latch, readable `fatalError`, handled `fatalPromise`, shutdown-owner registry, and atomic `fail`. Commit the fatal state before reporting. Later candidates neither replace nor reattribute it and do not report again. The execution exposes that same handled Promise to its root and higher scheduler; do not add another fatal latch, Promise, or reporter.
+
+Register only an open owner that fatal shutdown must wake or synchronously clean because it has a pending public outcome, a registered release, or equivalent operation-owned state. Purely synchronous work and bare Promise tasks are never registered. This registry neither counts work nor detects normal completion.
 
 ### 3. Stop operation work cooperatively
 
@@ -1314,7 +1316,7 @@ Remove the current pre-fatal `close(operation)` behavior from `operation-lifecyc
 
 Normal root completion waits only for the returned value's required boundary processing and export, raced against `fatalPromise`. It does not wait for unrelated operations, Chains, shared settlement, or cleanup. If the result completes first, later work continues. A later fatal is stored in `execution.fatalError`, reported, and closes remaining work, but cannot change the delivered result. A missing `fatalError` while work remains does not guarantee eventual success.
 
-Do not add an execution-idle counter, quiescence barrier, or task registry. Do not interrupt synchronous JavaScript, cancel native Promises, or undo completed host effects. Existing operation owners register with their execution while open and unregister on close; fatal-capable continuations report directly through `Execution.fail` even after their originating owner closes.
+Do not add an execution-idle counter, quiescence barrier, or general task registry. Do not interrupt synchronous JavaScript, cancel native Promises, or undo completed host effects. Shutdown-relevant operation owners register while needed and unregister on close; fatal-capable continuations report directly through `Execution.fail` even after their originating owner closes.
 
 Diagnostic formatting remains above the kernel. It may inspect opaque source data and cause stacks only outside graph transitions and under `try`/`catch`. Formatter or reporter failure cannot replace the stored Error or execution outcome.
 
@@ -1322,16 +1324,17 @@ Diagnostic formatting remains above the kernel. It may inspect opaque source dat
 
 - `RuntimeError` is a direct, non-thenable native Error. Existing instances are submitted unchanged to each receiving execution, whose earlier fatal Error remains authoritative. `runFatal` propagates an escaping recoverable Error unchanged; poison is never escalated merely because it propagates.
 - `runFatal` attributes raw synchronous and asynchronous internal failure to the causing operation and returns the execution's first fatal outcome. `runContextlessFatal` uses the sentinel and closes no execution.
-- Fatal state commits before reporting. One occurrence reports once, later candidates cannot replace it, and the same occurrence may close another execution without another report.
+- Fatal state commits before reporting. One occurrence reports once within an execution, later candidates cannot replace it, and the same occurrence closes and reports independently in another execution.
 - Public entry, guarded continuations, post-wait effects, scheduler dispatch, and root completion observe the same fatal latch.
 - Closure starts no new operation or host work, rejects pending public results through their owners, releases operation-only resources, and still completes required shared settlement and cleanup.
 - A component cannot unregister its owner before fatal submission; the fatal transition rejects that owner's pending result before closing it.
+- Only owners requiring fatal wake-up or synchronous cleanup enter the shutdown registry. Purely synchronous operations and bare Promise tasks do not.
 - Fatal work wakes and fails a pending root with the exact authoritative Error. The root otherwise completes as soon as its returned value finishes required boundary processing and export, without waiting for unrelated or never-settling work.
-- A fatal discovered after successful root delivery is stored in `execution.fatalError`, reported once, and closes remaining work without changing the delivered result. Reading `null` before remaining work finishes is not a success guarantee.
+- A fatal discovered after successful root delivery is stored in `execution.fatalError`, reported once by that execution, and closes remaining work without changing the delivered result. Reading `null` before remaining work finishes is not a success guarantee.
 - A fatal from other execution work immediately rejects an operation waiting on a never-settling normal input with the execution's exact authoritative Error.
 - Closing an owner abandons its operation-only work without cancelling required shared settlement or preventing a later fatal report.
 - Reporter, formatter, and cleanup-release failure cannot replace the first fatal outcome or prevent the remaining cleanup sweep.
-- No competing reporter, fatal state, cancellation framework, idle counter, quiescence barrier, or task registry remains.
+- No competing reporter, fatal state, cancellation framework, idle counter, quiescence barrier, or general task registry remains. The shutdown-owner registry contains only owners requiring fatal wake-up or cleanup.
 
 Update [`AGENTS.md`](../AGENTS.md), [`error-handling.md`](error-handling.md), [`runtime-spec.md`](runtime-spec.md), operation-lifecycle documentation, scheduler integration, diagnostics, and public fatal-reporting documentation.
 
@@ -1341,7 +1344,7 @@ Update [`AGENTS.md`](../AGENTS.md), [`error-handling.md`](error-handling.md), [`
 
 ### Problem
 
-Phase 9B carries the final operation context to every boundary, and Phase 9C provides one authoritative fatal lane. Recoverable Error representation, attribution, Promise behavior, and boundary handling still use the transitional model.
+Phase 9B carries the final operation context to every boundary, and Phase 9C provides one authoritative fatal lane. Recoverable Error representation, attribution, Promise behavior, and boundary handling still use the transitional model. Earlier phases also prohibit synchronous Cascada re-entry from supported host code even though nested script loading requires it.
 
 ### Outcome
 
@@ -1364,7 +1367,7 @@ Error
 ~~~
 
 - `PoisonError` is recoverable language data and a sync-first rejecting thenable. Synchronous Error checks detect it; `await` and native Promise assimilation reject with that exact Error.
-- Its `then` exists only for assimilation and `await`. Without a rejection callback it returns `this`; otherwise it returns that callback's result and propagates a callback throw synchronously. It needs no `catch`, `finally`, Promise-compatible chaining, Promise subclass, or wrapper.
+- Reuse Cascada's established sync-first poison `then` behavior, applied directly to `PoisonError`. Without a rejection callback it returns `this`. Otherwise it returns that callback's result, returns poison thrown by the callback as the synchronous poison value, and propagates any other throw. It needs no `catch`, `finally`, Promise-compatible chaining, Promise subclass, or wrapper.
 - `CompoundPoisonError` contains flattened poison leaves.
 - Phase 9C's `RuntimeError` remains the separate fatal branch and is never admitted, combined, queried, repaired, or returned as language data.
 - Do not add a shared runtime `CascadaError` base. Semantic classification checks the recoverable and fatal branches directly.
@@ -1417,12 +1420,12 @@ Apply this classification before success handling regardless of JavaScript trans
 
 Wrap only the exact synchronous host-controlled action in private `runUserCode`:
 
-1. Enter the runtime-wide re-entry guard.
-2. Run the host action.
-3. Rethrow `RuntimeError` unchanged; wrap every other throw, including poison, in private `UserCodeFailure`.
-4. Leave the guard in `finally`.
+1. Run the host action.
+2. Rethrow `RuntimeError` unchanged; wrap every other throw, including poison, in private `UserCodeFailure`.
 
 The owning semantic boundary catches only `UserCodeFailure`, preserves a contained poison or contextualizes another reason with its context and kind, and then applies its graph effect. Preparation, export, import, publication, bookkeeping, and cleanup remain outside this envelope. An unmarked failure from that work is fatal. Application code and effectful host reflection use the envelope. A captured built-in is runtime-owned only on runtime-owned, hook-free inputs; applying it where a Proxy or host trap may run is supported host code.
+
+Remove the runtime-wide re-entry guard and its depth state. Supported host code may synchronously issue nested Cascada operations, including within the same execution. Each nested operation carries its own explicit operation context and uses the ordinary Chain, phase, gate, lease, and FIFO ordering rules; add no special re-entry path or ambient execution selection. Existing receiver and argument lifetime restrictions still apply to detached work and nested result Promises.
 
 Invalid host output is recoverable when the boundary can reject it without compromising runtime invariants, such as an unsupported callback result or invalid completed managed receiver. Host behavior is fatal when it makes runtime state, ownership, ordering, publication, or cleanup untrustworthy.
 
@@ -1529,7 +1532,8 @@ Delete the transitional machinery in the same change:
 - transport-specific Error kinds and generic source strings such as `\"run method result\"`;
 - separate imported-Error overlay storage;
 - the imported-at message suffix;
-- catches that merely forward or reclassify failures outside the classification and recovery roles defined by `error-handling.md`.
+- catches that merely forward or reclassify failures outside the classification and recovery roles defined by `error-handling.md`; and
+- the runtime-wide host-code re-entry guard and its depth state.
 
 ### 6. Implement in a safe order
 
@@ -1540,7 +1544,7 @@ Keep the full suite green after Phase 9C, then change Phase 9D in this order:
 3. Install causal contextualization at existing boundary continuations and remove `valueWithOrigin` and attribution-only Promise paths.
 4. Replace custom-thenable native assimilation with the source-neutral settlement record.
 5. Audit every internal Promise fulfillment that can currently return poison. In particular, update `continueInitial`, `continuePrepared`, `continuePreparedAll`, and the aggregates in `operation-lifecycle.js`, `export.js`, `managed-invocation.js`, and `observations.js` so publication and complete collection keep poison outside non-thenable readiness fulfillment.
-6. Add rejecting-thenable behavior to `PoisonError` and `CompoundPoisonError` only after those internal paths are safe. Remove any remaining transitional wrappers in the same change.
+6. Port Cascada's proven sync-first poison `then` behavior directly onto `PoisonError` and `CompoundPoisonError` only after those internal paths are safe. Omit wrapper conversion, `catch`, `finally`, and `RuntimePromise` machinery that the unified Error representation does not need. Remove every remaining transitional wrapper in the same change.
 
 Do not commit or review an intermediate step as the phase end state. The order exists only to keep failures observable while implementing and testing the atomic final behavior.
 
@@ -1561,7 +1565,8 @@ Do not commit or review an intermediate step as the phase end state. The order e
 - Throwing `then` acquisition and captured-then invocation use their exact operations and preserve native first-settlement-wins behavior. Native registration failure belongs to the registering operation, and native fulfillment is not resampled for thenability. A custom thenable's cached Promise exposes only a private non-thenable first-settlement record; each introducing boundary applies its retained attribution and nested capture. Successful thenability state retains no operation context.
 - Two causal boundaries consuming one custom thenable's raw rejection create separately contextualized occurrences; a cached acquisition or invocation failure instead preserves the first sampling or invocation operation.
 - A `RuntimeError` in any ready, fulfilled, thrown, rejected, or nested host-result position is submitted unchanged to the current execution and never admitted, stored, or exported as language data.
-- `runUserCode` marks every nonfatal throw from only the exact synchronous supported host action. Its boundary preserves contained poison or contextualizes another reason and applies the graph effect. Adjacent runtime work and trusted callbacks without a host-code contract remain fatal. Synchronous host re-entry is fatal.
+- `runUserCode` marks every nonfatal throw from only the exact synchronous supported host action. Its boundary preserves contained poison or contextualizes another reason and applies the graph effect. Adjacent runtime work and trusted callbacks without a host-code contract remain fatal. Synchronous nested Cascada operations work in the same or another execution through their explicit operation contexts and ordinary ordering; no re-entry guard remains.
+- Replace the earlier fatal-re-entry tests with synchronous nested-operation coverage in the same and another execution. Nested failures keep the inner causal source, and an inner fatal closes only its selected execution.
 - A direct Error follows the same boundary and graph-effect rules whether returned, fulfilled, thrown, or rejected. A direct mutation Error poisons the receiver; an Error from an independent nested result does not retroactively poison published state.
 - Direct host-result rejection is converted once in its existing boundary continuation. No attribution-only Promise or parallel continuation path remains.
 - Required independent inputs all settle and combine poison in logical order without fulfilling an aggregate branch with a thenable Error. An unclassified or fatal rejection closes the operation.
@@ -1833,7 +1838,7 @@ Controlled Arrays retain their specialized preparation:
 - Failed or rejected mutation combines all operation Errors and publishes the result through every selected mutation completion. Completed host effects remain visible.
 - Conflict performs no host access, is permanent, and cannot be repaired.
 - Repair-only bypasses and clears repairable predecessor poison and returns `undefined`. Repair-and-call bypasses old poison, then clears it on success or publishes the new mutation Error.
-- Host code cannot reenter Cascada while its direct invocation remains active.
+- Host code may synchronously issue nested Cascada operations while its direct invocation remains active. They use explicit operation contexts and ordinary ordering, not a separate external-operation or re-entry path.
 
 Attribute new failures at the selecting operation:
 
