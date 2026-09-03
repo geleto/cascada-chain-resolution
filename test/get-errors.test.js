@@ -5,6 +5,7 @@ import {
     countPromiseRegistrations,
     deferred,
     deletePath,
+    errorCause,
     expect,
     flushMicrotasks,
     getErrors,
@@ -24,7 +25,8 @@ import {
 function expectErrors(actual, expected) {
     expect(actual.length).to.be(expected.length)
     for (const error of expected) {
-        expect(actual.includes(error)).to.be(true)
+        expect(actual.some(value => value === error || value.cause === error))
+            .to.be(true)
     }
 }
 
@@ -53,7 +55,8 @@ describe("getErrors", () => {
             if (query === hasError) expect(answer).to.be(true)
             else expectErrors(answer, [failure])
             expect(reported).to.be(undefined)
-            expect(readPath(new Chain(value), ["pending"])).to.be(failure)
+            expect(errorCause(readPath(new Chain(value), ["pending"])))
+                .to.be(failure)
             verifyRefCounts(value)
         }
     })
@@ -71,8 +74,9 @@ describe("getErrors", () => {
                 reported = error
             })
 
-            expect(thrownBy(() => query(new Chain(value), []))).to.be(failure)
-            expect(reported).to.be(failure)
+            const thrown = thrownBy(() => query(new Chain(value), []))
+            expect(errorCause(thrown)).to.be(failure)
+            expect(reported).to.be(thrown)
         }
     })
 
@@ -104,8 +108,8 @@ describe("getErrors", () => {
             } catch (error) {
                 rejected = error
             }
-            expect(rejected).to.be(failure)
-            expect(reported).to.be(failure)
+            expect(errorCause(rejected)).to.be(failure)
+            expect(reported).to.be(rejected)
             expect(scans).to.be(2)
 
             inner.resolve({ ready: true })
@@ -144,8 +148,8 @@ describe("getErrors", () => {
             } catch (error) {
                 rejected = error
             }
-            expect(rejected).to.be(failure)
-            expect(reported).to.be(failure)
+            expect(errorCause(rejected)).to.be(failure)
+            expect(reported).to.be(rejected)
         }
     })
 
@@ -178,8 +182,8 @@ describe("getErrors", () => {
             } catch (error) {
                 rejected = error
             }
-            expect(rejected).to.be(failure)
-            expect(reported).to.be(failure)
+            expect(errorCause(rejected)).to.be(failure)
+            expect(reported).to.be(rejected)
         }
     })
 
@@ -214,7 +218,7 @@ describe("getErrors", () => {
             const pending = deferred()
             const root = { pending: pending.promise }
             buildRefIndex(root)
-            delete metaOf(root).mirrors.pending
+            delete metaOf(root).placementVersions.pending
 
             const failure = thrownBy(() => query(new Chain(root), []))
 
@@ -519,7 +523,7 @@ describe("getErrors", () => {
 
         expect(cyclicErrors).to.eql([])
         expect(frozenErrors.length).to.be(1)
-        expect(frozenErrors[0]).to.be(frozenError)
+        expect(errorCause(frozenErrors[0])).to.be(frozenError)
     })
 
     it("collects errors through every promise barrier before returning", async () => {
@@ -721,7 +725,7 @@ describe("getErrors", () => {
             collected,
         ])
 
-        expect(exportedValue).to.be(error)
+        expect(errorCause(exportedValue)).to.be(error)
         expectErrors(errors, [error])
         verifyRefCounts(chain._state.value)
     })
@@ -926,7 +930,7 @@ describe("getErrors", () => {
         expect(readPath(new Chain(sealed), ["pending"])).to.be(
             errors[0],
         )
-        expect(metaOf(sealed).mirrors.pending).not.to.be(undefined)
+        expect(metaOf(sealed).placementVersions.pending).not.to.be(undefined)
         expect(getRefCounter(sealed)).to.be(undefined)
     })
 

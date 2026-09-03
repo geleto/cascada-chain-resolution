@@ -33,8 +33,8 @@ class ArrayView {
         const projection = projectionOf(arrayOrArrayView, operationContext)
         const backing = backingOf(projection, operationContext)
         if (
-            metadata.importBoundaryOf(arrayOrArrayView, operationContext) ||
-            metadata.importBoundaryOf(backing, operationContext)
+            metadata.isImported(arrayOrArrayView, operationContext) ||
+            metadata.isImported(backing, operationContext)
         ) return undefined
         if (isArrayView(projection, operationContext)) return projection
 
@@ -114,17 +114,13 @@ class ArrayView {
     set(key, value) {
         if (key === "length") {
             if (!this.setLength(value)) {
-                errorUtils.reportFatalError(
-                    new Error("ArrayView growth requires materialization"),
-                )
+                throw new Error("ArrayView growth requires materialization")
             }
             return
         }
         const physical = this.#physicalKey(key)
         if (physical === undefined) {
-            errorUtils.reportFatalError(
-                new Error("Cannot write outside an ArrayView range"),
-            )
+            throw new Error("Cannot write outside an ArrayView range")
         }
         const backing = this._backing
         errorUtils.runUserCode(() => {

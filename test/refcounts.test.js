@@ -273,7 +273,7 @@ describe("subtree counters", () => {
         expect(next).not.to.be(root)
         expect(next.value).to.be(replacement)
         expect(root.value).to.be("original")
-        expect(metaOf(root).mirrors).to.be(undefined)
+        expect(metaOf(root).placementVersions).to.be(undefined)
         expectCounts(root, 0, 0)
         expectCounts(next, 0, 0)
         verifyRefCounts(root, next)
@@ -704,7 +704,7 @@ describe("subtree counters", () => {
 
         const overlaid = { pending: deferred().promise }
         buildRefIndex(overlaid)
-        metaOf(overlaid).mirrors.pending.value = {}
+        metaOf(overlaid).placementVersions.pending.value = {}
         expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
@@ -897,7 +897,7 @@ describe("subtree counters", () => {
         const chain = new Chain(root)
 
         buildRefIndex(root)
-        const mirror = metaOf(root).mirrors.value
+        const mirror = metaOf(root).placementVersions.value
         assignPath(chain, ["value"], "fixed")
 
         outer.resolve(resolved)

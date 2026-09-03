@@ -40,6 +40,7 @@ import {
     deferred,
     flushMicrotasks,
     expectCounts,
+    errorCause,
     thrownBy,
 } from "./support.js"
 
@@ -176,8 +177,8 @@ describe("promise helpers", () => {
             setFatalErrorReporter()
         }
 
-        expect(reported).to.be(fatal)
-        expect(caught).to.be(fatal)
+        expect(errorCause(caught)).to.be(fatal)
+        expect(reported).to.be(caught)
     })
 
     it("reports each fatal only once across nested wrapper layers", async () => {
@@ -203,7 +204,7 @@ describe("promise helpers", () => {
         }
 
         expect(reportCount).to.be(1)
-        expect(caught).to.be(fatal)
+        expect(errorCause(caught)).to.be(fatal)
     })
 
     it("reports internal promise rejections as fatal errors", async () => {
@@ -225,8 +226,8 @@ describe("promise helpers", () => {
             setFatalErrorReporter()
         }
 
-        expect(reported).to.be(fatal)
-        expect(caught).to.be(fatal)
+        expect(errorCause(caught)).to.be(fatal)
+        expect(reported).to.be(caught)
     })
 
     it("throws the original fatal error when the fatal reporter throws", () => {
@@ -247,8 +248,8 @@ describe("promise helpers", () => {
             setFatalErrorReporter()
         }
 
-        expect(reported).to.be(fatal)
-        expect(caught).to.be(fatal)
+        expect(errorCause(caught)).to.be(fatal)
+        expect(reported).to.be(caught)
     })
 
     it("reports losing internal race rejections after the race has settled", async () => {
@@ -272,7 +273,7 @@ describe("promise helpers", () => {
             setFatalErrorReporter()
         }
 
-        expect(reported).to.be(fatal)
+        expect(errorCause(reported)).to.be(fatal)
     })
 
     it("materializes suspended descriptor-restricted mutations", () => {
@@ -352,11 +353,11 @@ describe("promise mirrors and lookupPath", () => {
         const livePending = deferred()
         const liveRoot = {}
         assignPath(new Chain(liveRoot), ["value"], livePending.promise)
-        const liveMirror = metaOf(liveRoot).mirrors.value
+        const liveMirror = metaOf(liveRoot).placementVersions.value
 
         expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
         expect(liveMirror.value).to.be(livePending.promise)
-        expect(Object.keys(liveMirror)).to.eql(["value"])
+        expect(Object.keys(liveMirror)).to.eql(["promise", "value"])
 
         livePending.resolve("live")
         await flushMicrotasks()
@@ -364,13 +365,13 @@ describe("promise mirrors and lookupPath", () => {
         expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
         expect(liveRoot.value).to.be("live")
         expect(liveMirror.value).to.be("live")
-        expect(Object.keys(liveMirror)).to.eql(["value"])
+        expect(Object.keys(liveMirror)).to.eql(["promise", "value"])
 
         const detachedPending = deferred()
         const detachedRoot = {}
         const detachedChain = new Chain(detachedRoot)
         assignPath(detachedChain, ["value"], detachedPending.promise)
-        const detachedMirror = metaOf(detachedRoot).mirrors.value
+        const detachedMirror = metaOf(detachedRoot).placementVersions.value
         assignPath(detachedChain, ["value"], "replacement")
 
         expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
@@ -381,7 +382,7 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
         expect(detachedMirror.value).to.be("detached")
-        expect(Object.keys(detachedMirror)).to.eql(["value"])
+        expect(Object.keys(detachedMirror)).to.eql(["promise", "value"])
         expect(detachedRoot.value).to.be("replacement")
     })
 
@@ -414,8 +415,8 @@ describe("promise mirrors and lookupPath", () => {
         }))
         await flushMicrotasks()
 
-        expect(root.value).to.be(failure)
-        expect(readPath(chain, ["value"])).to.be(failure)
+        expect(errorCause(root.value)).to.be(failure)
+        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -439,9 +440,9 @@ describe("promise mirrors and lookupPath", () => {
 
         const outcome = await observed
         failReflection = false
-        expect(outcome).to.be(failure)
+        expect(errorCause(outcome)).to.be(failure)
         expect(physical.value).to.be(pending.promise)
-        expect(readPath(chain, ["value"])).to.be(failure)
+        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
         verifyRefCounts(root)
     })
 
@@ -460,9 +461,9 @@ describe("promise mirrors and lookupPath", () => {
 
         pending.resolve("resolved")
 
-        expect(await observed).to.be(failure)
+        expect(errorCause(await observed)).to.be(failure)
         expect(physical.value).to.be(pending.promise)
-        expect(readPath(chain, ["value"])).to.be(failure)
+        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -503,7 +504,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.value).to.be(value)
         expectCounts(root, 0, 1)
         expect(hasError(new Chain(root), [])).to.be(true)
-        expect(exportValue(new Chain(root), [])).to.be(error)
+        expect(errorCause(exportValue(new Chain(root), []))).to.be(error)
         verifyRefCounts(root)
     })
 
@@ -570,10 +571,10 @@ describe("promise mirrors and lookupPath", () => {
 
         assignPath(chain, ["value"], pending.promise)
         const copy = chain._state.value
-        const mirror = metaOf(copy).mirrors.value
+        const mirror = metaOf(copy).placementVersions.value
 
         expect(copy).not.to.be(owner)
-        expect(metaOf(copy).mirrors.value).to.be(mirror)
+        expect(metaOf(copy).placementVersions.value).to.be(mirror)
         expect(copy.value).to.be(pending.promise)
         expect(metaOf(copy).cycleCuts).to.be(undefined)
         expect(metaOf(owner).cycleCuts.has("value")).to.be(true)
@@ -1396,7 +1397,7 @@ describe("root promises", () => {
         assignPath(chain, ["a"], 1)
         assignPath(chain, ["b"], 2)
 
-        expect(chain._state.value).to.be(deferredRoot.promise)
+        expect(chain._state.value).to.be.a(Promise)
 
         deferredRoot.resolve({})
         await flushMicrotasks()

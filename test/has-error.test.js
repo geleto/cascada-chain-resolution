@@ -6,6 +6,7 @@ import {
     verifyRefCounts,
     assignPath,
     deletePath,
+    errorCause,
     hasError,
     importValue,
     metaOf,
@@ -116,7 +117,7 @@ describe("hasError", () => {
         expect(counter.promiseCount).to.be(1)
         expect(counter.cycleCutCount).to.be(1)
 
-        const mirror = metaOf(branch).mirrors.pending
+        const mirror = metaOf(branch).placementVersions.pending
         let mirrorValue = mirror.value
         // Fault after shared publication but before the query continuation.
         pending.promise.then(() => {
@@ -141,7 +142,7 @@ describe("hasError", () => {
         pending.resolve({ clean: true })
         await flushMicrotasks()
 
-        expect(reported).to.be(failure)
+        expect(errorCause(reported)).to.be(failure)
         Object.defineProperty(mirror, "value", {
             value: mirrorValue,
             enumerable: true,
@@ -195,8 +196,8 @@ describe("hasError", () => {
         expect(await badResult).to.be(true)
         expect(cleanRoot.pending).to.be(cleanPending.promise)
         expect(badRoot.pending).to.be(badPending.promise)
-        expect(metaOf(cleanRoot).mirrors.pending).not.to.be(undefined)
-        expect(metaOf(badRoot).mirrors.pending).not.to.be(undefined)
+        expect(metaOf(cleanRoot).placementVersions.pending).not.to.be(undefined)
+        expect(metaOf(badRoot).placementVersions.pending).not.to.be(undefined)
         expect(getRefCounter(cleanRoot)).to.be(undefined)
         expect(getRefCounter(badRoot)).to.be(undefined)
     })

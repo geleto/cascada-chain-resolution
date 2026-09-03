@@ -47,7 +47,6 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
                 languageProperties.ORDINARY_PROPERTY
             ) {
                 const error = languageProperties.propertyValidationError(
-                    target.receiver,
                     "run cannot use an Array or String length property " +
                     "as a mutation receiver",
                     operationContext,
@@ -83,10 +82,15 @@ function getMethodDescription(invocationContext) {
     if (!receiverPresent) {
         return errorUtils.validationError(
             "run receiver path does not exist",
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.NullLookup,
         )
     }
     if (method === "constructor") {
-        return invocation.methodNotCallableError(method)
+        return invocation.methodNotCallableError(
+            method,
+            invocationContext.operationContext,
+        )
     }
 
     const type = languageValues.typeOf(receiver, invocationContext.operationContext)
@@ -102,28 +106,36 @@ function getMethodDescription(invocationContext) {
     if (mutation) {
         return errorUtils.validationError(
             "run receiver does not support mutation",
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.UnsupportedMutation,
         )
     }
     if (type === languageValues.TYPE_STRING) {
-        const callable = getStringMethod(method)
+        const callable = getStringMethod(
+            method,
+            invocationContext.operationContext,
+        )
         if (languageValues.isError(callable)) return callable
         return invocation.getHostMethodDescription(callable, invocationContext)
     }
     return errorUtils.validationError(
         "run receiver does not support methods",
+        invocationContext.operationContext,
+        errorUtils.ERROR_KIND.NotAFunction,
     )
 }
 
-function getStringMethod(method) {
+function getStringMethod(method, operationContext) {
     const descriptor = Object.getOwnPropertyDescriptor(
         String.prototype,
         method,
     ) ?? Object.getOwnPropertyDescriptor(Object.prototype, method)
-    return descriptor &&
-        "value" in descriptor &&
-        typeof descriptor.value === "function"
+    if (!descriptor) {
+        return invocation.methodNotCallableError(method, operationContext, false)
+    }
+    return "value" in descriptor && typeof descriptor.value === "function"
         ? descriptor.value
-        : invocation.methodNotCallableError(method)
+        : invocation.methodNotCallableError(method, operationContext)
 }
 
 export { run }

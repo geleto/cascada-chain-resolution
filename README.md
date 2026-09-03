@@ -11,8 +11,9 @@ operation had run sequentially.
 A `Chain` holds a logical root value. Path operations read and update its graph,
 Promise mirrors preserve the exact property versions captured by pending work,
 and copy-on-write keeps mutations isolated between owners. Imported host data is
-never modified. JavaScript `Error` objects are language values, so a rejected
-data Promise poisons the affected value without stopping unrelated work.
+never modified. Recoverable JavaScript `Error` objects are language values, so
+a rejected data Promise poisons the affected value without stopping unrelated
+work. Each language failure records its causal source operation and kind.
 
 The package is native ESM, requires Node.js 24 or newer, and needs no build
 step.
@@ -41,8 +42,13 @@ console.log(await cascada.export(chain, [], operationContext))
 ```js
 import {
     Chain,
+    CascadaError,
+    CompoundPoisonError,
     ContextChain,
+    ERROR_KIND,
     Execution,
+    PoisonError,
+    RuntimeError,
     assignPath,
     deletePath,
     enter,
@@ -85,6 +91,17 @@ Every Chain constructor and graph operation receives
 `{ execution, errorContext }`. `execution` must match the Chain. `errorContext`
 identifies the source operation and may differ for every call.
 
+### Errors
+
+`CascadaError` is the base for runtime-created failures. `PoisonError` is
+recoverable language data; `CompoundPoisonError` contains its flattened,
+cause-deduplicated leaves in `.errors`; `RuntimeError` is a reported fatal
+runtime failure. Each has an opaque `.errorContext`; poison errors also have a
+stable `.kind`. A native host Error consumed by Cascada becomes a `PoisonError`
+whose `.cause` is that Error. Propagation preserves the contextualized
+occurrence; it does not replace its source with the context of a later
+operation. `ERROR_KIND` exports the shared Cascada failure-kind vocabulary.
+
 ### `new Chain(initialValue, operationContext)`
 
 Creates a mutation-capable Chain rooted at an existing Cascada value. It admits
@@ -110,6 +127,10 @@ admitted result. Nested Promises are registered without waiting for them.
 Imported identities are protected by copy-on-write, so Cascada mutations never
 modify their host representation. Application code must not mutate the imported
 graph after admission.
+
+A native Error at the root returns its contextual `PoisonError`. A nested native
+Error remains physically unchanged in host storage, while Cascada retains the
+wrapper as that property's logical version.
 
 ### `assignPath(chain, path, value, operationContext, mutationScopeDepth = path.length)`
 
@@ -172,11 +193,12 @@ preserving Arrays, holes, property order, aliases, and cycles. Managed class
 instances preserve their admitted prototypes without running constructors;
 external values retain their exact identities.
 
-If the branch contains one `Error`, that Error is returned. If it contains
-several distinct Errors, export returns a new `Error` whose `errors` property
-contains them. The result is a Promise when the complete snapshot or Error set
-depends on pending data. An `Error` keeps the full scan running; a fatal runtime
-failure stops it.
+If the branch contains one language Error, that contextualized occurrence is
+returned. Several leaves produce a `CompoundPoisonError`; nested compounds are
+flattened and repeated native causes are kept once in logical collection order.
+The result is a Promise when the complete snapshot or Error set depends on
+pending data. A language Error keeps the full scan running; a fatal
+`RuntimeError` stops it.
 
 ### `hasError(chain, path, operationContext)`
 
@@ -191,6 +213,9 @@ Returns each distinct reachable `Error` identity once. A broken required path
 contributes its path-access Error; a missing or primitive final value contributes
 nothing. The result is an Array when complete synchronously and otherwise a
 Promise for the Array.
+
+Separately contextualized occurrences of one native Error remain distinct here.
+Export groups those occurrences by their shared native cause.
 
 ### State declarations
 

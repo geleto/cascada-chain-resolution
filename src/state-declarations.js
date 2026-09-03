@@ -6,6 +6,7 @@ import * as metadata from "./meta.js"
 function externalState(value) {
     return declarationBoundary(() => {
         const isPromise = languageValues.createPromiseProbe()
+        if (errorUtils.isFatalError(value)) throw value
         if (languageValues.isError(value)) return value
         const failure = validateDeclarationTarget(
             value,
@@ -26,6 +27,7 @@ function externalState(value) {
 function managedState(value) {
     return declarationBoundary(() => {
         const isPromise = languageValues.createPromiseProbe()
+        if (errorUtils.isFatalError(value)) throw value
         if (languageValues.isError(value)) return value
         const rootFailure = validateDeclarationTarget(
             value,
@@ -58,7 +60,7 @@ function managedState(value) {
         function walk(identity, root = false) {
             if (languageValues.isError(identity)) return undefined
             if (isPromise(identity)) {
-                return errorUtils.validationError(
+                return errorUtils.hostValidationError(
                     "managedState cannot contain a Promise",
                 )
             }
@@ -80,7 +82,7 @@ function managedState(value) {
             if (facts.type === languageValues.TYPE_EXTERNAL) {
                 if (!facts.admittedPrototype) {
                     return root
-                        ? errorUtils.validationError(
+                        ? errorUtils.hostValidationError(
                             "managedState cannot declare this value managed " +
                             "because its prototype could not be inspected",
                         )
@@ -112,7 +114,7 @@ function managedStateClass(...classes) {
         const prototypes = new Set()
         for (const ManagedClass of classes) {
             if (typeof ManagedClass !== "function") {
-                return errorUtils.validationError(
+                return errorUtils.hostValidationError(
                     "managedStateClass requires constructors",
                 )
             }
@@ -155,20 +157,20 @@ function isConstructor(value) {
 
 function validateDeclarationTarget(value, api, isPromise) {
     if (!metadata.isObjectLike(value)) {
-        return errorUtils.validationError(`${api} requires an object`)
+        return errorUtils.hostValidationError(`${api} requires an object`)
     }
     if (typeof value === "function") {
-        return errorUtils.validationError(`${api} cannot declare a Function`)
+        return errorUtils.hostValidationError(`${api} cannot declare a Function`)
     }
     if (isPromise(value)) {
-        return errorUtils.validationError(`${api} cannot declare a Promise`)
+        return errorUtils.hostValidationError(`${api} cannot declare a Promise`)
     }
     return undefined
 }
 
 function conflictError(api, existing) {
     const requested = existing === "managed" ? "external" : "managed"
-    return errorUtils.validationError(
+    return errorUtils.hostValidationError(
         `${api} cannot declare this value ${requested} because it is already ${existing}`,
     )
 }

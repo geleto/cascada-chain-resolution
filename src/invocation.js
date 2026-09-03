@@ -4,6 +4,7 @@ import * as imports from "./import.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
+import * as resolution from "./resolution.js"
 
 class InvocationContext {
     open = true
@@ -81,15 +82,27 @@ class WrappedInvocationResult {
     }
 }
 
-function invokeHostFunction(callable, thisValue, args) {
-    return errorUtils.runUserCode(
-        () => Reflect.apply(callable, thisValue, args),
+function invokeHostFunction(
+    callable,
+    thisValue,
+    args,
+    operationContext,
+    kind = errorUtils.ERROR_KIND.UserCallThrew,
+    onFailure = value => value,
+) {
+    return errorUtils.catchUserCodeFailure(
+        () => errorUtils.runUserCode(
+            () => Reflect.apply(callable, thisValue, args),
+        ),
+        operationContext,
+        kind,
+        onFailure,
     )
 }
 
 function getHostMethodDescription(callable, invocationContext) {
     return {
-        admitResult: value => imports.import(
+        admitResult: value => imports.importHostResult(
             value,
             invocationContext.operationContext,
         ),
@@ -97,13 +110,20 @@ function getHostMethodDescription(callable, invocationContext) {
             callable,
             invocationContext.receiver,
             args,
+            invocationContext.operationContext,
         ),
         prepareArguments: () => invocationContext.exportArguments(),
     }
 }
 
-function methodNotCallableError(method) {
-    return errorUtils.validationError(`Method is not callable: ${method}`)
+function methodNotCallableError(method, operationContext, present = true) {
+    return errorUtils.validationError(
+        `Method is not callable: ${method}`,
+        operationContext,
+        present
+            ? errorUtils.ERROR_KIND.NotAFunction
+            : errorUtils.ERROR_KIND.MissingFunction,
+    )
 }
 
 // The method description supplies category behavior; this owns the shared call transition
@@ -171,6 +191,8 @@ function invokeMethod(
                 const callable = methodDescription.getMethod
                     ? errorUtils.catchUserCodeFailure(
                         () => methodDescription.getMethod(readyArguments),
+                        operationContext,
+                        errorUtils.ERROR_KIND.LookupThrew,
                         failure => failure,
                     )
                     : undefined
@@ -206,13 +228,12 @@ function invokeMethod(
                 ? result.value
                 : result
         }
-        return languageValues.continuePromise(
+        return resolution.continueInternalPromiseOrFatal(
             result,
             operationContext,
             resolved => resolved instanceof WrappedInvocationResult
                 ? resolved.value
                 : resolved,
-            errorUtils.reportFatalError,
         )
     }
 }

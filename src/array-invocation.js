@@ -13,11 +13,17 @@ function getArrayMethodDescription(invocationContext) {
     const { method, mutation, receiver } = invocationContext
     const methodDefinition = ARRAY_METHODS[method]
     if (!methodDefinition) {
-        return errorUtils.validationError(`Unsupported Array method: ${method}`)
+        return errorUtils.validationError(
+            `Unsupported Array method: ${method}`,
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.MissingFunction,
+        )
     }
     if (mutation && methodDefinition.mutationResult === undefined) {
         return errorUtils.validationError(
             `Array method ${method} cannot be used as a mutation`,
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.InvalidArrayOperation,
         )
     }
     return {
@@ -30,15 +36,21 @@ function getArrayMethodDescription(invocationContext) {
                 invocationContext,
             ),
         invoke(preparedArguments) {
-            if (!mutation) return invokeArrayObservationMethod(
-                methodDefinition,
-                preparedArguments,
-                invocationContext,
-            )
-            return invokeArrayMutationMethod(
-                methodDefinition,
-                preparedArguments,
-                invocationContext,
+            return errorUtils.catchUserCodeFailure(
+                () => mutation
+                    ? invokeArrayMutationMethod(
+                        methodDefinition,
+                        preparedArguments,
+                        invocationContext,
+                    )
+                    : invokeArrayObservationMethod(
+                        methodDefinition,
+                        preparedArguments,
+                        invocationContext,
+                    ),
+                invocationContext.operationContext,
+                errorUtils.ERROR_KIND.InvalidArrayOperation,
+                failure => failure,
             )
         },
     }
@@ -112,6 +124,7 @@ function invokeArrayObservationMethod(
             methodDefinition.intrinsic,
             remap,
             preparedArgs,
+            invocationContext.operationContext,
         )
         // Mutators change the receiver remap; observations return one.
         if (methodDefinition.mutationResult === undefined) remap = result
@@ -176,11 +189,18 @@ function invokeArrayMutationMethod(
         thisValue,
         invocationContext.operationContext,
     )
+    let callFailure
     const nativeResult = invocation.invokeHostFunction(
         methodDefinition.intrinsic,
         mutation.working,
         preparedArguments,
+        invocationContext.operationContext,
+        errorUtils.ERROR_KIND.UserCallThrew,
+        failure => callFailure = failure,
     )
+    if (callFailure) {
+        return { mutatedValue: callFailure, result: callFailure }
+    }
     return finishMutation(mutation, nativeResult)
 
     function finishMutation(mutation, nativeResult) {

@@ -16,6 +16,13 @@
 
 export { Chain, ContextChain } from "./chain.js"
 export { Execution } from "./execution.js"
+export {
+    CascadaError,
+    CompoundPoisonError,
+    ERROR_KIND,
+    PoisonError,
+    RuntimeError,
+} from "./error.js"
 
 export {
     assignPath, deletePath,

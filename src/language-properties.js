@@ -29,26 +29,23 @@ function classifyProjectedProperty(parent, key, operationContext) {
     return ORDINARY_PROPERTY
 }
 
-// Imported-storage validation retains the source of that representation.
-// Phase 9C replaces this transitional attribution with causal Error context.
-function importErrorContextOf(value, operationContext) {
-    return metadata.importBoundaryOf(value, operationContext)?.errorContext
-}
-
-function propertyValidationError(parent, message, operationContext) {
+function propertyValidationError(message, operationContext) {
     return errorUtils.validationError(
         message,
-        importErrorContextOf(parent, operationContext),
+        operationContext,
+        errorUtils.ERROR_KIND.PropertyValidation,
     )
 }
 
-function normalizePathSegment(segment) {
+function normalizePathSegment(segment, operationContext) {
     return typeof segment === "string"
         ? segment
         : typeof segment === "number"
             ? String(segment)
             : errorUtils.validationError(
                 "Path segments must be Strings or Numbers",
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidPathSegment,
             )
 }
 
@@ -165,7 +162,7 @@ function assertWritable(descriptor) {
 }
 
 function fatalPropertyError(message) {
-    errorUtils.reportFatalError(new Error(message))
+    throw new Error(message)
 }
 
 function assertPromisePropertyShape(parent, key, operationContext) {
@@ -219,12 +216,12 @@ function readLanguageProperty(parent, key, operationContext) {
     }
     if (propertyKind === STRING_LENGTH) return parent.length
 
-    const mirror = metadata.metaOf(
+    const version = metadata.metaOf(
         logicalParent,
         operationContext,
-    )?.mirrors?.[key]
-    const value = mirror
-        ? mirror.value
+    )?.placementVersions?.[key]
+    const value = version
+        ? version.value
         : getLanguagePlacementDescriptor(parent, key, operationContext)?.value
     languageValues.admitValue(value, operationContext)
     return value

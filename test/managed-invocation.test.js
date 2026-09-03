@@ -5,6 +5,7 @@ import {
     Chain,
     buildRefIndex,
     deferred,
+    errorCause,
     expect,
     flushMicrotasks,
     importValue,
@@ -13,6 +14,7 @@ import {
     readPath,
     managedStateClass,
     reportFatalError,
+    runtime,
     run,
     setFatalErrorReporter,
     thrownBy,
@@ -278,14 +280,14 @@ describe("managed invocation", () => {
         const failure = new Error("invalid argument")
         const failed = new Chain(new Value())
         reflections.length = 0
-        expect(run(
+        const argumentFailure = run(
             failed,
             [],
             "change",
             [failure],
             { mutationScopeDepth: 0 },
-
-        )).to.be(failure)
+        )
+        expect(errorCause(argumentFailure)).to.be(failure)
         expect(reflections).to.eql([])
 
         const receiverFailure = new Error("invalid receiver")
@@ -293,7 +295,13 @@ describe("managed invocation", () => {
         invalid.failure = receiverFailure
         const invalidChain = new Chain(invalid)
         reflections.length = 0
-        expect(run(invalidChain, [], "change", [], { mutationScopeDepth: 0 })).to.be(receiverFailure)
+        expect(errorCause(run(
+            invalidChain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        ))).to.be(receiverFailure)
         expect(reflections).to.eql([])
 
         const value = new Proxy(new Value(), {
@@ -409,7 +417,8 @@ describe("managed invocation", () => {
         const value = new Value()
         value.nested = { failure }
 
-        expect(run(new Chain(value), [], "read", [], {})).to.be(failure)
+        expect(errorCause(run(new Chain(value), [], "read", [], {})))
+            .to.be(failure)
         expect(invoked).to.be(false)
     })
 
@@ -638,11 +647,19 @@ describe("managed invocation", () => {
         const source = new Value()
         source.child = { failure }
 
-        expect(run(new Chain(source), [], "read", [], {})).to.be(failure)
+        expect(errorCause(run(new Chain(source), [], "read", [], {})))
+            .to.be(failure)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
         const chain = new Chain(source)
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const mutationFailure = run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        )
+        expect(errorCause(mutationFailure)).to.be(failure)
+        expect(chain._state.value).to.be(mutationFailure)
         expect(source.changed).to.be(undefined)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
@@ -671,9 +688,11 @@ describe("managed invocation", () => {
             {},
         )
 
-        expect(result.errors).to.have.length(2)
-        expect(result.errors[0].errors).to.eql(receiverErrors)
-        expect(result.errors[1]).to.be(argumentError)
+        expect(result.errors).to.have.length(3)
+        expect(result.errors.map(errorCause)).to.eql([
+            ...receiverErrors,
+            argumentError,
+        ])
     })
 
     it("orders pending receiver and argument Errors by input position", async () => {
@@ -696,7 +715,7 @@ describe("managed invocation", () => {
         argumentValue.resolve(argumentFailure)
         receiverValue.resolve(receiverFailure)
 
-        expect((await result).errors).to.eql([
+        expect((await result).errors.map(errorCause)).to.eql([
             receiverFailure,
             argumentFailure,
         ])
@@ -757,9 +776,49 @@ describe("managed invocation", () => {
         value.value = 1
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(resultError)
+        expect(errorCause(run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        ))).to.be(resultError)
         expect(chain._state.value).to.be(value)
         expect(value.value).to.be(2)
+    })
+
+    it("attributes an Error added inside an admitted mutation result", () => {
+        const cause = new Error("detached result failure")
+        class Value {
+            constructor() {
+                this.result = { value: 1 }
+            }
+
+            detachResult() {
+                const result = this.result
+                delete this.result
+                result.failure = cause
+                return result
+            }
+        }
+        managedStateClass(Value)
+        const value = new Value()
+        const chain = new Chain(value)
+
+        const result = run(
+            chain,
+            [],
+            "detachResult",
+            [],
+            { mutationScopeDepth: 0 },
+        )
+        const failure = lookupPath(new Chain(result), ["failure"])
+
+        expect(failure.cause).to.be(cause)
+        expect(failure.errorContext).to.be("test run")
+        expect(failure.kind).to.be(runtime.ERROR_KIND.UserCallThrew)
+        expect(chain._state.value).to.be(value)
+        expect(Object.hasOwn(value, "result")).to.be(false)
     })
 
     it("keeps a direct mutation Promise private through fulfillment", async () => {
@@ -784,7 +843,7 @@ describe("managed invocation", () => {
         expect(chain._state.value instanceof Promise).to.be(true)
         completion.resolve(resultError)
 
-        expect(await result).to.be(resultError)
+        expect(errorCause(await result)).to.be(resultError)
         expect(chain._state.value).to.be(value)
         expect(value.count).to.be(2)
     })
@@ -821,8 +880,8 @@ describe("managed invocation", () => {
         const rejection = await result.catch(error => error)
         setFatalErrorReporter()
 
-        expect(rejection).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(errorCause(rejection)).to.be(failure)
+        expect(chain._state.value).to.be(rejection)
         expect(reported).to.be(undefined)
     })
 
@@ -848,7 +907,7 @@ describe("managed invocation", () => {
         assignPath(chain, ["child", "value"], 2)
         completion.reject(failure)
 
-        expect(await result.catch(error => error)).to.be(failure)
+        expect(errorCause(await result.catch(error => error))).to.be(failure)
         expect(value.child.value).to.be(1)
         expect(chain._state.value.child.value).to.be(2)
         expect(metaOf(value).readLeaseCount).to.be(undefined)
@@ -936,8 +995,15 @@ describe("managed invocation", () => {
         value.state = state
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const validationFailure = run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        )
+        expect(errorCause(validationFailure)).to.be(failure)
+        expect(chain._state.value).to.be(validationFailure)
     })
 
     it("poisons a mutation when the mutator throws", () => {
@@ -952,8 +1018,15 @@ describe("managed invocation", () => {
         const source = new Value()
         const chain = new Chain(source)
 
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const mutationFailure = run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        )
+        expect(errorCause(mutationFailure)).to.be(failure)
+        expect(chain._state.value).to.be(mutationFailure)
     })
 
     it("retains exact admitted identities returned by an observation", () => {
@@ -1097,7 +1170,13 @@ describe("managed invocation", () => {
         value.value = 1
         const chain = new Chain(value)
 
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(failure)
+        expect(errorCause(run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        ))).to.be(failure)
         expect(chain._state.value).to.be(value)
         expect(value.value).to.be(2)
     })

@@ -65,9 +65,7 @@ function createEmptyContainerCopy(source, operationContext) {
     ) {
         destination = Object.create(sourceMeta.admittedPrototype)
     } else {
-        errorUtils.reportFatalError(
-            new TypeError("Cannot copy a non-container value"),
-        )
+        throw new TypeError("Cannot copy a non-container value")
     }
     languageValues.admitReadyValue(
         destination,
@@ -242,7 +240,12 @@ function transformValue(
     }
 
     function recoverMutationFailure(fn) {
-        return errorUtils.catchUserCodeFailure(fn, mutationFailureOutcome)
+        return errorUtils.catchUserCodeFailure(
+            fn,
+            operation.operationContext,
+            errorUtils.ERROR_KIND.PropertyMutationThrew,
+            mutationFailureOutcome,
+        )
     }
 
     function mutationFailureOutcome(failure) {
@@ -274,7 +277,10 @@ function assignPath(
     return errorUtils.runFatal(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
-        languageValues.admitValue(value, operationContext)
+        if (errorUtils.isFatalError(value)) throw value
+        if (!Error.isError(value)) {
+            languageValues.admitValue(value, operationContext)
+        }
         return walkMutationPath(
             chain,
             preparedPath,
@@ -298,7 +304,6 @@ function assignPath(
                     languageProperties.STRING_LENGTH
                 ) {
                     const error = languageProperties.propertyValidationError(
-                        target.receiver,
                         "String length is read-only",
                         operationContext,
                     )
@@ -391,7 +396,11 @@ function toArrayLength(value, operation) {
             const length = number >>> 0
             return length === number
                 ? length
-                : errorUtils.validationError("Invalid array length")
+                : errorUtils.validationError(
+                    "Invalid array length",
+                    operation.operationContext,
+                    errorUtils.ERROR_KIND.InvalidArrayLength,
+                )
         },
     )
 }
@@ -411,9 +420,7 @@ function walkMutationPath(
     } = {},
 ) {
     if (chain._entryMutable === false) {
-        errorUtils.reportFatalError(
-            new Error("Cannot mutate through a read-only Chain"),
-        )
+        throw new Error("Cannot mutate through a read-only Chain")
     }
     const rootState = chain._state
     const targetPath = ["value", ...path]
@@ -436,6 +443,8 @@ function walkMutationPath(
     function walk(value, index, writeBack, placement = undefined) {
         return errorUtils.catchUserCodeFailure(
             () => walkReady(value, index, writeBack, placement),
+            operationContext,
+            errorUtils.ERROR_KIND.PropertyMutationThrew,
             failure => complete(writeBack, failure, failure),
         )
     }
@@ -451,6 +460,7 @@ function walkMutationPath(
         }
         const key = languageProperties.normalizePathSegment(
             targetPath[index],
+            operationContext,
         )
         if (languageValues.isError(key)) {
             languageValues.admitReadyValue(key, operationContext)
@@ -464,7 +474,6 @@ function walkMutationPath(
         )
         if (propertyKind === languageProperties.INVALID_ARRAY_KEY) {
             const error = languageProperties.propertyValidationError(
-                value,
                 "Arrays support only indexes and length",
                 operationContext,
             )
@@ -498,7 +507,10 @@ function walkMutationPath(
             )
         }
         if (!languageValues.isTraversable(value, operationContext)) {
-            return complete(writeBack, errorUtils.pathAccessError())
+            return complete(
+                writeBack,
+                errorUtils.pathAccessError(value, operationContext),
+            )
         }
 
         const mutatedValue = atTarget
@@ -631,7 +643,6 @@ function deletePath(
                     languageProperties.ORDINARY_PROPERTY
                 ) {
                     const error = languageProperties.propertyValidationError(
-                        target.receiver,
                         "Cannot delete length",
                         operationContext,
                     )

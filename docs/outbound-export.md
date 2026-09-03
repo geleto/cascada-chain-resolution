@@ -21,10 +21,11 @@ Each batch root retains its own result position. Wrapping the roots in an ordina
 
 ## Errors
 
-The same walk has two concrete policies:
-
-- Every root consumes every distinct Error reached beneath it. One is returned unchanged; several produce `export: branch contains errors`, whose `.errors` contains those identities. Order within one graph is not semantic.
-- A batch export combines failed roots in root order without flattening their `.errors` payloads. Any Error prevents host invocation or assignment. No Error is exported.
+The walk collects every contextual Error reached beneath each root. One
+occurrence is preserved. Several produce a `CompoundPoisonError`; combination
+flattens nested compounds and deduplicates leaves by `leaf.cause ?? leaf`.
+Order within one graph is not semantic, while failed batch roots retain root
+order. Any Error prevents host invocation or assignment. No Error is exported.
 
 An Error discards partial output but does not stop the scan: pending captured branches may reveal other Errors. Export never starts a second `getErrors` operation.
 
@@ -34,7 +35,7 @@ Export traverses every available placement synchronously. A pending placement is
 
 The operation retains output copies, its identity tables, and captured property versions. It does not lease or reread managed source identities. Later managed mutation may therefore proceed normally without changing the captured output.
 
-Export captures only the selected path and the Promise frontier recursively exposed from it. It does not wait for unrelated graph Promises or build a refcount index. Rejected data Promises become ordinary Error values before the common Error rule is applied.
+Export captures only the selected path and the Promise frontier recursively exposed from it. It does not wait for unrelated graph Promises or build a refcount index. A rejected data Promise is already contextualized by the boundary that introduced it; export preserves that occurrence.
 
 ## Output lifetime
 
@@ -42,7 +43,7 @@ Export operation work uses its containing operation's owner, or its own owner wh
 
 An already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication after operation closure.
 
-The result is synchronous when its captured frontier is ready. Otherwise one operation Promise fulfills with the completed copy or language Error. Unexpected internal readiness failure remains fatal.
+The result is synchronous when its captured frontier is ready. Otherwise one operation Promise fulfills with the completed copy or language Error. Export reflection failures use the export operation's source and kind; unexpected internal readiness failure becomes a fatal `RuntimeError` at that operation.
 
 ## Ownership
 

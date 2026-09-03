@@ -1,25 +1,126 @@
-let fatalReporter = () => {}
-const reportedFatalErrors = new WeakSet()
-let userCodeDepth = 0
+const CONTEXTLESS_ERROR_CONTEXT = Symbol("contextless Error source")
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
 
-class UserCodeFailure {
+const ERROR_KIND = Object.freeze({
+    AsyncCallback: "AsyncCallback",
+    AssignmentValueError: "AssignmentValueError",
+    AssignmentValueRejected: "AssignmentValueRejected",
+    ChainValueError: "ChainValueError",
+    ChainValueRejected: "ChainValueRejected",
+    ContextValueError: "ContextValueError",
+    ContextValueRejected: "ContextValueRejected",
+    ConversionThrew: "ConversionThrew",
+    DivideByZero: "DivideByZero",
+    ExportThrew: "ExportThrew",
+    ExportValueError: "ExportValueError",
+    ImportBindingMissing: "ImportBindingMissing",
+    ImportThrew: "ImportThrew",
+    IncompatibleOperands: "IncompatibleOperands",
+    InvalidArrayLength: "InvalidArrayLength",
+    InvalidArrayOperation: "InvalidArrayOperation",
+    InvalidCallbackResult: "InvalidCallbackResult",
+    InvalidConcurrentLimit: "InvalidConcurrentLimit",
+    InvalidImportValue: "InvalidImportValue",
+    InvalidManagedReceiver: "InvalidManagedReceiver",
+    InvalidPathSegment: "InvalidPathSegment",
+    InvalidTextValue: "InvalidTextValue",
+    IteratorThrew: "IteratorThrew",
+    LoadFailed: "LoadFailed",
+    LookupThrew: "LookupThrew",
+    MissingFunction: "MissingFunction",
+    Multiple: "Multiple",
+    NaNResult: "NaNResult",
+    NotAFunction: "NotAFunction",
+    NotDestructurable: "NotDestructurable",
+    NotIterable: "NotIterable",
+    NullLookup: "NullLookup",
+    OperationInputError: "OperationInputError",
+    OperationInputRejected: "OperationInputRejected",
+    PropertyMutationThrew: "PropertyMutationThrew",
+    PropertyValidation: "PropertyValidation",
+    ScalarLookup: "ScalarLookup",
+    ThenAccessThrew: "ThenAccessThrew",
+    ThenInvocationThrew: "ThenInvocationThrew",
+    UnknownVariable: "UnknownVariable",
+    UserCallThrew: "UserCallThrew",
+    UnsupportedMutation: "UnsupportedMutation",
+})
+
+class CascadaError extends Error {
+    constructor(message, errorContext, options = undefined) {
+        if (errorContext === undefined) {
+            throw new TypeError("Cascada Errors require source context")
+        }
+        super(message, options)
+        this.errorContext = errorContext
+    }
+}
+
+class PoisonError extends CascadaError {
+    constructor(message, errorContext, kind, options = undefined) {
+        if (typeof kind !== "string" || !kind) {
+            throw new TypeError("Poison Errors require a failure kind")
+        }
+        super(message, errorContext, options)
+        this.name = "PoisonError"
+        this.kind = kind
+    }
+}
+
+class CompoundPoisonError extends PoisonError {
+    constructor(errors, message) {
+        const kinds = [...new Set(errors.map(error => error.kind))]
+        super(
+            message,
+            errors[0].errorContext,
+            kinds.length === 1 ? kinds[0] : ERROR_KIND.Multiple,
+        )
+        this.name = "CompoundPoisonError"
+        this.errors = errors
+        this.kinds = kinds
+    }
+}
+
+class RuntimeError extends CascadaError {
+    #reported = false
+
+    constructor(cause, errorContext) {
+        super(
+            errorMessage(cause, "Cascada runtime failed with a non-Error value"),
+            errorContext,
+            { cause },
+        )
+        this.name = "RuntimeError"
+    }
+
+    report(reporter) {
+        if (!this.#reported) {
+            this.#reported = true
+            try {
+                reporter(this)
+            } catch {
+                // Reporting must never replace the fatal error being thrown.
+            }
+        }
+        throw this
+    }
+}
+
+class UserCodeFailure extends Error {
     constructor(error) {
+        super("Supported user code failed")
         this.error = error
     }
 }
 
+let fatalReporter = () => {}
+let userCodeDepth = 0
+
 function reportFatalError(error) {
-    const isObjectLike = error !== null &&
-        (typeof error === "object" || typeof error === "function")
-    if (!isObjectLike || !reportedFatalErrors.has(error)) {
-        if (isObjectLike) reportedFatalErrors.add(error)
-        try {
-            fatalReporter(error)
-        } catch {
-            // Reporting must never replace the fatal error being thrown.
-        }
-    }
-    throw error
+    const failure = Error.isError(error) && error instanceof RuntimeError
+        ? error
+        : new RuntimeError(error, CONTEXTLESS_ERROR_CONTEXT)
+    return failure.report(fatalReporter)
 }
 
 function setFatalErrorReporter(reporter = () => {}) {
@@ -27,97 +128,171 @@ function setFatalErrorReporter(reporter = () => {}) {
 }
 
 function runFatal(operationContext, fn, value = undefined) {
-    return runFatalWork(fn, value, () => operationContext.execution)
+    if (
+        operationContext?.execution === undefined ||
+        operationContext.errorContext === undefined
+    ) {
+        return reportFatalError(new RuntimeError(
+            new TypeError("Operation context requires execution and errorContext"),
+            CONTEXTLESS_ERROR_CONTEXT,
+        ))
+    }
+    return runFatalWork(operationContext.errorContext, fn, value)
 }
 
 function runContextlessFatal(fn, value = undefined) {
-    return runFatalWork(fn, value)
+    return runFatalWork(CONTEXTLESS_ERROR_CONTEXT, fn, value)
 }
 
-function runFatalWork(fn, value, requireOperationContext = undefined) {
-    if (userCodeDepth > 0) {
-        reportFatalError(
-            new Error("Cascada cannot be re-entered from supported user code"),
-        )
-    }
+function runFatalWork(errorContext, fn, value) {
     try {
-        requireOperationContext?.()
+        if (userCodeDepth > 0) {
+            throw new Error("Cascada cannot be re-entered from supported user code")
+        }
         return fn(value)
     } catch (error) {
-        if (error instanceof UserCodeFailure) return error.error
-        return reportFatalError(error)
+        const userFailure = Error.isError(error) &&
+            error instanceof UserCodeFailure
+        if (userFailure) {
+            // Contextless configuration preserves the raw host failure. At an
+            // operation boundary, an uncaught signal means its owner failed to
+            // classify supported user code and is therefore a runtime bug.
+            if (errorContext === CONTEXTLESS_ERROR_CONTEXT) {
+                return error.error
+            }
+        }
+        const failure = Error.isError(error) && error instanceof RuntimeError
+            ? error
+            : new RuntimeError(
+                userFailure ? error.error : error,
+                errorContext,
+            )
+        return reportFatalError(failure)
     }
 }
 
 // Reflection hooks, controlled callbacks, and host calls are supported user
-// code. Their failures are language data, but a fatal raised inside them must
-// keep crossing the boundary unchanged. The depth covers callbacks and
-// coercions performed synchronously by a host call, so public re-entry from
-// anywhere in that dynamic extent is rejected by runFatal.
+// code. The nearest semantic boundary converts this private raw-failure signal.
 function runUserCode(fn) {
     userCodeDepth++
     try {
         return fn()
     } catch (error) {
-        if (isFatalError(error)) throw error
-        if (error instanceof UserCodeFailure) throw error
-        throw new UserCodeFailure(toPoison(error))
+        if (Error.isError(error) && (
+            error instanceof RuntimeError ||
+            error instanceof UserCodeFailure
+        )) {
+            throw error
+        }
+        throw new UserCodeFailure(error)
     } finally {
         userCodeDepth--
     }
 }
 
 function isFatalError(error) {
-    return error !== null &&
-        (typeof error === "object" || typeof error === "function") &&
-        reportedFatalErrors.has(error)
+    return Error.isError(error) && error instanceof RuntimeError
 }
 
-// Catch only the private signal from an exact user-code boundary. Every
-// ordinary throw keeps crossing toward the fatal boundary.
-function catchUserCodeFailure(fn, onFailure) {
+function catchUserCodeFailure(fn, operationContext, kind, onFailure = value => value) {
+    return catchRawUserCodeFailure(
+        fn,
+        error => onFailure(toPoison(error, operationContext, kind)),
+    )
+}
+
+function catchRawUserCodeFailure(fn, onFailure) {
     try {
         return fn()
     } catch (error) {
-        if (!(error instanceof UserCodeFailure)) throw error
+        if (!Error.isError(error) || !(error instanceof UserCodeFailure)) throw error
         return onFailure(error.error)
     }
 }
 
-function validationError(message, importErrorContext = undefined) {
-    if (importErrorContext === undefined) return new Error(message)
-    return new Error(`${message} (imported at: ${String(importErrorContext)})`)
+function validationError(message, operationContext, kind) {
+    return new PoisonError(message, operationContext.errorContext, kind)
 }
 
-function pathAccessError() {
-    return new Error("Cannot access property through missing or primitive value")
+function hostValidationError(message) {
+    return new Error(message)
+}
+
+function pathAccessError(value, operationContext) {
+    const kind = value === null || value === undefined
+        ? ERROR_KIND.NullLookup
+        : ERROR_KIND.ScalarLookup
+    return validationError(
+        "Cannot access property through missing or primitive value",
+        operationContext,
+        kind,
+    )
 }
 
 function combineErrors(errors, message) {
-    // A compound Error is one supplied Error. Keep it intact so combining
-    // input outcomes preserves their grouping and source context.
-    const distinct = [...new Set(errors)]
+    const distinct = []
+    const causes = new Set()
+    for (const error of flattenErrors(errors)) {
+        const cause = error.cause ?? error
+        if (causes.has(cause)) continue
+        causes.add(cause)
+        distinct.push(error)
+    }
     if (distinct.length < 2) return distinct[0]
-
-    const combined = new Error(message)
-    combined.errors = distinct
-    return combined
+    return new CompoundPoisonError(distinct, message)
 }
 
-function toPoison(reason) {
-    if (Error.isError(reason)) return reason
-    const type = typeof reason
-    const message = reason === null ||
-        (type !== "object" && type !== "function")
+function* flattenErrors(errors) {
+    for (const error of errors) {
+        if (error instanceof CompoundPoisonError) yield* error.errors
+        else yield error
+    }
+}
+
+function toPoison(reason, operationContext, kind) {
+    const isError = Error.isError(reason)
+    if (isError && (
+        reason instanceof RuntimeError ||
+        reason instanceof PoisonError
+    )) return reason
+    return new PoisonError(
+        errorMessage(reason, "User code failed with a non-Error value"),
+        operationContext.errorContext,
+        kind,
+        { cause: reason },
+    )
+}
+
+function errorMessage(reason, objectFallback) {
+    if (Error.isError(reason)) {
+        // Reading through a descriptor cannot invoke a host `message` getter.
+        const descriptor = getOwnPropertyDescriptor(reason, "message")
+        return descriptor && "value" in descriptor &&
+            typeof descriptor.value === "string"
+            ? descriptor.value
+            : objectFallback
+    }
+    return reason === null || (
+        typeof reason !== "object" &&
+        typeof reason !== "function"
+    )
         ? String(reason)
-        : "User code failed with a non-Error value"
-    return new Error(message, { cause: reason })
+        : objectFallback
 }
 
 export {
-    combineErrors,
-    pathAccessError,
+    CascadaError,
+    CompoundPoisonError,
+    CONTEXTLESS_ERROR_CONTEXT,
+    ERROR_KIND,
+    PoisonError,
+    RuntimeError,
+    catchRawUserCodeFailure,
     catchUserCodeFailure,
+    combineErrors,
+    hostValidationError,
+    isFatalError,
+    pathAccessError,
     reportFatalError,
     runContextlessFatal,
     runFatal,

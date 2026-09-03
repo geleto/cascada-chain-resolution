@@ -13,6 +13,7 @@ import {
     importValue,
     setFatalErrorReporter,
     deferred,
+    errorCause,
     flushMicrotasks,
 } from "./support.js"
 
@@ -23,7 +24,7 @@ describe("Chain root state", () => {
 
         expect(chain._state.value).to.be(value)
         expect(metaOf(value).shared).to.be(undefined)
-        expect(metaOf(value).importBoundary).to.be(undefined)
+        expect(metaOf(value).imported).to.be(undefined)
     })
 
     it("uses the supplied execution", () => {
@@ -73,7 +74,7 @@ describe("Chain root state", () => {
                 reported = error
             })
 
-            expect(operation(value)).to.be(failure)
+            expect(errorCause(operation(value))).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })

@@ -1,4 +1,3 @@
-import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -110,14 +109,13 @@ class ExternalMutationTree {
 
         function admittedTypeOf(value) {
             if (!metadata.isObjectLike(value)) return undefined
+            if (languageValues.isError(value)) return languageValues.TYPE_ERROR
             if (languageValues.isPromise(value, operationContext)) return undefined
             const facts = factsOf(value)
             if (!facts) {
-                errorUtils.reportFatalError(
-                    new Error(
-                        "Context tree reached an identity outside the " +
-                        "downward-closed admission set",
-                    ),
+                throw new Error(
+                    "Context tree reached an identity outside the " +
+                    "downward-closed admission set",
                 )
             }
             return facts.type
@@ -224,9 +222,7 @@ class ExternalMutationTree {
 
     _boundary() {
         if (!this._boundaryRecord) {
-            errorUtils.reportFatalError(
-                new Error("External boundary queried before tree commit"),
-            )
+            throw new Error("External boundary queried before tree commit")
         }
         return this._boundaryRecord
     }

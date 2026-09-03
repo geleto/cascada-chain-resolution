@@ -114,17 +114,18 @@ function verifyCycleCuts(node, operationContext) {
         }
     }
 
-    for (const key of Object.keys(meta?.mirrors ?? {})) {
+    for (const key of Object.keys(meta?.placementVersions ?? {})) {
         const mirror = propertyVersions.getPromiseMirror(node, key, operationContext)
+        if (!mirror) continue
         const descriptor = languageProperties.getLanguagePropertyDescriptor(
             node,
             key,
             operationContext,
         )
-        const imported = metadata.importBoundaryOf(
+        const imported = metadata.isImported(
             node,
             operationContext,
-        ) !== undefined
+        )
         const validShape = mirror &&
             Object.hasOwn(mirror, "value") &&
             descriptor?.enumerable &&

@@ -260,6 +260,7 @@ function createConcatRemap(parts, invocationContext) {
             invocationContext.operationContext,
         ),
         parts,
+        invocationContext.operationContext,
     )
 }
 
@@ -277,6 +278,7 @@ function flatRemap([depth = 1], invocationContext) {
             arrayFlat,
             prepared,
             [depth],
+            invocationContext.operationContext,
         ),
     )
 }
@@ -286,8 +288,10 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
         depth === Infinity &&
         arrayViews.hasArrayAncestor(ancestry, array)
     ) {
-        return new RangeError(
+        return errorUtils.validationError(
             "Cannot flat an Array cycle to unlimited depth",
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.InvalidArrayOperation,
         )
     }
     const source = arrayRemaps.createRemap(array, invocationContext.operationContext)
@@ -366,6 +370,8 @@ function prepareSortArguments(invocationContext) {
         if (value === undefined || typeof value === "function") return value
         return errorUtils.validationError(
             "Array sort comparator must be callable or undefined",
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.NotAFunction,
         )
     })
 }
@@ -429,7 +435,12 @@ function prepareAndSortRecords(sortable, comparator, invocationContext, finish) 
         return operationLifecycle.continuePreparedAll(
             invocationContext,
             records,
-            ready => sortRecords(ready, comparePreparedKeys, finish),
+            ready => sortRecords(
+                ready,
+                comparePreparedKeys,
+                invocationContext.operationContext,
+                finish,
+            ),
         )
     }
 
@@ -449,19 +460,21 @@ function prepareAndSortRecords(sortable, comparator, invocationContext, finish) 
                     right.exported,
                     invocationContext.operationContext,
                 ),
+                invocationContext.operationContext,
                 finish,
             )
         },
     )
 }
 
-function sortRecords(sortable, compare, finish) {
+function sortRecords(sortable, compare, operationContext, finish) {
     const sorted = invocation.invokeHostFunction(
         arraySort,
         sortable,
         [compare],
+        operationContext,
     )
-    return finish(sorted)
+    return languageValues.isError(sorted) ? sorted : finish(sorted)
 }
 
 function finishSortedRemap(
@@ -491,16 +504,29 @@ function compareExported(comparator, left, right, operationContext) {
         comparator,
         undefined,
         [left, right],
+        operationContext,
+        errorUtils.ERROR_KIND.UserCallThrew,
     )
-    if (languageValues.isError(result)) throw result
+    if (errorUtils.isFatalError(result)) throw result
+    if (languageValues.isError(result)) {
+        throw errorUtils.toPoison(
+            result,
+            operationContext,
+            errorUtils.ERROR_KIND.UserCallThrew,
+        )
+    }
     if (languageValues.isPromise(result, operationContext)) {
         throw errorUtils.validationError(
             "Promise-returning Array sort comparators are unsupported",
+            operationContext,
+            errorUtils.ERROR_KIND.AsyncCallback,
         )
     }
     if (typeof result !== "number") {
         throw errorUtils.validationError(
             "Array sort comparator must return a Number",
+            operationContext,
+            errorUtils.ERROR_KIND.InvalidCallbackResult,
         )
     }
     return result
@@ -692,7 +718,12 @@ function deriveArrayView(start, end, invocationContext) {
 }
 
 function tryConcatArrayView(parts, invocationContext) {
-    const suffix = invocation.invokeHostFunction(arrayConcat, [], parts)
+    const suffix = invocation.invokeHostFunction(
+        arrayConcat,
+        [],
+        parts,
+        invocationContext.operationContext,
+    )
     return tryAppendArrayView(suffix, invocationContext)
 }
 

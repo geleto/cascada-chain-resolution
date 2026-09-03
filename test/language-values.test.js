@@ -11,8 +11,10 @@ import {
     metadata,
     resolveInitialValueOrPoison,
     setFatalErrorReporter,
+    testOperationContext,
     thrownBy,
 } from "./support.js"
+import * as errorUtils from "../src/error.js"
 
 describe("value admission", () => {
     it("uses distinct named numeric categories", () => {
@@ -46,7 +48,7 @@ describe("value admission", () => {
             [new External(), languageValues.TYPE_EXTERNAL],
         ]
         for (const [value, type] of cases) {
-            new Chain(value)
+            languageValues.admitValue(value)
             expect(languageValues.typeOf(value)).to.be(type)
         }
         for (const value of [undefined, null, true, 1, 1n, Symbol()]) {
@@ -145,14 +147,14 @@ describe("value admission", () => {
         expect(reads).to.be(1)
     })
 
-    it("turns an incompatible intrinsic then receiver into ready poison", () => {
+    it("turns an incompatible intrinsic then receiver into ready poison", async () => {
         const value = new Proxy(Promise.resolve("settled"), {
             getPrototypeOf() {
                 throw new Error("Promise continuation reflected on its source")
             },
         })
 
-        const result = lookupPath(new Chain(value), [])
+        const result = await lookupPath(new Chain(value), [])
 
         expect(result).to.be.a(Error)
     })
@@ -193,7 +195,7 @@ describe("value admission", () => {
         const error = new Error("fixed")
         const early = new Early()
         const managed = new Managed()
-        new Chain(error)
+        languageValues.admitValue(error)
         new Chain(early)
         new Chain(managed)
 
@@ -268,11 +270,12 @@ describe("value admission", () => {
         const chain = new Chain(value)
         const result = lookupPath(chain, [])
 
-        expect(chain._state.value).to.be(value)
+        expect(chain._state.value instanceof Promise).to.be(true)
         expect(metadata.metaOf(value)).to.be(undefined)
-        expect(await result).to.be(failure)
-        expect(chain._state.value).to.be(failure)
-        expect(languageValues.typeOf(failure)).to.be(
+        const attributed = await result
+        expect(attributed.cause).to.be(failure)
+        expect(chain._state.value).to.be(attributed)
+        expect(languageValues.typeOf(attributed)).to.be(
             languageValues.TYPE_ERROR,
         )
     })
@@ -286,9 +289,49 @@ describe("value admission", () => {
         }
         const chain = new Chain(value)
 
-        expect(await lookupPath(chain, [])).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const attributed = await lookupPath(chain, [])
+        expect(attributed.cause).to.be(failure)
+        expect(chain._state.value).to.be(attributed)
         expect(metadata.metaOf(value)).to.be(undefined)
+    })
+
+    it("reports a RuntimeError fulfilled by initial resolution", async () => {
+        const pending = deferred()
+        const failure = new errorUtils.RuntimeError(
+            new Error("fatal fulfillment"),
+            "fulfillment internals",
+        )
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            const result = resolveInitialValueOrPoison(pending.promise)
+            pending.resolve(failure)
+            const caught = await result.catch(error => error)
+
+            expect(caught).to.be(failure)
+            expect(reported).to.be(failure)
+        } finally {
+            setFatalErrorReporter()
+        }
+    })
+
+    it("rejects a RuntimeError fulfilled through a causal boundary", async () => {
+        const failure = new errorUtils.RuntimeError(
+            new Error("fatal boundary fulfillment"),
+            "fulfillment internals",
+        )
+        const operationContext = testOperationContext("causal boundary")
+
+        const result = languageValues.valueWithOrigin(
+            Promise.resolve(failure),
+            operationContext,
+            errorUtils.ERROR_KIND.ChainValueError,
+            errorUtils.ERROR_KIND.ChainValueRejected,
+        )
+
+        expect(await result.catch(error => error)).to.be(failure)
     })
 
     it("declares a class without admitting its prototype", () => {
@@ -357,6 +400,6 @@ describe("value admission", () => {
 
         expect(ownKeyReads).to.be(0)
         expect(metadata.metaOf(value).shared).to.be(undefined)
-        expect(metadata.importBoundaryOf(value)).to.be(undefined)
+        expect(metadata.isImported(value)).to.be(false)
     })
 })

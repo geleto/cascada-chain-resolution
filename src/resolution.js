@@ -10,23 +10,32 @@ function resolveInitialValueOrPoison(
     operationContext,
     fn = value => value,
     shouldContinue = () => true,
+    rejectionKind = errorUtils.ERROR_KIND.OperationInputRejected,
 ) {
     if (!languageValues.isPromise(value, operationContext)) {
         if (!shouldContinue()) return undefined
-        languageValues.admitReadyValue(value, operationContext)
-        return errorUtils.runFatal(operationContext, fn, value)
+        return errorUtils.runFatal(operationContext, () => {
+            languageValues.admitReadyValue(value, operationContext)
+            return fn(value)
+        })
     }
     return languageValues.continuePromise(
         value,
         operationContext,
         value => {
             if (!shouldContinue()) return undefined
-            languageValues.admitReadyValue(value, operationContext)
-            return errorUtils.runFatal(operationContext, fn, value)
+            return errorUtils.runFatal(operationContext, () => {
+                languageValues.admitReadyValue(value, operationContext)
+                return fn(value)
+            })
         },
         reason => errorUtils.runFatal(operationContext, () => {
             if (!shouldContinue()) return undefined
-            const failure = errorUtils.toPoison(reason)
+            const failure = errorUtils.toPoison(
+                reason,
+                operationContext,
+                rejectionKind,
+            )
             languageValues.admitReadyValue(failure, operationContext)
             return fn(failure)
         }),
@@ -47,13 +56,16 @@ function continueInternalPromiseOrFatal(
     result,
     operationContext,
     onFulfilled,
+    onRejected = reason => {
+        throw reason
+    },
 ) {
     if (!languageValues.isPromise(result, operationContext)) {
-        return errorUtils.runFatal(operationContext, onFulfilled, result)
+        return onFulfilled(result)
     }
     return result.then(
         value => errorUtils.runFatal(operationContext, onFulfilled, value),
-        errorUtils.reportFatalError,
+        reason => errorUtils.runFatal(operationContext, onRejected, reason),
     )
 }
 

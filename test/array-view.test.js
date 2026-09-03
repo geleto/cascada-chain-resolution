@@ -3,6 +3,7 @@ import {
     assignPath,
     buildRefIndex,
     deferred,
+    errorCause,
     expect,
     exportValue,
     flushMicrotasks,
@@ -208,7 +209,7 @@ describe("ArrayView", () => {
         expect(await errors).to.eql([error])
         const outcome = await exported
         expect(outcome instanceof Error).to.be(true)
-        expect(outcome).to.be(error)
+        expect(errorCause(outcome)).to.be(error)
         verifyRefCounts(view, source)
     })
 
@@ -382,7 +383,7 @@ describe("ArrayView", () => {
 
         const result = run(source, [], "push", [2], {})
 
-        expect(result).to.be(failure)
+        expect(errorCause(result)).to.be(failure)
         expect(exportValue(source, [])).to.eql([1])
     })
 
@@ -402,8 +403,8 @@ describe("ArrayView", () => {
 
         const result = run(chain, [], "push", [3], { mutationScopeDepth: 0 })
 
-        expect(result).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(errorCause(result)).to.be(failure)
+        expect(chain._state.value).to.be(result)
         expect([...view]).to.eql([1, 2])
         expect(exportValue(source, [])).to.eql([1])
     })

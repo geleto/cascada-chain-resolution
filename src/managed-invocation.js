@@ -101,7 +101,11 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
     function visit(value) {
         if (!operationLifecycle.mayContinue(invocationContext)) return undefined
         if (languageValues.isError(value)) {
-            preparation.errors.add(value)
+            preparation.errors.add(errorUtils.toPoison(
+                value,
+                invocationContext.operationContext,
+                errorUtils.ERROR_KIND.InvalidManagedReceiver,
+            ))
             return undefined
         }
         if (
@@ -153,6 +157,8 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
     function catchFailure(step) {
         return errorUtils.catchUserCodeFailure(
             step,
+            invocationContext.operationContext,
+            errorUtils.ERROR_KIND.InvalidManagedReceiver,
             failure => {
                 languageValues.admitReadyValue(failure, invocationContext.operationContext)
                 preparation.errors.add(failure)
@@ -193,6 +199,11 @@ function combineReadiness(invocationContext, waits) {
 
 // Common dispatch rejects `constructor` before either managed policy runs.
 function getManagedRecordMethod(receiver, invocationContext) {
+    const present = languageProperties.hasLanguageProperty(
+        receiver,
+        invocationContext.method,
+        invocationContext.operationContext,
+    )
     const callable = languageProperties.readLanguageProperty(
         receiver,
         invocationContext.method,
@@ -200,7 +211,11 @@ function getManagedRecordMethod(receiver, invocationContext) {
     )
     return typeof callable === "function"
         ? callable
-        : invocation.methodNotCallableError(invocationContext.method)
+        : invocation.methodNotCallableError(
+            invocationContext.method,
+            invocationContext.operationContext,
+            present,
+        )
 }
 
 function getManagedClassMethod(receiver, invocationContext) {
@@ -209,6 +224,8 @@ function getManagedClassMethod(receiver, invocationContext) {
         return errorUtils.validationError(
             `Cannot call ${method} because an own data property ` +
             "with that name hides the method",
+            operationContext,
+            errorUtils.ERROR_KIND.NotAFunction,
         )
     }
     let prototype = metadata.requireMeta(
@@ -224,19 +241,20 @@ function getManagedClassMethod(receiver, invocationContext) {
         )
         if (descriptor) {
             if (!("value" in descriptor)) {
-                errorUtils.reportFatalError(
-                    new Error("Managed class prototype accessor changed"),
-                )
+                throw new Error("Managed class prototype accessor changed")
             }
             return typeof descriptor.value === "function"
                 ? descriptor.value
-                : invocation.methodNotCallableError(method)
+                : invocation.methodNotCallableError(
+                    method,
+                    operationContext,
+                )
         }
         prototype = errorUtils.runUserCode(
             () => Object.getPrototypeOf(prototype),
         )
     }
-    return invocation.methodNotCallableError(method)
+    return invocation.methodNotCallableError(method, operationContext, false)
 }
 
 // Observation materialization path-copies only required representation changes.
@@ -256,6 +274,8 @@ function prepareMethodReceiver(
                 invocationContext,
             )
         },
+        invocationContext.operationContext,
+        errorUtils.ERROR_KIND.InvalidManagedReceiver,
         failure => {
             languageValues.admitReadyValue(failure, invocationContext.operationContext)
             return failure
@@ -427,9 +447,7 @@ function requiresIsolation(value, operationContext) {
 
 function copyCompleteGraph(source, operationContext, copies = new Map()) {
     if (languageValues.isPromise(source, operationContext)) {
-        errorUtils.reportFatalError(
-            new Error("Prepared managed receiver contains a Promise"),
-        )
+        throw new Error("Prepared managed receiver contains a Promise")
     }
     languageValues.admitValue(source, operationContext)
     if (!languageValues.isTraversable(source, operationContext)) return source
@@ -457,14 +475,30 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
 }
 
 function invokeObservation(callable, receiver, args, operationContext) {
-    return imports.import(
-        invocation.invokeHostFunction(callable, receiver, args),
+    return imports.importHostResult(
+        invocation.invokeHostFunction(
+            callable,
+            receiver,
+            args,
+            operationContext,
+        ),
         operationContext,
     )
 }
 
 function invokeMutation(callable, receiver, args, operationContext) {
-    const result = invocation.invokeHostFunction(callable, receiver, args)
+    let callFailure
+    const result = invocation.invokeHostFunction(
+        callable,
+        receiver,
+        args,
+        operationContext,
+        errorUtils.ERROR_KIND.UserCallThrew,
+        failure => callFailure = failure,
+    )
+    if (callFailure) {
+        return { mutatedValue: callFailure, result: callFailure }
+    }
     if (result === receiver) return finishMutation(receiver, receiver, operationContext)
 
     // A mutation may detach an admitted result while retaining one of its
@@ -485,7 +519,11 @@ function invokeMutation(callable, receiver, args, operationContext) {
             () => finishMutation(receiver, imported, operationContext),
         ),
         reason => ({
-            mutatedValue: errorUtils.toPoison(reason),
+            mutatedValue: errorUtils.toPoison(
+                reason,
+                operationContext,
+                errorUtils.ERROR_KIND.UserCallThrew,
+            ),
             result: admittedResult,
         }),
     )
@@ -515,12 +553,18 @@ function validateReceiver(receiver, operationContext) {
             errors.add(
                 promiseError ??= errorUtils.validationError(
                     "Managed mutation receiver contains a Promise",
+                    operationContext,
+                    errorUtils.ERROR_KIND.InvalidManagedReceiver,
                 ),
             )
             return
         }
         if (languageValues.isError(value)) {
-            errors.add(value)
+            errors.add(errorUtils.toPoison(
+                value,
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidManagedReceiver,
+            ))
             return
         }
         languageValues.admitValue(value, operationContext)

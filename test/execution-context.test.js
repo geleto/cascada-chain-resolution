@@ -162,8 +162,10 @@ describe("operation context", () => {
         const firstMeta = metadata.metaOf(value, firstOperationContext)
         const secondMeta = metadata.metaOf(value, secondOperationContext)
         expect(firstMeta).not.to.be(secondMeta)
-        expect(firstMeta.importBoundary.errorContext).to.be("first import")
-        expect(secondMeta.importBoundary.errorContext).to.be("second import")
+        expect(firstMeta.imported).to.be(true)
+        expect(secondMeta.imported).to.be(true)
+        expect(Object.hasOwn(firstMeta, "importPolicy")).to.be(false)
+        expect(Object.hasOwn(secondMeta, "importPolicy")).to.be(false)
         expect(propertyVersions.getPromiseMirror(
             value,
             "pending",
@@ -175,8 +177,8 @@ describe("operation context", () => {
         ))
 
         await flushMicrotasks()
-        expect(firstMeta.mirrors.pending.value).to.eql({ ready: true })
-        expect(secondMeta.mirrors.pending.value).to.eql({ ready: true })
+        expect(firstMeta.placementVersions.pending.value).to.eql({ ready: true })
+        expect(secondMeta.placementVersions.pending.value).to.eql({ ready: true })
     })
 
     it("isolates ownership and Array projections by execution", () => {
@@ -215,7 +217,7 @@ describe("operation context", () => {
         expect(metadata.metaOf(value, secondOperationContext)).to.be(admitted)
     })
 
-    it("keeps each import source in later diagnostics", () => {
+    it("attributes later failures to the operation that causes them", () => {
         const execution = new runtime.Execution()
         const firstOperationContext = operationContext(execution, "first source")
         const secondOperationContext = operationContext(execution, "second source")
@@ -237,11 +239,11 @@ describe("operation context", () => {
             deleteOperationContext,
         )
 
-        expect(firstFailure.message).to.contain("first source")
-        expect(secondFailure.message).to.contain("second source")
+        expect(firstFailure.errorContext).to.be("delete operation")
+        expect(secondFailure.errorContext).to.be("delete operation")
     })
 
-    it("preserves a falsey import source in diagnostics", () => {
+    it("preserves a falsey operation source in diagnostics", () => {
         const execution = new runtime.Execution()
         const importOperationContext = operationContext(execution, 0)
         const imported = runtime.import(
@@ -254,7 +256,7 @@ describe("operation context", () => {
             importOperationContext,
         )
 
-        expect(failure.message).to.contain("(imported at: 0)")
+        expect(failure.errorContext).to.be(0)
     })
 
     it("samples and canonicalizes thenables independently per execution", async () => {
@@ -287,7 +289,7 @@ describe("operation context", () => {
         expect(readPath(secondChain, [], secondOperationContext)).to.be(resolved)
     })
 
-    it("retains the contexts that first sample and invoke a thenable", () => {
+    it("retains the contexts that first sample and invoke a thenable", async () => {
         const acquisitionExecution = new runtime.Execution()
         const acquisitionOperationContext = operationContext(
             acquisitionExecution,
@@ -298,11 +300,17 @@ describe("operation context", () => {
                 throw new Error("acquisition failed")
             },
         })
-        new runtime.Chain(acquisitionFailure, acquisitionOperationContext)
-        expect(
-            acquisitionExecution._thenables.get(acquisitionFailure)
-                .acquisitionOperationContext,
-        ).to.be(acquisitionOperationContext)
+        const acquisitionChain = new runtime.Chain(
+            acquisitionFailure,
+            acquisitionOperationContext,
+        )
+        const acquisitionError = await readPath(
+            acquisitionChain,
+            [],
+            operationContext(acquisitionExecution, "later acquisition"),
+        )
+        expect(acquisitionError.errorContext).to.be("then acquisition")
+        expect(acquisitionError.kind).to.be("ThenAccessThrew")
 
         const invocationExecution = new runtime.Execution()
         const invocationOperationContext = operationContext(
@@ -314,11 +322,17 @@ describe("operation context", () => {
                 throw new Error("invocation failed")
             },
         }
-        new runtime.Chain(invocationFailure, invocationOperationContext)
-        expect(
-            invocationExecution._thenables.get(invocationFailure)
-                .invocationOperationContext,
-        ).to.be(invocationOperationContext)
+        const invocationChain = new runtime.Chain(
+            invocationFailure,
+            invocationOperationContext,
+        )
+        const invocationError = await readPath(
+            invocationChain,
+            [],
+            operationContext(invocationExecution, "later invocation"),
+        )
+        expect(invocationError.errorContext).to.be("then invocation")
+        expect(invocationError.kind).to.be("ThenInvocationThrew")
     })
 
     it("applies current declarations independently at first admission", () => {

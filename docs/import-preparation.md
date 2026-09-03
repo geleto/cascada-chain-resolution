@@ -14,13 +14,13 @@ During the initial synchronous import segment, only those paths are searched. A 
 
 Each available synchronous segment uses one transactional identity walk:
 
-1. Classify every newly reached identity from its declarations and defaults.
+1. Recognize native Errors and classify every other newly reached identity from its declarations and defaults.
 2. Traverse new managed records, Arrays, and class instances once while preserving aliases and cycles.
 3. Stop at external identities, Functions, and Errors.
 4. Capture each reached Promise placement without awaiting it.
-5. Commit admission, origin, sharing, and Promise mirrors only after the complete segment validates.
+5. Commit admission, origin, sharing, Promise mirrors, and fixed Error versions only after the complete segment validates.
 
-The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. A supported enumeration, descriptor, validation, or host-reflection failure returns a language Error for that whole synchronous segment and commits nothing from it; an existing Error remains data and an internal failure is fatal.
+The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. A supported enumeration, descriptor, validation, or host-reflection failure returns a contextual language Error for that whole synchronous segment and commits nothing from it; an existing contextual Error remains data and an internal failure is fatal. A native Error at the root returns its occurrence wrapper. A nested native Error remains physically unchanged while the importer stages its wrapper as that placement's fixed logical version.
 
 An already admitted identity keeps its category and origin and is not rescanned. When importing it adds another owner, an admitted managed identity is marked shared. Import builds no refcount index.
 
@@ -28,9 +28,9 @@ Public `import(value, operationContext)` creates no static external mutation tre
 
 ## Promise boundaries
 
-A direct Promise root returns one operation Promise. Fulfillment completes the same import before exposing its value; rejection remains a rejection.
+A direct Promise root returns one operation Promise. Fulfillment completes the same import before exposing its value. Rejection remains rejection, with a raw reason contextualized to the import operation and an existing contextualized reason preserved.
 
-A nested Promise belongs to its captured property version. Its fulfillment imports newly exposed data before publishing the logical value, while rejection publishes a language Error. Imported physical storage keeps the original Promise; the mirror stores its logical settlement without writeback. Runtime-owned Promise properties retain ordinary writeback.
+A nested Promise belongs to its captured property version. Its fulfillment imports newly exposed data before publishing the logical value, while rejection publishes a contextual language Error attributed to this import boundary. Imported physical storage keeps the original Promise; the mirror stores its logical settlement without writeback. Runtime-owned Promise properties retain ordinary writeback.
 
 ## Ownership
 
@@ -43,4 +43,4 @@ Application code must not mutate managed data after passing it to Cascada. Exter
 - `src/import.js` owns the public boundary and direct-Promise completion.
 - `src/import-preparation.js` owns the transactional admission walk.
 - `src/meta.js` owns declarations, admitted facts, and origin metadata.
-- `src/property-versions.js` owns captured Promise placements and settlement publication.
+- `src/property-versions.js` owns placement overlays, captured Promise settlement, and fixed imported-Error versions.

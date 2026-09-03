@@ -36,7 +36,7 @@ async function assertOutcome(
     }
     if (expected instanceof Error) {
         assert(actual instanceof Error, scenario.message)
-        assert.deepStrictEqual(actual, expected, scenario.message)
+        assert.deepStrictEqual(actual.cause ?? actual, expected, scenario.message)
         return actual
     }
     assert(!(actual instanceof Error), scenario.message)
@@ -64,6 +64,7 @@ function callNativeMethod(prototype, source, method, args) {
 }
 
 function cloneData(value, clones = new Map()) {
+    if (Error.isError(value)) return value.cause ?? value
     if (!Array.isArray(value)) return value
     const existing = clones.get(value)
     if (existing) return existing

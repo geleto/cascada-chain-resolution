@@ -5,6 +5,7 @@ import {
     assignPath,
     buildRefIndex,
     deferred,
+    errorCause,
     expect,
     expectCounts,
     flushMicrotasks,
@@ -235,7 +236,7 @@ describe("managed class copy-on-write", () => {
         const copy = chain._state.value
 
         expect(copy instanceof Result).to.be(true)
-        expect(copy.error).to.be(source.error)
+        expect(errorCause(copy.error)).to.be(source.error)
         expectCounts(source, 0, 1)
         expectCounts(copy, 0, 1)
         verifyRefCounts(source, copy)

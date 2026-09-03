@@ -1,4 +1,5 @@
 import { runInNewContext } from "node:vm"
+import * as errorUtils from "../src/error.js"
 
 import {
     Chain,
@@ -10,6 +11,7 @@ import {
     enter,
     expect,
     externalState,
+    errorCause,
     exportValue,
     flushMicrotasks,
     getRefCounter,
@@ -346,7 +348,7 @@ describe("run", () => {
         })
         const chain = new Chain(source)
 
-        expect(run(chain, [], "fail", [], {})).to.be(failure)
+        expect(errorCause(run(chain, [], "fail", [], {}))).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
     })
@@ -372,7 +374,7 @@ describe("run", () => {
         )
         argument.resolve("ready")
 
-        expect(await result).to.be(failure)
+        expect(errorCause(await result)).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
         expect(metaOf(source).readLeaseCount).to.be(undefined)
@@ -401,7 +403,7 @@ describe("run", () => {
         )
         argument.resolve("ready")
         returned.resolve(fulfilledError)
-        expect(await fulfilled).to.be(fulfilledError)
+        expect(errorCause(await fulfilled)).to.be(fulfilledError)
 
         const ready = run(
             chain,
@@ -411,7 +413,7 @@ describe("run", () => {
             {},
         )
         expect(ready).not.to.be(returned.promise)
-        expect(await ready).to.be(fulfilledError)
+        expect(errorCause(await ready)).to.be(fulfilledError)
 
         const returnedData = deferred()
         const hostValue = {}
@@ -425,7 +427,7 @@ describe("run", () => {
         expect(dataResult).not.to.be(returnedData.promise)
         returnedData.resolve(hostValue)
         expect(await dataResult).to.be(hostValue)
-        expect(metaOf(hostValue).importBoundary).not.to.be(undefined)
+        expect(metaOf(hostValue).imported).to.be(true)
 
         const failed = deferred()
         Object.defineProperty(source, "failure", {
@@ -442,7 +444,7 @@ describe("run", () => {
         } catch (error) {
             rejected = error
         }
-        expect(rejected).to.be(rejectedError)
+        expect(errorCause(rejected)).to.be(rejectedError)
         expect(chain._state.value).to.be(source)
     })
 
@@ -558,7 +560,7 @@ describe("run", () => {
         } catch (error) {
             rejection = error
         }
-        expect(rejection).to.be(failure)
+        expect(errorCause(rejection)).to.be(failure)
 
         assignPath(chain, ["value"], 2)
         expect(chain._state.value).to.be(source)
@@ -634,7 +636,7 @@ describe("run", () => {
         const result = await invocation
         expect(result).to.be(root)
         expect(Reflect.ownKeys(root)).to.eql(languageKeys)
-        expect(metaOf(root).importBoundary).to.be(undefined)
+        expect(metaOf(root).imported).to.be(undefined)
         expect(metaOf(root).shared).to.be(true)
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
@@ -909,7 +911,7 @@ describe("run", () => {
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
         expect(Array.isArray(middleConcat)).to.be(true)
-        expect(metaOf(nestedSource.values).importBoundary).not.to.be(undefined)
+        expect(metaOf(nestedSource.values).imported).to.be(true)
         expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])
@@ -994,10 +996,10 @@ describe("run", () => {
             {},
         )
 
-        expect(flat).to.eql([direct])
+        expect(flat.map(errorCause)).to.eql([direct])
         expect(inspected instanceof Promise).to.be(true)
         nested.reject(direct)
-        expect(await inspected).to.be(direct)
+        expect(errorCause(await inspected)).to.be(direct)
         expect(received).to.be(undefined)
     })
 
@@ -1026,9 +1028,7 @@ describe("run", () => {
         )
 
         expect(invoked).to.be(false)
-        expect(result.errors.length).to.be(2)
-        expect(result.errors[0].errors).to.eql([first, second])
-        expect(result.errors[1]).to.be(third)
+        expect(result.errors.map(errorCause)).to.eql([first, second, third])
     })
 
     it("keeps shared failed inputs as separate argument roots", () => {
@@ -1056,9 +1056,7 @@ describe("run", () => {
         )
 
         expect(invoked).to.be(false)
-        expect(result.errors.length).to.be(2)
-        expect(result.errors[0].errors).to.eql([first, second])
-        expect(result.errors[1].errors).to.eql([first, second])
+        expect(result.errors.map(errorCause)).to.eql([first, second])
     })
 
     it("poisons only arguments consumed by an Array method", async () => {
@@ -1067,15 +1065,15 @@ describe("run", () => {
         const pending = deferred()
         const concatItem = deferred()
 
-        expect(run(
+        expect(errorCause(run(
             new Chain("abc"),
             [],
             "slice",
             [direct],
             {},
 
-        )).to.be(direct)
-        expect(run(
+        ))).to.be(direct)
+        expect(errorCause(run(
             new Chain([1]),
             [],
             "with",
@@ -1085,7 +1083,7 @@ describe("run", () => {
             ],
             {},
 
-        )).to.be(direct)
+        ))).to.be(direct)
 
         const pushed = new Chain([1])
         expect(run(
@@ -1096,7 +1094,7 @@ describe("run", () => {
             { mutationScopeDepth: 0 },
 
         )).to.be(2)
-        expect(pushed._state.value).to.eql([1, direct])
+        expect(errorCause(readPath(pushed, ["1"]))).to.be(direct)
 
         const pushedPromise = deferred()
         const promisedPush = new Chain([])
@@ -1110,33 +1108,33 @@ describe("run", () => {
         )).to.be(1)
         pushedPromise.reject(rejected)
         await flushMicrotasks()
-        expect(readPath(promisedPush, ["0"])).to.be(rejected)
+        expect(errorCause(readPath(promisedPush, ["0"]))).to.be(rejected)
         expect(promisedPush._state.value).not.to.be(rejected)
 
-        expect(run(
+        expect(errorCause(run(
             new Chain([direct]),
             [],
             "includes",
             [direct],
             {},
 
-        )).to.be(direct)
-        expect(run(
+        ))).to.be(direct)
+        expect(errorCause(run(
             new Chain([direct]),
             [],
             "indexOf",
             [direct],
             {},
 
-        )).to.be(direct)
-        expect(run(
+        ))).to.be(direct)
+        expect(errorCause(run(
             new Chain([direct]),
             [],
             "lastIndexOf",
             [direct],
             {},
 
-        )).to.be(direct)
+        ))).to.be(direct)
 
         const concatenated = run(
             new Chain([]),
@@ -1146,7 +1144,7 @@ describe("run", () => {
             {},
         )
         concatItem.reject(rejected)
-        expect(await concatenated).to.be(rejected)
+        expect(errorCause(await concatenated)).to.be(rejected)
 
         const delayed = run(
             new Chain([1]),
@@ -1156,26 +1154,27 @@ describe("run", () => {
             {},
         )
         pending.reject(rejected)
-        expect(await delayed).to.be(rejected)
+        expect(errorCause(await delayed)).to.be(rejected)
 
         const mutation = new Chain([1, 2])
-        expect(run(
+        const mutationFailure = run(
             mutation,
             [],
             "copyWithin",
             [direct],
             { mutationScopeDepth: 0 },
 
-        )).to.be(direct)
-        expect(run(
+        )
+        expect(errorCause(mutationFailure)).to.be(direct)
+        expect(errorCause(run(
             new Chain([]),
             [],
             "concat",
             [direct],
             {},
 
-        )).to.be(direct)
-        expect(mutation._state.value).to.be(direct)
+        ))).to.be(direct)
+        expect(mutation._state.value).to.be(mutationFailure)
 
         const mutationPending = deferred()
         const delayedMutation = new Chain([1, 2])
@@ -1187,8 +1186,9 @@ describe("run", () => {
             { mutationScopeDepth: 0 },
         )
         mutationPending.reject(rejected)
-        expect(await mutationResult).to.be(rejected)
-        expect(delayedMutation._state.value).to.be(rejected)
+        const delayedFailure = await mutationResult
+        expect(errorCause(delayedFailure)).to.be(rejected)
+        expect(delayedMutation._state.value).to.be(delayedFailure)
     })
 
     it("does not resolve ignored controlled Array arguments", () => {
@@ -1213,7 +1213,7 @@ describe("run", () => {
         ignored.resolve(2)
     })
 
-    it("combines argument Errors without flattening compounds", async () => {
+    it("does not treat an arbitrary .errors property as a compound", async () => {
         const firstPending = deferred()
         const secondPending = deferred()
         const first = new Error("first")
@@ -1236,9 +1236,9 @@ describe("run", () => {
         firstPending.reject(first)
 
         const combined = await delayed
-        expect(combined.errors).to.eql([first, second])
+        expect(combined.errors.map(errorCause)).to.eql([first, second])
         expect(combined.errors.includes(nested)).to.be(false)
-        expect(combined.errors[1].errors).to.eql([nested])
+        expect(errorCause(combined.errors[1]).errors).to.eql([nested])
 
         const ready = run(
             new Chain([1, 2]),
@@ -1251,7 +1251,7 @@ describe("run", () => {
             ],
             {},
         )
-        expect(ready.errors).to.eql([first, second])
+        expect(ready.errors.map(errorCause)).to.eql([first, second])
 
         const concatPending = deferred()
         const concatResult = run(
@@ -1267,7 +1267,7 @@ describe("run", () => {
         )
         concatPending.reject(second)
         const concatCombined = await concatResult
-        expect(concatCombined.errors).to.eql([first, second])
+        expect(concatCombined.errors.map(errorCause)).to.eql([first, second])
         expect(concatCombined.errors.includes(nested)).to.be(false)
     })
 
@@ -1295,7 +1295,7 @@ describe("run", () => {
             {},
         )
 
-        expect(result).to.be(failure)
+        expect(errorCause(result)).to.be(failure)
         expect(reflections).to.be(0)
     })
 
@@ -1346,6 +1346,8 @@ describe("run", () => {
 
         expect(missing.message).to.be("Method is not callable: missing")
         expect(accessor.message).to.be("Method is not callable: __proto__")
+        expect(missing.kind).to.be(errorUtils.ERROR_KIND.MissingFunction)
+        expect(accessor.kind).to.be(errorUtils.ERROR_KIND.NotAFunction)
         expect(registrations()).to.be(before)
         const failure = new Error("unused argument rejected")
         const handled = pending.promise.catch(error => error)
@@ -1695,7 +1697,7 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        expect(run(new Chain(source), [], "slice", [0], {})).to.be(
+        expect(errorCause(run(new Chain(source), [], "slice", [0], {}))).to.be(
             failure,
         )
     })
@@ -1943,8 +1945,8 @@ describe("run", () => {
         expect(metaOf(payload).readLeaseCount).to.be(1)
 
         start.reject(failure)
-        expect(await result).to.be(failure)
-        expect(receiver._state.value).to.be(failure)
+        expect(errorCause(await result)).to.be(failure)
+        expect(errorCause(receiver._state.value)).to.be(failure)
         expect(metaOf(payload).readLeaseCount).to.be(undefined)
     })
 
@@ -2323,6 +2325,40 @@ describe("run", () => {
         comparison.resolve(0)
     })
 
+    it("propagates a RuntimeError returned by a comparator", () => {
+        const source = [2, 1]
+        const chain = new Chain(source)
+        const failure = new errorUtils.RuntimeError(
+            new Error("fatal comparator result"),
+            "comparator internals",
+        )
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            const caught = thrownBy(() => run(
+                chain,
+                [],
+                "sort",
+                [() => failure],
+                { mutationScopeDepth: 0 },
+            ))
+
+            expect(caught).to.be(failure)
+            expect(reported).to.be(failure)
+            expect(source).to.eql([2, 1])
+        } finally {
+            setFatalErrorReporter()
+        }
+    })
+
+    it("attributes String conversion failures to conversion", () => {
+        const failure = run(new Chain([Symbol("value")]), [], "join", [], {})
+
+        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ConversionThrew)
+    })
+
     it("exports one aliased snapshot to a sort comparator", () => {
         const shared = { rank: 2 }
         const first = { rank: 1 }
@@ -2370,7 +2406,7 @@ describe("run", () => {
             [comparator],
             {},
         )
-        expect(failed).to.be(failure)
+        expect(errorCause(failed)).to.be(failure)
         expect(called).to.be(false)
 
         const retained = run(
@@ -2380,7 +2416,7 @@ describe("run", () => {
             [comparator],
             {},
         )
-        expect(retained[0]).to.be(failure)
+        expect(errorCause(retained[0])).to.be(failure)
         expect(called).to.be(false)
     })
 
@@ -2856,7 +2892,7 @@ describe("run", () => {
         expect(metaOf(retained).readLeaseCount).to.be(undefined)
 
         pending.resolve("done")
-        expect(await result).to.be(failure)
+        expect(errorCause(await result)).to.be(failure)
     })
 
     it("continues Error collection after preparation fails", async () => {
@@ -2887,7 +2923,7 @@ describe("run", () => {
             },
         })
         pending.resolve(late)
-        expect(await result).to.be(failure)
+        expect(errorCause(await result)).to.be(failure)
 
         expect(reflected).to.be(true)
         expect(metaOf(late).readLeaseCount).to.be(undefined)
@@ -2904,7 +2940,7 @@ describe("run", () => {
         const receiver = {}
         Object.defineProperty(receiver, "read", { value() {} })
 
-        expect(thrownBy(() => run(
+        expect(errorCause(thrownBy(() => run(
             new Chain(receiver),
             [],
             "read",
@@ -2914,7 +2950,7 @@ describe("run", () => {
             ],
             {},
 
-        ))).to.be(failure)
+        )))).to.be(failure)
 
         let reflected = false
         const late = new Proxy({}, {
@@ -2939,7 +2975,7 @@ describe("run", () => {
             },
         }
 
-        expect(thrownBy(() => run(
+        expect(errorCause(thrownBy(() => run(
             new Chain([]),
             [],
             "concat",
@@ -2949,7 +2985,7 @@ describe("run", () => {
             ],
             {},
 
-        ))).to.be(failure)
+        )))).to.be(failure)
 
         let reflected = false
         const late = new Proxy([1], {
@@ -2982,7 +3018,7 @@ describe("run", () => {
                 reportFatalError(failure)
             },
         }))
-        expect(await result.catch(error => error)).to.be(failure)
+        expect(errorCause(await result.catch(error => error))).to.be(failure)
 
         let reflected = false
         const lateArray = new Proxy([2], {
@@ -3195,8 +3231,9 @@ describe("run", () => {
         })
         const chain = new Chain(receiver)
 
-        expect(run(chain, [], "reverse", [], { mutationScopeDepth: 0 })).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const result = run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
+        expect(errorCause(result)).to.be(failure)
+        expect(chain._state.value).to.be(result)
         expect([...receiver]).to.eql([1, 2])
     })
 
@@ -3239,8 +3276,8 @@ describe("run", () => {
 
             const result = run(chain, [], method, [], { mutationScopeDepth: 0 })
 
-            expect(result).to.be(failure)
-            expect(chain._state.value).to.be(failure)
+            expect(errorCause(result)).to.be(failure)
+            expect(chain._state.value).to.be(result)
             verifyRefCounts(receiver)
         }
     })
@@ -3258,8 +3295,8 @@ describe("run", () => {
         { mutationScopeDepth: 0 },
         )
 
-        expect(result).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(errorCause(result)).to.be(failure)
+        expect(chain._state.value).to.be(result)
         expect(source).to.eql([2, 1])
     })
 
@@ -3280,8 +3317,9 @@ describe("run", () => {
             throw failure
         })
 
-        expect(await result).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        const outcome = await result
+        expect(errorCause(outcome)).to.be(failure)
+        expect(chain._state.value).to.be(outcome)
         expect(source).to.eql([2, 1])
     })
 
@@ -3294,7 +3332,9 @@ describe("run", () => {
         const unlimited = run(chain, ["items"], "flat", [Infinity], {})
         const bounded = run(chain, ["items"], "flat", [2], {})
 
-        expect(unlimited instanceof RangeError).to.be(true)
+        expect(unlimited.message).to.be(
+            "Cannot flat an Array cycle to unlimited depth",
+        )
         expect(bounded instanceof Error).to.be(false)
         expect(bounded.length).to.be(4)
         expect(bounded.slice(0, 3)).to.eql([1, 1, 1])

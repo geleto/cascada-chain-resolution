@@ -30,7 +30,25 @@ Do not place semantic managed state outside graph-visible properties. Cascada ma
 - Number, Boolean, BigInt, Symbol, `null`, and `undefined` have no methods or property writes.
 - A Promise has no direct operations; the resolved value determines its capabilities.
 - A Promise input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to a call rejected while its receiver is ready; application code remains responsible for handling its rejection. While receiver selection is pending, explicit call arguments are provisionally consumed only at root availability so their captured values can be preserved if the boundary uses them.
-- An Error has no operations and propagates as language data when consumed.
+- A language Error has no operations and propagates when consumed.
+
+## Errors
+
+`PoisonError` is recoverable language data. It records an opaque source context,
+a stable failure kind, and, for a native host Error, that Error in `.cause`.
+Once contextualized, the occurrence propagates unchanged; a later consumer does
+not replace its source. Reusing one native Error at another causal boundary
+creates another wrapper for that occurrence.
+
+`CompoundPoisonError` contains flattened leaves in `.errors`, preserves their
+logical order and individual attribution, and keeps one leaf per
+`leaf.cause ?? leaf`. `RuntimeError` represents a fatal runtime or host-contract
+failure. It is reported and rethrown, never treated as language data.
+
+Imported host storage keeps nested native Error objects unchanged while Cascada
+exposes their contextual wrappers as the logical property values. Declaration
+APIs are outside the graph and therefore return a supplied Error unchanged. No
+language Error is exported to host code.
 
 ## Classification and declarations
 

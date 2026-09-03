@@ -40,12 +40,7 @@ class ErrorQueryContext {
     }
 
     runTransition(transition) {
-        return operationLifecycle.run(this, () => {
-            return errorUtils.catchUserCodeFailure(
-                transition,
-                error => this.fail(error),
-            )
-        })
+        return operationLifecycle.run(this, transition)
     }
 
     found(error) {
@@ -64,7 +59,7 @@ class ErrorQueryContext {
         // Query reflection is neither a Boolean result nor graph Error data.
         // An asynchronous path failure has no enclosing query transition.
         operationLifecycle.close(this)
-        return errorUtils.reportFatalError(error)
+        throw error
     }
 
     finish(result) {
@@ -252,7 +247,7 @@ function walkObservationPath(
     path,
     operationContext,
     onResolved,
-    onUserCodeFailure = error => error,
+    onUserCodeFailure = undefined,
 ) {
     const rootState = chain._state
     const targetPath = ["value", ...path]
@@ -261,6 +256,7 @@ function walkObservationPath(
     function walkFromParent(parent, index) {
         const key = languageProperties.normalizePathSegment(
             targetPath[index],
+            operationContext,
         )
         if (languageValues.isError(key)) {
             languageValues.admitReadyValue(key, operationContext)
@@ -300,6 +296,7 @@ function walkObservationPath(
         if (typeof value === "string") {
             const key = languageProperties.normalizePathSegment(
                 targetPath[index + 1],
+                operationContext,
             )
             if (languageValues.isError(key)) {
                 languageValues.admitReadyValue(key, operationContext)
@@ -310,7 +307,7 @@ function walkObservationPath(
             }
         }
         if (!languageValues.isTraversable(value, operationContext)) {
-            const failure = errorUtils.pathAccessError()
+            const failure = errorUtils.pathAccessError(value, operationContext)
             languageValues.admitReadyValue(failure, operationContext)
             return onResolved(failure, false)
         }
@@ -318,10 +315,16 @@ function walkObservationPath(
     }
 
     function runTraversal(traverse) {
-        return errorUtils.catchUserCodeFailure(
-            traverse,
-            onUserCodeFailure,
-        )
+        return onUserCodeFailure
+            ? errorUtils.catchRawUserCodeFailure(
+                traverse,
+                onUserCodeFailure,
+            )
+            : errorUtils.catchUserCodeFailure(
+                traverse,
+                operationContext,
+                errorUtils.ERROR_KIND.LookupThrew,
+            )
     }
 }
 

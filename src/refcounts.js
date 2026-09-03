@@ -1,4 +1,3 @@
-import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -13,9 +12,7 @@ function getRefCounter(node, operationContext) {
 function getRequiredRefCounter(node, operationContext) {
     const counter = getRefCounter(node, operationContext)
     if (!counter) {
-        errorUtils.reportFatalError(
-            new Error("Ref counts require a ref-indexed value"),
-        )
+        throw new Error("Ref counts require a ref-indexed value")
     }
     return counter
 }
@@ -310,9 +307,7 @@ function prepareCountUpdate(
         const existing = states.get(current)
         if (existing) {
             if (!existing.complete) {
-                errorUtils.reportFatalError(
-                    new Error("Ref-count parent graph contains a cycle"),
-                )
+                throw new Error("Ref-count parent graph contains a cycle")
             }
             return existing
         }

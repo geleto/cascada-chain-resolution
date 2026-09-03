@@ -18,6 +18,8 @@ function toStringValue(value, ancestry, operation) {
             stringConcat,
             "",
             [primitive],
+            operation.operationContext,
+            errorUtils.ERROR_KIND.ConversionThrew,
         ),
     )
 }
@@ -30,7 +32,11 @@ function toNumberValue(value, operation) {
             try {
                 return +primitive
             } catch (error) {
-                return errorUtils.toPoison(error)
+                return errorUtils.toPoison(
+                    error,
+                    operation.operationContext,
+                    errorUtils.ERROR_KIND.ConversionThrew,
+                )
             }
         },
     )
@@ -65,12 +71,12 @@ function toPrimitiveValue(value, ancestry, operation) {
                     resolved,
                     operation.operationContext,
                 ).admittedPrototype === null
-                    ? conversionError()
+                    ? conversionError(operation.operationContext)
                     : "[object Object]"
             }
             return type === languageValues.TYPE_MANAGED_CLASS
                 ? "[object Object]"
-                : conversionError()
+                : conversionError(operation.operationContext)
         },
     )
 }
@@ -87,9 +93,11 @@ function toIntegerOrInfinity(value, operation) {
     )
 }
 
-function conversionError() {
+function conversionError(operationContext) {
     return errorUtils.validationError(
         "Cannot convert object to primitive value",
+        operationContext,
+        errorUtils.ERROR_KIND.ConversionThrew,
     )
 }
 
@@ -133,6 +141,7 @@ function joinLogicalArray(
             arrayJoin,
             values,
             [separator],
+            operation.operationContext,
         ),
     )
 }

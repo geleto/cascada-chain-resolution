@@ -254,7 +254,7 @@ const languageValues = {
 const testMetadata = {
     ...metadata,
     metaOf,
-    importBoundaryOf: value => metadata.importBoundaryOf(
+    isImported: value => metadata.isImported(
         value,
         testOperationContext(),
     ),
@@ -346,6 +346,10 @@ export {
     getRefCounts,
 }
 
+function errorCause(value) {
+    return value?.cause ?? value
+}
+
 function verifyRefCounts(...values) {
     return verifyExecutionRefCounts(
         testOperationContext("test ref verification"),
@@ -367,6 +371,7 @@ export {
     deletePath,
     decrementReadLease,
     enter,
+    errorCause,
     exportValue,
     getErrors,
     hasError,

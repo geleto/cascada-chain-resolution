@@ -10,6 +10,7 @@ import {
     decrementReadLease,
     deferred,
     enter,
+    errorCause,
     expect,
     exportValue,
     flushMicrotasks,
@@ -185,9 +186,9 @@ describe("enter", () => {
         const rejected = new Error("rejected")
         pending.reject(rejected)
 
-        expect(directResult).to.be(directError)
+        expect(errorCause(directResult)).to.be(directError)
         expect(directCalls).to.be(0)
-        expect(await pendingResult).to.be(rejected)
+        expect(errorCause(await pendingResult)).to.be(rejected)
         expect(pendingCalls).to.be(0)
     })
 
@@ -355,7 +356,7 @@ describe("enter", () => {
             return completion.promise
         })
 
-        expect(result).to.be(completion.promise)
+        expect(result).not.to.be(completion.promise)
         assignPath(entered, ["value"], 2)
         completion.resolve("done")
         expect(await result).to.be("done")
@@ -600,14 +601,14 @@ describe("enter", () => {
         expect(external.target).to.be(pending.promise)
     })
 
-    it("preserves imported attribution through read-only entry", () => {
+    it("preserves imported storage through read-only entry", () => {
         const child = { value: 1 }
         const target = { child }
         const external = { target }
         const chain = new Chain(importValue(external, "read target"))
         let extracted
 
-        expect(metaOf(target).importBoundary).not.to.be(undefined)
+        expect(metaOf(target).imported).to.be(true)
         const result = enter(chain, ["target"], false, entered => {
             extracted = lookupPath(entered, ["child"])
             return "read"
@@ -615,10 +616,8 @@ describe("enter", () => {
 
         expect(result).to.be("read")
         expect(extracted).to.be(child)
-        expect(metaOf(target).importBoundary.errorContext)
-            .to.be("read target")
-        expect(metaOf(child).importBoundary.errorContext)
-            .to.be("read target")
+        expect(metaOf(child).imported).to.be(true)
+        expect(Object.hasOwn(metaOf(target), "importPolicy")).to.be(false)
         expect(metaOf(target).readLeaseCount).to.be(undefined)
     })
 
@@ -673,7 +672,7 @@ describe("enter", () => {
         await flushMicrotasks()
 
         expect(calls).to.be(1)
-        expect(root.target).to.be(error)
+        expect(errorCause(root.target)).to.be(error)
     })
 
     it("lets an exact later replacement supersede a pending gate", async () => {
@@ -878,13 +877,13 @@ describe("enter", () => {
         let errorMutationCalls = 0
         expect(enter(chain, ["error"], true, entered => {
             errorMutationCalls++
-            expect(readPath(entered, [])).to.be(error)
+            expect(errorCause(readPath(entered, []))).to.be(error)
             return "error"
         })).to.be("error")
 
         await flushMicrotasks()
         expect(primitive._state.value).to.be(2)
-        expect(root.error).to.be(error)
+        expect(errorCause(root.error)).to.be(error)
         expect(errorMutationCalls).to.be(1)
     })
 
@@ -1024,8 +1023,10 @@ describe("enter", () => {
             },
         ))
 
-        expect(caught).to.be(failure)
-        expect(reported).to.be(failure)
+        expect(errorCause(caught)).to.be(failure)
+        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught.errorContext).to.be("test enter")
+        expect(reported).to.be(caught)
         expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
     })
@@ -1061,8 +1062,10 @@ describe("enter", () => {
             caught = error
         }
 
-        expect(caught).to.be(failure)
-        expect(reported).to.be(failure)
+        expect(errorCause(caught)).to.be(failure)
+        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught.errorContext).to.be("test enter")
+        expect(reported).to.be(caught)
         expectClosed(entered)
         let gateSettled = false
         gate.then(() => {
@@ -1097,10 +1100,75 @@ describe("enter", () => {
             caught = error
         }
 
-        expect(caught).to.be(failure)
-        expect(reported).to.be(failure)
+        expect(errorCause(caught)).to.be(failure)
+        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught.errorContext).to.be("test enter")
+        expect(reported).to.be(caught)
         expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
+    })
+
+    it("closes an entry when its callback returns a RuntimeError", () => {
+        const branch = {}
+        const failure = new packageRuntime.RuntimeError(
+            new Error("fatal callback result"),
+            "callback internals",
+        )
+        let entered
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            const caught = thrownBy(() => enter(
+                new Chain({ branch }),
+                ["branch"],
+                false,
+                privateChain => {
+                    entered = privateChain
+                    return failure
+                },
+            ))
+
+            expect(caught).to.be(failure)
+            expect(reported).to.be(failure)
+            expect(metaOf(branch).readLeaseCount).to.be(undefined)
+            expectClosed(entered)
+        } finally {
+            setFatalErrorReporter()
+        }
+    })
+
+    it("closes an entry when its callback fulfills with a RuntimeError", async () => {
+        const branch = {}
+        const failure = new packageRuntime.RuntimeError(
+            new Error("fatal callback fulfillment"),
+            "callback internals",
+        )
+        let entered
+        let reported
+        setFatalErrorReporter(error => {
+            reported = error
+        })
+        try {
+            const result = enter(
+                new Chain({ branch }),
+                ["branch"],
+                false,
+                privateChain => {
+                    entered = privateChain
+                    return Promise.resolve(failure)
+                },
+            )
+            const caught = await result.catch(error => error)
+
+            expect(caught).to.be(failure)
+            expect(reported).to.be(failure)
+            expect(metaOf(branch).readLeaseCount).to.be(undefined)
+            expectClosed(entered)
+        } finally {
+            setFatalErrorReporter()
+        }
     })
 
     it("closes a failed mutating entry without publishing it", async () => {
@@ -1109,7 +1177,7 @@ describe("enter", () => {
         const failure = new Error("mutation failed")
         let entered
 
-        expect(thrownBy(() => enter(
+        const failureResult = thrownBy(() => enter(
             chain,
             ["target"],
             true,
@@ -1118,7 +1186,8 @@ describe("enter", () => {
                 assignPath(privateChain, ["value"], 2)
                 throw failure
             },
-        ))).to.be(failure)
+        ))
+        expect(errorCause(failureResult)).to.be(failure)
 
         const gate = root.target
         expect(gate instanceof Promise).to.be(true)
@@ -1148,7 +1217,7 @@ describe("enter", () => {
             caught = error
         }
 
-        expect(caught).to.be(failure)
+        expect(errorCause(caught)).to.be(failure)
         expectClosed(entered)
         await flushMicrotasks()
         expect(root.target).to.be(gate)

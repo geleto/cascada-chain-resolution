@@ -42,17 +42,25 @@ function runEnteredCallback(
         throw error
     }
     if (!languageValues.isPromise(result, operationContext)) {
-        return onFulfilled(result)
+        return finish(result)
     }
-    return resolution.observeResultPromise(
+    return resolution.continueInternalPromiseOrFatal(
         result,
         operationContext,
-        onFulfilled,
+        finish,
         reason => {
             onRejected(reason)
-            errorUtils.reportFatalError(reason)
+            throw reason
         },
     )
+
+    function finish(value) {
+        if (errorUtils.isFatalError(value)) {
+            onRejected(value)
+            throw value
+        }
+        return onFulfilled(value)
+    }
 }
 
 function enterReadOnly(
@@ -115,7 +123,6 @@ function enterMutating(
                 languageProperties.ORDINARY_PROPERTY
             ) {
                 const error = languageProperties.propertyValidationError(
-                    target.receiver,
                     "Cannot enter length for mutation",
                     operationContext,
                 )
@@ -220,9 +227,7 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
         // Preserve publication ordering for corrupt raw Promise state: issuance
         // is already closed; report the invariant failure from this FIFO slot.
         resolution.onLaterPromiseReady(value, operationContext, () => {
-            errorUtils.reportFatalError(
-                new Error("Entered root remained pending at publication"),
-            )
+            throw new Error("Entered root remained pending at publication")
         })
         return
     }
@@ -232,9 +237,7 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
         operationContext,
         publishedValue => {
             if (languageValues.isPromise(publishedValue, operationContext)) {
-                errorUtils.reportFatalError(
-                    new Error("Entered root remained pending at publication"),
-                )
+                throw new Error("Entered root remained pending at publication")
             }
             resolveGate(publishedValue)
         },

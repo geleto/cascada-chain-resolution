@@ -5,6 +5,7 @@ import {
     assignPath,
     deferred,
     enter,
+    errorCause,
     expect,
     externalState,
     flushMicrotasks,
@@ -221,7 +222,7 @@ describe("context external foundations", () => {
             [[]],
         )
 
-        expect(readPath(chain, [])).to.be(failure)
+        expect(errorCause(readPath(chain, []))).to.be(failure)
         expect(chain._externalMutationTree).to.be(undefined)
         expect(execution._externalIdentities.get(service)).to.be(undefined)
         expect(metaOf(root)).to.be(undefined)

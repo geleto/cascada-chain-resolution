@@ -11,6 +11,12 @@ class Chain {
         externalMutationTree = undefined,
     ) {
         errorUtils.runFatal(operationContext, () => {
+            initialValue = languageValues.valueWithOrigin(
+                initialValue,
+                operationContext,
+                errorUtils.ERROR_KIND.ChainValueError,
+                errorUtils.ERROR_KIND.ChainValueRejected,
+            )
             languageValues.admitValue(initialValue, operationContext)
             const rootState = { value: initialValue }
             languageValues.admitReadyValue(
@@ -42,9 +48,7 @@ class Chain {
 
     _assertOpen() {
         if (!this._state || this._closed === true) {
-            errorUtils.reportFatalError(
-                new Error("Cannot use a closed Chain"),
-            )
+            throw new Error("Cannot use a closed Chain")
         }
     }
 
@@ -58,9 +62,7 @@ class Chain {
     _closeEntry() {
         this._assertOpen()
         if (this._entryMutable === undefined) {
-            errorUtils.reportFatalError(
-                new Error("Cannot close a Chain outside enter"),
-            )
+            throw new Error("Cannot close a Chain outside enter")
         }
         this._closed = true
     }

@@ -7,16 +7,18 @@ import * as metadata from "./meta.js"
 function prepareImportedData(
     root,
     operationContext,
-    importBoundary,
+    importPolicy,
     installPromise,
+    installFixedVersion,
     externalMutationTreeSetup,
 ) {
     if (!metadata.isObjectLike(root)) return root
 
-    const shareAdmittedGraph = importBoundary.shareAdmittedGraph === true
+    const shareAdmittedGraph = importPolicy.shareAdmittedGraph === true
     const stagedAdmissions = new Map()
     const stagedRetentions = new Set()
     const promisePlacements = []
+    const fixedVersions = []
     let preparedExternalMutationTree
     const failure = errorUtils.catchUserCodeFailure(
         () => {
@@ -33,6 +35,8 @@ function prepareImportedData(
             }
             return undefined
         },
+        operationContext,
+        errorUtils.ERROR_KIND.ImportThrew,
         error => error,
     )
     if (failure) {
@@ -47,13 +51,16 @@ function prepareImportedData(
             facts.type,
             facts.admittedPrototype,
         )
-        metadata.markImported(value, importBoundary, operationContext)
+        metadata.markImported(value, operationContext)
     }
     for (const value of stagedRetentions) {
         metadata.markShared(value, operationContext)
     }
     for (const { owner, key, promise } of promisePlacements) {
-        installPromise(owner, key, promise, importBoundary)
+        installPromise(owner, key, promise, importPolicy)
+    }
+    for (const { owner, key, value } of fixedVersions) {
+        installFixedVersion(owner, key, value)
     }
     if (externalMutationTreeSetup) {
         externalMutationTreeSetup.externalMutationTree =
@@ -67,12 +74,27 @@ function prepareImportedData(
         return metadata.metaOf(value, operationContext) ?? stagedAdmissions.get(value)
     }
 
-    function walk(value) {
+    function walk(value, owner = undefined, key = undefined) {
         if (!metadata.isObjectLike(value)) return undefined
+        if (errorUtils.isFatalError(value)) throw value
+        const isError = languageValues.isError(value)
+        if (isError && !(value instanceof errorUtils.PoisonError)) {
+            fixedVersions.push({
+                owner,
+                key,
+                value: errorUtils.toPoison(
+                    value,
+                    operationContext,
+                    importPolicy.valueKind,
+                ),
+            })
+            return undefined
+        }
         if (languageValues.isPromise(value, operationContext)) {
             return errorUtils.validationError(
                 "A Promise must occupy a captured import boundary",
-                importBoundary.errorContext,
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidImportValue,
             )
         }
         if (stagedAdmissions.has(value) || stagedRetentions.has(value)) return undefined
@@ -89,6 +111,7 @@ function prepareImportedData(
             stagedAdmissions.set(value, facts)
             if (!languageValues.isTraversableType(facts.type)) return undefined
         }
+        if (isError) return undefined
 
         for (const key of languageProperties.enumerableLanguageKeys(
             value,
@@ -102,7 +125,7 @@ function prepareImportedData(
                 promisePlacements.push({ owner: value, key, promise: child })
                 continue
             }
-            const childFailure = walk(child)
+            const childFailure = walk(child, value, key)
             if (childFailure) return childFailure
         }
         return undefined

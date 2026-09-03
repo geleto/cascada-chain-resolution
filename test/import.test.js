@@ -9,6 +9,7 @@ import {
     verifyRefCounts,
     assignPath,
     deletePath,
+    errorCause,
     getErrors,
     hasCycleCut,
     hasError,
@@ -74,7 +75,7 @@ describe("import", () => {
         importValue({ child, sealed }, "independent descendants")
 
         for (const source of [child, sealed]) {
-            expect(metaOf(source).importBoundary).not.to.be(undefined)
+            expect(metaOf(source).imported).to.be(true)
             const chain = new Chain(source)
             assignPath(chain, ["value"], 2)
 
@@ -122,7 +123,7 @@ describe("import", () => {
         importValue(root, "already admitted root")
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
-        expect(metaOf(root).importBoundary).to.be(undefined)
+        expect(metaOf(root).imported).to.be(undefined)
         expect(metaOf(root).shared).to.be(true)
         expect(registrations()).to.be(1)
 
@@ -172,9 +173,9 @@ describe("import", () => {
         expect(external.pending).to.be(externalPending.promise)
         expect(runtimeOwned.pending).to.be("runtime")
         expect(readPath(new Chain(external), ["pending"])).to.be("external")
-        const mirror = metaOf(external).mirrors.pending
-        expect(metaOf(external).importBoundary).not.to.be(undefined)
-        expect(Object.hasOwn(mirror, "importBoundary")).to.be(false)
+        const mirror = metaOf(external).placementVersions.pending
+        expect(metaOf(external).imported).to.be(true)
+        expect(Object.hasOwn(mirror, "importPolicy")).to.be(false)
     })
 
     it("publishes a nested then rejection without changing imported data", async () => {
@@ -194,8 +195,8 @@ describe("import", () => {
         const first = readPath(chain, ["value"])
 
         expect(external.value).to.be(value)
-        expect(await first).to.be(failure)
-        expect(readPath(chain, ["value"])).to.be(failure)
+        expect(errorCause(await first)).to.be(failure)
+        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
         expect(external.value).to.be(value)
         expect(reads).to.be(1)
         buildRefIndex(external)
@@ -209,14 +210,14 @@ describe("import", () => {
         lookupPath(new Chain(child), [])
 
         importValue({ child }, "admitted child")
-        expect(metaOf(child).importBoundary).to.be(undefined)
+        expect(metaOf(child).imported).to.be(undefined)
 
         const resolved = { done: true }
         pending.resolve(resolved)
         await flushMicrotasks()
 
         expect(child.pending).to.be(pending.promise)
-        expect(metaOf(resolved)?.importBoundary).to.be(undefined)
+        expect(metaOf(resolved)?.imported).to.be(undefined)
         expect(await readPath(new Chain(child), ["pending"])).to.be(resolved)
     })
 
@@ -240,7 +241,7 @@ describe("import", () => {
         importValue({ outer, nested }, "later frontier")
 
         expect(scans).to.be(0)
-        expect(metaOf(nested).mirrors).to.be(undefined)
+        expect(metaOf(nested).placementVersions).to.be(undefined)
     })
 
     it("imports a new direct alias regardless of property order", async () => {
@@ -257,9 +258,7 @@ describe("import", () => {
                 : "direct alias first"
 
             importValue(external, errorContext)
-            expect(metaOf(child).importBoundary.errorContext).to.be(
-                errorContext,
-            )
+            expect(metaOf(child).imported).to.be(true)
 
             const resolved = { done: true }
             pending.resolve(resolved)
@@ -306,15 +305,15 @@ describe("import", () => {
         expect(readPath(new Chain(external), ["pending"])).to.be(undefined)
     })
 
-    it("passes primitive and Error imports through unchanged", () => {
+    it("passes primitives through and wraps a root Error", () => {
         const error = new Error("language error")
 
         expect(importValue(null, "null import")).to.be(null)
         expect(importValue(undefined, "undefined import")).to.be(undefined)
         expect(importValue(7, "number import")).to.be(7)
         expect(importValue("text", "string import")).to.be("text")
-        expect(importValue(error, "error import")).to.be(error)
-        expect(metaOf(error).type).to.be.a("number")
+        expect(errorCause(importValue(error, "error import"))).to.be(error)
+        expect(metaOf(error)).to.be(undefined)
     })
 
     it("marks resolved promise roots before returning them", async () => {
@@ -374,32 +373,31 @@ describe("import", () => {
         const root = { child }
 
         const imported = importValue(root, "recursive import")
-        const importBoundary = metaOf(root).importBoundary
-
         expect(imported).to.be(root)
-        expect(importBoundary).to.eql({ errorContext: "recursive import" })
+        expect(metaOf(root).imported).to.be(true)
+        expect(Object.hasOwn(metaOf(root), "importPolicy")).to.be(false)
         expect(metaOf(child).shared).to.be(true)
-        expect(metaOf(child).importBoundary).to.be(importBoundary)
-        expect(metaOf(child).mirrors.value).not.to.be(undefined)
+        expect(metaOf(child).imported).to.be(true)
+        expect(metaOf(child).placementVersions.value).not.to.be(undefined)
         expect(child.value).to.be(outer.promise)
 
         buildRefIndex(root)
         expect(metaOf(child).shared).to.be(true)
-        expect(metaOf(child).importBoundary).to.be(importBoundary)
+        expect(metaOf(child).imported).to.be(true)
 
         const resolved = { leaf, inner: inner.promise }
         outer.resolve(resolved)
         await flushMicrotasks()
 
-        expect(metaOf(resolved).importBoundary).to.be(importBoundary)
+        expect(metaOf(resolved).imported).to.be(true)
         expect(metaOf(leaf).shared).to.be(true)
-        expect(metaOf(leaf).importBoundary).to.be(importBoundary)
+        expect(metaOf(leaf).imported).to.be(true)
 
         const nested = { done: true }
         inner.resolve(nested)
         await flushMicrotasks()
 
-        expect(metaOf(nested).importBoundary).to.be(importBoundary)
+        expect(metaOf(nested).imported).to.be(true)
         expect(child.value).to.be(outer.promise)
         expect(resolved.inner).to.be(inner.promise)
         expect(readPath(new Chain(root), ["child", "value"])).to.be(
@@ -449,12 +447,12 @@ describe("import", () => {
 
         expect(registrations()).to.be(1)
         expect(metaOf(shared).shared).to.be(true)
-        expect(metaOf(shared).importBoundary).not.to.be(undefined)
+        expect(metaOf(shared).imported).to.be(true)
 
         const leaf = { done: true }
         nested.resolve(leaf)
         await flushMicrotasks()
-        expect(metaOf(leaf).importBoundary).not.to.be(undefined)
+        expect(metaOf(leaf).imported).to.be(true)
     })
 
     it("canonicalizes one Promise identity across placements", async () => {
@@ -566,7 +564,7 @@ describe("import", () => {
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
 
         expect(metaOf(root).cycleCuts).to.be(undefined)
-        expect(metaOf(branch).importBoundary).not.to.be(undefined)
+        expect(metaOf(branch).imported).to.be(true)
         verifyRefCounts(root, branch)
     })
 
@@ -582,7 +580,7 @@ describe("import", () => {
         assignPath(chain, ["branch"], extracted)
 
         expect(hasError(chain, ["branch"])).to.be(false)
-        expect(metaOf(branch).importBoundary).not.to.be(undefined)
+        expect(metaOf(branch).imported).to.be(true)
         expect(metaOf(branch).cycleCuts.has("back")).to.be(true)
         expect(metaOf(root).cycleCuts).to.be(undefined)
         verifyRefCounts(root, branch)
@@ -673,7 +671,8 @@ describe("import", () => {
         for (const errors of [await leftResult, await rightResult]) {
             expect(errors.length).to.be(expectedErrors.length)
             for (const error of expectedErrors) {
-                expect(errors.includes(error)).to.be(true)
+                expect(errors.some(value => errorCause(value) === error))
+                    .to.be(true)
             }
         }
         expectCounts(left, 0, 4, 1)
@@ -985,25 +984,26 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps the first import boundary attribution", () => {
+    it("keeps imported storage marked across repeated import", () => {
         const root = {}
         root.self = root
 
         importValue(root, "first import")
         importValue(root, "second import")
         buildRefIndex(root)
-        expect(metaOf(root).importBoundary.errorContext).to.be("first import")
+        expect(metaOf(root).imported).to.be(true)
         expect(metaOf(root).cycleCuts.has("self")).to.be(true)
     })
 
-    it("uses the nearest nested import boundary", () => {
+    it("preserves separately imported child cycle indexing", () => {
         const child = {}
         child.self = child
         importValue(child, "child import")
         const root = importValue({ child }, "parent import")
 
         buildRefIndex(root)
-        expect(metaOf(child).importBoundary.errorContext).to.be("child import")
+        expect(metaOf(root).imported).to.be(true)
+        expect(metaOf(child).imported).to.be(true)
         expect(metaOf(child).cycleCuts.has("self")).to.be(true)
         expect(getRefCounter(root).errorCount).to.be(0)
         expect(getRefCounter(root).cycleCutCount).to.be(1)
@@ -1057,7 +1057,7 @@ describe("import", () => {
 
         buildRefIndex(cyclic)
         expect(getErrors(new Chain(cyclic), [])).to.eql([])
-        expect(metaOf(cyclic).importBoundary.errorContext).to.be("first async import")
+        expect(metaOf(cyclic).imported).to.be(true)
         expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
     })
 
@@ -1108,7 +1108,8 @@ describe("import", () => {
         expect(frozen.pending).to.be(frozenPending)
         expect(readPath(new Chain(sealed), ["pending"])).to.be(1)
         expect(readPath(new Chain(frozen), ["pending"])).to.be(2)
-        expect(getErrors(new Chain(nonExtensibleError), [])[0]).to.be(error)
+        expect(errorCause(getErrors(new Chain(nonExtensibleError), [])[0]))
+            .to.be(error)
         expectCounts(sealed, 0, 0)
         expectCounts(frozen, 0, 0)
         verifyRefCounts(sealed, frozen, nonExtensibleError)
@@ -1178,8 +1179,8 @@ describe("import", () => {
 
         const errors = await result
         expect(errors.length).to.be(2)
-        expect(errors.includes(directError)).to.be(true)
-        expect(errors.includes(resolvedError)).to.be(true)
+        expect(errors.map(errorCause)).to.contain(directError)
+        expect(errors.map(errorCause)).to.contain(resolvedError)
         expectCounts(array, 0, 2, 1)
         verifyRefCounts(array)
     })
@@ -1196,9 +1197,10 @@ describe("import", () => {
         pending.reject(error)
         const result = await errors
 
-        expect(result).to.eql([error])
+        expect(result.length).to.be(1)
+        expect(errorCause(result[0])).to.be(error)
         expect(root.pending).to.be(pending.promise)
-        expect(readPath(new Chain(root), ["pending"])).to.be(error)
+        expect(errorCause(readPath(new Chain(root), ["pending"]))).to.be(error)
         expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
@@ -1246,7 +1248,7 @@ describe("import", () => {
         const errors = await getErrors(chain, [])
 
         expect(errors.length).to.be(1)
-        expect(errors[0]).to.be(secondError)
+        expect(errorCause(errors[0])).to.be(secondError)
         expect(wrapper.keep).to.be(true)
         expect(wrapper.first).to.be(first)
         expect(wrapper.second).to.be(second)
@@ -1411,7 +1413,7 @@ describe("import", () => {
         const next = chain._state.value
 
         expect(extracted).to.be(branch)
-        expect(metaOf(branch).importBoundary.errorContext).to.be("extract import")
+        expect(metaOf(branch).imported).to.be(true)
         expect(next).not.to.be(branch)
         expect(branch.x).to.be(1)
         expect(next.x).to.be(2)
@@ -1430,14 +1432,14 @@ describe("import", () => {
         assignPath(chain, ["branch", "leaf", "added"], 2)
         const next = chain._state.value
 
-        expect(metaOf(next)?.importBoundary).to.be(undefined)
-        expect(metaOf(next.branch)?.importBoundary).to.be(undefined)
-        expect(metaOf(next.branch.leaf)?.importBoundary).to.be(undefined)
-        const importBoundary = metaOf(branch).importBoundary
-        expect(metaOf(leaf).importBoundary).to.be(importBoundary)
-        expect(metaOf(rootSibling).importBoundary).to.be(importBoundary)
-        expect(metaOf(branchSibling).importBoundary).to.be(importBoundary)
-        expect(metaOf(leafSibling).importBoundary).to.be(importBoundary)
+        expect(metaOf(next)?.imported).to.be(undefined)
+        expect(metaOf(next.branch)?.imported).to.be(undefined)
+        expect(metaOf(next.branch.leaf)?.imported).to.be(undefined)
+        expect(metaOf(branch).imported).to.be(true)
+        expect(metaOf(leaf).imported).to.be(true)
+        expect(metaOf(rootSibling).imported).to.be(true)
+        expect(metaOf(branchSibling).imported).to.be(true)
+        expect(metaOf(leafSibling).imported).to.be(true)
     })
 
     it("keeps Promise forks outside the import boundary during COW", async () => {
@@ -1453,7 +1455,7 @@ describe("import", () => {
         assignPath(chain, ["path", "added"], 2)
         const next = chain._state.value
 
-        expect(metaOf(next).importBoundary).to.be(undefined)
+        expect(metaOf(next).imported).to.be(undefined)
 
         pathValue.resolve({ kept: true })
         retainedValue.resolve({ sibling: true })
@@ -1466,7 +1468,7 @@ describe("import", () => {
             sibling: true,
         })
         expect(next.path).to.eql({ kept: true, added: 2 })
-        expect(metaOf(next.path)?.importBoundary).to.be(undefined)
+        expect(metaOf(next.path)?.imported).to.be(undefined)
         expect(next.retained).to.eql({
             sibling: true,
         })
@@ -1511,9 +1513,7 @@ describe("import", () => {
 
         expect(second.pending).to.be(resolved)
         expect(readPath(chain, ["pending"])).to.be(resolved)
-        expect(metaOf(resolved).importBoundary.errorContext).to.be(
-            "repeated Promise COW",
-        )
+        expect(metaOf(resolved).imported).to.be(true)
     })
 
     it("samples Promise import attribution at the fork's FIFO position", async () => {
@@ -1536,12 +1536,12 @@ describe("import", () => {
         pending.resolve({ original: true })
         const owned = await observed
 
-        expect(metaOf(owned)?.importBoundary).to.be(undefined)
+        expect(metaOf(owned)?.imported).to.be(undefined)
         expect(owned).to.eql({ original: true, first: 1 })
         expect(copy.pending).to.be(owned)
     })
 
-    it("retains a resolved import boundary when COW drops its mirror", async () => {
+    it("retains imported status when COW drops a resolved mirror", async () => {
         const pending = deferred()
         const resolved = { value: true }
         const root = {
@@ -1558,17 +1558,15 @@ describe("import", () => {
         pending.resolve(resolved)
         await flushMicrotasks()
 
-        expect(metaOf(resolved).importBoundary).not.to.be(undefined)
+        expect(metaOf(resolved).imported).to.be(true)
 
         lookupPath(chain, [])
         assignPath(chain, ["right"], 2)
         const second = chain._state.value
 
-        expect(metaOf(second)?.mirrors?.pending).to.be(undefined)
+        expect(metaOf(second)?.placementVersions?.pending).to.be(undefined)
         expect(second.pending).to.be(resolved)
-        expect(metaOf(resolved).importBoundary.errorContext).to.be(
-            "resolved Promise COW",
-        )
+        expect(metaOf(resolved).imported).to.be(true)
     })
 
     it("keeps an off-path fork runtime-owned when it becomes the COW path", async () => {
@@ -1585,7 +1583,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         const owned = readPath(chain, ["pending"])
-        expect(metaOf(owned)?.importBoundary).to.be(undefined)
+        expect(metaOf(owned)?.imported).to.be(undefined)
         expect(owned).to.eql({ original: true, first: 1 })
 
         assignPath(chain, ["pending", "second"], 2)
@@ -1609,11 +1607,9 @@ describe("import", () => {
         assignPath(chain, ["pending", "value"], 1)
         const owned = readPath(chain, ["pending"])
 
-        expect(metaOf(parentCopy).mirrors?.pending).to.be(undefined)
-        expect(metaOf(owned)?.importBoundary).to.be(undefined)
-        expect(metaOf(retained).importBoundary.errorContext).to.be(
-            "resolved Promise path",
-        )
+        expect(metaOf(parentCopy).placementVersions?.pending).to.be(undefined)
+        expect(metaOf(owned)?.imported).to.be(undefined)
+        expect(metaOf(retained).imported).to.be(true)
         expect(owned.value).to.be(1)
     })
 
@@ -1643,7 +1639,7 @@ describe("import", () => {
         const root = { value: deferredValue.promise }
 
         importValue(root, "promise key import")
-        expect(metaOf(root).mirrors.value).not.to.be(undefined)
+        expect(metaOf(root).placementVersions.value).not.to.be(undefined)
         expect(root.value).to.be(deferredValue.promise)
         expect(getRefCounter(root)).to.be(undefined)
         buildRefIndex(root)
@@ -1701,7 +1697,7 @@ describe("import", () => {
 
         pending.resolve(errorValue)
 
-        expect((await errors)[0]).to.be(errorValue.bad)
+        expect(errorCause((await errors)[0])).to.be(errorValue.bad)
         expect(root.value).to.be("fixed")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, errorValue)
@@ -1756,7 +1752,7 @@ describe("import", () => {
         expect(metaOf(resolved).cycleCuts).to.be(undefined)
         expect(hasCycleCut(root.nested, "value")).to.be(true)
         expect(metaOf(resolved).shared).to.be(true)
-        expect(metaOf(resolved).importBoundary).not.to.be(undefined)
+        expect(metaOf(resolved).imported).to.be(true)
         expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
@@ -2044,7 +2040,7 @@ describe("import", () => {
 
         expect(value).to.be(sealed)
         expect(indexed).to.be(sealed)
-        expect(metaOf(sealed).importBoundary.errorContext).to.be("sealed promise root")
+        expect(metaOf(sealed).imported).to.be(true)
         expectCounts(sealed, 0, 0)
 
         await flushMicrotasks()
@@ -2066,7 +2062,7 @@ describe("import", () => {
         } catch (error) {
             rejection = error
         }
-        expect(rejection).to.be("external boom")
+        expect(rejection.cause).to.be("external boom")
     })
 
     it("completes direct-Promise admission before fulfillment", async () => {
@@ -2081,7 +2077,7 @@ describe("import", () => {
 
         pending.resolve(value)
 
-        expect(await imported).to.be(failure)
+        expect(errorCause(await imported)).to.be(failure)
         expect(metaOf(value)).to.be(undefined)
     })
 
@@ -2101,8 +2097,8 @@ describe("import", () => {
             },
         }))
 
-        expect(await read).to.be(failure)
-        expect(lookupPath(chain, ["value"])).to.be(failure)
+        expect(errorCause(await read)).to.be(failure)
+        expect(errorCause(lookupPath(chain, ["value"]))).to.be(failure)
         expect(root.value).to.be(pending.promise)
     })
 
@@ -2120,7 +2116,7 @@ describe("import", () => {
         })
         const root = { child }
 
-        expect(importValue(root, "failed import")).to.be(failure)
+        expect(errorCause(importValue(root, "failed import"))).to.be(failure)
         expect(metaOf(root)).to.be(undefined)
         expect(metaOf(child)).to.be(undefined)
         expect(importValue(root, "retried import")).to.be(root)
@@ -2141,6 +2137,6 @@ describe("import", () => {
         } catch (error) {
             rejection = error
         }
-        expect(rejection).to.be("already external boom")
+        expect(rejection.cause).to.be("already external boom")
     })
 })

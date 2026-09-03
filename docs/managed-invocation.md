@@ -36,7 +36,7 @@ If receiver selection is pending, the common coordinator registers on each root 
 
 ## Receiver preparation
 
-Preparation consumes the complete receiver graph because method code may read any state through `this`. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise while the working receiver exposes its logical value.
+Preparation consumes the complete receiver graph because method code may read any state through `this`. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached contextual Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise or native Error while the working receiver exposes its logical value.
 
 Every traversable receiver identity is leased while preparation may resume reading it. A synchronous observation releases the leases after result admission. A direct-Promise observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private.
 
@@ -66,10 +66,16 @@ Every managed result is imported without deep-copying it. An observation uses or
 
 A Promise nested inside a synchronous result is ordinary imported data and does not extend the call. One Promise returned directly by the method is the call completion:
 
-- An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection remains the exact rejection and leaves the receiver unchanged.
-- A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection poisons the receiver while the operation result preserves the exact rejection.
-- A fulfilled Error is an ordinary result and does not poison an otherwise valid mutation receiver.
+- An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection leaves the receiver unchanged and preserves an existing contextual failure or wraps a raw reason at the invocation boundary.
+- A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection contextualizes the same way and poisons the receiver with that occurrence.
+- A fulfilled Error is contextualized as an explicit result and does not poison an otherwise valid mutation receiver.
 - A receiver validation failure poisons the receiver and becomes the fulfilled operation result.
+
+A synchronous method throw, explicit returned Error, direct-result rejection,
+nested result Error, and nested result rejection have distinct stable kinds but
+share the call's source context. Later operations preserve that attribution. A
+method throw poisons a mutation receiver; a deliberate Error return remains an
+independent result after a valid receiver is published.
 
 Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access, receiver exposure through a nested result Promise, and Cascada re-entry while supported user code is active are trusted contract violations. Exact external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
 

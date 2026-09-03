@@ -10,6 +10,7 @@ import {
     verifyRefCounts,
     assignPath,
     deletePath,
+    errorCause,
     getErrors,
     hasCycleCut,
     hasError,
@@ -30,22 +31,29 @@ import * as operationLifecycle from "../src/operation-lifecycle.js"
 function expectExportErrors(outcome, expected) {
     expect(outcome instanceof Error).to.be(true)
     if (expected.length === 1) {
-        expect(outcome).to.be(expected[0])
+        expect(outcome === expected[0] || outcome.cause === expected[0]).to.be(true)
         return
     }
-    expect(outcome.message).to.be("export: branch contains errors")
+    expect(outcome.message).to.be("Operation received multiple Errors")
     expect(outcome.errors.length).to.be(expected.length)
     for (const error of expected) {
-        expect(outcome.errors.includes(error)).to.be(true)
+        expect(outcome.errors.some(value => {
+            return value === error || value.cause === error
+        })).to.be(true)
     }
 }
 
 describe("export", () => {
     it("exposes the native ESM package API", () => {
         expect(Object.keys(packageRuntime).sort()).to.eql([
+            "CascadaError",
             "Chain",
+            "CompoundPoisonError",
             "ContextChain",
+            "ERROR_KIND",
             "Execution",
+            "PoisonError",
+            "RuntimeError",
             "assignPath",
             "deletePath",
             "enter",
@@ -152,7 +160,7 @@ describe("export", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         buildRefIndex(root)
-        delete metaOf(root).mirrors.pending
+        delete metaOf(root).placementVersions.pending
         let reported
         setFatalErrorReporter(error => {
             reported = error
@@ -178,7 +186,7 @@ describe("export", () => {
             reported = error
         })
 
-        expect(exportValue(new Chain(root), [])).to.be(failure)
+        expect(errorCause(exportValue(new Chain(root), []))).to.be(failure)
         expect(reported).to.be(undefined)
     })
 
@@ -225,14 +233,14 @@ describe("export", () => {
         importValue(root, "re-entrant cycle")
         const chain = new Chain(root)
         const exported = exportValue(chain, ["value"])
-        const mirror = metaOf(root).mirrors.value
+        const mirror = metaOf(root).placementVersions.value
         const resolved = { back: root }
 
         pending.resolve(resolved)
         const copy = await exported
 
         expect(copy.back.value).to.be(copy)
-        expect(metaOf(root).mirrors.value).to.be(mirror)
+        expect(metaOf(root).placementVersions.value).to.be(mirror)
         expect(root.value).to.be(pending.promise)
         expect(readPath(new Chain(root), ["value"])).to.be(resolved)
         buildRefIndex(root)
@@ -527,14 +535,14 @@ describe("export", () => {
         pending.resolve({ value: 1 })
         await observed
 
-        const mirror = metaOf(root).mirrors.pending
-        expect(metaOf(root).mirrors.pending).to.be(mirror)
+        const mirror = metaOf(root).placementVersions.pending
+        expect(metaOf(root).placementVersions.pending).to.be(mirror)
 
         const exported = exportValue(chain, [])
 
         expect(exported.then).to.be(undefined)
         expect(exported).to.eql({ pending: { value: 1 } })
-        expect(metaOf(root).mirrors.pending).to.be(mirror)
+        expect(metaOf(root).placementVersions.pending).to.be(mirror)
     })
 
     it("does not expose imported metadata", () => {
@@ -547,7 +555,8 @@ describe("export", () => {
         expect(value).to.eql(branch)
         expect(value).not.to.be(branch)
         expect(metaOf(value)).to.be(undefined)
-        expect(metaOf(root).importBoundary.errorContext).to.be("valid export import")
+        expect(metaOf(root).imported).to.be(true)
+        expect(Object.hasOwn(metaOf(root), "importPolicy")).to.be(false)
     })
 
     it("protects fast-path results from already-issued suspended writes", async () => {
@@ -1128,14 +1137,14 @@ describe("export", () => {
         importValue(root, "export import")
         const branchMeta = metaOf(branch)
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary).not.to.be(undefined)
+        expect(branchMeta.imported).to.be(true)
         const value = exportValue(new Chain(root), ["branch"])
 
         expect(value).not.to.be(branch)
         expect(value.cyclic.self).to.be(value.cyclic)
         expect(hasError(new Chain(root), ["branch"])).to.be(false)
         expect(metaOf(branch)).to.be(branchMeta)
-        expect(branchMeta.importBoundary).not.to.be(undefined)
+        expect(branchMeta.imported).to.be(true)
         expect(getRefCounter(branch).errorCount).to.be(0)
         expect(getRefCounter(branch).cycleCutCount).to.be(1)
     })
@@ -1154,7 +1163,7 @@ describe("export", () => {
         expectExportErrors(result, [error])
         expect(metaOf(branch)).to.be(branchMeta)
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary).not.to.be(undefined)
+        expect(branchMeta.imported).to.be(true)
     })
 
     it("waits on imported branches without pinning or re-rooting them", async () => {
@@ -1167,13 +1176,13 @@ describe("export", () => {
         const result = exportValue(new Chain(root), ["branch"])
 
         expect(branchMeta.shared).to.be(true)
-        expect(branchMeta.importBoundary).not.to.be(undefined)
+        expect(branchMeta.imported).to.be(true)
         expect(getRefCounter(branch)).to.be(undefined)
 
         pending.resolve("done")
         expect(await result).to.eql({ pending: "done" })
         expect(metaOf(branch)).to.be(branchMeta)
-        expect(branchMeta.importBoundary).not.to.be(undefined)
+        expect(branchMeta.imported).to.be(true)
     })
 
     it("exports promises inside sealed branches through mirrors", async () => {

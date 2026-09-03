@@ -175,7 +175,11 @@ function walkExportValue(value, exportContext, position) {
 
 function runExportStep(exportContext, position, step) {
     // Only the exact user-code boundary becomes language Error data.
-    const result = errorUtils.catchUserCodeFailure(step, error => error)
+    const result = errorUtils.catchUserCodeFailure(
+        step,
+        exportContext.owner.operationContext,
+        errorUtils.ERROR_KIND.ExportThrew,
+    )
     if (languageValues.isError(result)) collectError(exportContext, position, result)
     return result
 }
@@ -232,6 +236,11 @@ function writeOutputProperty(parent, key, value) {
 }
 
 function collectError(exportContext, position, error) {
+    error = errorUtils.toPoison(
+        error,
+        exportContext.owner.operationContext,
+        errorUtils.ERROR_KIND.ExportValueError,
+    )
     const errors = exportContext.collectedErrors[position] ??= new Set()
     errors.add(error)
     exportContext.discardCopies()

@@ -37,15 +37,11 @@ function getOrCreateMeta(
             (meta.type === TYPE_RECORD || meta.type === TYPE_MANAGED_CLASS) &&
             meta.admittedPrototype === undefined
         ) {
-            errorUtils.reportFatalError(
-                new TypeError("Managed container admission requires a prototype"),
-            )
+            throw new TypeError("Managed container admission requires a prototype")
         }
         metadata.set(value, meta)
     } else if (type !== undefined && meta.type !== type) {
-        errorUtils.reportFatalError(
-            new TypeError("Admitted type cannot change"),
-        )
+        throw new TypeError("Admitted type cannot change")
     }
     return meta
 }
@@ -54,7 +50,7 @@ function getOrCreateMeta(
 // traps. If it cannot identify managed structure, preserving the exact value
 // as external is always safe.
 function inspectMetaFacts(value) {
-    return errorUtils.catchUserCodeFailure(
+    return errorUtils.catchRawUserCodeFailure(
         () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
         () => ({ type: TYPE_EXTERNAL }),
     )
@@ -141,9 +137,7 @@ function isObjectLike(value) {
 function requireMeta(value, operationContext) {
     const meta = metaOf(value, operationContext)
     if (!meta) {
-        errorUtils.reportFatalError(
-            new TypeError("Value metadata requires prior admission"),
-        )
+        throw new TypeError("Value metadata requires prior admission")
     }
     return meta
 }
@@ -176,7 +170,7 @@ function decrementReadLease(value, operationContext) {
     const meta = requireMeta(value, operationContext)
     const count = meta.readLeaseCount ?? 0
     if (count < 1) {
-        errorUtils.reportFatalError(new Error("Read lease underflow"))
+        throw new Error("Read lease underflow")
     }
     if (count === 1) delete meta.readLeaseCount
     else meta.readLeaseCount = count - 1
@@ -184,20 +178,21 @@ function decrementReadLease(value, operationContext) {
 
 function markShared(value, operationContext) {
     if (!isObjectLike(value)) return value
+    if (errorUtils.isFatalError(value)) throw value
+    if (Error.isError(value)) return value
     const meta = requireMeta(value, operationContext)
     if (isTraversableType(meta.type)) meta.shared = true
     return value
 }
 
-// New identities admitted by one import share its origin token.
-function markImported(value, importBoundary, operationContext) {
+function markImported(value, operationContext) {
     const meta = requireMeta(value, operationContext)
-    meta.importBoundary ??= importBoundary
+    meta.imported = true
     if (isTraversableType(meta.type)) meta.shared = true
 }
 
-function importBoundaryOf(value, operationContext) {
-    return metaOf(value, operationContext)?.importBoundary
+function isImported(value, operationContext) {
+    return metaOf(value, operationContext)?.imported === true
 }
 
 export {
@@ -216,7 +211,7 @@ export {
     getOrCreateMeta,
     hasReadLease,
     incrementReadLease,
-    importBoundaryOf,
+    isImported,
     identityDeclarationOf,
     inspectMetaFacts,
     isObjectLike,

@@ -3,6 +3,7 @@ import {
     expect,
     assignPath,
     deletePath,
+    errorCause,
     exportValue,
     lookupPath,
     readPath,
@@ -407,9 +408,9 @@ describe("path assignment", () => {
             setFatalErrorReporter()
         }
 
-        expect(observed).to.be(failure)
-        expect(mutation).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(errorCause(observed)).to.be(failure)
+        expect(errorCause(mutation)).to.be(failure)
+        expect(chain._state.value).to.be(mutation)
         expect(target).to.eql([1, 2])
         expect(reported).to.be(undefined)
     })
@@ -470,8 +471,8 @@ describe("path assignment", () => {
 
         const result = assignPath(chain, ["length"], 1)
 
-        expect(result).to.be(failure)
-        expect(chain._state.value).to.be(failure)
+        expect(errorCause(result)).to.be(failure)
+        expect(chain._state.value).to.be(result)
     })
 
     it("attributes intrinsic errors to an imported receiver", () => {
@@ -486,14 +487,13 @@ describe("path assignment", () => {
             { mutationScopeDepth: 1 },
         )
 
-        expect(deletion.message).to.be(
-            "Cannot delete length (imported at: intrinsic receiver)",
-        )
+        expect(deletion.message).to.be("Cannot delete length")
+        expect(deletion.errorContext).to.be("test deletion")
         expect(mutation.message).to.be(
             "run cannot use an Array or String length property as a " +
-            "mutation receiver " +
-            "(imported at: intrinsic receiver)",
+            "mutation receiver",
         )
+        expect(mutation.errorContext).to.be("test run")
         expect(source).to.eql([1])
     })
 
@@ -1008,14 +1008,13 @@ describe("path assignment", () => {
 
         const imported = importValue([], "indexed growth")
         const invalidImportedChain = new Chain(imported)
-        expect(assignPath(
+        const invalid = assignPath(
             invalidImportedChain,
             ["name"],
             "value",
-        ).message).to.be(
-            "Arrays support only indexes and length " +
-            "(imported at: indexed growth)",
         )
+        expect(invalid.message).to.be("Arrays support only indexes and length")
+        expect(invalid.errorContext).to.be("test assignment")
         const importedChain = new Chain(imported)
         expect(assignPath(importedChain, ["2"], "value")).to.be(undefined)
         expect(importedChain._state.value).not.to.be(imported)
@@ -1117,9 +1116,9 @@ describe("path assignment", () => {
             1,
         )
 
-        expect(rootResult).to.be(errorRoot)
-        expect(branchResult).to.be(root.branch)
-        expect(chain._state.value).to.be(errorRoot)
+        expect(errorCause(rootResult)).to.be(errorRoot)
+        expect(errorCause(branchResult)).to.be(root.branch)
+        expect(chain._state.value).to.be(rootResult)
         expect(root.branch instanceof Error).to.be(true)
         expect(root.branch.message).to.be("branch")
     })
@@ -1148,8 +1147,10 @@ describe("lookupPath", () => {
         const branchError = new Error("branch")
         const root = { branch: branchError }
 
-        expect(lookupPath(new Chain(errorRoot), ["value"])).to.be(errorRoot)
-        expect(lookupPath(new Chain(root), ["branch", "value"])).to.be(branchError)
+        expect(errorCause(lookupPath(new Chain(errorRoot), ["value"])))
+            .to.be(errorRoot)
+        expect(errorCause(lookupPath(new Chain(root), ["branch", "value"])))
+            .to.be(branchError)
     })
 
     it("allows missing targets but returns Error for broken paths", () => {
@@ -1332,7 +1333,7 @@ describe("deletePath", () => {
         deletePath(chain, ["value"])
         deletePath(new Chain(root), ["branch", "value"])
 
-        expect(chain._state.value).to.be(errorRoot)
+        expect(errorCause(chain._state.value)).to.be(errorRoot)
         expect(root.branch).to.be(branchError)
     })
 

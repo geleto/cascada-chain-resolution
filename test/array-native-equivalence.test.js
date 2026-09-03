@@ -753,6 +753,7 @@ async function assertLogicalValue(actual, expected, scenario) {
 
 async function logicalSnapshot(value) {
     value = await value
+    if (Error.isError(value)) return value.cause ?? value
     if (!arrayViews.isLogicalArray(value)) return value
 
     const array = arrayViews.projectionOf(value)

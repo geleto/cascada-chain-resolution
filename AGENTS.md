@@ -290,7 +290,7 @@ Export is used for:
 - values assigned to external properties;
 - script results.
 
-Export never sends an Error to host JavaScript. Each root is one Error-collection domain. After reaching an Error at any depth, export still completes that root's captured frontier and collects every distinct Error identity beneath it. One Error becomes the root outcome unchanged; several become one compound Error containing them all. A batch export combines every failed root outcome in root order without flattening or losing its component Errors. Any failed root prevents host invocation or assignment and replaces a script result.
+Export never sends an Error to host JavaScript. Each root is one Error-collection domain. After reaching an Error at any depth, export still completes that root's captured frontier and collects every distinct Error occurrence beneath it. One Error becomes the root outcome unchanged; several become one compound Error. A batch export combines failed roots in root order, flattening nested compounds and deduplicating leaves by `leaf.cause ?? leaf`. Any failed root prevents host invocation or assignment and replaces a script result.
 
 Export uses no managed source lease. Each transition copies every ready placement synchronously; a pending placement is captured through its exact mirror, and its FIFO continuation traverses each newly revealed branch synchronously once. Later work never rereads already captured source state. Host code may retain exported copies, exact Functions, and observation-only external identities, but not their managed sources. Exact identities remain read-only. Export never transfers external mutation authority.
 
@@ -408,19 +408,20 @@ Guard poison belongs to a selected external identity's execution-scoped phase st
 
 ## Errors
 
-Cascada distinguishes:
+Cascada distinguishes recoverable `PoisonError` language data from fatal
+`RuntimeError`. An unexpected runtime failure or violated internal or host
+contract becomes a `RuntimeError`, is reported once, and is rethrown; it is
+never admitted, queried, combined, or propagated as language data.
 
-- **Error poisoning:** an Error is language data. Invalid logical input or supported user-code failure produces it. An Error assigned or explicitly returned remains an ordinary value and poisons neither a managed receiver nor an external guard. A rejected Promise stored in the graph publishes an Error at its captured version. Dependent work propagates it while unrelated work continues.
-- **Fatal failure:** an unexpected runtime failure or violated internal or host contract is reported and rethrown.
-
-- Classify failure at its exact boundary by what failed, not whether code threw or returned. Catch supported user code only there. Entering it through `run` does not make adjacent runtime code user-controlled.
-- Preserve a produced value or Error unless its boundary consumes it. Required boundary processing may transform Promise fulfillment into the operation's logical result; rejection remains rejection. Never convert between poisoning and fatal failure.
+- Attribute a raw failure at the exact causal boundary by what failed, not by whether it threw, rejected, or returned. Every runtime-created Error records an opaque source context; every poison also records a nonempty failure kind. A later consumer preserves them unless it causes a new failure.
+- One native host Error consumed at one logical occurrence becomes a `PoisonError` with the native Error as `cause`. Reusing that native Error at another causal boundary creates another wrapper. Imported host storage remains physically unchanged; its logical property version carries the occurrence wrapper.
+- Preserve an existing `PoisonError`, `CompoundPoisonError`, or `RuntimeError` unchanged across later boundaries. Promise delay, copying, and whichever consumer advances shared settlement never reattribute it.
+- Compound poison flattens nested compounds, preserves logical collection order, and deduplicates leaves by `leaf.cause ?? leaf`. Every surviving leaf keeps its own context and kind.
+- Catch supported user code only at its semantic boundary. Entering it through `run` does not make adjacent runtime code user-controlled. Never convert between poisoning and fatal failure.
 - A representation limitation is not a logical failure. Materialize and retry; failure of required internal handling is fatal.
-- An ordinary poisoned observation changes only its outcome. An external-containment violation also poisons its external container's selected phase, when one exists, without replacing application data. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and returns the same Error. A transition cannot replace a scope when doing so would remove a live external leaf.
+- An ordinary poisoned observation changes only its outcome. An external-containment violation also poisons its selected external phase when one exists. A poisoned mutation replaces the nearest replaceable logical value whose transition failed and returns that same contextualized Error. A transition cannot replace a scope when doing so would remove a live external leaf.
 - For a mutating call, preparation or method failure normally poisons the receiver placement or root. Ordinary COW preserves live leaves reached through other managed placements. If failure publication at the authoritative placement would remove a live leaf, preserve the original scope and return the Error instead. Failure confined to an independent result does not affect a successfully mutated receiver.
-- One consumed Error propagates unchanged. Several produce one Error whose `errors` array contains every distinct original. Call order is receiver then arguments; order inside one composite input is unspecified.
-- Rejecting managed work because it would disturb a live external leaf changes neither the static tree nor the leaf's phase.
-- Poisoning external mutation changes guard state but cannot undo completed effects on the exact host identity.
+- Rejecting managed work because it would disturb a live external leaf changes neither the static tree nor the leaf's phase. Poisoning external mutation changes phase state but cannot undo completed effects on the exact host identity.
 
 ## Work Bounds
 

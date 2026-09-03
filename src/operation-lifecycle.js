@@ -113,7 +113,11 @@ function continueInitial(operation, value, onReady) {
         operation,
         value,
         resolved => languageValues.isError(resolved)
-            ? resolved
+            ? errorUtils.toPoison(
+                resolved,
+                operation.operationContext,
+                errorUtils.ERROR_KIND.OperationInputError,
+            )
             : onReady(resolved),
     )
 }

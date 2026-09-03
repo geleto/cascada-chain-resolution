@@ -9,8 +9,8 @@ The runtime recognizes these value categories:
 - **Primitive:** `null`, `undefined`, strings, numbers, booleans, symbols, and
   bigints.
 - **Promise:** any object or function with a callable `then` property.
-- **Error:** a JavaScript `Error`, used here as the stand-in for Cascada's
-  language Error value.
+- **Language Error:** a recoverable `PoisonError` occurrence or a native host
+  Error awaiting contextualization. Fatal `RuntimeError` is excluded.
 - **Managed value:** an Array, record, managed class instance, or internal
   `ArrayView`. Managed values have traversable language properties.
 - **External value:** any other non-null non-Promise object. It retains exact
@@ -149,8 +149,8 @@ or execution mismatch is a fatal integration error.
 
 For a ready root, import returns its admitted logical value after one
 transactional synchronous walk. For a Promise root, one operation Promise
-performs the same work on fulfillment before exposing the result; rejection
-remains rejection.
+performs the same work on fulfillment before exposing the result; a raw
+rejection is contextualized to the import operation.
 
 Import:
 
@@ -161,9 +161,10 @@ Import:
 
 Newly reached host objects receive external metadata recording their admitted
 category and origin. Import traverses only new managed identities and stops at
-external identities, Functions, and Errors. It commits no metadata or Promise
-mirror from a synchronous segment whose enumeration or descriptor lookup fails.
-A nested Promise property is not replaced: its mirror keeps the logical value
+external identities, Functions, and Errors. A nested native Error remains
+physical host data while a fixed placement overlay stores its logical wrapper.
+Import commits no metadata or placement version from a synchronous segment
+whose enumeration or descriptor lookup fails. A nested Promise property is not replaced: its mirror keeps the logical value
 while imported storage retains the Promise. Frozen imported managed data
 therefore follows the same path as writable imported managed data.
 
@@ -196,7 +197,7 @@ every preceding segment is required.
 
 When a required intermediate is:
 
-- an Error, the same Error is propagated;
+- a language Error, the same contextualized occurrence is propagated;
 - missing, `null`, `undefined`, or primitive, a path-access Error is produced;
 - a Promise, the operation registers at that property's program position and
     continues from the state captured by its Promise mirror; or
@@ -236,48 +237,61 @@ materialize ordinary writable storage before committing. It is not a language
 failure. If the selected representation still cannot perform a preflighted
 commit, the violated runtime invariant is fatal.
 
-## Promise-backed properties
+## Placement versions
+
+A placement overlay holds the logical value when physical storage must remain
+unchanged. A Promise mirror is a changing overlay for one Promise-backed
+property version. A nested native Error in imported storage uses a fixed overlay
+for its contextualized occurrence. Both use the same parent-key map and detach
+when that placement is replaced or deleted.
 
 One mirror represents one Promise-backed property version. Assigning the same
 Promise again, copying the property, or retaining it in a distinct ArrayView
 creates a new mirror at that operation's FIFO position. ArrayViews may still
 share the property's physical backing slot.
 
-The mirror's single `value` field is the property version's authoritative logical
-value. Its first resolver captures the property's import boundary at creation.
-Every state-changing resolver uses the import status captured at registration;
-the boundary remains on the imported owner and imported graph values, not the
-mirror. A live runtime-owned version normally writes through to its physical
-property. If writeback reflection fails, its Error remains logical in the mirror
-and the physical Promise is preserved. An imported version always preserves the
-external Promise.
+The mirror's `value` field is the property version's authoritative logical
+value. Its first resolver registers with the import operation context and policy
+captured at creation. Imported identities retain only their import status; the
+pending continuation retains attribution until settlement, and a resulting
+Error carries its own context and kind. A live runtime-owned version normally
+writes through to its physical property. If writeback reflection fails, its
+Error remains logical in the mirror and the physical Promise is preserved. An
+imported version always preserves the external Promise.
 
 A fork uses the canonical Promise only as a FIFO readiness signal and samples
 its source mirror at the fork position. Retained ArrayView properties have
 distinct mirrors even when they share a physical backing slot, so their logical
 edges and later operations remain independent.
 
-A later overwrite or deletion detaches the mirror by removing it from the live
-map. The mirror keeps its current value; resolvers already registered for that
-property version continue against it and cannot affect a replacement property.
-The mirror stores no source Promise, parent, key, or import boundary.
+A later overwrite or deletion detaches the live overlay. A detached mirror keeps
+its current value; resolvers already registered for that property version
+continue against it and cannot affect a replacement property. The mirror stores
+no source Promise, parent, key, import context, or import policy.
 
 ## Errors and fatal failures
 
-A rejected data Promise is converted to a language Error before its value
-continuation runs. An Error keeps its identity. Every other reason is retained
-as the `cause`; a primitive also supplies the message, while an object receives
-a fixed message without invoking its properties or conversion hooks.
+A raw failure is contextualized at its first causal boundary. `PoisonError`
+stores that boundary's opaque `errorContext` and stable `kind`; a wrapped host
+failure is retained in `cause`. An existing contextual Error propagates
+unchanged. Reusing one native Error at another causal occurrence creates another
+wrapper rather than changing the earlier occurrence. The public `ERROR_KIND`
+object defines the shared Cascada failure-kind vocabulary.
 
-Synchronous failures from supported user code and exact reflection hooks are
-language Errors. The boundary catches only the user-controlled invocation;
-adjacent runtime work remains outside it. Synchronous re-entry into Cascada
-from such code is a fatal host-contract violation.
+`CompoundPoisonError` flattens nested compounds, preserves logical collection
+order, and deduplicates leaves by `leaf.cause ?? leaf`. Each surviving leaf
+keeps its context and kind.
 
-Internal failures are fatal. They are reported through `reportFatalError` and
-the original thrown value continues to throw or reject. Continuation throws,
-rejection-conversion failures, invariant violations, and rejected internal
-aggregate waits are never converted into language Error values.
+Synchronous failures from supported user code and exact reflection hooks become
+language Errors at those boundaries. The boundary catches only the
+user-controlled invocation; adjacent runtime work remains outside it.
+Synchronous re-entry into Cascada from such code is a fatal host-contract
+violation.
+
+Internal failures become `RuntimeError`, retain the owning operation's context,
+are reported once, and continue to throw or reject. They are never admitted or
+queried as language data. Continuation failures, invariant violations, and
+rejected internal aggregate waits follow this path.
 
 Every public operation runs its synchronous prefix under this fatal boundary.
 The FIFO helpers register directly on a native Promise and otherwise share one
@@ -287,8 +301,8 @@ canonical native Promise for each ordered thenable.
 rejection, and `observeResultPromise` registers ordered admission or lease
 bookkeeping without replacing a result. `continueInternalPromiseOrFatal`
 continues an already-native intermediate wait directly and owns its rejection.
-An independent result Promise remains unchanged. None adds a per-consumer
-proxy.
+An independent data result Promise is not operation work. The common helpers
+use ordinary native Promises and add no Promise subclass or per-consumer proxy.
 
 `src/operation-lifecycle.js` guards operation-specific continuations with one shared
 open/closed owner. Fatal failure closes the owner before an aggregate can run a
@@ -298,8 +312,9 @@ ready work allocates no release-registry state. Pending nested resources registe
 owner and unregister on completion; closing releases them without cancelling
 settlement.
 
-An object-like fatal value is reported once per identity even if it crosses
-several fatal wrapper boundaries.
+One `RuntimeError` reports at most once even when it crosses several fatal
+boundaries. Reusing a raw internal Error in another causal operation creates a
+new fatal occurrence.
 
 ## Operations
 
@@ -342,7 +357,7 @@ normal mutation path; observation preserves the receiver. See
 Returns host-ready data for the branch captured at its issue position.
 
 - Primitive and missing terminals return directly.
-- One Error returns unchanged.
+- One contextual language Error occurrence returns unchanged.
 - A successful result is always a metadata-free deep copy preserving arrays,
   holes, own-key order, aliases, cycles, admitted prototypes, enumerable
   `__proto__`, and captured Promise-property values.
@@ -350,16 +365,16 @@ Returns host-ready data for the branch captured at its issue position.
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
-- Several Errors return an Error with message
-  `export: branch contains errors`; `.errors` contains each distinct reachable
-  Error identity, and its order is not semantic.
+- Several Errors return a `CompoundPoisonError`. Nested compounds are flattened
+  and leaves are deduplicated by native cause; order within one graph is not
+  semantic.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
 pending export fulfills with its final single or combined Error. A synchronous
-reflection failure returns its Error. Other unexpected traversal failures and
-rejected internal readiness are fatal. Rejected data Promises are converted to
-ordinary Error values before collection.
+reflection failure returns a contextual export Error. Other unexpected
+traversal failures and rejected internal readiness become fatal `RuntimeError`.
+Rejected data Promises retain the source boundary that introduced them.
 
 ### `hasError(chain, path, operationContext)`
 
@@ -381,6 +396,9 @@ The operation never marks or pins the branch.
 ### `getErrors(chain, path, operationContext)`
 
 Returns an array containing each reachable Error identity once.
+
+Separately contextualized occurrences of one native Error are distinct Error
+identities and are all returned. Export instead groups them by native cause.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and primitive terminals return `[]`.
@@ -444,14 +462,15 @@ no source lease. Other pending preparation leases only identities it must read
 again. One common invocation lifetime stops abandoned Array work after a final
 result or fatal failure without cancelling shared settlement.
 
-A managed-class call prepares every explicit argument and the complete receiver
-graph, resolves its method once from the prepared receiver, and only then
-isolates a mutation receiver. An observation runs synchronously on its leased
-prepared receiver. A mutation invokes once synchronously, validates and admits
-the completed receiver, and publishes it through the ordinary mutation
-transition. It returns the published receiver for `this` and an independent
-copy for every other traversable result. Promise-valued managed-class results
-are validation Errors and are never awaited.
+A managed-record or managed-class call exports every explicit argument and
+prepares the complete receiver graph, resolves its method once from the prepared
+receiver, and only then isolates a mutation receiver. A direct result Promise
+extends receiver protection or private mutation until settlement; a nested
+result Promise is ordinary imported data. A mutation validates and admits the
+completed receiver before publishing it through the ordinary transition. It
+returns the published receiver for `this`; every other result is imported, and
+managed mutation-result import marks all reached managed aliases shared without
+copying them.
 
 A `sort` or `toSorted` comparator remains executable control outside the graph.
 When comparison is possible, the wrapper exports every sortable value as one

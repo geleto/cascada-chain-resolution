@@ -29,17 +29,21 @@ function capturedThenableOf(value, operationContext) {
 function captureThenable(value, thenables, operationContext = undefined) {
     if (!metadata.isObjectLike(value)) return undefined
     if (thenables.has(value)) return thenables.get(value)
-    const captured = errorUtils.catchUserCodeFailure(
-        () => {
-            const then = errorUtils.runUserCode(() => value.then)
-            return typeof then === "function" ? { then } : undefined
-        },
-        rejection => ({
-            // Acquisition failure belongs to the operation that first sampled it.
-            acquisitionOperationContext: operationContext,
-            then: (_resolve, reject) => reject(rejection),
-        }),
-    )
+    const capture = () => {
+        const then = errorUtils.runUserCode(() => value.then)
+        return typeof then === "function" ? { then } : undefined
+    }
+    const onFailure = rejection => ({
+        then: (_resolve, reject) => reject(rejection),
+    })
+    const captured = operationContext === undefined
+        ? errorUtils.catchRawUserCodeFailure(capture, onFailure)
+        : errorUtils.catchUserCodeFailure(
+            capture,
+            operationContext,
+            errorUtils.ERROR_KIND.ThenAccessThrew,
+            onFailure,
+        )
     thenables.set(value, captured)
     return captured
 }
@@ -47,14 +51,12 @@ function captureThenable(value, thenables, operationContext = undefined) {
 function continuePromise(value, operationContext, onFulfilled, onRejected) {
     const captured = capturedThenableOf(value, operationContext)
     if (!captured) {
-        errorUtils.reportFatalError(
-            new TypeError("Value is not a captured Promise"),
-        )
+        throw new TypeError("Value is not a captured Promise")
     }
 
     // A local native Promise already is the FIFO queue. Register directly so
-    // its reaction keeps that queue position; failed registration runs the
-    // rejection continuation synchronously because no reaction was installed.
+    // its reaction keeps that queue position. Failed registration becomes an
+    // ordinary rejected Promise with this boundary's attribution.
     if (
         captured.canonical === undefined &&
         captured.then === Promise.prototype.then
@@ -65,28 +67,51 @@ function continuePromise(value, operationContext, onFulfilled, onRejected) {
                 value,
                 [onFulfilled, onRejected],
             )),
-            onRejected,
+            operationContext,
+            errorUtils.ERROR_KIND.ThenInvocationThrew,
+            failure => Promise.reject(failure).then(onFulfilled, onRejected),
         )
     }
     if (captured.canonical === undefined) {
         const { promise, resolve, reject } = Promise.withResolvers()
         captured.canonical = promise
-        // Invocation failure belongs to the first operation that invokes it.
-        captured.invocationOperationContext = operationContext
         errorUtils.catchUserCodeFailure(
             () => errorUtils.runUserCode(() => Reflect.apply(
                 captured.then,
                 value,
                 [resolve, reject],
             )),
+            operationContext,
+            errorUtils.ERROR_KIND.ThenInvocationThrew,
             reject,
         )
     }
     return captured.canonical.then(onFulfilled, onRejected)
 }
 
+function valueWithOrigin(value, operationContext, valueKind, rejectionKind) {
+    if (!isPromise(value, operationContext)) {
+        return Error.isError(value)
+            ? errorUtils.toPoison(value, operationContext, valueKind)
+            : value
+    }
+    return continuePromise(
+        value,
+        operationContext,
+        resolved => {
+            if (errorUtils.isFatalError(resolved)) throw resolved
+            return Error.isError(resolved)
+                ? errorUtils.toPoison(resolved, operationContext, valueKind)
+                : resolved
+        },
+        reason => {
+            throw errorUtils.toPoison(reason, operationContext, rejectionKind)
+        },
+    )
+}
+
 function isError(value) {
-    return Error.isError(value)
+    return Error.isError(value) && !(value instanceof errorUtils.RuntimeError)
 }
 
 function admitValue(value, operationContext) {
@@ -101,6 +126,7 @@ function admitReadyValue(
     knownType = undefined,
     knownAdmittedPrototype = undefined,
 ) {
+    if (errorUtils.isFatalError(value)) throw value
     if (metadata.isObjectLike(value)) {
         metadata.getOrCreateMeta(
             value,
@@ -116,9 +142,7 @@ function typeOf(value, operationContext) {
     if (!metadata.isObjectLike(value)) return TYPE_PRIMITIVE
     const type = metadata.metaOf(value, operationContext)?.type
     if (type === undefined) {
-        errorUtils.reportFatalError(
-            new TypeError("Value was not admitted"),
-        )
+        throw new TypeError("Value was not admitted")
     }
     return type
 }
@@ -154,4 +178,5 @@ export {
     isTraversable,
     isTraversableType,
     typeOf,
+    valueWithOrigin,
 }
