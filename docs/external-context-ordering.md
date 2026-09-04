@@ -17,6 +17,8 @@ Constructing a root `ContextChain` imports its raw host value. `ContextChain` ca
 - `scopeMutationPaths` contains each prefix before `!`;
 - `propertyMutationPaths` contains each complete assignment or deletion target.
 
+After Promise-valued path support, a mutation path containing a dynamic segment contributes its longest preceding String/Number prefix as a conservative scope path. Thus `apis[pendingKey]!.run()` contributes `["apis"]`, and `[pendingKey]!.run()` contributes `[]`; dynamic assignment and deletion use the same rule. The discovery Arrays themselves remain synchronous and contain no Promise.
+
 Two empty Arrays import the context but build no external mutation tree. Ordinary `Chain` construction admits existing Cascada data without importing it. Both classes use the same importer and execution representation.
 
 Property discovery starts at the context root. For `propertyMutationPaths: [["status"]]`, the empty containing path therefore records the root when the root is external. An empty property mutation path is different: it replaces the Chain's root value and has no containing graph placement, so it discovers nothing. An empty scope mutation path searches the root scope.
@@ -34,7 +36,7 @@ The tree is a fixed positive index, not a copy of the managed graph:
 - It is not updated after COW, Array remapping, assignment, deletion, or `enter`.
 - Ordinary managed assignment creates another owner. Later mutation through either managed placement uses COW and cannot change the other placement or its live leaves.
 - External identities remain exact through a managed copy. Actual use through another Chain or path, or through a later alias elsewhere, is handled by the identity map and conflicts.
-- A controlled graph replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf returns a language Error before publication. Array changes that preserve every live leaf's exact path and identity remain valid. Apply the same check to a managed host method's private completed receiver: failure is recoverable `InvalidManagedReceiver`, poisons the receiver and every selected external phase, and publishes none of the invalid managed state. Host behavior is fatal only if it has already changed external state without authority or made another runtime invariant untrustworthy.
+- A controlled graph replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf returns a language Error before publication. Array changes that preserve every live leaf's exact path and identity remain valid. Apply the same check to a managed host method's private completed receiver: failure is recoverable `InvalidManagedReceiver`; discard the private receiver, preserve the original managed state, and return the Error. Any recoverable managed mutation failure whose ordinary Error publication would remove a live leaf uses the same preserve-and-return rule. A failed external operation below a managed gate likewise republishes the unchanged managed prefix and carries its failure through the selected external phases. Host behavior is fatal only if it has already changed external state without authority or made another runtime invariant untrustworthy.
 
 Tree lookup is the only tree-removal point. A leaf is always checked against the identity map before use. If its identity is already in permanent conflict, remove that leaf and report no live boundary. Other leaves remove themselves if later queried; no reverse identity-to-leaf index or tree scan is needed. Already-issued operations retain their captured identity state.
 
@@ -45,13 +47,13 @@ Every context-path call or property operation, including an unmarked observation
 One execution-scoped `WeakMap` accounts for every external identity recorded in any static tree, including later references to that identity outside the tree. Tree construction creates or reuses one durable entry with exactly two fields:
 
 - `use`: unset before first use, `ONE(location)` for one live tree leaf, or `CONFLICT(reason)` after incompatible use;
-- `phase`: the readers-writer cursor whose completion payload is the sole repairable poison state.
+- `phase`: the readers-writer cursor whose non-thenable completion record carries the repairable poison state.
 
-Keep only the first stable conflict reason, not operation history. There is no separate current-poison field. Conflict belongs to `use` and is permanent; repairable operation poison belongs only to phase-completion payloads. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
+Keep only the first stable conflict reason, not operation history. There is no separate durable current-poison field. Conflict belongs to `use` and is permanent; repairable operation poison belongs to phase-state records, including the current read group while it is open. This is execution state, not graph metadata: neither poisoning nor repair replaces a placement or modifies the external object. A tree leaf may refer to the shared entry, but the map never needs to enumerate the leaf set. Different executions do not share authority or ordering.
 
-Actual use means a call or property operation through an external boundary. Import, managed assignment, storage, return, and copying do not count. A direct lookup of a mutable external identity fails without recording use, but still joins that boundary's observation phase so it cannot overtake earlier mutation or miss predecessor poison. An attempt to export one fails without recording use or acquiring a phase.
+Actual use means selecting a supported call or property operation through an external boundary, or selecting a boundary as part of a broader external mutation scope. Import, managed assignment, storage, return, and copying do not count. Once ordered, selection claims authority even if member reflection or later preparation fails before host access. A direct lookup of a mutable external identity fails without recording use, but still joins that boundary's observation phase so it cannot overtake earlier mutation or miss predecessor poison. An attempt to export one fails without recording use or acquiring a phase.
 
-Apply actual-use transitions in operation order before host access:
+Apply actual-use transitions when the complete exact selection and its phase predecessors are ready:
 
 ```text
 no state + use at a live leaf              -> ONE(that location)
@@ -63,11 +65,11 @@ CONFLICT(reason) + any actual use           -> Error using that reason
 
 Mutation additionally requires the current location to be a live tree leaf. An identity absent from every static tree remains observation-only and may be observed from any location; it needs no identity-map entry or phase.
 
-Conflict is permanent. The conflicting operation performs no host access, publishes poison in operation order when a phase exists, and returns an Error explaining the first incompatible use. Repair may clear an ordinary operation failure but cannot clear conflict or grant another location. A late alias discovered behind a Promise is rejected when reached; it never acquires authority or causes tree growth.
+Conflict is permanent. The conflicting operation performs no access through the selected external receiver, publishes poison in operation order when a phase exists, and returns an Error explaining the first incompatible use. Repair may clear an ordinary operation failure but cannot clear conflict or grant another location. A late alias discovered behind a Promise is rejected when reached; it never acquires authority or causes tree growth.
 
-One `ExternalOperationContext` owns one identity-keyed operation map. Each selected record contains the location, strongest access mode, proposed `use` transition, phase-completion handle, and repair intent for that operation. Durable identity entries contain none of those proposals.
+One `ExternalOperationContext` owns one identity-keyed operation map and the operation-wide repair intent. Each selected record contains the location, strongest access mode, use transition, and phase-completion handle. Merging another location for the same identity creates conflict instead of discarding either location. Durable identity entries contain none of those operation facts.
 
-Evaluate the selected records from one pre-operation state. If any conflict exists, commit every discovered permanent conflict but no compatible new location, because host access will not occur. Otherwise commit all new locations together immediately before host access. Report conflicts in deterministic receiver and path order; iteration order must not grant partial authority.
+Evaluate the complete actual-use set from one state and commit it atomically at the first ordered point after exact selection. A ready operation does this synchronously; an unresolved path does it in its already-ordered phase continuation. Commit before host access and independently of later preparation success. If any conflict exists, commit every discovered permanent conflict but no compatible new location. Otherwise commit all new locations together. Report conflicts in deterministic receiver and path order; iteration order must not grant partial authority.
 
 ## External phases
 
@@ -85,6 +87,8 @@ mutation or repair:
 ```
 
 Register every synchronously selectable receiver and mutation-scope leaf when the operation is issued and before its first wait. Merge duplicate selections by identity; exclusive access wins. Publish all successors before waiting on any predecessor, and never make entries created by one operation wait on one another.
+
+For a Promise-valued path segment, an external boundary already reached by the ready prefix is exact and uses its ordinary access mode. Other live leaves that the unresolved suffix may reach receive exclusive provisional phases, even for an observation. They record no use until resolution selects an exact leaf; the exclusive reservation prevents later authority decisions from overtaking them without adding another queue.
 
 After phase publication, synchronously capture ready managed property versions, any ready external boundary, and selected input export. Phase predecessors and ordinary readiness may then settle concurrently. Host reflection begins only after both complete. Freeze the phase set before the first wait; an identity first revealed later never acquires another phase.
 
@@ -116,7 +120,7 @@ A mutating entry's ordinary branch gate prevents outside operations from reachin
 
 External poison belongs to the identity's execution-scoped phase state, not to application data, graph metadata, or the external object. Poisoning never replaces the selected placement with an Error. Existing poison contributes an Error at the selecting receiver; required preparation finishes, host code is skipped, and the poison remains.
 
-Each phase completion carries the repairable poison visible after that phase. Observation failure normally does not poison. A failed or rejected mutation publishes its combined Error through every selected mutation-phase completion. An external-containment violation adds its Error to the selected boundary. Observations already issued in the same read group share their predecessor and do not retroactively consume peer poison; their completed group carries newly produced poison to the next exclusive operation.
+Each phase Promise is marked handled at creation and fulfills with a hook-free, non-thenable record equivalent to `{ poison }`; it never fulfills directly with a rejecting-thenable Error. Fatal Error is never repairable phase poison and creates no special phase record. A successor that resumes after fatal stops at its common execution check before host work; one whose predecessor never settles may remain pending because every pending public operation result observes fatal independently. The current read group keeps issuance-ordered outcome slots and the poison known so far. An observation snapshots that known poison when it joins: peers already issued are unaffected, while observations issued after poison is published and the next exclusive operation see it. The completed group exposes the final combined poison in its completion record. Observation failure normally does not poison. A failed or rejected mutation publishes its combined Error through every selected mutation-phase record. An external-containment violation adds its Error to the selected boundary.
 
 Repair-only enters an existing selected location exclusively, bypasses and clears repairable predecessor poison, performs no host access, and returns `undefined`. Repair-and-call bypasses old poison, invokes one selected method, then completes cleanly on success or publishes its new mutation Error. These are the only repair forms. Repair never changes actual-use history, clears `CONFLICT`, creates a tree leaf, or transfers authority.
 
@@ -131,15 +135,14 @@ Public `import(value, operationContext)` never creates a static tree or external
 An external operation follows the common lifecycle:
 
 1. Validate operation inputs and perform ready hook-free internal dispatch.
-2. Query the static tree for the receiver and mutation scope, validate identity-map state, and register all known phases.
-3. Capture graph versions, the ready external boundary, and input export before waiting.
-4. Wait for phase predecessors and finish required preparation.
-5. Evaluate all receiver and property-use transitions from one state. Commit permanent conflicts; if any Error exists, commit no compatible new location and perform no host reflection.
-6. Otherwise commit every new location together immediately before host access.
-7. Traverse the host suffix and invoke the selected callable exactly once.
-8. Import the result, publish mutation poison or repair, complete any managed scope, and release phases.
+2. Query the static tree for the receiver and mutation scope, register every possible phase successor, and freeze the set before waiting.
+3. Capture graph versions, the ready external boundary, and input export.
+4. Wait only as needed for phase predecessors and path resolution, then assemble and atomically commit the exact identity-use batch.
+5. Finish required preparation. A later preparation failure does not undo the use claim.
+6. If preparation or conflict failed, perform no host reflection; otherwise traverse the host suffix and invoke the selected callable exactly once.
+7. Import the result, publish mutation poison or repair, complete any managed scope, and fulfill phases with non-thenable state records.
 
-A closed continuation completes shared settlement but performs no later host access or publication. Host code may synchronously issue nested Cascada operations, which use their own explicit operation contexts and ordinary ordering. External identities reached below a selected boundary gain no tree leaf or independent mutation authority. A property value returned to Cascada is copied into managed state; call results still use ordinary import.
+A locally closed continuation in a live execution completes shared settlement but performs no later host access or publication. A continuation in a fatally failed execution returns at the execution check before settlement. Host code may synchronously issue nested Cascada operations, which use their own explicit operation contexts and ordinary ordering. A direct host Promise must not depend on a nested operation ordered behind the call's active managed gate or external phase; such a dependency cycle is invalid host behavior. External identities reached below a selected boundary gain no tree leaf or independent mutation authority. A property read inside mutable external state returns a detached managed snapshot; observation-only external-property results and call results use ordinary import.
 
 ## Scope
 

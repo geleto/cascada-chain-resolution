@@ -15,7 +15,7 @@ Observation immutability is a trusted contract, not runtime enforcement. A viola
 Method reflection happens once, after receiver and argument preparation succeeds and before mutation isolation.
 
 - A record method is an own enumerable string-keyed placement whose prepared logical value is a Function. Accessors, non-enumerables, inherited properties, non-Functions, and extracted Functions are not record methods.
-- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Class declaration rejects prototype accessors; a later accessor change is fatal.
+- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Class declaration rejects prototype accessors. If method selection later detects an accessor or another invalid prototype change before invoking host code or publishing state, the call returns `InvalidManagedReceiver` and preserves the original receiver. The violation is fatal only after it has made runtime state or ordering untrustworthy.
 - `constructor` is never callable.
 
 Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the prepared receiver, not nested Cascada invocations.
@@ -25,7 +25,7 @@ Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the p
 One operation context performs the call:
 
 1. Select the managed boundary from the admitted receiver category, method name, and mode without reflecting on the method.
-2. Prepare the complete receiver graph and export every explicit argument together. Continue both after language Errors to collect the required receiver-then-argument outcome; a fatal failure abandons operation-specific work in both.
+2. Prepare the complete receiver graph and export every explicit argument together. Continue both after language Errors to collect the required receiver-then-argument outcome; after a fatal failure, either path simply returns at its next execution check.
 3. Resolve and validate the method once from the prepared receiver or admitted class prototype.
 4. Materialize an observational receiver when its logical representation cannot be exposed physically, or isolate a mutation receiver.
 5. Invoke once with `Reflect.apply(method, workingReceiver, exportedArguments)`.
@@ -68,8 +68,8 @@ A Promise nested inside a synchronous result is ordinary imported data and does 
 
 - An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection leaves the receiver unchanged and preserves an existing contextual failure or wraps a raw reason at the invocation boundary.
 - A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection contextualizes the same way and poisons the receiver with that occurrence.
-- A direct Error is call failure whether it is returned, fulfilled, thrown, or rejected. An observation returns it; a mutation poisons its receiver with it after the defined graph effect.
-- A receiver validation failure poisons the receiver and becomes the operation result; pending transport rejects only after that graph effect is published.
+- A direct Error is call failure whether it is returned, fulfilled, thrown, or rejected. An observation returns it; a mutation normally poisons its receiver with it after the defined graph effect.
+- Any recoverable mutation failure normally poisons the receiver and becomes the operation result; pending transport rejects only after that graph effect is published. If replacing the receiver with an Error would remove a live external mutation-tree leaf, discard the private receiver, preserve the original managed state, and return the Error instead.
 
 A synchronous method throw, explicit returned Error, direct Error fulfillment,
 and direct-result rejection follow the same causal and graph-effect rules for
@@ -77,7 +77,7 @@ the failed call. A Promise nested inside a successful result is independent data
 its later Error does not poison an already published valid receiver. Later
 operations preserve every contextualized Error's attribution.
 
-Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronously issued nested Cascada operations use their own explicit operation contexts and ordinary ordering.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronously issued nested Cascada operations use their own explicit operation contexts and ordinary ordering, but the direct host Promise must not depend on a nested operation ordered behind its active receiver gate or external phase.
 
 ## Managed-code contract
 

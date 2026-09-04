@@ -38,13 +38,18 @@ Do not place semantic managed state outside graph-visible properties. Cascada ma
 a stable failure kind, and, for a native host Error, that Error in `.cause`.
 Once contextualized, the occurrence propagates unchanged; a later consumer does
 not replace its source. Reusing one native Error at another causal boundary
-creates another wrapper for that occurrence.
+creates another wrapper for that occurrence. Aliases to a raw Error reached by
+one import boundary share one wrapper through that walk's identity map, so
+contextualization does not change graph topology.
 
 `CompoundPoisonError` contains flattened leaves in `.errors`, preserves their
-logical order and individual attribution, and deduplicates occurrence wrappers
-only when their causes have identity. Equal primitive causes remain distinct.
+semantic logical order and individual attribution, and deduplicates exact leaf
+identity only. Different occurrence wrappers remain distinct even when they
+share one cause.
 `RuntimeError` represents a fatal runtime defect, broken invariant, or unsafe
 host failure. It is reported and rethrown, never treated as language data.
+Runtime-created Error wrappers and compound child arrays are frozen after
+construction, so exposing an Error cannot mutate later graph attribution.
 
 Imported host storage keeps nested native Error objects unchanged while Cascada
 exposes their contextual wrappers as the logical property values. Declaration
@@ -60,7 +65,7 @@ Records and Arrays default to managed. Class instances default to external.
 - Call `managedStateClass(...classes)` to make subsequently admitted instances of those exact classes managed. The rule is not inherited by subclasses.
 - Classification becomes permanent at first admission within one execution. Later declarations and class-registry changes cannot reclassify that execution's identity, but another execution admits the same host identity independently.
 - Repeating the same declaration is allowed. A conflicting declaration returns a validation Error without changing the established category.
-- Declaration APIs are synchronous and never await. Do not pass them a Promise or callable thenable. `externalState` also rejects Functions and primitives. Passing an Error returns that exact Error unchanged.
+- Declaration APIs are synchronous and never await. Do not pass them a Promise or callable thenable. A declaration samples each reached identity's `then` at most once for that call; if the getter fails nonfatally, the declaration returns a validation Error and records nothing because it cannot establish that the input is safe to declare. This probe creates no Promise or persistent thenability state. `externalState` also rejects Functions and primitives. Passing an Error returns that exact Error unchanged without reading `then`.
 
 Declare a managed class before ordinary admission of its instances. A detached property copy from mutable external state may instead preserve a source prototype after validating it against the managed-class contract; this does not make other instances managed. Changing an admitted identity's prototype or classification afterward is unsupported.
 
@@ -75,6 +80,8 @@ Managed values move between independent Cascada executions only through export f
 ## Runtime primordials
 
 Cascada assumes the global `Array`, `Array[Symbol.species]`, the standard Array intrinsics, `Array.prototype`, `String.prototype`, and `Object.prototype` are not modified. Otherwise native dispatch, inherited indexes, accessors, species, or protocols could change controlled behavior.
+
+Runtime-owned `RuntimeError` objects nevertheless define their own non-callable `then`. This narrowly prevents `Error.prototype.then` from changing fatal Error behavior under native Promise assimilation; it is not general support for modified `Error.prototype` or other primordials.
 
 Custom or replaced methods and accessors on `String.prototype` or `Object.prototype` are unsupported through native String dispatch. Cascada never invokes those accessors while selecting a String method.
 
@@ -114,6 +121,8 @@ A managed class has these additional restrictions:
 - Constructors are not run when Cascada copies an instance.
 - Host code does not change its prototype chain, descriptors, or extensibility after admission.
 
+Changing a prototype after admission violates the host contract, but violation is not itself proof that the runtime is corrupt. If method selection detects an accessor or another invalid prototype shape before invoking host code or publishing receiver state, the call returns `InvalidManagedReceiver` and preserves the original receiver. It becomes fatal only when the change has already made runtime state, ownership, ordering, or publication untrustworthy.
+
 Do not declare native internal-slot types such as `Date` managed. Their prototype can be preserved, but their hidden state cannot be reconstructed in a copy. Keep them external, and explicitly declare a nested identity external before a surrounding `managedState` walk reaches it.
 
 These restrictions allow records and class instances to share one managed invocation model.
@@ -130,7 +139,7 @@ These restrictions allow records and class instances to share one managed invoca
 - Access nested external state through a separate Cascada operation that selects it as the external receiver. `api!.db.close()` is supported; a managed `api!.close()` must not call `this.db.close()` internally.
 - A completed mutation receiver contains no Promise or Error. Managed state may contain either between calls, because Cascada resolves or propagates them before the next managed invocation.
 - A managed method may complete synchronously or through one direct Promise. Later receiver access and any inspection of a read-only exact external input must belong to that Promise and finish before it settles.
-- A direct Error always reports method failure, whether returned, fulfilled, thrown, or rejected. A mutating call applies its receiver-failure behavior; returning an Error as successful payload is unsupported.
+- A direct Error always reports method failure, whether returned, fulfilled, thrown, or rejected. A mutating call applies its receiver-failure behavior; returning an Error as successful payload is unsupported. If ordinary failure publication would remove a live external mutation-tree leaf, Cascada preserves the original managed receiver and returns the Error instead.
 - Detached receiver or external-input work is forbidden. A Promise nested in a synchronous result must not later access or expose the receiver, or inspect or mutate an exact external input; return that Promise directly when its completion needs such access. Exact observation-only external identities may be retained or returned inertly because this grants no authority. The managed structure of exported argument copies may be retained, used, or returned later; exact external leaves inside it follow the same rule. Synchronously issued nested Cascada operations use their own explicit operation contexts and ordinary ordering.
 
 Nested calls such as `this.increment()` are ordinary JavaScript calls on the already prepared receiver and follow the same outer invocation contract.
@@ -143,13 +152,13 @@ External identities are exact host objects. Cascada observes them by default and
 
 One external identity that Cascada may mutate must be available under a compiler-provided mutation path during initial context import and used through one location: one context Chain and one complete normalized path.
 
-- Mutation paths are String/Number prefixes selected by `!` and String/Number complete targets of assignment and deletion. Initial import searches only the supplied paths and their selected subtrees.
+- Mutation paths are String/Number prefixes selected by `!` and String/Number complete targets of assignment and deletion. If such a path contains a dynamic segment, the compiler supplies its longest preceding String/Number prefix for conservative subtree discovery. Initial import searches only the supplied paths and their selected subtrees.
 - Initial import records only external boundaries reached without crossing a Promise. Mutation paths containing no external boundary are discarded. External identities outside the resulting tree, Promise-revealed identities, and subsequently added identities remain observation-only.
-- The first actual observation or mutation must occur at a recorded location and selects that one location. Every later use of that identity must use the same Chain and path.
-- First use elsewhere, or later use through another Chain or path, later alias, copied occurrence, or Promise-revealed occurrence elsewhere, creates permanent conflict. The operation performs no host access, poisons the external identity's ordering state, and returns an Error explaining the first incompatible use even when it requested observation.
-- Several stored occurrences do not conflict until used. If one identity appears at several recorded leaves, the first actual use selects one; use through another conflicts.
+- The first supported call or property-operation selection must occur at a recorded location and selects that one location, even if member reflection or later preparation fails before host access. Every later use of that identity must use the same Chain and path.
+- First use elsewhere, or later use through another Chain or path, later alias, copied occurrence, or Promise-revealed occurrence elsewhere, creates permanent conflict. The operation performs no access through that external receiver, poisons the external identity's ordering state, and returns an Error explaining the first incompatible use even when it requested observation.
+- Several stored occurrences do not conflict until used. If one identity appears at several recorded leaves, the first supported operation selection chooses one; selecting another, including within the same operation, conflicts.
 - Managed assignment creates another owner rather than JavaScript reference semantics. Later mutation through either managed placement uses COW and cannot change the original live binding.
-- A Cascada replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf fails before publication. Array changes that leave every live leaf at the same index and path remain valid. Managed host methods must preserve every live leaf at its recorded path and identity; a detected violation is fatal.
+- A Cascada replacement, deletion, or Array remap that would remove, replace, hide, or relocate a live leaf fails before publication. Array changes that leave every live leaf at the same index and path remain valid. Managed host methods must preserve every live leaf at its recorded path and identity. A detected violation returns `InvalidManagedReceiver`, discards the private receiver, and preserves the original managed state; it is fatal only if host code has already changed external state without authority or made runtime state untrustworthy.
 - Another reference may be stored elsewhere, including at another Array index, but actual external use through it creates permanent conflict.
 - A later Cascada gate may temporarily hide the original path without changing it.
 - A mutation-capable external identity cannot be passed as a host argument, external write value, or controlled-callback input. Export returns an Error before host code runs and records no use. Observation-only external identities may cross unchanged and remain read-only.
@@ -211,8 +220,9 @@ Host data entering Cascada's language graph is imported. Data leaving the graph 
 - Functions and external identities cross exactly. Host code must treat them as read-only unless the exact external identity is independently covered by the active receiver mutation scope.
 - Export consumes Errors at any depth. If any argument or assigned value contains an Error, host code is not called and no Error crosses the boundary.
 - Host code may retain exported copies. It must not retain access to an unexported managed receiver or source.
-- Host methods, accessors, callbacks, and reflection hooks must not issue Cascada operations while active.
+- Host methods, accessors, callbacks, and reflection hooks may synchronously issue nested Cascada operations with explicit operation contexts. They receive no ambient execution or special re-entry path.
 - A direct result Promise may keep using its receiver and exact external inputs until it settles. A nested result Promise does not extend that authority, though it may carry an exact external identity as inert result data. The managed structure of exported copies may outlive either Promise; exact external leaves gain no later authority.
+- A direct host Promise must not depend on a nested Cascada operation ordered behind that call's active managed gate or external phase. Such a dependency is a self-wait and is invalid host behavior.
 - A callback invoked by a controlled method must complete synchronously and must not return a Promise. It receives only its declared exported inputs and may not access an unexported managed source.
 
 ## Choosing a representation

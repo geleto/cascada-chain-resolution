@@ -43,6 +43,13 @@ shared by related Chains. Each constructor and operation receives an operation
 context `{ execution, errorContext }`; its execution must match the Chain, while
 its error context identifies that operation's source.
 
+This Chain/context pairing is trusted kernel integration control supplied by the
+higher runtime, even though the package exports the kernel surface. A missing
+context, cross-execution binding, or new operation through a closed entered Chain
+is fatal before graph access. Script data cannot supply these control facts; a
+separate general host-facing facade would validate its own invocation before
+calling the kernel rather than adding another kernel execution path.
+
 Every public path operation receives a `Chain`. Its private `_state.value`
 property is the mutable root location. The holder itself is runtime state, not
 language data; other `Chain` fields are never walked, copied, indexed, marked,
@@ -50,8 +57,9 @@ or validated by the kernel.
 
 An empty path targets `_state.value`. This stable parent/key location lets a
 root Promise use the same Promise-mirror machinery as any nested property. A
-pending initial root establishes that mirror with the initialization operation context;
-later operations reuse the captured version rather than becoming its source.
+pending initial root establishes that mirror and registers its resolver with the
+initialization operation context in the continuation closure; later operations
+reuse the captured version rather than becoming its source.
 
 Successful assignment and deletion change the `Chain` and return `undefined`.
 A ready failed mutation returns the Error it publishes. Values are
@@ -68,18 +76,21 @@ calls. Each operation:
 3. registers all continuations needed at its current program position; and
 4. returns before unresolved data is available.
 
-A callable thenable is canonicalized once only when Cascada needs FIFO ordering
-among continuations on that source: to advance or consume a captured version,
-resume or finish a transition, or perform settlement bookkeeping before later
-Cascada use. Returning a result alone does not canonicalize or replace it.
-A genuine native Promise registers directly on its captured native `then`; its
-fulfilled value is checked for Error but not resampled for thenability. Custom
-thenable callbacks instead fulfill one cached Promise with a private
-non-thenable first-settlement record. Each causal boundary that introduced the
-thenable interprets that raw record with its retained operation context and
-processes a fulfilled nested thenable through execution-local capture. Later
-consumers preserve the boundary's contextualized Error. The record never escapes
-or receives a raw native Promise resolver.
+A callable thenable is captured once only when Cascada needs FIFO ordering among
+continuations on that source: to advance or consume a captured version, resume
+or finish a transition, or perform settlement bookkeeping before later Cascada
+use. Returning a result alone does not capture or replace it. Native Promises
+and custom thenables use the same source-neutral cached settlement Promise. The
+kernel invokes the captured `then` once with callbacks that fulfill one private,
+non-thenable first-settlement record and ignores the derived value returned by
+that invocation. A native Promise subclass may therefore execute its species
+machinery, as JavaScript requires, but that derived Promise never becomes kernel
+settlement or FIFO state. Each causal boundary interprets the raw record with its
+retained operation context. Native-Promise fulfillment is checked for Error but
+is not resampled for thenability; a fulfilled nested non-native thenable instead
+continues through execution-local capture. Later consumers preserve the
+boundary's contextualized Error. The record never escapes or receives a raw
+native Promise resolver.
 Every consumer of a Promise-backed property registers through that property's
 captured mirror, so its synchronous continuation observes all earlier
 consumers and none issued later.
@@ -131,6 +142,17 @@ Declarations neither modify nor admit values. First admission fixes an
 identity's category and prototype permanently. See
 [`data-classes.md`](data-classes.md).
 
+Structural classification is a conservative probe rather than a failure
+boundary: if user-controlled reflection cannot establish a supported managed
+shape, admission keeps the exact identity as external and creates no language
+Error. A fatal established during that execution-bound reflection still wins.
+Declaration thenability sampling is instead contextless and local to one
+declaration. It preserves Error values before sampling, rejects callable
+thenables, and returns an ordinary validation Error if a nonfatal throw from a
+`then` getter prevents the declaration from establishing a safe input. An
+escaping `RuntimeError` remains fatal. The probe creates no execution state,
+poison, Promise, or synthetic thenable.
+
 All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
 External classes and native internal-slot objects are identity leaves. The graph
@@ -152,8 +174,10 @@ Every host-provided root must pass through:
 runtime.import(value, operationContext)
 ```
 
-`operationContext` carries the execution and source-error information. A missing operation context
-or execution mismatch is a fatal integration error.
+`operationContext` carries the execution and source-error information. The kernel
+trusts its arbitrary source payload but explicitly checks the minimal routing
+invariants: a missing context or execution mismatch is a fatal integration error
+before graph access.
 
 For a ready root, import returns its admitted logical value after one
 transactional synchronous walk. For a Promise root, one operation Promise
@@ -259,10 +283,12 @@ creates a new mirror at that operation's FIFO position. ArrayViews may still
 share the property's physical backing slot.
 
 The mirror's `value` field is the property version's authoritative logical
-value. Its first resolver registers with the import operation context and policy
-captured at creation. Imported identities retain only their import status; the
-pending continuation retains attribution until settlement, and a resulting
-Error carries its own context and kind. A live runtime-owned version normally
+value. Its first resolver's continuation closure captures the import operation
+context and policy. The source Promise, identity metadata, Chain, version, and
+mirror store no attribution. On settlement the mirror receives the logical
+value; a resulting Error carries its own context and kind. Later continuations
+use FIFO readiness and read that published value instead of reinterpreting the
+raw settlement payload. A live runtime-owned version normally
 writes through to its physical property. If writeback reflection fails, its
 Error remains logical in the mirror and the physical Promise is preserved. An
 imported version always preserves the external Promise.
@@ -282,20 +308,38 @@ no source Promise, parent, key, import context, or import policy.
 A raw failure is contextualized at its first causal boundary. `PoisonError`
 stores that boundary's opaque `errorContext` and stable `kind`; a wrapped host
 failure is retained in `cause`. An existing contextual Error propagates
-unchanged. Reusing one native Error at another causal occurrence creates another
-wrapper rather than changing the earlier occurrence. The public `ERROR_KIND`
-object defines the shared Cascada failure-kind vocabulary.
+unchanged. One boundary identity walk reuses one occurrence wrapper for every
+alias to the same raw Error, preserving graph topology. Reusing that raw Error at
+another causal occurrence creates another wrapper rather than changing the
+earlier occurrence. The public `ERROR_KIND` object defines the shared Cascada
+failure-kind vocabulary.
 
-`CompoundPoisonError` flattens nested compounds, preserves logical collection
-order, and deduplicates occurrence wrappers only when their causes have identity.
-Equal primitive causes remain distinct. Each surviving leaf keeps its context
-and kind.
+Runtime construction uses protected factories and private semantic brands. The public
+construction boundary validates only its private token; trusted factories receive the
+authoritative kind and source, whose call-site inventory is checked statically rather
+than revalidated on every construction. Each completed Error is frozen; compound child arrays are copied
+and frozen first. Prototype shape alone is not trusted, and arbitrary cause properties
+are not copied into a wrapper. Precise predicates distinguish poison, `RuntimeError`,
+and an unclassified native Error before any thenability sampling. Kernel Errors
+expose only `name`, unformatted `message`, opaque `errorContext`, optional exact
+`cause`, poison `kind`, and compound-only `.errors`; source presentation belongs
+to a separate higher-runtime diagnostic view.
+
+`CompoundPoisonError` flattens nested compounds, preserves semantic logical
+collection order, and deduplicates exact leaf identity only. Different occurrence
+wrappers remain distinct even when they share one cause. Each surviving leaf
+keeps its context and kind.
 
 Synchronous failures from supported user code and exact reflection hooks become
-language Errors at those boundaries. The exact interaction marks every nonfatal
-host throw, including poison; the owning semantic boundary preserves or
-contextualizes it and applies the boundary's graph effect. Adjacent runtime work
-remains outside both catches and is fatal.
+language Errors at those boundaries. One narrow host-boundary helper catches
+only the exact action, checks fatal state, and preserves or contextualizes its
+outcome; the owning semantic boundary then applies the graph effect. Adjacent
+runtime work remains outside that catch and is fatal. Explicit conservative
+probes are different: their local catch returns only the specified opaque or
+validation outcome and never constructs poison or hides runtime fatality.
+A language-outcome transition preserves poison only when its contract admits a
+language Error. A poison escaping cleanup, scheduling, bookkeeping, or another
+runtime-only transition is a fatal trusted-contract violation.
 A direct Error result always means its boundary failed, whether returned,
 fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
 effect in every case; an Error cannot be a successful direct payload.
@@ -305,8 +349,11 @@ the ordinary ordering mechanisms.
 
 A raw data-Promise rejection is contextualized once in the first import,
 mirror, validation, or publication continuation already required by its causal
-boundary. Later native Promise propagation preserves that exact Error. No
-forwarding Promise exists only to attach attribution.
+boundary. That continuation closure captures the context and kind until it runs.
+Later native Promise propagation preserves that exact Error, while graph
+consumers use FIFO readiness and read the earlier mirror publication. No
+attribution is persisted on the source Promise or metadata, and no forwarding
+Promise exists only to attach it.
 
 Internal failures become `RuntimeError`, retain the owning operation's context,
 and are reported once by each execution they close. They are never admitted or
@@ -314,57 +361,43 @@ queried as language data. A
 `RuntimeError` physically received by return, fulfillment, throw, rejection, or
 graph traversal is submitted to the current execution before success handling.
 Continuation failures, invariant violations, and rejected internal aggregate
-waits follow this path.
+waits follow this path. Its frozen prototype has an own non-callable `then` so
+native Promise assimilation cannot turn the fatal branch into Cascada's
+thenable language-Error branch if `Error.prototype` is modified. This targeted
+protocol invariant does not imply general support for modified primordials.
 
-Each execution accepts only its first `RuntimeError` as its authoritative fatal
-outcome. That transition rejects the execution's fatal Promise with the same
-Error, fails registered shutdown-relevant operation owners and their pending
-public outcomes, prevents new host effects, and causes a still-pending root result and higher scheduler to
-stop with that Error. Operation-only work and resources are abandoned, while
-shared Promise settlement, required publication, bookkeeping, and cleanup
-continue. Already-observed Promises stay handled. Shutdown neither cancels
-native work nor undoes effects already begun. A later fatal failure cannot
-replace or reattribute the first.
+[`error-handling.md`](error-handling.md) is authoritative for the fatal lifecycle,
+public-result delivery, reporter behavior, Error surface, and Promise ownership.
+The runtime consequences are deliberately small:
 
-Normal root completion waits only for the returned value's required boundary
-processing and export, raced against the fatal Promise. It does not wait for
-unrelated operations, Chains, shared settlement, or cleanup. If the result
-completes first, that work may continue. A later fatal is stored in
-`execution.fatalError`, reported, and closes remaining work, but cannot change
-the delivered result. A missing `fatalError` while work remains is not proof that
-no later fatal will occur. The runtime provides no execution-idle counter or
-quiescence barrier.
-
-Every public operation runs its synchronous prefix under this fatal boundary.
-The FIFO helpers register directly on a native Promise. For a custom thenable,
-they share one Promise containing its private non-thenable first-settlement
-record; each causal boundary that introduced it applies its retained attribution
-and nested capture, while later consumers preserve that contextualized outcome.
-`resolveInitialValueOrPoison` converts the first data result,
-`onLaterPromiseReady` runs later property resolvers without reconverting
-rejection, and `observeResultPromise` registers ordered admission or lease
-bookkeeping without replacing a result. `continueInternalPromiseOrFatal`
-continues an already-native intermediate wait directly and owns its rejection.
-An independent data result Promise is not operation work. The common helpers
-use ordinary native Promises and add no Promise subclass or per-consumer proxy.
-
-`src/operation-lifecycle.js` guards operation-specific continuations with one
-shared open/closed owner. A component submits fatal failure while that owner is
-still registered; execution shutdown rejects its pending public outcome and
-closes it before an aggregate can run a late sibling. Shared property settlement
-still completes before the closed check. Every owner has an explicit open fact
-and idempotent close operation; while its public outcome is pending, it also
-retains one fatal rejection action. Only an owner that must be woken or cleaned
-during shutdown is registered; the execution tracks neither arbitrary tasks nor
-normal completion.
-Ready work allocates no release-registry state. Pending nested resources register
-synchronous release with the owner and unregister on completion; closing
-releases them without cancelling settlement.
-
-One `RuntimeError` reports at most once within one execution even when it crosses
-several fatal boundaries. If it reaches another execution, that execution closes
-and reports it independently. Reusing a raw internal Error in another causal
-operation creates a new fatal occurrence.
+- One private nullable `fatalError` slot is both an execution's live/failed fact
+  and its authoritative first fatal outcome. Fatal commit stores it, rejects and
+  clears only the outward public results currently pending, and then invokes the
+  execution's captured reporter as best-effort notification. It walks no task,
+  owner, gate, phase, aggregate, or internal wait and creates no asynchronous
+  global throw.
+- Public entry throws an already-stored fatal synchronously. A transition that
+  detects a new fatal submits and propagates it; a later continuation that merely
+  observes failed execution returns. Checks occur only at public entry, common
+  continuation resumption, host-boundary exit, and scheduler dispatch. Synchronous
+  JavaScript is not interrupted, and source Promises are neither cancelled nor
+  awaited by shutdown.
+- Every ready public result stays direct. Only an actually pending direct result
+  receives one outward wrapper and removable fatal-reject action. Normal
+  settlement unregisters it; fatal commit rejects it even when its ordinary
+  dependency never settles. There is no shared fatal Promise, result history,
+  root-only special case, final exposure check, execution-idle counter, or
+  quiescence barrier. A higher runtime calls the same unwrapped core operations
+  through the package's trusted integration subpath and applies this exposure
+  rule only to the outward results it owns; no dynamic public/internal mode is
+  passed into an operation.
+- Operation owners remain local open/closed facts for finishing one live
+  operation and releasing its operation-only resources. They are never registered
+  with the execution. If fatality makes a gate, phase, or aggregate unobservable,
+  it may remain pending; any still-pending outward result fails independently.
+- A `RuntimeError` may close and report independently in another execution. A
+  contextless fatal call throws synchronously and reports nowhere unless that
+  Error later reaches an execution.
 
 ## Operations
 
@@ -391,9 +424,11 @@ shared. The result is synchronous unless path resolution crosses a Promise.
 ### `readPath(chain, path, operationContext)`
 
 Returns the value captured at the path without adding an owner. The caller must
-either use it temporarily or cede the prior ownership.
+either use it temporarily or cede the prior ownership. A Promise-valued segment
+uses the containing operation's path protection and external-selection policy;
+`readPath` does not independently expose or claim an external capability.
 
-### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`
+### `run(chain, path, method, args, operationContext, { mutationScopeDepth, repair })`
 
 Invokes a supported operation through one common lifecycle after classifying
 the receiver. `args` contains the ordered explicit arguments.
@@ -401,6 +436,18 @@ the receiver. `args` contains the ordered explicit arguments.
 selects mutation and identifies the `!` prefix. Mutation publishes through the
 normal mutation path; observation preserves the receiver. See
 [`run.md`](run.md) for dispatch, argument, ordering, and result contracts.
+`repair` is an exact Boolean. `true` requires a mutation scope and performs
+repair-and-call on a selected external boundary.
+
+### `repairPath(chain, path, operationContext)`
+
+Performs an exclusive repair-only operation at an existing fixed external
+location. It clears repairable external phase poison, invokes no host code,
+repairs no managed graph Error, and returns `undefined` directly or through a
+Promise when it must wait for path resolution or earlier external work. Repair
+records no actual use and cannot establish a location or mutation authority. It
+stops at the first external boundary; an opaque suffix, including a pending
+segment, is not consumed.
 
 ### `export(chain, path, operationContext)`
 
@@ -416,19 +463,19 @@ Returns host-ready data for the branch captured at its issue position.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
 - Several Errors return a `CompoundPoisonError`. Nested compounds are flattened
-  and occurrence wrappers are deduplicated only when their causes have identity;
-  equal primitive causes remain distinct. Order within one graph is not semantic.
+  and exact leaf identity is deduplicated. Different occurrence wrappers remain
+  distinct even when they share a cause. Logical collection order is semantic.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
-pending export fulfills with its final single or combined Error. A synchronous
-reflection failure returns a contextual export Error. Other unexpected
+pending export rejects with its final single or combined rejecting-thenable
+Error. A synchronous reflection failure returns a contextual export Error. Other unexpected
 traversal failures and rejected internal readiness become fatal `RuntimeError`.
 Rejected data Promises retain the source boundary that introduced them.
 
 ### `hasError(chain, path, operationContext)`
 
-Returns whether an Error is reachable in the issue-time branch.
+On success, returns whether an Error is reachable in the issue-time branch.
 
 - A broken required prefix or existing path Error returns `true`.
 - A missing or primitive terminal returns `false`.
@@ -443,13 +490,18 @@ The operation never marks or pins the branch.
 
 `hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared mirror, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
 
+If supported user-controlled reflection fails while traversing the query, the
+operation instead produces `QueryReflectionFailed`. A ready query returns that
+poison directly and a pending query rejects with that same poison. It is not a
+positive answer and is not an Error found in the graph.
+
 ### `getErrors(chain, path, operationContext)`
 
-Returns an array containing each reachable Error identity once.
+On success, returns an array containing each reachable Error identity once.
 
 Separately contextualized occurrences of one native Error are distinct Error
-identities and are all returned. Export instead groups wrappers that share that
-identity-bearing cause.
+identities and are all returned. Export preserves them; diagnostic presentation
+may group a separate view by shared cause identity.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and primitive terminals return `[]`.
@@ -462,7 +514,7 @@ identity-bearing cause.
 The operation never marks or pins the branch. It returns the array directly
 when no wait is required and otherwise returns a Promise for that array.
 
-`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Failure of query-only traversal or indexing is fatal and closes that query. It is never returned as a Boolean or collected Error.
+`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, not an element of the collected Array: a ready query returns that poison directly and a pending query rejects with it. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
 
 ## Ref-index contract
 
@@ -510,8 +562,9 @@ member reflection instead occurs once after their required inputs are clean.
 Ordinary native calls instead export explicit arguments as one batch. Export
 captures available state synchronously through exact Promise mirrors and uses
 no source lease. Other pending preparation leases only identities it must read
-again. One common invocation lifetime stops abandoned Array work after a final
-result or fatal failure without cancelling shared settlement.
+again. One common invocation lifetime stops unused Array work after a local final
+result without cancelling settlement needed by the still-live execution. An
+execution-fatal resumption stops before settlement as well as Array work.
 
 A managed-record or managed-class call exports every explicit argument and
 prepares the complete receiver graph, resolves its method once from the prepared

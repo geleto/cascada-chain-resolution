@@ -30,11 +30,11 @@ All three use the common Promise-origin and placement transitions, preserving ho
 
 ## Controlled Array work
 
-One invocation lifetime covers controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. A final result or fatal failure closes that work. Late continuations still finish shared Promise settlement and bookkeeping, but perform no further Array-specific traversal, conversion, reflection, callback, protection, or result work.
+One invocation lifetime covers controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. A final local result closes that work. A late continuation in a live execution still finishes required shared Promise settlement and bookkeeping, but performs no further Array-specific work. A continuation in a fatal execution returns at the common execution check before either kind of work.
 
 `concat` bounds later work by synchronously capturing each resolved logical Array as a sparse property-placement remap. Sort resolves each present top-level placement once. Default sorting converts each sortable occurrence once; comparator sorting exports one dense snapshot and reuses it for every comparison.
 
-Array-length assignment makes the existing mutation context its explicit guarded-work owner, so ready conversion allocates no additional owner object or release-registry state. Pending conversion closes only after its mutation gate publishes; a fatal sibling abandons later conversion work without suppressing shared property settlement.
+Array-length assignment makes the existing mutation context its explicit guarded-work owner, so ready conversion allocates no additional owner object or release-registry state. Pending conversion normally closes only after its mutation gate publishes. Local sibling closure in a live execution does not suppress required shared property settlement; execution fatality stops a resumed conversion before settlement.
 
 ## Detached results
 
