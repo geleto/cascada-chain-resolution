@@ -171,7 +171,7 @@ function transformValue(
     returnResultPromise,
 ) {
     let originalValue
-    const readiness = operationLifecycle.continueInternalAll(
+    const readiness = operationLifecycle.continueAllInternalResultsOrFatal(
         operation,
         [value, preparedInput],
         values => recoverMutationFailure(
@@ -183,7 +183,7 @@ function transformValue(
                     attachmentRoot,
                     operation.operationContext,
                 )
-                return operationLifecycle.continueInternal(
+                return operationLifecycle.continueInternalResultOrFatal(
                     operation,
                     transform(
                         resolvedTargetValue,
@@ -216,13 +216,13 @@ function transformValue(
         })
         : undefined
     publishValue(mutatedValueGate)
-    const publication = operationLifecycle.continueInternal(
+    const publication = operationLifecycle.continueInternalResultOrFatal(
         operation,
         readiness,
         outcome => {
             outcome = prepareMutationPublication(outcome)
             // This private publication gate has only a resolve capability.
-            const completion = operationLifecycle.continueInternal(
+            const completion = operationLifecycle.continueInternalResultOrFatal(
                 operation,
                 mutatedValueGate,
                 () => {
@@ -280,7 +280,7 @@ function assignPath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         if (errorUtils.isFatalError(value)) throw value
@@ -635,7 +635,7 @@ function deletePath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         const deletesRoot = preparedPath.length === 0

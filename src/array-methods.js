@@ -18,9 +18,9 @@ const arrayFlat = Array.prototype.flat
 const arraySort = Array.prototype.sort
 
 // Dispatch precedence is view, direct observation, remap producer, then the
-// captured intrinsic on a property remap. mutationResult is absent for pure
+// captured intrinsic on a property remap. methodResult is absent for pure
 // observations, RETURN_RECEIVER for receiver-returning mutators, or a result
-// publisher. viewOperationResult reconstructs a view mutation's result.
+// publisher. viewMethodResult reconstructs a view mutation's method result.
 // leaseReceiverThroughResult protects placements captured by delayed observations.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 const ARRAY_METHODS = {
@@ -34,12 +34,12 @@ const ARRAY_METHODS = {
     copyWithin: {
         inputs: [numericInput, numericInput, numericInput],
         intrinsic: Array.prototype.copyWithin,
-        mutationResult: RETURN_RECEIVER,
+        methodResult: RETURN_RECEIVER,
     },
     fill: {
         inputs: [PASS_AS_PAYLOAD, numericInput, numericInput],
         intrinsic: Array.prototype.fill,
-        mutationResult: RETURN_RECEIVER,
+        methodResult: RETURN_RECEIVER,
     },
     flat: {
         inputs: [numericInput],
@@ -60,39 +60,39 @@ const ARRAY_METHODS = {
     },
     pop: {
         intrinsic: Array.prototype.pop,
-        mutationResult: publishElement,
+        methodResult: publishElement,
         view: tryPopArrayView,
-        viewOperationResult: getLastElementPlacement,
+        viewMethodResult: getLastElementPlacement,
     },
     push: {
         intrinsic: Array.prototype.push,
         remainingArgsAsPayload: true,
-        mutationResult: publishValue,
+        methodResult: publishValue,
         view: tryAppendArrayView,
-        viewOperationResult: getViewLength,
+        viewMethodResult: getViewLength,
     },
     reverse: {
         intrinsic: Array.prototype.reverse,
-        mutationResult: RETURN_RECEIVER,
+        methodResult: RETURN_RECEIVER,
     },
     shift: {
         intrinsic: Array.prototype.shift,
-        mutationResult: publishElement,
+        methodResult: publishElement,
         view: tryShiftArrayView,
-        viewOperationResult: getFirstElementPlacement,
+        viewMethodResult: getFirstElementPlacement,
     },
     slice: { inputs: [numericInput, numericInput], observe: slice },
     sort: {
         leaseReceiverThroughResult: true,
         prepare: prepareSortArguments,
         remap: prepareSortedRemap,
-        mutationResult: RETURN_RECEIVER,
+        methodResult: RETURN_RECEIVER,
     },
     splice: {
         inputs: [numericInput, numericInput],
         intrinsic: Array.prototype.splice,
         remainingArgsAsPayload: true,
-        mutationResult: publishArray,
+        methodResult: publishArray,
     },
     toReversed: { intrinsic: Array.prototype.toReversed },
     toSorted: {
@@ -110,7 +110,7 @@ const ARRAY_METHODS = {
     unshift: {
         intrinsic: Array.prototype.unshift,
         remainingArgsAsPayload: true,
-        mutationResult: publishValue,
+        methodResult: publishValue,
     },
     with: {
         inputs: [numericInput, PASS_AS_PAYLOAD],
@@ -185,14 +185,14 @@ function transferElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return operationLifecycle.continueInternal(invocationContext, result, value => value)
+    return operationLifecycle.continueInternalResultOrFatal(invocationContext, result, value => value)
 }
 
 function retainElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         invocationContext,
         result,
         value => {
@@ -329,7 +329,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
 
 function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
     if (depth === 0) return placement
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         invocationContext,
         placement.resolveValue(),
         value => arrayViews.isLogicalArray(value, invocationContext.operationContext)
@@ -391,13 +391,13 @@ function prepareSortedRemap(
     const records = []
     for (const placement of source) {
         if (!placement) continue
-        records.push(operationLifecycle.continueInternal(
+        records.push(operationLifecycle.continueInternalResultOrFatal(
             invocationContext,
             placement.resolveValue(),
             value => ({ placement, value }),
         ))
     }
-    return operationLifecycle.continueInternalAll(invocationContext, records, ready => {
+    return operationLifecycle.continueAllInternalResultsOrFatal(invocationContext, records, ready => {
         const sortable = []
         const undefinedPlacements = []
         for (const record of ready) {
@@ -544,7 +544,7 @@ function includes(
     if (start >= length) return false
     const pending = []
     for (let index = start; index < length; index++) {
-        const branch = operationLifecycle.continueInternal(
+        const branch = operationLifecycle.continueInternalResultOrFatal(
             invocationContext,
             propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationContext.operationContext),
             matches,
@@ -560,7 +560,7 @@ function includes(
     let remaining = pending.length
     const { promise: result, resolve: resolveResult } = Promise.withResolvers()
     for (const wait of pending) {
-        const branch = operationLifecycle.continueInternal(invocationContext, wait, found => {
+        const branch = operationLifecycle.continueInternalResultOrFatal(invocationContext, wait, found => {
             if (found) return finish(true)
             if (--remaining === 0) finish(false)
         })
@@ -618,7 +618,7 @@ function orderedIndexSearch(
                 invocationContext.operationContext,
             )
             if (languageValues.isPending(value, invocationContext.operationContext)) {
-                return operationLifecycle.continueInternal(
+                return operationLifecycle.continueInternalResultOrFatal(
                     invocationContext,
                     propertyVersions.resolvePropertyValueAtKey(
                         thisValue,

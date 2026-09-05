@@ -181,8 +181,8 @@ function hasCycleCut(value, key) {
     )
 }
 
-function runOrFailExecution(work) {
-    return errorUtils.runOrFailExecution(
+function runInternalStep(work) {
+    return errorUtils.runInternalStep(
         testOperationContext("test fatal work"),
         work,
     )
@@ -272,8 +272,8 @@ const testMetadata = {
     incrementReadLease,
 }
 
-function resolveInitialValueOrPoison(value, fn, shouldContinue) {
-    return resolution.resolveInitialValueOrPoison(
+function continueInitialValue(value, fn, shouldContinue) {
+    return resolution.continueInitialValue(
         value,
         testOperationContext("test initial resolution"),
         fn,
@@ -281,17 +281,17 @@ function resolveInitialValueOrPoison(value, fn, shouldContinue) {
     )
 }
 
-function onLaterPromiseReady(promise, fn) {
-    return resolution.onLaterPromiseReady(
+function continueWhenSettled(promise, fn) {
+    return resolution.continueWhenSettled(
         promise,
         testOperationContext("test later resolution"),
         fn,
     )
 }
 
-function continueInternalPromiseOrFatal(result, onFulfilled) {
-    return resolution.continueInternalPromiseOrFatal(
-        result,
+function continueInternalResultOrFatal(internalResult, onFulfilled) {
+    return resolution.continueInternalResultOrFatal(
+        internalResult,
         testOperationContext("test internal continuation"),
         onFulfilled,
     )
@@ -373,7 +373,7 @@ export {
     assignPath,
     advancePromiseVersion,
     buildRefIndex,
-    continueInternalPromiseOrFatal,
+    continueInternalResultOrFatal,
     deletePath,
     decrementReadLease,
     enter,
@@ -389,13 +389,13 @@ export {
     metaOf,
     markShared,
     testMetadata as metadata,
-    onLaterPromiseReady,
+    continueWhenSettled,
     readPath,
     getPromiseMirror,
-    resolveInitialValueOrPoison,
+    continueInitialValue,
     resetTestExecution,
     run,
-    runOrFailExecution,
+    runInternalStep,
     submitFatal,
     testOperationContext,
     useTestExecution,

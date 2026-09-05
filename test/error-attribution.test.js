@@ -414,7 +414,7 @@ describe("causal Error attribution", () => {
         const context = testOperationContext("fatal operation", execution)
         let failure
         try {
-            errorUtils.runOrFailExecution(context, () => {
+            errorUtils.runInternalStep(context, () => {
                 throw cause
             })
         } catch (error) {
@@ -432,7 +432,7 @@ describe("causal Error attribution", () => {
             errorUtils.ERROR_KIND.OperationInputError,
         )).to.be(failure)
         try {
-            errorUtils.runOrFailExecution(context, () => {
+            errorUtils.runInternalStep(context, () => {
                 throw failure
             })
         } catch (error) {
@@ -449,7 +449,7 @@ describe("causal Error attribution", () => {
         const context = testOperationContext("invalid poison", execution)
         let failure
         try {
-            errorUtils.runOrFailExecution(context, () => new errorUtils.PoisonError(
+            errorUtils.runInternalStep(context, () => new errorUtils.PoisonError(
                 "invalid",
                 undefined,
                 "",

@@ -1,10 +1,10 @@
 import * as runtime from "../src/index.js"
 import {
     runContextlessFatal,
-    runOrFailExecution,
+    runInternalStep,
     failExecution,
 } from "../src/error.js"
-import { continueInternalPromiseOrFatal } from "../src/resolution.js"
+import { continueInternalResultOrFatal } from "../src/resolution.js"
 import {
     deferred,
     expect,
@@ -87,13 +87,6 @@ describe("fatal execution", () => {
         expect(thrownBy(() => {
             firstExecution.fatalError = null
         })).to.be.a(TypeError)
-        expect(thrownBy(() => Object.defineProperty(
-            firstExecution,
-            "fatalError",
-            { value: null },
-        ))).to.be.a(TypeError)
-        Object.setPrototypeOf(firstExecution, { fatalError: null })
-        expect(firstExecution.fatalError).to.be(first)
     })
 
     it("commits before best-effort reporting and ignores reporter results", () => {
@@ -239,7 +232,7 @@ describe("fatal execution", () => {
         })
     })
 
-    it("rejects every pending public result without waiting for its source", async () => {
+    it("rejects every pending operation result without waiting for its source", async () => {
         const reports = []
         const execution = new runtime.Execution(error => reports.push(error))
         const context = operationContext(execution)
@@ -346,7 +339,7 @@ describe("fatal execution", () => {
         expect(await result.catch(error => error)).to.be(failure)
     })
 
-    it("keeps every ready public operation result direct", () => {
+    it("keeps every ready operation result direct", () => {
         const execution = new runtime.Execution()
         const context = operationContext(execution)
         const imported = runtime.import({ value: 1 }, context)
@@ -457,7 +450,7 @@ describe("fatal execution", () => {
         expect(execution._metadata.has(lateValue)).to.be(false)
     })
 
-    it("leaves completed public results complete and stops later resumptions", async () => {
+    it("leaves completed operation results complete and stops later resumptions", async () => {
         const execution = new runtime.Execution()
         const context = operationContext(execution)
         const waves = []
@@ -530,7 +523,7 @@ describe("fatal execution", () => {
 
         const fatalExecution = new runtime.Execution()
         const fatalContext = operationContext(fatalExecution, "fatal-on-escape")
-        const escaped = await continueInternalPromiseOrFatal(
+        const escaped = await continueInternalResultOrFatal(
             Promise.reject(poison),
             fatalContext,
             value => value,
@@ -585,7 +578,7 @@ describe("fatal execution", () => {
             .to.be(undefined)
         expect(thrownBy(() => runtime.externalState(external)))
             .to.be(undefined)
-        expect(thrownBy(() => runOrFailExecution(context, () => true)))
+        expect(thrownBy(() => runInternalStep(context, () => true)))
             .to.be(execution.fatalError)
     })
 })

@@ -19,7 +19,7 @@ function getArrayMethodDescription(invocationContext) {
             errorUtils.ERROR_KIND.MissingFunction,
         )
     }
-    if (mutation && methodDefinition.mutationResult === undefined) {
+    if (mutation && methodDefinition.methodResult === undefined) {
         return errorUtils.validationError(
             `Array method ${method} cannot be used as a mutation`,
             invocationContext.operationContext,
@@ -127,7 +127,7 @@ function invokeArrayObservationMethod(
             invocationContext.operationContext,
         )
         // Mutators change the receiver remap; observations return one.
-        if (methodDefinition.mutationResult === undefined) remap = result
+        if (methodDefinition.methodResult === undefined) remap = result
     }
     return operationLifecycle.continuePrepared(
         invocationContext,
@@ -158,8 +158,8 @@ function invokeArrayMutationMethod(
         if (view !== undefined) {
             return {
                 mutatedValue: view,
-                result: methodDefinition.mutationResult(
-                    methodDefinition.viewOperationResult(
+                result: methodDefinition.methodResult(
+                    methodDefinition.viewMethodResult(
                         view,
                         invocationContext,
                     ),
@@ -209,11 +209,11 @@ function invokeArrayMutationMethod(
             : mutation.requiresCopy()
         const copiesReceiver = sourceSurvives || representationCopy
         if (copiesReceiver) mutation.materialize()
-        const returnsReceiver = methodDefinition.mutationResult === RETURN_RECEIVER
+        const returnsReceiver = methodDefinition.methodResult === RETURN_RECEIVER
         // Capture removed property versions before committing the receiver.
         const result = returnsReceiver
             ? undefined
-            : methodDefinition.mutationResult(
+            : methodDefinition.methodResult(
                 nativeResult,
                 sourceSurvives,
                 invocationContext,

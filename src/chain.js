@@ -10,7 +10,7 @@ class Chain {
         entryMutable = undefined,
         externalMutationTree = undefined,
     ) {
-        errorUtils.runOrFailExecution(operationContext, () => {
+        errorUtils.runInternalStep(operationContext, () => {
             initialValue = languageValues.valueWithOrigin(
                 initialValue,
                 operationContext,

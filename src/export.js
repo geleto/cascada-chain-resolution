@@ -55,13 +55,13 @@ function exportValues(values, owner, resultFromValues, ownsOwner) {
     const exportContext = new ExportContext(values.length, owner)
     const readiness = values.map((value, position) =>
         prepareExportValue(value, position, exportContext))
-    const result = operationLifecycle.continueInternalAll(
+    const result = operationLifecycle.continueAllInternalResultsOrFatal(
         owner,
         readiness,
         () => finishExport(exportContext, resultFromValues),
     )
     if (languageValues.isPending(result, operationContext)) {
-        exportContext.unregisterRelease = operationLifecycle.registerRelease(
+        exportContext.unregisterRelease = operationLifecycle.releaseOnClose(
             owner,
             () => exportContext.release(),
         )
@@ -158,7 +158,7 @@ function walkExportValue(value, exportContext, position) {
     }
     return waits.length === 0
         ? undefined
-        : operationLifecycle.continueInternal(
+        : operationLifecycle.continueInternalResultOrFatal(
             exportContext.owner,
             Promise.all(waits),
             () => undefined,
@@ -199,7 +199,7 @@ function walkExportPromise(parent, key, promise, exportContext, position) {
 }
 
 function runExportTransition(exportContext, position, transition) {
-    return operationLifecycle.run(exportContext.owner, () => {
+    return operationLifecycle.doOperationWorkIfStillRelevant(exportContext.owner, () => {
         return runExportStep(exportContext, position, transition)
     })
 }

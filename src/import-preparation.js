@@ -79,7 +79,7 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
         const existing = metadata.metaOf(value, operationContext)
         if (existing) {
             retentions.add(value)
-            if (!importPolicy.shareAdmittedGraph || !languageValues.isTraversableType(existing.type)) return value
+            if (!importPolicy.retainAdmittedDescendants || !languageValues.isTraversableType(existing.type)) return value
         } else {
             const facts = metadata.inspectAdmissionMetaFacts(value, operationContext)
             admissions.set(value, facts)
@@ -95,14 +95,14 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
                 let placements = versions.get(value)
                 if (!placements) versions.set(value, placements = new Map())
                 placements.set(key, version)
-                const publication = languageValues.consumeValue(
+                const publication = languageValues.thenValue(
                     child,
-                    operationContext,
-                    resolved => errorUtils.runOrFailExecution(operationContext, () => deliver(resolved)),
-                    reason => errorUtils.runOrFailExecution(operationContext, () => {
+                    resolved => errorUtils.runInternalStep(operationContext, () => deliver(resolved)),
+                    reason => errorUtils.runInternalStep(operationContext, () => {
                         if (state === "abandoned") return undefined
                         return deliver(errorUtils.toPoison(reason, operationContext, importPolicy.rejectionKind))
                     }),
+                    operationContext,
                 )
                 if (languageValues.isPending(publication, operationContext)) {
                     version.promise = true

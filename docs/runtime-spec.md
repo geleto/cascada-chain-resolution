@@ -434,32 +434,33 @@ thenable language-Error branch if `Error.prototype` is modified. This targeted
 protocol invariant does not imply general support for modified primordials.
 
 [`error-handling.md`](error-handling.md) is authoritative for the fatal lifecycle,
-public-result delivery, reporter behavior, Error surface, and Promise ownership.
+operation-result delivery, reporter behavior, Error surface, and Promise ownership.
 The runtime consequences are deliberately small:
 
 - One private nullable `fatalError` slot is both an execution's live/failed fact
   and its authoritative first fatal outcome. Fatal commit stores it, rejects and
-  clears only the outward public results currently pending, and then invokes the
+  clears only the outward operation results currently pending, and then invokes the
   execution's captured reporter as best-effort notification. It walks no task,
   owner, gate, phase, aggregate, or internal wait and creates no asynchronous
-  global throw. The public query is an own, non-configurable, read-only getter,
-  so prototype replacement or property shadowing cannot hide the stored state.
+  global throw. The public query is a read-only class getter over the private
+  state. Deliberate property redefinition or prototype replacement of this
+  trusted control object is unsupported.
 - Public entry throws an already-stored fatal synchronously. A transition that
   detects a new fatal submits and propagates it; a later continuation that merely
   observes failed execution returns. Checks occur only at public entry, common
   continuation resumption, host-boundary exit, and scheduler dispatch. Synchronous
   JavaScript is not interrupted, and source Promises are neither cancelled nor
   awaited by shutdown.
-- Every ready public result stays direct. Only an actually pending direct result
+- Every ready operation result stays direct. Only an actually pending direct result
   receives one outward wrapper and removable fatal-reject action. Normal
   outward settlement unregisters it before delivery. Internal source settlement
   only queues that transition, so a fatal committed before it runs rejects the
   still-pending wrapper; once it runs, later fatality cannot alter the delivered
   result. Fatal commit also rejects when the ordinary dependency never settles.
   There is no shared fatal Promise, result history,
-  root-only special case, final exposure check, execution-idle counter, or
+  root-only special case, final return check, execution-idle counter, or
   quiescence barrier. A higher runtime calls the same unwrapped core operations
-  through the package's trusted integration subpath and applies this exposure
+  through the package's trusted integration subpath and applies this return
   rule only to the outward results it owns; no dynamic public/internal mode is
   passed into an operation.
 - A direct result remains pending for all boundary processing and publication
@@ -474,9 +475,11 @@ The runtime consequences are deliberately small:
   operation and releasing its operation-only resources. They are never registered
   with the execution. If fatality makes a gate, phase, or aggregate unobservable,
   it may remain pending; any still-pending outward result fails independently.
-- A `FatalError` may close and report independently in another execution. A
-  contextless fatal call throws synchronously and reports nowhere unless that
-  Error later reaches an execution.
+- A `FatalError` may close and report independently in another execution. Every
+  authentic instance originates through execution-bound `failExecution`.
+  Contextless configuration creates no fatal Error: validation failure is an
+  ordinary host API Error and an unexpected implementation exception escapes
+  synchronously.
 
 ## Operations
 

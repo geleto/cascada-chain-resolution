@@ -11,7 +11,7 @@ import {
 import { walkObservationPath } from "./observations.js"
 
 function run(chain, path, method, args, operationContext, facts) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const mutationScopeDepth = facts.mutationScopeDepth
         path = [...path]

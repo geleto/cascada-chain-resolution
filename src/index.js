@@ -29,7 +29,7 @@ import {
     managedStateClass,
 } from "./state-declarations.js"
 
-function exposeResultOrFatal(operationContext, result) {
+function returnOperationResult(operationContext, result) {
     if (
         Error.isError(result) ||
         !languageValues.isPending(result, operationContext)
@@ -46,11 +46,11 @@ function exposeResultOrFatal(operationContext, result) {
         unregister()
         settlement(value)
     }
-    const bridge = languageValues.consumeValue(
+    const bridge = languageValues.thenValue(
         result,
-        operationContext,
         value => settle(resolve, value),
         reason => settle(reject, reason),
+        operationContext,
     )
     markPromiseHandled(bridge)
     return exposedResult
@@ -58,32 +58,32 @@ function exposeResultOrFatal(operationContext, result) {
 
 function importValue(value, operationContext) {
     const result = importCore(value, operationContext)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function lookupPath(chain, path, operationContext) {
     const result = lookupPathCore(chain, path, operationContext)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function exportValue(chain, path, operationContext) {
     const result = exportPath(chain, path, operationContext)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function hasError(chain, path, operationContext) {
     const result = hasErrorCore(chain, path, operationContext)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function getErrors(chain, path, operationContext) {
     const result = getErrorsCore(chain, path, operationContext)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function run(chain, path, method, args, operationContext, facts) {
     const result = runCore(chain, path, method, args, operationContext, facts)
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function enter(chain, path, operationContext, entryMutable, onEntered) {
@@ -94,7 +94,7 @@ function enter(chain, path, operationContext, entryMutable, onEntered) {
         entryMutable,
         onEntered,
     )
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function assignPath(
@@ -111,7 +111,7 @@ function assignPath(
         operationContext,
         mutationScopeDepth,
     )
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 function deletePath(
@@ -126,7 +126,7 @@ function deletePath(
         operationContext,
         mutationScopeDepth,
     )
-    return exposeResultOrFatal(operationContext, result)
+    return returnOperationResult(operationContext, result)
 }
 
 export {

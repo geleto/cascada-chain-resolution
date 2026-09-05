@@ -17,10 +17,10 @@ import {
     expect,
     submitFatal,
     useTestExecution,
-    resolveInitialValueOrPoison,
-    onLaterPromiseReady,
-    continueInternalPromiseOrFatal,
-    runOrFailExecution,
+    continueInitialValue,
+    continueWhenSettled,
+    continueInternalResultOrFatal,
+    runInternalStep,
     buildRefIndex,
     getRefCounts,
     getPromiseMirror,
@@ -49,15 +49,15 @@ describe("promise helpers", () => {
         const pending = deferred()
         const order = []
 
-        resolveInitialValueOrPoison(
+        continueInitialValue(
             pending.promise,
             () => order.push("value 1"),
         )
-        onLaterPromiseReady(
+        continueWhenSettled(
             pending.promise,
             () => order.push("later"),
         )
-        resolveInitialValueOrPoison(
+        continueInitialValue(
             pending.promise,
             () => order.push("value 2"),
         )
@@ -97,7 +97,7 @@ describe("promise helpers", () => {
     })
 
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await resolveInitialValueOrPoison(
+        const value = await continueInitialValue(
             Promise.reject("data boom"),
             value => value,
         )
@@ -109,7 +109,7 @@ describe("promise helpers", () => {
     it("leaves returned Promises to their owning async boundary", () => {
         const promise = Promise.resolve("ready")
 
-        expect(runOrFailExecution(() => promise)).to.be(promise)
+        expect(runInternalStep(() => promise)).to.be(promise)
     })
 
     it("does not convert continuation throws into language Error values", async () => {
@@ -121,7 +121,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await resolveInitialValueOrPoison(Promise.resolve("ok"), () => {
+            await continueInitialValue(Promise.resolve("ok"), () => {
                 throw fatal
             })
         } catch (error) {
@@ -141,8 +141,8 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await continueInternalPromiseOrFatal(
-                resolveInitialValueOrPoison(
+            await continueInternalResultOrFatal(
+                continueInitialValue(
                     Promise.resolve("ok"),
                     () => submitFatal(fatal),
                 ),
@@ -165,7 +165,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await continueInternalPromiseOrFatal(
+            await continueInternalResultOrFatal(
                 Promise.reject(fatal),
                 () => "ignored",
             )
@@ -188,7 +188,7 @@ describe("promise helpers", () => {
             throw reporterBug
         })
         try {
-            runOrFailExecution(() => {
+            runInternalStep(() => {
                 throw fatal
             })
         } catch (error) {
@@ -209,7 +209,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            continueInternalPromiseOrFatal(cleanWait.promise, () => false),
+            continueInternalResultOrFatal(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)
@@ -455,7 +455,7 @@ describe("promise mirrors and lookupPath", () => {
         const root = {}
 
         assignPath(new Chain(root), ["value"], pending.promise)
-        onLaterPromiseReady(pending.promise, () => buildRefIndex(root))
+        continueWhenSettled(pending.promise, () => buildRefIndex(root))
 
         pending.resolve({ bad: new Error("bad"), nested: nested.promise })
         await flushMicrotasks()
@@ -479,7 +479,7 @@ describe("promise mirrors and lookupPath", () => {
         let publishedCycleCut
         let countsAfterPublication
 
-        onLaterPromiseReady(pending.promise, () => {
+        continueWhenSettled(pending.promise, () => {
             publishedCycleCut = hasCycleCut(root, "value")
             countsAfterPublication = getRefCounts(root)
         })

@@ -1,6 +1,8 @@
 import { commitFatal } from "./execution.js"
 
 const CONTEXTLESS_ERROR_CONTEXT = Symbol("contextless Error source")
+// Keep the exported FatalError class recognizable without letting callers
+// construct a fatal outcome with an invented cause or source context.
 const FATAL_ERROR_TOKEN = Symbol("FatalError construction")
 const fatalErrors = new WeakSet()
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
@@ -124,7 +126,7 @@ function failExecution(operationContext, reason) {
     throw commitFatal(operationContext.execution, candidate)
 }
 
-function runOrFailExecution(operationContext, fn, value = undefined) {
+function runInternalStep(operationContext, work, value = undefined) {
     if (
         operationContext?.execution === undefined ||
         operationContext.errorContext === undefined
@@ -140,7 +142,7 @@ function runOrFailExecution(operationContext, fn, value = undefined) {
         if (userCodeDepth > 0) {
             throw new Error("Cascada cannot be re-entered from supported user code")
         }
-        return fn(value)
+        return work(value)
     } catch (error) {
         const userFailure = Error.isError(error) &&
             error instanceof UserCodeFailure
@@ -301,7 +303,7 @@ export {
     isFatalError,
     pathAccessError,
     runContextlessFatal,
-    runOrFailExecution,
+    runInternalStep,
     runUserCode,
     toPoison,
     validationError,

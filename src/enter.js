@@ -12,7 +12,7 @@ import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 function enter(chain, path, operationContext, entryMutable, onEntered) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         path = [...path]
         const externalMutationTree = chain._externalMutationTree?.findBranch(path)
@@ -36,7 +36,7 @@ function runEnteredCallback(
     const result = onEntered(enteredChain)
     const fatalError = operationContext.execution.fatalError
     if (fatalError !== null) throw fatalError
-    return resolution.continueInternalPromiseOrFatal(
+    return resolution.continueInternalResultOrFatal(
         result,
         operationContext,
         finish,
@@ -210,7 +210,7 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
     if (!mirror) {
         // Preserve publication ordering for corrupt raw Promise state: issuance
         // is already closed; report the invariant failure from this FIFO slot.
-        const publication = resolution.onLaterPromiseReady(
+        const publication = resolution.continueWhenSettled(
             value,
             operationContext,
             () => {

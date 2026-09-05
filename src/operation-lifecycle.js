@@ -36,7 +36,7 @@ function close(operation) {
     }
 }
 
-function registerRelease(operation, release) {
+function releaseOnClose(operation, release) {
     if (!operation.open) {
         release()
         return undefined
@@ -53,13 +53,13 @@ function registerRelease(operation, release) {
     }
 }
 
-function run(operation, transition) {
+function doOperationWorkIfStillRelevant(operation, work) {
     if (operation.operationContext.execution.fatalError !== null) return undefined
-    return operation.open ? transition() : undefined
+    return operation.open ? work() : undefined
 }
 
 function continueResult(operation, result, onReady, continueValue) {
-    return run(
+    return doOperationWorkIfStillRelevant(
         operation,
         () => continueValue(
             result,
@@ -74,7 +74,7 @@ function resolveInitial(operation, value, onReady) {
         operation,
         value,
         onReady,
-        (input, next) => resolution.resolveInitialValueOrPoison(
+        (input, next) => resolution.continueInitialValue(
             input,
             operation.operationContext,
             next,
@@ -97,12 +97,12 @@ function continueInitial(operation, value, onReady) {
     )
 }
 
-function continueInternal(operation, result, onReady) {
+function continueInternalResultOrFatal(operation, internalResult, onReady) {
     return continueResult(
         operation,
-        result,
+        internalResult,
         onReady,
-        (input, next) => resolution.continueInternalPromiseOrFatal(
+        (input, next) => resolution.continueInternalResultOrFatal(
             input,
             operation.operationContext,
             next,
@@ -111,31 +111,31 @@ function continueInternal(operation, result, onReady) {
 }
 
 function continuePrepared(operation, result, onReady) {
-    return continueInternal(
+    return continueInternalResultOrFatal(
         operation,
         result,
         value => languageValues.isError(value) ? value : onReady(value),
     )
 }
 
-function continueInternalAll(operation, results, onReady) {
-    const values = new Array(results.length)
+function continueAllInternalResultsOrFatal(operation, internalResults, onReady) {
+    const values = new Array(internalResults.length)
     const waits = []
-    for (let index = 0; index < results.length; index++) {
-        const wait = continueInternal(operation, results[index], value => {
+    for (let index = 0; index < internalResults.length; index++) {
+        const wait = continueInternalResultOrFatal(operation, internalResults[index], value => {
             values[index] = value
         })
         if (languageValues.isPending(wait, operation.operationContext)) waits.push(wait)
     }
     if (waits.length === 0) {
-        return continueInternal(operation, values, onReady)
+        return continueInternalResultOrFatal(operation, values, onReady)
     }
 
-    const unregisterRelease = registerRelease(
+    const unregisterRelease = releaseOnClose(
         operation,
         () => values.fill(undefined),
     )
-    const result = continueInternal(
+    const result = continueInternalResultOrFatal(
         operation,
         Promise.all(waits),
         () => {
@@ -147,7 +147,7 @@ function continueInternalAll(operation, results, onReady) {
 }
 
 function continuePreparedAll(operation, results, onReady) {
-    return continueInternalAll(operation, results, values => {
+    return continueAllInternalResultsOrFatal(operation, results, values => {
         const errors = values.filter(languageValues.isError)
         return errors.length === 0
             ? onReady(values)
@@ -161,20 +161,20 @@ function continuePreparedAll(operation, results, onReady) {
 function closeWhenDone(operation, result) {
     const operationContext = operation.operationContext
     try {
-        return languageValues.consumeValue(
+        return languageValues.thenValue(
             result,
-            operationContext,
-            value => errorUtils.runOrFailExecution(operationContext, () => {
+            value => errorUtils.runInternalStep(operationContext, () => {
                 close(operation)
                 return value
             }),
             reason => {
-                throw errorUtils.runOrFailExecution(operationContext, () => {
+                throw errorUtils.runInternalStep(operationContext, () => {
                     if (!(reason instanceof errorUtils.PoisonError)) throw reason
                     close(operation)
                     return reason
                 })
             },
+            operationContext,
         )
     } catch (failure) {
         if (failure instanceof errorUtils.PoisonError) return failure
@@ -186,12 +186,12 @@ export {
     close,
     closeWhenDone,
     continueInitial,
-    continueInternal,
-    continueInternalAll,
+    continueInternalResultOrFatal,
+    continueAllInternalResultsOrFatal,
     continuePrepared,
     continuePreparedAll,
+    doOperationWorkIfStillRelevant,
     OperationOwner,
-    registerRelease,
+    releaseOnClose,
     resolveInitial,
-    run,
 }

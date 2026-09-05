@@ -25,9 +25,9 @@ class ErrorQueryContext {
     }
 
     run(chain, path, onResolved) {
-        return errorUtils.runOrFailExecution(this.operationContext, () => {
+        return errorUtils.runInternalStep(this.operationContext, () => {
             chain._assertOperationContext(this.operationContext)
-            return this.runTransition(() => {
+            return operationLifecycle.doOperationWorkIfStillRelevant(this, () => {
                 const result = walkObservationPath(
                     chain,
                     path,
@@ -38,10 +38,6 @@ class ErrorQueryContext {
                 return result
             })
         })
-    }
-
-    runTransition(transition) {
-        return operationLifecycle.run(this, transition)
     }
 
     found(error) {
@@ -70,7 +66,7 @@ class ErrorQueryContext {
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path, operationContext) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => {
             metadata.markShared(value, operationContext)
@@ -81,7 +77,7 @@ function lookupPath(chain, path, operationContext) {
 
 // A temporary read or ownership transfer does not create another owner.
 function readPath(chain, path, operationContext) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => value)
     })
@@ -89,7 +85,7 @@ function readPath(chain, path, operationContext) {
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path, operationContext) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(
             chain,
@@ -128,10 +124,13 @@ function searchForFirstError(value, queryContext) {
     // Every non-fatal close resolves foundPromise before readiness can finish.
     return Promise.race([
         foundPromise,
-        operationLifecycle.continueInternal(
+        operationLifecycle.continueInternalResultOrFatal(
             queryContext,
             readiness,
-            () => queryContext.runTransition(() => queryContext.finish(false)),
+            () => operationLifecycle.doOperationWorkIfStillRelevant(
+                queryContext,
+                () => queryContext.finish(false),
+            ),
         ),
     ])
 }
@@ -151,7 +150,7 @@ function getErrorsAtPathValue(value, queryContext) {
     }
     if (!readiness) return queryContext.finish([...queryContext.errors])
 
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         queryContext,
         readiness,
         () => queryContext.finish([...queryContext.errors]),
@@ -172,7 +171,7 @@ function collectFencedErrorWaits(value, queryContext) {
         return undefined
     }
     if (waits.length === 0) return undefined
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         queryContext,
         Promise.all(waits),
         () => undefined,
@@ -224,7 +223,7 @@ function collectFencedErrorWaits(value, queryContext) {
             key,
             promise,
             queryContext.operationContext,
-            value => queryContext.runTransition(() => {
+            value => operationLifecycle.doOperationWorkIfStillRelevant(queryContext, () => {
                 if (languageValues.isError(value)) {
                     queryContext.found(value)
                     return undefined

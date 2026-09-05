@@ -40,10 +40,9 @@ class InvocationContext {
 
     retainArgumentsUntilReceiverReached() {
         for (const value of this.args) {
-            const protection = languageValues.consumeValue(
+            const protection = languageValues.thenValue(
                 value,
-                this.operationContext,
-                resolved => errorUtils.runOrFailExecution(this.operationContext, () => {
+                resolved => errorUtils.runInternalStep(this.operationContext, () => {
                     if (!this.open) return undefined
                     languageValues.admitReadyValue(resolved, this.operationContext)
                     this.#argumentsAwaitingReceiverLeases.retain(resolved)
@@ -51,6 +50,7 @@ class InvocationContext {
                 // Rejection reveals no identity. Selected input preparation
                 // owns its interpretation if the receiver is later reached.
                 () => undefined,
+                this.operationContext,
             )
             resolution.markPromiseHandled(protection)
         }
@@ -72,8 +72,8 @@ class InvocationContext {
 }
 
 // Internal continuations may adopt a returned Promise. Boxing keeps receiver
-// traversal and input readiness separate from the method's public result.
-class WrappedInvocationResult {
+// traversal and input readiness separate from the produced method result.
+class WrappedMethodResult {
     constructor(value) {
         this.value = value
     }
@@ -99,7 +99,7 @@ function invokeHostFunction(
 
 function getHostMethodDescription(callable, invocationContext) {
     return {
-        admitResult: value => imports.importHostResult(
+        admitMethodResult: value => imports.importMethodResult(
             value,
             invocationContext.operationContext,
         ),
@@ -139,7 +139,7 @@ function invokeMethod(
         mutation,
         args,
     )
-    const result = operationLifecycle.run(
+    const result = operationLifecycle.doOperationWorkIfStillRelevant(
         invocationContext,
         () => accessReceiver(invokeWithReceiver),
     )
@@ -163,14 +163,14 @@ function invokeMethod(
         invocationContext.retainReceiver(methodDescription.receiverToLease)
         invocationContext.releaseArgumentsAwaitingReceiver()
 
-        const preparedResult = operationLifecycle.continueInternal(
+        const preparedResult = operationLifecycle.continueInternalResultOrFatal(
             invocationContext,
             preparedArguments,
-            readyArguments => new WrappedInvocationResult(
+            readyArguments => new WrappedMethodResult(
                 invokePrepared(readyArguments),
             ),
         )
-        return unwrapInvocationResult(preparedResult)
+        return unwrapMethodResult(preparedResult)
 
         function invokePrepared(readyArguments) {
             let receiverLeaseContinues = false
@@ -199,8 +199,8 @@ function invokeMethod(
                     ) {
                         receiverLeaseContinues = true
                     }
-                    if (methodDescription.admitResult) {
-                        result = methodDescription.admitResult(result)
+                    if (methodDescription.admitMethodResult) {
+                        result = methodDescription.admitMethodResult(result)
                         if (languageValues.isPending(result, operationContext)) {
                             receiverLeaseContinues = true
                         }
@@ -213,11 +213,11 @@ function invokeMethod(
         }
     }
 
-    function unwrapInvocationResult(result) {
-        return resolution.continueInternalPromiseOrFatal(
+    function unwrapMethodResult(result) {
+        return resolution.continueInternalResultOrFatal(
             result,
             operationContext,
-            resolved => resolved instanceof WrappedInvocationResult
+            resolved => resolved instanceof WrappedMethodResult
                 ? resolved.value
                 : resolved,
         )
@@ -231,7 +231,7 @@ function createLeaseLedger(operationContext) {
 
     function retain(value) {
         if (closed || values.has(value)) return value
-        const retained = resolution.resolveInitialValueOrPoison(value, operationContext, ready => {
+        const retained = resolution.continueInitialValue(value, operationContext, ready => {
             if (!closed && !values.has(ready) && metadata.incrementReadLease(ready, operationContext)) values.add(ready)
             return ready
         })

@@ -81,12 +81,12 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         },
     )
     if (languageValues.isPending(readiness, invocationContext.operationContext)) {
-        unregisterRelease = operationLifecycle.registerRelease(
+        unregisterRelease = operationLifecycle.releaseOnClose(
             invocationContext,
             release,
         )
     }
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         invocationContext,
         readiness,
         finish,
@@ -184,7 +184,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 function combineReadiness(invocationContext, waits) {
     if (waits.length === 0) return undefined
     if (waits.length === 1) return waits[0]
-    return operationLifecycle.continueInternal(
+    return operationLifecycle.continueInternalResultOrFatal(
         invocationContext,
         Promise.all(waits),
         () => undefined,
@@ -469,7 +469,7 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
 }
 
 function invokeObservation(callable, receiver, args, operationContext) {
-    return imports.importHostResult(
+    return imports.importMethodResult(
         invocation.invokeHostFunction(
             callable,
             receiver,
@@ -497,18 +497,17 @@ function invokeMutation(callable, receiver, args, operationContext) {
 
     // A mutation may detach an admitted result while retaining one of its
     // descendants elsewhere in the receiver, so every result identity is shared.
-    const admittedResult = imports.importManagedMutationResult(
+    const admittedResult = imports.importManagedMutationMethodResult(
         result,
         operationContext,
     )
-    return languageValues.consumeValue(
+    return languageValues.thenValue(
         admittedResult,
-        operationContext,
-        imported => errorUtils.runOrFailExecution(
+        imported => errorUtils.runInternalStep(
             operationContext,
             () => finishMutation(receiver, imported, operationContext),
         ),
-        reason => errorUtils.runOrFailExecution(operationContext, () => {
+        reason => errorUtils.runInternalStep(operationContext, () => {
             const failure = errorUtils.toPoison(
                 reason,
                 operationContext,
@@ -520,6 +519,7 @@ function invokeMutation(callable, receiver, args, operationContext) {
                 result: admittedResult,
             }
         }),
+        operationContext,
     )
 }
 

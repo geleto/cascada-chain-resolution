@@ -12,15 +12,15 @@ describe("operation lifecycle", () => {
             testOperationContext(),
         )
         const released = []
-        const unregister = operationLifecycle.registerRelease(
+        const unregister = operationLifecycle.releaseOnClose(
             owner,
             () => released.push("unregistered"),
         )
-        operationLifecycle.registerRelease(
+        operationLifecycle.releaseOnClose(
             owner,
             () => released.push("first"),
         )
-        operationLifecycle.registerRelease(
+        operationLifecycle.releaseOnClose(
             owner,
             () => released.push("second"),
         )
@@ -28,7 +28,7 @@ describe("operation lifecycle", () => {
         unregister()
         operationLifecycle.close(owner)
         operationLifecycle.close(owner)
-        operationLifecycle.registerRelease(
+        operationLifecycle.releaseOnClose(
             owner,
             () => released.push("late"),
         )
@@ -71,7 +71,7 @@ describe("operation lifecycle", () => {
             testOperationContext(),
         )
         const released = []
-        operationLifecycle.registerRelease(owner, () => released.push(true))
+        operationLifecycle.releaseOnClose(owner, () => released.push(true))
         return { owner, released }
     }
 

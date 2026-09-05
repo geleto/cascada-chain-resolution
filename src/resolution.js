@@ -7,24 +7,23 @@ const ignore = () => {}
 // before the continuation runs; continuation throws are Fatal. Initial
 // operation work may be abandoned before admission; graph settlement omits
 // that predicate and always completes.
-function resolveInitialValueOrPoison(
+function continueInitialValue(
     value,
     operationContext,
     fn = value => value,
     shouldContinue = () => true,
     rejectionKind = errorUtils.ERROR_KIND.OperationInputRejected,
 ) {
-    return languageValues.consumeValue(
+    return languageValues.thenValue(
         value,
-        operationContext,
         value => {
             if (!shouldContinue()) return undefined
-            return errorUtils.runOrFailExecution(operationContext, () => {
+            return errorUtils.runInternalStep(operationContext, () => {
                 languageValues.admitReadyValue(value, operationContext)
                 return fn(value)
             })
         },
-        reason => errorUtils.runOrFailExecution(operationContext, () => {
+        reason => errorUtils.runInternalStep(operationContext, () => {
             if (!shouldContinue()) return undefined
             const failure = errorUtils.toPoison(
                 reason,
@@ -34,31 +33,32 @@ function resolveInitialValueOrPoison(
             languageValues.admitReadyValue(failure, operationContext)
             return fn(failure)
         }),
+        operationContext,
     )
 }
 
 // The initial resolver has already published its value or Poison. A later
 // resolver uses the source only as readiness and reads the current mirror.
-function onLaterPromiseReady(promise, operationContext, fn) {
-    const onReady = () => errorUtils.runOrFailExecution(operationContext, fn)
-    return languageValues.consumeValue(promise, operationContext, onReady, onReady)
+function continueWhenSettled(promise, operationContext, fn) {
+    const onReady = () => errorUtils.runInternalStep(operationContext, fn)
+    return languageValues.thenValue(promise, onReady, onReady, operationContext)
 }
 
-// Continue through the ordinary FIFO subscription. Rejection is Fatal unless the
-// exact caller supplies a language-outcome transition.
-function continueInternalPromiseOrFatal(
-    result,
+// Continue an internal result through the ordinary FIFO subscription. Rejection
+// is Fatal unless the exact caller supplies a language-outcome transition.
+function continueInternalResultOrFatal(
+    internalResult,
     operationContext,
     onFulfilled,
     onRejected = reason => {
         throw reason
     },
 ) {
-    return languageValues.consumeValue(
-        result,
+    return languageValues.thenValue(
+        internalResult,
+        value => errorUtils.runInternalStep(operationContext, onFulfilled, value),
+        reason => errorUtils.runInternalStep(operationContext, onRejected, reason),
         operationContext,
-        value => errorUtils.runOrFailExecution(operationContext, onFulfilled, value),
-        reason => errorUtils.runOrFailExecution(operationContext, onRejected, reason),
     )
 }
 
@@ -72,8 +72,8 @@ function markPromiseHandled(promise) {
 }
 
 export {
-    continueInternalPromiseOrFatal,
+    continueInternalResultOrFatal,
     markPromiseHandled,
-    onLaterPromiseReady,
-    resolveInitialValueOrPoison,
+    continueWhenSettled,
+    continueInitialValue,
 }

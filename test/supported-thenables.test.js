@@ -17,10 +17,10 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 describe("supported thenables", () => {
     it("uses direct transitions for ready inputs and nested continuation work", () => {
         const ctx = context()
-        assert.equal(resolution.resolveInitialValueOrPoison(ready(2), ctx, value =>
-            resolution.resolveInitialValueOrPoison(ready(3), ctx, next => value + next)), 5)
+        assert.equal(resolution.continueInitialValue(ready(2), ctx, value =>
+            resolution.continueInitialValue(ready(3), ctx, next => value + next)), 5)
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = lifecycle.continueInternalAll(owner, [ready(1), 2, ready(3)], items => items)
+        const result = lifecycle.continueAllInternalResultsOrFatal(owner, [ready(1), 2, ready(3)], items => items)
         assert.deepEqual(result, [1, 2, 3])
         assert.equal(owner.releases, undefined)
         assert.equal(lifecycle.closeWhenDone(owner, ready("done")), "done")
@@ -43,14 +43,14 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const order = []
-        const first = resolution.resolveInitialValueOrPoison(source, ctx, () => order.push(1))
+        const first = resolution.continueInitialValue(source, ctx, () => order.push(1))
         source.resolve("ready")
-        const second = resolution.resolveInitialValueOrPoison(source, ctx, () => order.push(2))
+        const second = resolution.continueInitialValue(source, ctx, () => order.push(2))
         assert.equal(values.isPending(second, ctx), true)
         assert.deepEqual(order, [])
         await Promise.all([first, second])
         assert.deepEqual(order, [1, 2])
-        assert.equal(resolution.resolveInitialValueOrPoison(source, ctx, () => 3), 3)
+        assert.equal(resolution.continueInitialValue(source, ctx, () => 3), 3)
         assert.equal(source.subscriptions, 3)
     })
 
@@ -60,7 +60,7 @@ describe("supported thenables", () => {
             const ctx = context(error => reports.push(error))
             const source = pending ? new OrderedThenable() : ready(1)
             const cause = new Error("transition failed")
-            const run = () => resolution.continueInternalPromiseOrFatal(source, ctx, () => { throw cause })
+            const run = () => resolution.continueInternalResultOrFatal(source, ctx, () => { throw cause })
             if (pending) {
                 const result = run()
                 source.resolve(1)
@@ -114,7 +114,7 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = lifecycle.continueInternalAll(owner, [ready(1), source], items => items)
+        const result = lifecycle.continueAllInternalResultsOrFatal(owner, [ready(1), source], items => items)
         assert.equal(values.isPending(result, ctx), true)
         assert.equal(owner.releases.size, 1)
         source.resolve(2)
@@ -335,7 +335,7 @@ describe("supported thenables", () => {
         new runtime.Chain(external, ctx)
         Object.defineProperty(external, "then", { get: fail })
         for (const value of [error, fn, external]) {
-            assert.equal(resolution.resolveInitialValueOrPoison(value, ctx), value)
+            assert.equal(resolution.continueInitialValue(value, ctx), value)
         }
     })
 
@@ -346,7 +346,7 @@ describe("supported thenables", () => {
         resolution.markPromiseHandled(source)
         const result = runtime.import(source, ctx)
         const observed = assert.rejects(result, error => error === ctx.execution.fatalError)
-        assert.throws(() => errors.runOrFailExecution(ctx, () => { throw new Error("fatal") }), runtime.isFatalError)
+        assert.throws(() => errors.runInternalStep(ctx, () => { throw new Error("fatal") }), runtime.isFatalError)
         await observed
         pending.reject(new Error("late rejection"))
         await flush()

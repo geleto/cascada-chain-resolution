@@ -9,7 +9,7 @@ import {
     languageValues,
     managedStateClass,
     metadata,
-    resolveInitialValueOrPoison,
+    continueInitialValue,
     useTestExecution,
     testOperationContext,
     thrownBy,
@@ -76,7 +76,7 @@ describe("value admission", () => {
     it("leaves Promise identities pending instead of admitting them", () => {
         const promise = Promise.resolve(1)
 
-        resolveInitialValueOrPoison(promise)
+        continueInitialValue(promise)
         expect(metadata.metaOf(promise)?.type).to.be(undefined)
         expect(languageValues.isPending(promise)).to.be(true)
     })
@@ -109,7 +109,7 @@ describe("value admission", () => {
             },
         })
 
-        expect(resolveInitialValueOrPoison(value)).to.be(value)
+        expect(continueInitialValue(value)).to.be(value)
         expect(reads).to.be(1)
         expect(languageValues.typeOf(value)).to.be(
             languageValues.TYPE_RECORD,
@@ -275,7 +275,7 @@ describe("value admission", () => {
         useTestExecution(error => {
             reported = error
         })
-        const result = resolveInitialValueOrPoison(pending.promise)
+        const result = continueInitialValue(pending.promise)
         pending.resolve(failure)
         const caught = await result.catch(error => error)
 

@@ -89,7 +89,7 @@ the execution is created and is called once with that execution's first fatal
 `FatalError`; reporting is notification and cannot replace the failure.
 `execution.fatalError` is a read-only query that is `null` until then.
 
-Fatal failure rejects every public operation result that is still pending.
+Fatal failure rejects every operation result that is still pending.
 Already completed results stay completed, and ready results remain synchronous.
 Internal work simply stops when a common continuation next observes the failed
 execution; source Promises are not cancelled and private gates are not settled

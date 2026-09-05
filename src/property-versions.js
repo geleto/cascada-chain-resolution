@@ -87,7 +87,7 @@ function isLivePromiseMirror(owner, key, mirror, operationContext) {
 }
 
 function continuePromiseVersion(promise, mirror, operationContext, onValue) {
-    return resolution.onLaterPromiseReady(
+    return resolution.continueWhenSettled(
         promise,
         operationContext,
         () => onValue(mirror.value),
@@ -139,7 +139,7 @@ function assignProperty(owner, key, value, operationContext, retained = false) {
 // A staging version is callback-visible before subscription. Its logical value
 // may change synchronously; only the returned pending chain requires a mirror.
 function preparePropertyVersion(owner, key, version, operationContext, retained = false) {
-    const publication = resolution.resolveInitialValueOrPoison(
+    const publication = resolution.continueInitialValue(
         version.value,
         operationContext,
         resolved => publishPromiseValue(owner, key, version, resolved, operationContext, retained),
@@ -155,7 +155,7 @@ function preparePropertyVersion(owner, key, version, operationContext, retained 
 
 // This is the first consumption of a raw placement. Subsequent reads use its
 // logical value and never probe or subscribe to the physical host value again.
-function normalizePropertyValue(owner, key, value, operationContext, writable) {
+function normalizeRawPropertyValue(owner, key, value, operationContext, writable) {
     if (value === null || typeof value !== "object" || Error.isError(value) ||
         metadata.metaOf(value, operationContext)) {
         languageValues.admitReadyValue(value, operationContext)
@@ -451,7 +451,7 @@ export {
     placePromiseVersion,
     commitPromiseValue,
     installPlacementVersion,
-    normalizePropertyValue,
+    normalizeRawPropertyValue,
     prepareRetainedArrayProperties,
     resolvePropertyValueAtKey,
 }

@@ -23,9 +23,9 @@ function isPending(value, operationContext) {
         typeof value.then === "function"
 }
 
-function consumeValue(value, operationContext, onFulfilled, onRejected) {
-    const fulfilled = guardContinuation(operationContext, onFulfilled)
-    const rejected = guardContinuation(operationContext, onRejected)
+function thenValue(value, onFulfilled, onRejected, operationContext) {
+    const fulfilled = wrapContinuation(operationContext, onFulfilled)
+    const rejected = wrapContinuation(operationContext, onRejected)
     if (errorUtils.isFatalError(value)) throw value
     if (value === null || typeof value !== "object" || Error.isError(value) ||
         metadata.metaOf(value, operationContext)) return fulfilled(value)
@@ -56,7 +56,7 @@ function consumeValue(value, operationContext, onFulfilled, onRejected) {
     }
 }
 
-function guardContinuation(operationContext, continuation) {
+function wrapContinuation(operationContext, continuation) {
     return value => operationContext.execution.fatalError === null
         ? continuation(value)
         : undefined
@@ -66,22 +66,22 @@ function valueWithOrigin(value, operationContext, valueKind, rejectionKind) {
     // A language rejection delivered inside then returns its ready Error.
     // Deferred delivery throws from its callback and rejects the source chain.
     try {
-        return consumeValue(
+        return thenValue(
             value,
-            operationContext,
-            resolved => errorUtils.runOrFailExecution(operationContext, () => {
+            resolved => errorUtils.runInternalStep(operationContext, () => {
                 if (errorUtils.isFatalError(resolved)) throw resolved
                 return Error.isError(resolved)
                     ? errorUtils.toPoison(resolved, operationContext, valueKind)
                     : resolved
             }),
             reason => {
-                throw errorUtils.runOrFailExecution(operationContext, () => {
+                throw errorUtils.runInternalStep(operationContext, () => {
                     const failure = errorUtils.toPoison(reason, operationContext, rejectionKind)
                     if (errorUtils.isFatalError(failure)) throw failure
                     return failure
                 })
             },
+            operationContext,
         )
     } catch (failure) {
         if (failure instanceof errorUtils.PoisonError) return failure
@@ -123,6 +123,6 @@ function isTraversable(value, operationContext) {
 export {
     TYPE_ARRAY, TYPE_ERROR, TYPE_EXTERNAL, TYPE_FUNCTION, TYPE_MANAGED_CLASS,
     TYPE_PRIMITIVE, TYPE_RECORD, TYPE_STRING,
-    admitReadyValue, consumeValue, isError, isPending, isTraversable,
+    admitReadyValue, isError, isPending, isTraversable, thenValue,
     isTraversableType, typeOf, valueWithOrigin,
 }

@@ -2,43 +2,44 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import { prepareImportedData } from "./import-preparation.js"
 
-const CONTEXT_IMPORT_POLICY = {
-    valueKind: errorUtils.ERROR_KIND.ContextValueError,
-    rejectionKind: errorUtils.ERROR_KIND.ContextValueRejected,
-}
-
-const HOST_RESULT_IMPORT_POLICY = {
-    valueKind: errorUtils.ERROR_KIND.UserCallThrew,
-    rejectionKind: errorUtils.ERROR_KIND.UserCallThrew,
-}
-
-const MANAGED_MUTATION_RESULT_IMPORT_POLICY = {
-    ...HOST_RESULT_IMPORT_POLICY,
-    shareAdmittedGraph: true,
+const IMPORT_POLICY = {
+    Context: {
+        valueKind: errorUtils.ERROR_KIND.ContextValueError,
+        rejectionKind: errorUtils.ERROR_KIND.ContextValueRejected,
+    },
+    MethodResult: {
+        valueKind: errorUtils.ERROR_KIND.UserCallThrew,
+        rejectionKind: errorUtils.ERROR_KIND.UserCallThrew,
+    },
+    ManagedMutationMethodResult: {
+        valueKind: errorUtils.ERROR_KIND.UserCallThrew,
+        rejectionKind: errorUtils.ERROR_KIND.UserCallThrew,
+        retainAdmittedDescendants: true,
+    },
 }
 
 function importValue(value, operationContext) {
-    return importData(value, operationContext, CONTEXT_IMPORT_POLICY)
+    return importData(value, operationContext, IMPORT_POLICY.Context)
 }
 
-// Unlike ordinary import, revisit and share admitted managed descendants.
-function importManagedMutationResult(value, operationContext) {
+// Unlike ordinary import, revisit and retain admitted managed descendants.
+function importManagedMutationMethodResult(value, operationContext) {
     return importData(
         value,
         operationContext,
-        MANAGED_MUTATION_RESULT_IMPORT_POLICY,
+        IMPORT_POLICY.ManagedMutationMethodResult,
     )
 }
 
-function importHostResult(value, operationContext) {
-    return importData(value, operationContext, HOST_RESULT_IMPORT_POLICY)
+function importMethodResult(value, operationContext) {
+    return importData(value, operationContext, IMPORT_POLICY.MethodResult)
 }
 
 function importContext(value, operationContext, externalMutationTreeSetup) {
     return importData(
         value,
         operationContext,
-        CONTEXT_IMPORT_POLICY,
+        IMPORT_POLICY.Context,
         externalMutationTreeSetup,
     )
 }
@@ -49,22 +50,22 @@ function importData(
     importPolicy,
     externalMutationTreeSetup = undefined,
 ) {
-    return errorUtils.runOrFailExecution(operationContext, () => {
+    return errorUtils.runInternalStep(operationContext, () => {
         // Discovery belongs only to work completed in the issuing segment.
         // Later root fulfillment starts ordinary import without tree authority.
         try {
-            return languageValues.consumeValue(
+            return languageValues.thenValue(
                 value,
-                operationContext,
-                root => errorUtils.runOrFailExecution(operationContext, () =>
+                root => errorUtils.runInternalStep(operationContext, () =>
                     prepareImportedData(root, operationContext, importPolicy, externalMutationTreeSetup)),
                 reason => {
-                    throw errorUtils.runOrFailExecution(operationContext, () => {
+                    throw errorUtils.runInternalStep(operationContext, () => {
                         const failure = errorUtils.toPoison(reason, operationContext, importPolicy.rejectionKind)
                         if (errorUtils.isFatalError(failure)) throw failure
                         return failure
                     })
                 },
+                operationContext,
             )
         } catch (failure) {
             if (failure instanceof errorUtils.PoisonError) return failure
@@ -77,7 +78,7 @@ function importData(
 
 export {
     importContext,
-    importHostResult,
-    importManagedMutationResult,
+    importMethodResult,
+    importManagedMutationMethodResult,
     importValue as import,
 }

@@ -2,7 +2,7 @@ import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import { normalizePropertyValue } from "./property-versions.js"
+import { normalizeRawPropertyValue } from "./property-versions.js"
 
 const ORDINARY_PROPERTY = 0
 const ARRAY_LENGTH = 1
@@ -227,7 +227,7 @@ function readLanguageProperty(parent, key, operationContext) {
     )?.placementVersions?.[key]
     if (version) return version.value
     const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
-    return normalizePropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
+    return normalizeRawPropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
 }
 
 function hasLanguageProperty(parent, key, operationContext) {
