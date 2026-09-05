@@ -1,6 +1,8 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 
+const ignore = () => {}
+
 // A direct value runs immediately. Data-Promise rejection becomes a Poison
 // before the continuation runs; continuation throws are Fatal. Initial
 // operation work may be abandoned before admission; graph settlement omits
@@ -12,24 +14,17 @@ function resolveInitialValueOrPoison(
     shouldContinue = () => true,
     rejectionKind = errorUtils.ERROR_KIND.OperationInputRejected,
 ) {
-    if (!languageValues.isPromise(value, operationContext)) {
-        if (!shouldContinue()) return undefined
-        return errorUtils.runFatal(operationContext, () => {
-            languageValues.admitReadyValue(value, operationContext)
-            return fn(value)
-        })
-    }
-    return languageValues.continuePromise(
+    return languageValues.consumeValue(
         value,
         operationContext,
         value => {
             if (!shouldContinue()) return undefined
-            return errorUtils.runFatal(operationContext, () => {
+            return errorUtils.runOrFailExecution(operationContext, () => {
                 languageValues.admitReadyValue(value, operationContext)
                 return fn(value)
             })
         },
-        reason => errorUtils.runFatal(operationContext, () => {
+        reason => errorUtils.runOrFailExecution(operationContext, () => {
             if (!shouldContinue()) return undefined
             const failure = errorUtils.toPoison(
                 reason,
@@ -45,13 +40,12 @@ function resolveInitialValueOrPoison(
 // The initial resolver has already published its value or Poison. A later
 // resolver uses the source only as readiness and reads the current mirror.
 function onLaterPromiseReady(promise, operationContext, fn) {
-    const onReady = () => errorUtils.runFatal(operationContext, fn)
-    return languageValues.continuePromise(promise, operationContext, onReady, onReady)
+    const onReady = () => errorUtils.runOrFailExecution(operationContext, fn)
+    return languageValues.consumeValue(promise, operationContext, onReady, onReady)
 }
 
-// Promise inputs must already be native runtime readiness or continuation
-// Promises whose source ordering is established. Never pass an uncanonicalized
-// graph or host thenable here. Continue directly; rejection is Fatal.
+// Continue through the ordinary FIFO subscription. Rejection is Fatal unless the
+// exact caller supplies a language-outcome transition.
 function continueInternalPromiseOrFatal(
     result,
     operationContext,
@@ -60,38 +54,26 @@ function continueInternalPromiseOrFatal(
         throw reason
     },
 ) {
-    if (!languageValues.isPromise(result, operationContext)) {
-        return onFulfilled(result)
-    }
-    return result.then(
-        value => errorUtils.runFatal(operationContext, onFulfilled, value),
-        reason => errorUtils.runFatal(operationContext, onRejected, reason),
+    return languageValues.consumeValue(
+        result,
+        operationContext,
+        value => errorUtils.runOrFailExecution(operationContext, onFulfilled, value),
+        reason => errorUtils.runOrFailExecution(operationContext, onRejected, reason),
     )
 }
 
-// Observe settlement for runtime bookkeeping without replacing the result.
-// Registering here ensures this work precedes later Cascada consumers of the
-// same thenable. The observer is internal, so consume any Fatal it has already
-// reported.
-function observeResultPromise(
-    promise,
-    operationContext,
-    onFulfilled,
-    onRejected = onFulfilled,
-) {
-    const observer = languageValues.continuePromise(
-        promise,
-        operationContext,
-        value => errorUtils.runFatal(operationContext, onFulfilled, value),
-        reason => errorUtils.runFatal(operationContext, onRejected, reason),
-    )
-    observer.then(undefined, () => {})
-    return promise
+function markPromiseHandled(promise) {
+    // These callbacks cannot reject or assimilate a fulfilled payload. Their
+    // returned chain therefore needs no recursive observer.
+    if (promise !== null && typeof promise === "object" &&
+        !Error.isError(promise) && typeof promise.then === "function") {
+        promise.then(ignore, ignore)
+    }
 }
 
 export {
     continueInternalPromiseOrFatal,
-    observeResultPromise,
+    markPromiseHandled,
     onLaterPromiseReady,
     resolveInitialValueOrPoison,
 }

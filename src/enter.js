@@ -12,7 +12,7 @@ import * as propertyVersions from "./property-versions.js"
 import * as resolution from "./resolution.js"
 
 function enter(chain, path, operationContext, entryMutable, onEntered) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         path = [...path]
         const externalMutationTree = chain._externalMutationTree?.findBranch(path)
@@ -32,31 +32,22 @@ function runEnteredCallback(
     enteredChain,
     operationContext,
     onFulfilled,
-    onRejected,
 ) {
-    let result
-    try {
-        result = onEntered(enteredChain)
-    } catch (error) {
-        onRejected(error)
-        throw error
-    }
-    if (!languageValues.isPromise(result, operationContext)) {
-        return finish(result)
-    }
+    const result = onEntered(enteredChain)
+    const fatalError = operationContext.execution.fatalError
+    if (fatalError !== null) throw fatalError
     return resolution.continueInternalPromiseOrFatal(
         result,
         operationContext,
         finish,
         reason => {
-            onRejected(reason)
-            throw reason
+            if (!(reason instanceof errorUtils.PoisonError)) throw reason
+            return finish(reason)
         },
     )
 
     function finish(value) {
         if (errorUtils.isFatalError(value)) {
-            onRejected(value)
             throw value
         }
         return onFulfilled(value)
@@ -98,7 +89,6 @@ function enterReadOnly(
                 close()
                 return result
             },
-            close,
         )
     })
 }
@@ -136,16 +126,15 @@ function enterMutating(
                 operationContext,
             )
             enteredChain = new Chain(
-                value,
+                undefined,
                 operationContext,
                 true,
                 externalMutationTree,
             )
-            const sourceMirror = languageValues.isPromise(value, operationContext)
-                ? propertyVersions.getOrCreatePromiseMirror(
+            const sourceMirror = languageValues.isPending(value, operationContext)
+                ? propertyVersions.requirePromiseMirror(
                     parent,
                     key,
-                    value,
                     operationContext,
                 )
                 : undefined
@@ -154,10 +143,9 @@ function enterMutating(
                 resolveGate = resolve
             })
 
-            // Install the gate first. Promise reactions cannot run in this
-            // synchronous transition, so the source is safely detached before
-            // its transfer registers, still ahead of the callback and all
-            // target-dependent commands.
+            // Capture the source before detaching it. The private Chain is
+            // initialized without consuming that source; its exact version
+            // transfers only after the entry gate excludes outside access.
             setProperty(
                 parent,
                 key,
@@ -175,8 +163,9 @@ function enterMutating(
                     operationContext,
                     Boolean(attachmentRoot),
                 )
-            } else if (attachmentRoot) {
-                metadata.markShared(value, operationContext)
+            } else {
+                propertyVersions.assignProperty(enteredChain._state, "value", value, operationContext)
+                if (attachmentRoot) metadata.markShared(value, operationContext)
             }
         },
         entryError => {
@@ -197,27 +186,22 @@ function enterMutating(
                     )
                     return result
                 },
-                // A fatal callback outcome must not publish private state.
-                close,
             )
         },
     )
 }
 
 function publishEnteredValue(rootState, resolveGate, operationContext) {
-    const value = languageProperties.readLanguageProperty(
-        rootState,
-        "value",
-        operationContext,
-    )
-    if (!languageValues.isPromise(value, operationContext)) {
+    const version = metadata.metaOf(rootState, operationContext).placementVersions?.value
+    const value = version ? version.value : rootState.value
+    if (!languageValues.isPending(value, operationContext)) {
         resolveGate(value)
         return
     }
 
     // Registration happens only after callback issuance has stopped. The root
     // mirror and all earlier private commands therefore update rootState.value
-    // first in the same canonical FIFO batch.
+    // first in the same FIFO delivery.
     const mirror = propertyVersions.getPromiseMirror(
         rootState,
         "value",
@@ -226,22 +210,28 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
     if (!mirror) {
         // Preserve publication ordering for corrupt raw Promise state: issuance
         // is already closed; report the invariant failure from this FIFO slot.
-        resolution.onLaterPromiseReady(value, operationContext, () => {
-            throw new Error("Entered root remained pending at publication")
-        })
+        const publication = resolution.onLaterPromiseReady(
+            value,
+            operationContext,
+            () => {
+                throw new Error("Entered root remained pending at publication")
+            },
+        )
+        resolution.markPromiseHandled(publication)
         return
     }
-    propertyVersions.continuePromiseVersion(
+    const publication = propertyVersions.continuePromiseVersion(
         value,
         mirror,
         operationContext,
         publishedValue => {
-            if (languageValues.isPromise(publishedValue, operationContext)) {
+            if (languageValues.isPending(publishedValue, operationContext)) {
                 throw new Error("Entered root remained pending at publication")
             }
             resolveGate(publishedValue)
         },
     )
+    resolution.markPromiseHandled(publication)
 }
 
 export { enter }

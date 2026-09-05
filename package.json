@@ -10,7 +10,7 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "mocha --require ./test/setup.js \"test/**/*.test.js\""
+    "test": "node --unhandled-rejections=strict ./node_modules/mocha/bin/mocha.js --require ./test/setup.js \"test/**/*.test.js\""
   },
   "devDependencies": {
     "expect.js": "^0.3.1",

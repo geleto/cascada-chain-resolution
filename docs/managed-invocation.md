@@ -15,7 +15,7 @@ Observation immutability is a trusted contract, not runtime enforcement. A viola
 Method reflection happens once, after receiver and argument preparation succeeds and before mutation isolation.
 
 - A record method is an own enumerable string-keyed placement whose prepared logical value is a Function. Accessors, non-enumerables, inherited properties, non-Functions, and extracted Functions are not record methods.
-- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Class declaration rejects prototype accessors. If method selection later detects an accessor or another invalid prototype change before invoking host code or publishing state, the call returns `InvalidManagedReceiver` and preserves the original receiver. The violation is fatal only after it has made runtime state or ordering untrustworthy.
+- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Class declaration rejects prototype accessors and callable `then` methods so a copied instance cannot be assimilated only on an asynchronous result path. If method selection later detects an accessor, callable `then`, or another invalid prototype change before invoking host code or publishing state, the call returns `InvalidManagedReceiver` and preserves the original receiver. The violation is fatal only after it has made runtime state or ordering untrustworthy.
 - `constructor` is never callable.
 
 Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the prepared receiver, not nested Cascada invocations.
@@ -25,20 +25,20 @@ Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the p
 One operation context performs the call:
 
 1. Select the managed boundary from the admitted receiver category, method name, and mode without reflecting on the method.
-2. Prepare the complete receiver graph and export every explicit argument together. Continue both after language Errors to collect the required receiver-then-argument outcome; after a fatal failure, either path simply returns at its next execution check.
+2. Prepare the complete receiver graph and export every explicit argument together. Continue both after language Errors to collect every required receiver and argument Error; after a fatal failure, either path simply returns at its next execution check.
 3. Resolve and validate the method once from the prepared receiver or admitted class prototype.
 4. Materialize an observational receiver when its logical representation cannot be exposed physically, or isolate a mutation receiver.
 5. Invoke once with `Reflect.apply(method, workingReceiver, exportedArguments)`.
 6. Import the result. Validate and publish a mutation receiver before its result becomes observable.
 7. Release operation resources after their last possible access on every completion path.
 
-If receiver selection is pending, the common coordinator registers on each root argument Promise. A traversable fulfillment is leased until selected preparation synchronously captures that root. This closes the interval before argument export can register its own ordered work without exporting or traversing arguments before receiver classification.
+If receiver selection is pending, the common coordinator consumes each possible root-argument Promise. A ready custom thenable retains its fulfilled identity synchronously; only a returned pending continuation is handled as detached work. A traversable fulfillment is leased until selected preparation synchronously captures that root. This closes the interval before argument export can register its own ordered work without exporting or traversing arguments before receiver classification.
 
 ## Receiver preparation
 
 Preparation consumes the complete receiver graph because method code may read any state through `this`. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached contextual Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise or native Error while the working receiver exposes its logical value.
 
-Every traversable receiver identity is leased while preparation may resume reading it. A synchronous observation releases the leases after result admission. A direct-Promise observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private.
+Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
 Observation materialization copies only paths needed to expose logical storage. Its receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
 
@@ -58,13 +58,13 @@ Refcount indexing is downward-closed. An indexed identity cannot be mutated in p
 
 The isolation walk inspects each reached identity once before any required complete-subgraph copy. A qualifying identity is replaced with a complete graph copy that preserves aliases, cycles, admitted prototypes, sparse Array structure, Functions, and exact external leaves. The walk continues through nonqualifying identities to find qualifying descendants. If a copied subgraph reaches an ancestor, that ancestor is copied too. Copies reconnect through ordinary placement replacement, materializing a retained parent when its representation cannot accept the replacement. No receiver copy is allocated when nothing qualifies.
 
-After invocation, one complete walk admits newly created identities and rejects any Promise or Error left in the receiver. A clean receiver is published through the ordinary mutation transition. No pre-call identity history, changed-property set, active-lease scan, result-provenance map, or managed-specific refcount state is kept.
+After invocation, one complete walk admits newly created identities and rejects any Promise or Error left in the receiver. This validation rejects a stored supported thenable without invoking it, even if it could deliver synchronously; direct method-result consumption does not weaken the completed-receiver contract. A clean receiver is published through the ordinary mutation transition. No pre-call identity history, changed-property set, active-lease scan, result-provenance map, or managed-specific refcount state is kept.
 
 ## Results and direct Promises
 
 Every managed result is imported without deep-copying it. An observation uses ordinary import. A mutation returning its working receiver returns the published receiver. Every other mutation uses managed mutation-result import: it traverses even an already admitted managed root and marks every reached managed identity shared. A mutation can move a result descendant onto a shorter receiver path, where sharing only the result root would not protect it. Managed mutation-result import protects that descendant without result-provenance state. Its cost is one identity traversal of the non-receiver mutation result.
 
-A Promise nested inside a synchronous result is ordinary imported data and does not extend the call. One Promise returned directly by the method is the call completion:
+A Promise nested inside a synchronous result is ordinary imported data and does not extend the call. A possible Promise returned directly by the method is consumed through the common helper; a sync-first custom outcome continues the call directly, while a returned pending chain is the call completion:
 
 - An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection leaves the receiver unchanged and preserves an existing contextual failure or wraps a raw reason at the invocation boundary.
 - A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection contextualizes the same way and poisons the receiver with that occurrence.
@@ -77,7 +77,7 @@ the failed call. A Promise nested inside a successful result is independent data
 its later Error does not poison an already published valid receiver. Later
 operations preserve every contextualized Error's attribution.
 
-Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronously issued nested Cascada operations use their own explicit operation contexts and ordinary ordering, but the direct host Promise must not depend on a nested operation ordered behind its active receiver gate or external phase.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronous Cascada re-entry is forbidden. Independent work started after the host call returns uses its own explicit operation context, but the direct host Promise must not depend on work ordered behind its active receiver gate or external phase.
 
 ## Managed-code contract
 

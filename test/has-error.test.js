@@ -16,7 +16,7 @@ import {
     countPromiseRegistrations,
     deferred,
     flushMicrotasks,
-    setFatalErrorReporter,
+    useTestExecution,
 } from "./support.js"
 
 describe("hasError", () => {
@@ -104,6 +104,10 @@ describe("hasError", () => {
     })
 
     it("creates no abandoned aggregate after a synchronous Error proof", async () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const pending = deferred()
         const failure = new Error("late query continuation failure")
         const ancestor = { bad: new Error("found") }
@@ -133,11 +137,6 @@ describe("hasError", () => {
                 },
             })
         })
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         expect(hasError(new Chain(branch), [])).to.be(true)
         pending.resolve({ clean: true })
         await flushMicrotasks()
@@ -626,10 +625,10 @@ describe("hasError", () => {
         const root = { direct: shared, delayed: delayed.promise }
         const result = hasError(new Chain(root), [])
 
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         delayed.resolve(shared)
         await flushMicrotasks()
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
 
         pending.reject("bad")
         expect(await result).to.be(true)

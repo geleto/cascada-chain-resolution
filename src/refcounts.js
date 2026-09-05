@@ -30,7 +30,7 @@ function getRefCounts(value, operationContext) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
-    if (languageValues.isPromise(value, operationContext)) promiseCount = 1
+    if (languageValues.isPending(value, operationContext)) promiseCount = 1
     else if (languageValues.isError(value)) errorCount = 1
     else if (languageValues.isTraversable(value, operationContext)) {
         const counter = getRequiredRefCounter(value, operationContext)
@@ -46,7 +46,7 @@ function getValueRefState(child, operationContext, cycleCut = false) {
     let errorCount = 0
     let cycleCutCount = 0
     let childCounter
-    if (languageValues.isPromise(child, operationContext)) {
+    if (languageValues.isPending(child, operationContext)) {
         promiseCount = 1
     } else if (cycleCut) {
         cycleCutCount = 1
@@ -61,7 +61,9 @@ function getValueRefState(child, operationContext, cycleCut = false) {
     return { childCounter, promiseCount, errorCount, cycleCutCount }
 }
 
-function buildRefIndex(value, operationContext, preparePromiseProperty) {
+function buildRefIndex(value, operationContext) {
+    if (languageValues.isPending(value, operationContext)) return value
+    languageValues.admitReadyValue(value, operationContext)
     if (
         !languageValues.isTraversable(value, operationContext) ||
         getRefCounter(value, operationContext)
@@ -70,7 +72,7 @@ function buildRefIndex(value, operationContext, preparePromiseProperty) {
     }
 
     const cutTargetQueue = []
-    indexComponent(value, operationContext, cutTargetQueue, preparePromiseProperty)
+    indexComponent(value, operationContext, cutTargetQueue)
 
     // A cut blocks count propagation, not indexing. Defer its target until the
     // current component is published so a closing back edge cannot re-enter an
@@ -78,7 +80,7 @@ function buildRefIndex(value, operationContext, preparePromiseProperty) {
     for (let index = 0; index < cutTargetQueue.length; index++) {
         const target = cutTargetQueue[index]
         if (!getRefCounter(target, operationContext)) {
-            indexComponent(target, operationContext, cutTargetQueue, preparePromiseProperty)
+            indexComponent(target, operationContext, cutTargetQueue)
         }
     }
     return value
@@ -88,10 +90,9 @@ function indexValueIfSourceIndexed(
     source,
     value,
     operationContext,
-    preparePromiseProperty,
 ) {
     if (getRefCounter(source, operationContext)) {
-        buildRefIndex(value, operationContext, preparePromiseProperty)
+        buildRefIndex(value, operationContext)
     }
 }
 
@@ -102,10 +103,9 @@ function prepareRefEdge(
     parentCounter,
     child,
     operationContext,
-    preparePromiseProperty,
 ) {
     if (!languageValues.isTraversable(child, operationContext)) return false
-    buildRefIndex(child, operationContext, preparePromiseProperty)
+    buildRefIndex(child, operationContext)
 
     const visited = new Set()
     return reachesChild(parent, parentCounter)
@@ -132,7 +132,6 @@ function indexComponent(
     node,
     operationContext,
     cutTargetQueue,
-    preparePromiseProperty,
     active = new Set(),
 ) {
     const existing = getRefCounter(node, operationContext)
@@ -152,8 +151,7 @@ function indexComponent(
             continue
         }
 
-        if (languageValues.isPromise(child, operationContext)) {
-            preparePromiseProperty(node, key, child)
+        if (languageValues.isPending(child, operationContext)) {
             promiseCount++
             continue
         }
@@ -175,7 +173,6 @@ function indexComponent(
             child,
             operationContext,
             cutTargetQueue,
-            preparePromiseProperty,
             active,
         )
         promiseCount += childCounts.promiseCount
@@ -203,7 +200,6 @@ function prepareLiveEdge(
     key,
     value,
     operationContext,
-    preparePromiseProperty,
 ) {
     const counter = getRefCounter(owner, operationContext)
     if (!counter) return COMMIT_UNINDEXED_EDGE
@@ -213,7 +209,6 @@ function prepareLiveEdge(
         counter,
         value,
         operationContext,
-        preparePromiseProperty,
     )
     const previousState = getValueRefState(
         languageProperties.readLanguageProperty(owner, key, operationContext),

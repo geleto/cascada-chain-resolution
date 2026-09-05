@@ -5,7 +5,7 @@ import {
     metaOf,
     buildRefIndex,
     getRefCounter,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     verifyRefCounts,
     assignPath,
@@ -52,8 +52,8 @@ describe("export", () => {
             "ContextChain",
             "ERROR_KIND",
             "Execution",
+            "FatalError",
             "PoisonError",
-            "RuntimeError",
             "assignPath",
             "deletePath",
             "enter",
@@ -62,6 +62,7 @@ describe("export", () => {
             "getErrors",
             "hasError",
             "import",
+            "isFatalError",
             "lookupPath",
             "managedState",
             "managedStateClass",
@@ -106,18 +107,12 @@ describe("export", () => {
                 this.open = false
             },
         }
-        let reported
-        setFatalErrorReporter(error => {
-            reported ??= error
-        })
-
         const result = exportManyValues([source], operation)
         operationLifecycle.close(operation)
         pending.resolve(late)
 
         expect(await result).to.be(undefined)
         expect(reflected).to.be(false)
-        expect(reported).to.be(undefined)
         expect(readPath(new Chain(source), ["pending"])).to.be(late)
         verifyRefCounts(source)
     })
@@ -159,12 +154,12 @@ describe("export", () => {
     it("reports a missing indexed Promise mirror as fatal", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
-        buildRefIndex(root)
-        delete metaOf(root).placementVersions.pending
         let reported
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
+        buildRefIndex(root)
+        delete metaOf(root).placementVersions.pending
 
         const failure = thrownBy(() => exportValue(new Chain(root), []))
 
@@ -181,13 +176,7 @@ describe("export", () => {
                 throw failure
             },
         })
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         expect(errorCause(exportValue(new Chain(root), []))).to.be(failure)
-        expect(reported).to.be(undefined)
     })
 
     it("does not invoke accessors exposed after a Promise", async () => {
@@ -425,22 +414,13 @@ describe("export", () => {
         )
     })
 
-    it("continues the Error scan after Promise capture fails", () => {
-        const pending = deferred()
-        const reflection = new Error("Promise capture failed")
-        const nested = new Error("after Promise")
-        let reads = 0
-        const branch = new Proxy({ pending: pending.promise, nested }, {
-            getOwnPropertyDescriptor(target, key) {
-                if (key === "pending" && reads++ === 2) throw reflection
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
+    it("continues the Error scan after thenable recognition fails", () => {
+        const reflection = new Error("then access failed")
+        const nested = new Error("after thenable")
+        const broken = Object.defineProperty({}, "then", {
+            get() { throw reflection },
         })
-
-        expectExportErrors(
-            exportValue(new Chain({ branch }), []),
-            [reflection, nested],
-        )
+        expectExportErrors(exportValue(new Chain({ broken, nested }), []), [reflection, nested])
     })
 
     it("agrees with Error queries on stable sync and promised data", async () => {

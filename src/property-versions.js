@@ -1,6 +1,5 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as importPreparation from "./import-preparation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -23,11 +22,10 @@ class PropertyPlacement {
             operationContext,
         )
         this.value = value
-        if (languageValues.isPromise(value, operationContext)) {
-            this.mirror = getOrCreatePromiseMirror(
+        if (languageValues.isPending(value, operationContext)) {
+            this.mirror = requirePromiseMirror(
                 owner,
                 key,
-                value,
                 operationContext,
             )
         }
@@ -35,7 +33,7 @@ class PropertyPlacement {
 
     resolveValue() {
         this.captureVersion()
-        if (!languageValues.isPromise(this.value, this.operationContext)) {
+        if (!languageValues.isPending(this.value, this.operationContext)) {
             return this.value
         }
         return continuePromiseVersion(
@@ -97,7 +95,7 @@ function continuePromiseVersion(promise, mirror, operationContext, onValue) {
 }
 
 function continuePropertyValue(owner, key, promise, operationContext, onValue) {
-    const mirror = getOrCreatePromiseMirror(owner, key, promise, operationContext)
+    const mirror = requirePromiseMirror(owner, key, operationContext)
     return continuePromiseVersion(
         promise,
         mirror,
@@ -124,99 +122,61 @@ function resolvePropertyValueAtKey(owner, key, operationContext) {
     return getPropertyPlacement(owner, key, operationContext)?.resolveValue()
 }
 
-function getOrCreatePromiseMirror(owner, key, promise, operationContext) {
-    const meta = metadata.metaOf(owner, operationContext)
-    const existing = getPlacementVersion(owner, key, operationContext)
-    if (existing) {
-        if (existing.promise === true) return existing
-        throw new Error("Promise property has a fixed placement version")
-    }
-    if (meta?.parents) {
-        throw new Error("Indexed promise property has no mirror")
-    }
-
-    if (meta?.imported) {
-        throw new Error("Imported promise property has no mirror")
-    }
-    languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-
-    const mirror = createInitialPromiseMirror(owner, key, promise, operationContext)
-    installPlacementVersion(owner, key, mirror, operationContext)
+function requirePromiseMirror(owner, key, operationContext) {
+    const mirror = getPromiseMirror(owner, key, operationContext)
+    if (!mirror) throw new Error("Pending property has no mirror")
     return mirror
 }
 
 function assignProperty(owner, key, value, operationContext, retained = false) {
     languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-    const isPromise = languageValues.isPromise(value, operationContext)
-    if (!isPromise) {
-        if (Error.isError(value)) value = errorUtils.toPoison(
-            value,
-            operationContext,
-            errorUtils.ERROR_KIND.AssignmentValueError,
-        )
-        languageValues.admitReadyValue(value, operationContext)
-    }
-    if (retained && !isPromise) metadata.markShared(value, operationContext)
-    const mirror = isPromise
-        ? createInitialPromiseMirror(
-            owner,
-            key,
-            value,
-            operationContext,
-            undefined,
-            retained,
-        )
-        : undefined
-    replaceProperty(owner, key, mirror, value, operationContext)
+    const version = { value }
+    const result = preparePropertyVersion(owner, key, version, operationContext, retained)
+    replaceProperty(owner, key, version.promise ? version : undefined, version.value, operationContext)
+    return languageValues.isPending(result, operationContext) ? undefined : result
 }
 
-// An initial version consumes the settlement payload. Derived versions instead
-// sample their source mirror at their own FIFO position.
-function createInitialPromiseMirror(
-    owner,
-    key,
-    promise,
-    operationContext,
-    importPolicy,
-    retained = false,
-) {
-    const mirror = { promise: true, value: promise }
-    const publish = value => publishPromiseValue(
-        owner,
-        key,
-        mirror,
-        value,
+// A staging version is callback-visible before subscription. Its logical value
+// may change synchronously; only the returned pending chain requires a mirror.
+function preparePropertyVersion(owner, key, version, operationContext, retained = false) {
+    const publication = resolution.resolveInitialValueOrPoison(
+        version.value,
         operationContext,
-        importPolicy,
-        retained,
+        resolved => publishPromiseValue(owner, key, version, resolved, operationContext, retained),
+        () => true,
+        errorUtils.ERROR_KIND.AssignmentValueRejected,
     )
-    if (importPolicy) {
-        // Import must process fulfillment before admission; the general
-        // initial-value resolver admits first.
-        languageValues.continuePromise(
-            promise,
-            operationContext,
-            value => errorUtils.runFatal(operationContext, publish, value),
-            reason => errorUtils.runFatal(
-                operationContext,
-                publish,
-                errorUtils.toPoison(
-                    reason,
-                    operationContext,
-                    importPolicy.rejectionKind,
-                ),
-            ),
-        )
-    } else {
-        resolution.resolveInitialValueOrPoison(
-            promise,
-            operationContext,
-            publish,
-            () => true,
-            errorUtils.ERROR_KIND.AssignmentValueRejected,
-        )
+    if (languageValues.isPending(publication, operationContext)) {
+        version.promise = true
+        resolution.markPromiseHandled(publication)
     }
-    return mirror
+    return publication
+}
+
+// This is the first consumption of a raw placement. Subsequent reads use its
+// logical value and never probe or subscribe to the physical host value again.
+function normalizePropertyValue(owner, key, value, operationContext, writable) {
+    if (value === null || typeof value !== "object" || Error.isError(value) ||
+        metadata.metaOf(value, operationContext)) {
+        languageValues.admitReadyValue(value, operationContext)
+        return value
+    }
+    const version = { value }
+    preparePropertyVersion(owner, key, version, operationContext)
+    if (version.promise) {
+        const meta = metadata.metaOf(owner, operationContext)
+        if (meta?.parents) throw new Error("Indexed promise property has no mirror")
+        if (meta?.imported) throw new Error("Imported promise property has no mirror")
+        installPlacementVersion(owner, key, version, operationContext)
+    } else if (version.value !== value) {
+        if (writable && !metadata.metaOf(owner, operationContext)?.imported) {
+            languageProperties.writeLanguageProperty(owner, key, version.value, operationContext)
+        } else {
+            // Immutable physical storage uses the existing fixed overlay.
+            installFixedPlacementVersion(owner, key, version.value, operationContext)
+        }
+    }
+    return version.value
 }
 
 function placePromiseVersion(
@@ -229,19 +189,27 @@ function placePromiseVersion(
 ) {
     languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
     // A derived placement is runtime-owned and may publish into its owner.
-    const mirror = { promise: true, value: promise }
-    continuePromiseVersion(promise, sourceMirror, operationContext, value => {
-        publishPromiseValue(
-            owner,
-            key,
-            mirror,
-            value,
-            operationContext,
-            undefined,
-            retained,
-        )
-    })
-    replaceProperty(owner, key, mirror, promise, operationContext)
+    const mirror = { value: promise }
+    const publication = continuePromiseVersion(
+        promise,
+        sourceMirror,
+        operationContext,
+        value => {
+            publishPromiseValue(
+                owner,
+                key,
+                mirror,
+                value,
+                operationContext,
+                retained,
+            )
+        },
+    )
+    if (languageValues.isPending(publication, operationContext)) {
+        mirror.promise = true
+        resolution.markPromiseHandled(publication)
+    }
+    replaceProperty(owner, key, mirror.promise ? mirror : undefined, mirror.value, operationContext)
     return mirror
 }
 
@@ -255,16 +223,20 @@ function publishPromiseValue(
     mirror,
     value,
     operationContext,
-    importPolicy,
     retained = false,
 ) {
+    let validationFailure
     value = errorUtils.catchUserCodeFailure(
         () => {
-            if (languageValues.isPromise(value, operationContext)) {
+            if (languageValues.isPending(value, operationContext)) {
                 throw new Error("A Promise requires a fresh property version")
             }
-            if (importPolicy) {
-                value = prepareImportedValue(value, operationContext, importPolicy)
+            if (languageProperties.isCallableThenPlacement(key, value)) {
+                value = validationFailure = languageProperties.propertyValidationError(
+                    "Language data cannot contain a callable then property",
+                    operationContext,
+                )
+                languageValues.admitReadyValue(value, operationContext)
             } else {
                 if (Error.isError(value)) value = errorUtils.toPoison(
                     value,
@@ -277,12 +249,21 @@ function publishPromiseValue(
             return value
         },
         operationContext,
-        importPolicy
-            ? errorUtils.ERROR_KIND.ImportThrew
-            : errorUtils.ERROR_KIND.PropertyMutationThrew,
-        admitFailure,
+        errorUtils.ERROR_KIND.PropertyMutationThrew,
+        failure => {
+            languageValues.admitReadyValue(failure, operationContext)
+            return failure
+        },
     )
-    const writeBack = importPolicy === undefined
+    commitPromiseValue(owner, key, mirror, value, operationContext, true)
+    return validationFailure
+}
+
+function commitPromiseValue(owner, key, mirror, value, operationContext, writeBack) {
+    function admitFailure(failure) {
+        languageValues.admitReadyValue(failure, operationContext)
+        return failure
+    }
     const commit = errorUtils.catchUserCodeFailure(
         () => prepareCommit(value, writeBack),
         operationContext,
@@ -299,10 +280,6 @@ function publishPromiseValue(
         failure => prepareCommit(admitFailure(failure), false)(),
     )
 
-    function admitFailure(failure) {
-        languageValues.admitReadyValue(failure, operationContext)
-        return failure
-    }
 
     function prepareCommit(nextValue, canWriteBack) {
         // A runtime-owned version can be displaced when its owner is later
@@ -328,7 +305,7 @@ function publishPromiseValue(
                 canWriteBack = false
             }
         }
-        const commitEdge = preparePropertyCommit(
+        const commitEdge = refcounts.prepareLiveEdge(
             owner,
             key,
             nextValue,
@@ -420,97 +397,8 @@ function commitArrayLength(array, length, operationContext) {
     }
 }
 
-function preparePropertyCommit(owner, key, value, operationContext) {
-    return refcounts.prepareLiveEdge(
-        owner,
-        key,
-        value,
-        operationContext,
-        (parent, childKey, promise) => getOrCreatePromiseMirror(
-            parent,
-            childKey,
-            promise,
-            operationContext,
-        ),
-    )
-}
-
 function commitProperty(owner, key, value, operationContext, updateProperty) {
-    preparePropertyCommit(owner, key, value, operationContext)(updateProperty)
-}
-
-function buildRefIndex(value, operationContext) {
-    languageValues.admitValue(value, operationContext)
-    return refcounts.buildRefIndex(
-        value,
-        operationContext,
-        (parent, key, promise) => getOrCreatePromiseMirror(
-            parent,
-            key,
-            promise,
-            operationContext,
-        ),
-    )
-}
-
-function indexValueIfSourceIndexed(source, value, operationContext) {
-    return refcounts.indexValueIfSourceIndexed(
-        source,
-        value,
-        operationContext,
-        (parent, key, promise) => getOrCreatePromiseMirror(
-            parent,
-            key,
-            promise,
-            operationContext,
-        ),
-    )
-}
-
-function prepareImportedValue(
-    value,
-    operationContext,
-    importPolicy,
-    externalMutationTreeSetup,
-) {
-    if (errorUtils.isFatalError(value)) throw value
-    if (Error.isError(value)) {
-        return errorUtils.toPoison(
-            value,
-            operationContext,
-            importPolicy.valueKind,
-        )
-    }
-    return importPreparation.prepareImportedData(
-        value,
-        operationContext,
-        importPolicy,
-        (owner, key, promise, boundary) => installImportedPromise(
-            owner,
-            key,
-            promise,
-            operationContext,
-            boundary,
-        ),
-        (owner, key, error) => installFixedPlacementVersion(
-            owner,
-            key,
-            error,
-            operationContext,
-        ),
-        externalMutationTreeSetup,
-    )
-}
-
-function installImportedPromise(owner, key, promise, operationContext, importPolicy) {
-    const mirror = createInitialPromiseMirror(
-        owner,
-        key,
-        promise,
-        operationContext,
-        importPolicy,
-    )
-    installPlacementVersion(owner, key, mirror, operationContext)
+    refcounts.prepareLiveEdge(owner, key, value, operationContext)(updateProperty)
 }
 
 function prepareRetainedArrayProperties(
@@ -533,12 +421,12 @@ function prepareRetainedArrayProperties(
             sourceKey,
             operationContext,
         )
-        if (!languageValues.isPromise(value, operationContext)) {
+        if (!languageValues.isPending(value, operationContext)) {
             metadata.markShared(value, operationContext)
             continue
         }
         placePromiseVersion(
-            getOrCreatePromiseMirror(source, sourceKey, value, operationContext),
+            requirePromiseMirror(source, sourceKey, operationContext),
             value,
             destination,
             destinationKey,
@@ -551,19 +439,19 @@ function prepareRetainedArrayProperties(
 export {
     advancePromiseVersion,
     assignProperty,
-    buildRefIndex,
     commitArrayLength,
     continuePropertyValue,
     continuePromiseVersion,
     deleteProperty,
-    getOrCreatePromiseMirror,
+    requirePromiseMirror,
     getPropertyPlacement,
     getPromiseMirror,
     hasPromiseMirrors,
-    indexValueIfSourceIndexed,
     isPropertyPlacement,
     placePromiseVersion,
-    prepareImportedValue,
+    commitPromiseValue,
+    installPlacementVersion,
+    normalizePropertyValue,
     prepareRetainedArrayProperties,
     resolvePropertyValueAtKey,
 }

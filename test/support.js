@@ -2,7 +2,7 @@ import expect from "expect.js"
 
 import * as runtime from "../src/index.js"
 import * as sourceArrayViews from "../src/array-view.js"
-import * as runtimeError from "../src/error.js"
+import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
@@ -15,6 +15,11 @@ let testExecution
 
 function resetTestExecution() {
     testExecution = undefined
+}
+
+function useTestExecution(reporter) {
+    testExecution = new runtime.Execution(reporter)
+    return testExecution
 }
 
 function testOperationContext(
@@ -157,7 +162,7 @@ function advancePromiseVersion(owner, key, mirror, value) {
 }
 
 function buildRefIndex(value) {
-    return propertyVersions.buildRefIndex(value, testOperationContext("test ref index"))
+    return refcounts.buildRefIndex(value, testOperationContext("test ref index"))
 }
 
 function getRefCounter(value) {
@@ -176,8 +181,18 @@ function hasCycleCut(value, key) {
     )
 }
 
-function runFatal(work) {
-    return runtimeError.runFatal(testOperationContext("test fatal work"), work)
+function runOrFailExecution(work) {
+    return errorUtils.runOrFailExecution(
+        testOperationContext("test fatal work"),
+        work,
+    )
+}
+
+function submitFatal(reason, errorContext = "test fatal injection") {
+    return errorUtils.failExecution(
+        testOperationContext(errorContext),
+        reason,
+    )
 }
 
 function ArrayView(source, start = 0, end = undefined) {
@@ -222,22 +237,18 @@ const testPropertyVersions = {
         key,
         testOperationContext("test Promise mirror"),
     ),
-    getOrCreatePromiseMirror: (owner, key, promise) =>
-        propertyVersions.getOrCreatePromiseMirror(
-            owner,
-            key,
-            promise,
-            testOperationContext("test Promise mirror creation"),
-        ),
+    getPropertyPlacement: (owner, key) => propertyVersions.getPropertyPlacement(
+        owner, key, testOperationContext("test placement capture"),
+    ),
 }
 
 const languageValues = {
     ...sourceLanguageValues,
-    admitValue: value => sourceLanguageValues.admitValue(
+    admitReadyValue: value => sourceLanguageValues.admitReadyValue(
         value,
         testOperationContext("test admission"),
     ),
-    isPromise: value => sourceLanguageValues.isPromise(
+    isPending: value => sourceLanguageValues.isPending(
         value,
         testOperationContext("test Promise check"),
     ),
@@ -337,11 +348,6 @@ export {
 } from "../src/index.js"
 
 export {
-    reportFatalError,
-    setFatalErrorReporter,
-} from "../src/error.js"
-
-export {
     getRefCounter,
     getRefCounts,
 }
@@ -389,8 +395,10 @@ export {
     resolveInitialValueOrPoison,
     resetTestExecution,
     run,
-    runFatal,
+    runOrFailExecution,
+    submitFatal,
     testOperationContext,
+    useTestExecution,
     testPropertyVersions as propertyVersions,
     countPromiseRegistrations,
     deferred,

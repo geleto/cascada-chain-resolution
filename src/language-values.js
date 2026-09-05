@@ -13,113 +13,86 @@ const {
     isTraversableType,
 } = metadata
 
-function isPromise(value, operationContext) {
-    return !isError(value) && capturedThenableOf(value, operationContext) !== undefined
+// Only normalized transition results and logical placements use this test.
+// Raw inputs are consumed below, at their causal boundary. Validation-only
+// callers may inspect prohibited thenables under their own host envelope,
+// without invoking them.
+function isPending(value, operationContext) {
+    return value !== null && typeof value === "object" &&
+        !Error.isError(value) && !metadata.metaOf(value, operationContext) &&
+        typeof value.then === "function"
 }
 
-// Reading `then` may invoke a getter or Proxy trap. The first sample
-// permanently fixes this object's Promise behavior; acquisition failure is a
-// rejection, and a callable is captured exactly once.
-function capturedThenableOf(value, operationContext) {
-    if (!metadata.isObjectLike(value)) return undefined
-    if (metadata.metaOf(value, operationContext)) return undefined
-    return captureThenable(value, operationContext.execution._thenables, operationContext)
-}
+function consumeValue(value, operationContext, onFulfilled, onRejected) {
+    const fulfilled = guardContinuation(operationContext, onFulfilled)
+    const rejected = guardContinuation(operationContext, onRejected)
+    if (errorUtils.isFatalError(value)) throw value
+    if (value === null || typeof value !== "object" || Error.isError(value) ||
+        metadata.metaOf(value, operationContext)) return fulfilled(value)
 
-function captureThenable(value, thenables, operationContext = undefined) {
-    if (!metadata.isObjectLike(value)) return undefined
-    if (thenables.has(value)) return thenables.get(value)
-    const capture = () => {
-        const then = errorUtils.runUserCode(() => value.then)
-        return typeof then === "function" ? { then } : undefined
-    }
-    const onFailure = rejection => ({
-        then: (_resolve, reject) => reject(rejection),
-    })
-    const captured = operationContext === undefined
-        ? errorUtils.catchRawUserCodeFailure(capture, onFailure)
-        : errorUtils.catchUserCodeFailure(
-            capture,
+    let then
+    try {
+        then = errorUtils.catchUserCodeFailure(
+            () => errorUtils.runUserCode(() => value.then),
             operationContext,
             errorUtils.ERROR_KIND.ThenAccessThrew,
-            onFailure,
+            failure => { throw failure },
         )
-    thenables.set(value, captured)
-    return captured
+    } catch (failure) {
+        if (errorUtils.isFatalError(failure)) throw failure
+        return rejected(failure)
+    }
+    if (typeof then !== "function") return fulfilled(value)
+
+    // The source owns FIFO scheduling. In particular, its supplied callback
+    // must run outside the generic host-code re-entry guard.
+    try {
+        return Reflect.apply(then, value, [fulfilled, rejected])
+    } catch (reason) {
+        if (errorUtils.isFatalError(reason)) throw reason
+        return rejected(errorUtils.toPoison(
+            reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationThrew,
+        ))
+    }
 }
 
-function continuePromise(value, operationContext, onFulfilled, onRejected) {
-    const captured = capturedThenableOf(value, operationContext)
-    if (!captured) {
-        throw new TypeError("Value is not a captured Promise")
-    }
-
-    // A local native Promise already is the FIFO queue. Register directly so
-    // its reaction keeps that queue position. Failed registration becomes an
-    // ordinary rejected Promise with this boundary's attribution.
-    if (
-        captured.canonical === undefined &&
-        captured.then === Promise.prototype.then
-    ) {
-        return errorUtils.catchUserCodeFailure(
-            () => errorUtils.runUserCode(() => Reflect.apply(
-                captured.then,
-                value,
-                [onFulfilled, onRejected],
-            )),
-            operationContext,
-            errorUtils.ERROR_KIND.ThenInvocationThrew,
-            failure => Promise.reject(failure).then(onFulfilled, onRejected),
-        )
-    }
-    if (captured.canonical === undefined) {
-        const { promise, resolve, reject } = Promise.withResolvers()
-        captured.canonical = promise
-        errorUtils.catchUserCodeFailure(
-            () => errorUtils.runUserCode(() => Reflect.apply(
-                captured.then,
-                value,
-                [resolve, reject],
-            )),
-            operationContext,
-            errorUtils.ERROR_KIND.ThenInvocationThrew,
-            reject,
-        )
-    }
-    return captured.canonical.then(onFulfilled, onRejected)
+function guardContinuation(operationContext, continuation) {
+    return value => operationContext.execution.fatalError === null
+        ? continuation(value)
+        : undefined
 }
 
 function valueWithOrigin(value, operationContext, valueKind, rejectionKind) {
-    if (!isPromise(value, operationContext)) {
-        return Error.isError(value)
-            ? errorUtils.toPoison(value, operationContext, valueKind)
-            : value
+    // A language rejection delivered inside then returns its ready Error.
+    // Deferred delivery throws from its callback and rejects the source chain.
+    try {
+        return consumeValue(
+            value,
+            operationContext,
+            resolved => errorUtils.runOrFailExecution(operationContext, () => {
+                if (errorUtils.isFatalError(resolved)) throw resolved
+                return Error.isError(resolved)
+                    ? errorUtils.toPoison(resolved, operationContext, valueKind)
+                    : resolved
+            }),
+            reason => {
+                throw errorUtils.runOrFailExecution(operationContext, () => {
+                    const failure = errorUtils.toPoison(reason, operationContext, rejectionKind)
+                    if (errorUtils.isFatalError(failure)) throw failure
+                    return failure
+                })
+            },
+        )
+    } catch (failure) {
+        if (failure instanceof errorUtils.PoisonError) return failure
+        throw failure
     }
-    return continuePromise(
-        value,
-        operationContext,
-        resolved => {
-            if (errorUtils.isFatalError(resolved)) throw resolved
-            return Error.isError(resolved)
-                ? errorUtils.toPoison(resolved, operationContext, valueKind)
-                : resolved
-        },
-        reason => {
-            throw errorUtils.toPoison(reason, operationContext, rejectionKind)
-        },
-    )
 }
 
 function isError(value) {
-    return Error.isError(value) && !(value instanceof errorUtils.RuntimeError)
+    return Error.isError(value) && !errorUtils.isFatalError(value)
 }
 
-function admitValue(value, operationContext) {
-    if (!isPromise(value, operationContext)) admitReadyValue(value, operationContext)
-}
-
-// Thenability has already been sampled at this program position. Ready-value
-// admission always preserves the value and creates complete typed metadata.
 function admitReadyValue(
     value,
     operationContext,
@@ -128,12 +101,7 @@ function admitReadyValue(
 ) {
     if (errorUtils.isFatalError(value)) throw value
     if (metadata.isObjectLike(value)) {
-        metadata.getOrCreateMeta(
-            value,
-            operationContext,
-            knownType,
-            knownAdmittedPrototype,
-        )
+        metadata.getOrCreateMeta(value, operationContext, knownType, knownAdmittedPrototype)
     }
 }
 
@@ -152,31 +120,9 @@ function isTraversable(value, operationContext) {
     return isTraversableType(type)
 }
 
-function createPromiseProbe() {
-    // One declaration may reach an identity through validation and aliases.
-    // Sample an effectful `then` only once without entering an execution cache.
-    const thenables = new WeakMap()
-    return value => !isError(value) &&
-        captureThenable(value, thenables) !== undefined
-}
-
 export {
-    TYPE_ARRAY,
-    TYPE_ERROR,
-    TYPE_EXTERNAL,
-    TYPE_FUNCTION,
-    TYPE_MANAGED_CLASS,
-    TYPE_PRIMITIVE,
-    TYPE_RECORD,
-    TYPE_STRING,
-    admitReadyValue,
-    admitValue,
-    continuePromise,
-    createPromiseProbe,
-    isError,
-    isPromise,
-    isTraversable,
-    isTraversableType,
-    typeOf,
-    valueWithOrigin,
+    TYPE_ARRAY, TYPE_ERROR, TYPE_EXTERNAL, TYPE_FUNCTION, TYPE_MANAGED_CLASS,
+    TYPE_PRIMITIVE, TYPE_RECORD, TYPE_STRING,
+    admitReadyValue, consumeValue, isError, isPending, isTraversable,
+    isTraversableType, typeOf, valueWithOrigin,
 }

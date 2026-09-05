@@ -23,9 +23,9 @@ Each batch root retains its own result position. Wrapping the roots in an ordina
 
 The walk collects every contextual Error reached beneath each root. One
 occurrence is preserved. Several produce a `CompoundPoisonError`; combination
-flattens nested compounds and deduplicates exact leaf identity only. Different
-occurrence wrappers remain distinct even when they share one cause. Logical
-collection order within one graph and failed batch-root order are semantic. Any
+flattens nested compounds and deduplicates by raw cause, source-context identity,
+and kind, sharing the rule used by `getErrors`. Error order and representative
+wrapper/source are unspecified; successful batch-root positions remain ordered. Any
 Error prevents host invocation or assignment. No Error is exported.
 
 An Error discards partial output but does not stop the scan: pending captured branches may reveal other Errors. Export never starts a second `getErrors` operation.
@@ -40,11 +40,11 @@ Export captures only the selected path and the Promise frontier recursively expo
 
 ## Output lifetime
 
-Export operation work uses its containing operation's owner, or its own owner when export is standalone. A nested export receives only that owner, whose operation context is therefore authoritative. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. A pending nested export registers that release with its owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. After required shared settlement, local owner closure in a live execution stops later export traversal. If the execution is fatal, a resumed export returns at the common execution check before settlement or traversal.
+Export operation work uses its containing operation's owner, or its own owner when export is standalone. A nested export receives only that owner, whose operation context is therefore authoritative. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. Export runs each possible-Promise branch first and derives pending lifetime from the normalized aggregate result, not from an input pre-scan or output backwrite. A pending nested export registers its release with the owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. After required shared settlement, local owner closure in a live execution stops later export traversal. If the execution is fatal, a resumed export returns at the common execution check before settlement or traversal.
 
 In a live execution, an already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication after local operation closure. In a fatal execution it performs neither settlement nor export work.
 
-The result is synchronous when its captured frontier is ready. Otherwise one operation Promise fulfills with the completed copy or rejects with the final language Error. Export reflection failures use the export operation's source and kind; unexpected internal readiness failure becomes a fatal `RuntimeError` at that operation.
+The result is synchronous when every consumed frontier transition returns directly, including sync-first custom thenables. Otherwise one operation Promise fulfills with the completed copy or rejects with the final language Error. Export reflection failures use the export operation's source and kind; unexpected internal readiness failure becomes a fatal `FatalError` at that operation.
 
 ## Ownership
 

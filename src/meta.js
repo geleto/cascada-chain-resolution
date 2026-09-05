@@ -29,7 +29,7 @@ function getOrCreateMeta(
     let meta = metadata.get(value)
     if (!meta) {
         meta = type === undefined
-            ? inspectMetaFacts(value)
+            ? inspectAdmissionMetaFacts(value, operationContext)
             : admittedPrototype === undefined
                 ? { type }
                 : { type, admittedPrototype }
@@ -49,7 +49,15 @@ function getOrCreateMeta(
 // Classification is a capability probe whose reflection can invoke Proxy
 // traps. If it cannot identify managed structure, preserving the exact value
 // as external is always safe.
-function inspectMetaFacts(value) {
+function inspectAdmissionMetaFacts(value, operationContext) {
+    return errorUtils.catchRawUserCodeFailure(
+        () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
+        () => ({ type: TYPE_EXTERNAL }),
+        operationContext,
+    )
+}
+
+function inspectDeclarationMetaFacts(value) {
     return errorUtils.catchRawUserCodeFailure(
         () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
         () => ({ type: TYPE_EXTERNAL }),
@@ -109,6 +117,11 @@ function validateManagedPrototype(prototype) {
             if (descriptor && !("value" in descriptor)) {
                 throw new TypeError(
                     "Managed class prototypes cannot contain accessors",
+                )
+            }
+            if (key === "then" && typeof descriptor?.value === "function") {
+                throw new TypeError(
+                    "Managed class prototypes cannot contain a callable then",
                 )
             }
         }
@@ -213,7 +226,8 @@ export {
     incrementReadLease,
     isImported,
     identityDeclarationOf,
-    inspectMetaFacts,
+    inspectAdmissionMetaFacts,
+    inspectDeclarationMetaFacts,
     isObjectLike,
     isPlainObjectPrototype,
     isTraversableType,

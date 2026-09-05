@@ -235,17 +235,6 @@ describe("causal Error attribution", () => {
         expect(invoked.kind).to.be(errorUtils.ERROR_KIND.ThenInvocationThrew)
     })
 
-    it("ignores a custom then throw after its first settlement", async () => {
-        const laterThrow = new Error("too late")
-        const chain = new Chain({
-            then(resolve) {
-                resolve("settled")
-                throw laterThrow
-            },
-        })
-
-        expect(await lookupPath(chain, [])).to.be("settled")
-    })
 
     it("commits no Error overlay when an import segment fails", () => {
         const native = new Error("nested")
@@ -420,66 +409,58 @@ describe("causal Error attribution", () => {
 
     it("wraps and reports a fatal failure once", () => {
         const cause = new Error("runtime failure")
-        const context = testOperationContext("fatal operation")
         const reported = []
-        errorUtils.setFatalErrorReporter(error => reported.push(error))
+        const execution = new runtime.Execution(error => reported.push(error))
+        const context = testOperationContext("fatal operation", execution)
+        let failure
         try {
-            let failure
-            try {
-                errorUtils.runFatal(context, () => {
-                    throw cause
-                })
-            } catch (error) {
-                failure = error
-            }
-            expect(failure).to.be.a(runtime.RuntimeError)
-            expect(failure.cause).to.be(cause)
-            expect(failure.errorContext).to.be("fatal operation")
-            expect(failure.kind).to.be(undefined)
-            expect(errorUtils.isFatalError(failure)).to.be(true)
-            expect(languageValues.isError(failure)).to.be(false)
-            expect(errorUtils.toPoison(
-                failure,
-                context,
-                errorUtils.ERROR_KIND.OperationInputError,
-            )).to.be(failure)
-            try {
-                errorUtils.runFatal(context, () => {
-                    throw failure
-                })
-            } catch (error) {
-                expect(error).to.be(failure)
-            }
-            expect(reported).to.eql([failure])
-        } finally {
-            errorUtils.setFatalErrorReporter()
+            errorUtils.runOrFailExecution(context, () => {
+                throw cause
+            })
+        } catch (error) {
+            failure = error
         }
+        expect(failure).to.be.a(runtime.FatalError)
+        expect(failure.cause).to.be(cause)
+        expect(failure.errorContext).to.be("fatal operation")
+        expect(failure.kind).to.be(undefined)
+        expect(errorUtils.isFatalError(failure)).to.be(true)
+        expect(languageValues.isError(failure)).to.be(false)
+        expect(errorUtils.toPoison(
+            failure,
+            context,
+            errorUtils.ERROR_KIND.OperationInputError,
+        )).to.be(failure)
+        try {
+            errorUtils.runOrFailExecution(context, () => {
+                throw failure
+            })
+        } catch (error) {
+            expect(error).to.be(failure)
+        }
+        expect(reported).to.eql([failure])
     })
 
     it("reports an invalid PoisonError definition as fatal", () => {
-        const context = testOperationContext("invalid poison")
         let reported
-        errorUtils.setFatalErrorReporter(error => {
+        const execution = new runtime.Execution(error => {
             reported = error
         })
+        const context = testOperationContext("invalid poison", execution)
+        let failure
         try {
-            let failure
-            try {
-                errorUtils.runFatal(context, () => new errorUtils.PoisonError(
-                    "invalid",
-                    undefined,
-                    "",
-                ))
-            } catch (error) {
-                failure = error
-            }
-
-            expect(failure).to.be.a(runtime.RuntimeError)
-            expect(failure.cause).to.be.a(TypeError)
-            expect(failure.errorContext).to.be("invalid poison")
-            expect(reported).to.be(failure)
-        } finally {
-            errorUtils.setFatalErrorReporter()
+            errorUtils.runOrFailExecution(context, () => new errorUtils.PoisonError(
+                "invalid",
+                undefined,
+                "",
+            ))
+        } catch (error) {
+            failure = error
         }
+
+        expect(failure).to.be.a(runtime.FatalError)
+        expect(failure.cause).to.be.a(TypeError)
+        expect(failure.errorContext).to.be("invalid poison")
+        expect(reported).to.be(failure)
     })
 })

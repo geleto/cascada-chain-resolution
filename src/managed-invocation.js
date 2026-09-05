@@ -72,34 +72,28 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         visited: new WeakSet(),
     }
     let unregisterRelease
-    try {
-        const readiness = operationLifecycle.resolveInitial(
+    const readiness = operationLifecycle.resolveInitial(
+        invocationContext,
+        receiver,
+        resolved => {
+            preparation.receiver = resolved
+            return visit(resolved)
+        },
+    )
+    if (languageValues.isPending(readiness, invocationContext.operationContext)) {
+        unregisterRelease = operationLifecycle.registerRelease(
             invocationContext,
-            receiver,
-            resolved => {
-                preparation.receiver = resolved
-                return visit(resolved)
-            },
+            release,
         )
-        if (languageValues.isPromise(readiness, invocationContext.operationContext)) {
-            unregisterRelease = operationLifecycle.registerRelease(
-                invocationContext,
-                release,
-            )
-        }
-        return operationLifecycle.continueInternal(
-            invocationContext,
-            readiness,
-            finish,
-        )
-    } catch (error) {
-        unregisterRelease?.()
-        release()
-        throw error
     }
+    return operationLifecycle.continueInternal(
+        invocationContext,
+        readiness,
+        finish,
+    )
 
     function visit(value) {
-        if (!operationLifecycle.mayContinue(invocationContext)) return undefined
+        if (!invocationContext.open) return undefined
         if (languageValues.isError(value)) {
             preparation.errors.add(errorUtils.toPoison(
                 value,
@@ -134,7 +128,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
                     invocationContext.operationContext,
                 ),
             )
-            if (!languageValues.isPromise(child, invocationContext.operationContext)) {
+            if (!languageValues.isPending(child, invocationContext.operationContext)) {
                 const nested = visit(child)
                 if (nested) waits.push(nested)
                 continue
@@ -147,7 +141,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
                     invocationContext.operationContext,
                     visit,
                 )
-                return operationLifecycle.observeFatal(invocationContext, result)
+                return result
             })
             if (continued) waits.push(continued)
         }
@@ -446,10 +440,10 @@ function requiresIsolation(value, operationContext) {
 }
 
 function copyCompleteGraph(source, operationContext, copies = new Map()) {
-    if (languageValues.isPromise(source, operationContext)) {
+    if (languageValues.isPending(source, operationContext)) {
         throw new Error("Prepared managed receiver contains a Promise")
     }
-    languageValues.admitValue(source, operationContext)
+    languageValues.admitReadyValue(source, operationContext)
     if (!languageValues.isTraversable(source, operationContext)) return source
 
     const existing = copies.get(source)
@@ -507,30 +501,33 @@ function invokeMutation(callable, receiver, args, operationContext) {
         result,
         operationContext,
     )
-    if (!languageValues.isPromise(admittedResult, operationContext)) {
-        return finishMutation(receiver, admittedResult, operationContext)
-    }
-
-    return languageValues.continuePromise(
+    return languageValues.consumeValue(
         admittedResult,
         operationContext,
-        imported => errorUtils.runFatal(
+        imported => errorUtils.runOrFailExecution(
             operationContext,
             () => finishMutation(receiver, imported, operationContext),
         ),
-        reason => ({
-            mutatedValue: errorUtils.toPoison(
+        reason => errorUtils.runOrFailExecution(operationContext, () => {
+            const failure = errorUtils.toPoison(
                 reason,
                 operationContext,
                 errorUtils.ERROR_KIND.UserCallThrew,
-            ),
-            result: admittedResult,
+            )
+            if (errorUtils.isFatalError(failure)) throw failure
+            return {
+                mutatedValue: failure,
+                result: admittedResult,
+            }
         }),
     )
 }
 
 function finishMutation(receiver, result, operationContext) {
-    return validateReceiver(receiver, operationContext) ?? {
+    return errorUtils.catchUserCodeFailure(
+        () => validateReceiver(receiver, operationContext),
+        operationContext, errorUtils.ERROR_KIND.InvalidManagedReceiver,
+    ) ?? {
         mutatedValue: receiver,
         result,
     }
@@ -540,6 +537,7 @@ function validateReceiver(receiver, operationContext) {
     const visited = new Set()
     const errors = new Set()
     let promiseError
+    let callableThenError
     walk(receiver)
     return errors.size === 0
         ? undefined
@@ -549,7 +547,7 @@ function validateReceiver(receiver, operationContext) {
         )
 
     function walk(value) {
-        if (languageValues.isPromise(value, operationContext)) {
+        if (errorUtils.runUserCode(() => languageValues.isPending(value, operationContext))) {
             errors.add(
                 promiseError ??= errorUtils.validationError(
                     "Managed mutation receiver contains a Promise",
@@ -567,7 +565,7 @@ function validateReceiver(receiver, operationContext) {
             ))
             return
         }
-        languageValues.admitValue(value, operationContext)
+        languageValues.admitReadyValue(value, operationContext)
         if (
             !languageValues.isTraversable(value, operationContext) ||
             visited.has(value)
@@ -577,7 +575,21 @@ function validateReceiver(receiver, operationContext) {
             value,
             operationContext,
         )) {
-            walk(languageProperties.readLanguageProperty(value, key, operationContext))
+            // Validation must inspect retained data without consuming it.
+            const version = metadata.metaOf(value, operationContext).placementVersions?.[key]
+            const child = version ? version.value : languageProperties
+                .getLanguagePlacementDescriptor(value, key, operationContext)?.value
+            if (languageProperties.isCallableThenPlacement(key, child)) {
+                errors.add(
+                    callableThenError ??= errorUtils.validationError(
+                        "Managed mutation receiver contains a callable then property",
+                        operationContext,
+                        errorUtils.ERROR_KIND.InvalidManagedReceiver,
+                    ),
+                )
+                continue
+            }
+            walk(child)
         }
     }
 }

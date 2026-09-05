@@ -40,22 +40,19 @@ class InvocationContext {
 
     retainArgumentsUntilReceiverReached() {
         for (const value of this.args) {
-            if (!languageValues.isPromise(value, this.operationContext)) {
-                this.#argumentsAwaitingReceiverLeases.retain(value)
-                continue
-            }
-            const protection = languageValues.continuePromise(
+            const protection = languageValues.consumeValue(
                 value,
                 this.operationContext,
-                resolved => operationLifecycle.run(
-                    this,
-                    () => this.#argumentsAwaitingReceiverLeases.retain(resolved),
-                ),
-                // Rejection reveals no identity to protect. Input preparation
-                // consumes it only if receiver resolution reaches invocation.
+                resolved => errorUtils.runOrFailExecution(this.operationContext, () => {
+                    if (!this.open) return undefined
+                    languageValues.admitReadyValue(resolved, this.operationContext)
+                    this.#argumentsAwaitingReceiverLeases.retain(resolved)
+                }),
+                // Rejection reveals no identity. Selected input preparation
+                // owns its interpretation if the receiver is later reached.
                 () => undefined,
             )
-            operationLifecycle.observeFatal(this, protection)
+            resolution.markPromiseHandled(protection)
         }
     }
 
@@ -149,7 +146,7 @@ function invokeMethod(
 
     if (
         !invocationContext.receiverReached &&
-        languageValues.isPromise(result, operationContext)
+        languageValues.isPending(result, operationContext)
     ) {
         invocationContext.retainArgumentsUntilReceiverReached()
     }
@@ -157,18 +154,14 @@ function invokeMethod(
 
     function invokeWithReceiver(receiver, present, preserveReceiver = false) {
         invocationContext.setReceiver(receiver, present, preserveReceiver)
-        let methodDescription
-        let preparedArguments
-        try {
-            methodDescription = getMethodDescription(invocationContext)
-            if (languageValues.isError(methodDescription)) {
-                return methodDescription
-            }
-            preparedArguments = methodDescription.prepareArguments()
-            invocationContext.retainReceiver(methodDescription.receiverToLease)
-        } finally {
+        const methodDescription = getMethodDescription(invocationContext)
+        if (languageValues.isError(methodDescription)) {
             invocationContext.releaseArgumentsAwaitingReceiver()
+            return methodDescription
         }
+        const preparedArguments = methodDescription.prepareArguments()
+        invocationContext.retainReceiver(methodDescription.receiverToLease)
+        invocationContext.releaseArgumentsAwaitingReceiver()
 
         const preparedResult = operationLifecycle.continueInternal(
             invocationContext,
@@ -181,11 +174,8 @@ function invokeMethod(
 
         function invokePrepared(readyArguments) {
             let receiverLeaseContinues = false
-            try {
-                if (languageValues.isError(readyArguments)) {
-                    return readyArguments
-                }
-
+            let result = readyArguments
+            if (!languageValues.isError(readyArguments)) {
                 // Application reflection belongs after clean input preparation
                 // and before category-specific isolation inside invoke.
                 const callable = methodDescription.getMethod
@@ -196,38 +186,34 @@ function invokeMethod(
                         failure => failure,
                     )
                     : undefined
-                if (languageValues.isError(callable)) return callable
-
-                const callResult = methodDescription.invoke(
-                    readyArguments,
-                    callable,
-                )
-                if (
-                    methodDescription.leaseReceiverThroughResult &&
-                    languageValues.isPromise(callResult, operationContext)
-                ) {
-                    receiverLeaseContinues = true
+                if (languageValues.isError(callable)) {
+                    result = callable
+                } else {
+                    result = methodDescription.invoke(
+                        readyArguments,
+                        callable,
+                    )
+                    if (
+                        methodDescription.leaseReceiverThroughResult &&
+                        languageValues.isPending(result, operationContext)
+                    ) {
+                        receiverLeaseContinues = true
+                    }
+                    if (methodDescription.admitResult) {
+                        result = methodDescription.admitResult(result)
+                        if (languageValues.isPending(result, operationContext)) {
+                            receiverLeaseContinues = true
+                        }
+                    }
                 }
-                if (!methodDescription.admitResult) return callResult
-
-                const admittedResult = methodDescription.admitResult(callResult)
-                if (languageValues.isPromise(admittedResult, operationContext)) {
-                    receiverLeaseContinues = true
-                }
-                return admittedResult
-            } finally {
-                invocationContext.releaseArguments()
-                if (!receiverLeaseContinues) invocationContext.releaseReceivers()
             }
+            invocationContext.releaseArguments()
+            if (!receiverLeaseContinues) invocationContext.releaseReceivers()
+            return result
         }
     }
 
     function unwrapInvocationResult(result) {
-        if (!languageValues.isPromise(result, operationContext)) {
-            return result instanceof WrappedInvocationResult
-                ? result.value
-                : result
-        }
         return resolution.continueInternalPromiseOrFatal(
             result,
             operationContext,
@@ -245,11 +231,12 @@ function createLeaseLedger(operationContext) {
 
     function retain(value) {
         if (closed || values.has(value)) return value
-        languageValues.admitValue(value, operationContext)
-        if (
-            !languageValues.isPromise(value, operationContext) &&
-            metadata.incrementReadLease(value, operationContext)
-        ) values.add(value)
+        const retained = resolution.resolveInitialValueOrPoison(value, operationContext, ready => {
+            if (!closed && !values.has(ready) && metadata.incrementReadLease(ready, operationContext)) values.add(ready)
+            return ready
+        })
+        if (!languageValues.isPending(retained, operationContext)) return retained
+        resolution.markPromiseHandled(retained)
         return value
     }
 

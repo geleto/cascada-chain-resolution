@@ -6,7 +6,7 @@ import * as metadata from "./meta.js"
 // writes can invoke its traps.
 class ArrayView {
     constructor(arrayOrArrayView, operationContext, start = 0, end) {
-        languageValues.admitValue(arrayOrArrayView, operationContext)
+        languageValues.admitReadyValue(arrayOrArrayView, operationContext)
         const source = projectionOf(arrayOrArrayView, operationContext)
         const sourceView = isArrayView(source, operationContext) ? source : undefined
         const sourceStart = sourceView?._start ?? 0

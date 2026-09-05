@@ -6,6 +6,7 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
+import * as resolution from "./resolution.js"
 
 class ErrorQueryContext {
     open = true
@@ -24,7 +25,7 @@ class ErrorQueryContext {
     }
 
     run(chain, path, onResolved) {
-        return errorUtils.runFatal(this.operationContext, () => {
+        return errorUtils.runOrFailExecution(this.operationContext, () => {
             chain._assertOperationContext(this.operationContext)
             return this.runTransition(() => {
                 const result = walkObservationPath(
@@ -34,7 +35,7 @@ class ErrorQueryContext {
                     value => onResolved(value, this),
                     error => this.fail(error),
                 )
-                return operationLifecycle.observeFatal(this, result)
+                return result
             })
         })
     }
@@ -57,8 +58,7 @@ class ErrorQueryContext {
 
     fail(error) {
         // Query reflection is neither a Boolean result nor graph Error data.
-        // An asynchronous path failure has no enclosing query transition.
-        operationLifecycle.close(this)
+        // Throw through the enclosing ready or resumed runtime transition.
         throw error
     }
 
@@ -70,7 +70,7 @@ class ErrorQueryContext {
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path, operationContext) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => {
             metadata.markShared(value, operationContext)
@@ -81,7 +81,7 @@ function lookupPath(chain, path, operationContext) {
 
 // A temporary read or ownership transfer does not create another owner.
 function readPath(chain, path, operationContext) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => value)
     })
@@ -89,7 +89,7 @@ function readPath(chain, path, operationContext) {
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path, operationContext) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(
             chain,
@@ -162,12 +162,16 @@ function getErrorsAtPathValue(value, queryContext) {
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
 function collectFencedErrorWaits(value, queryContext) {
-    propertyVersions.buildRefIndex(value, queryContext.operationContext)
+    refcounts.buildRefIndex(value, queryContext.operationContext)
     queryContext.visited ??= new WeakSet()
     const waits = []
     walk(value)
     // A synchronous Error proof abandons observed waits, not an aggregate.
-    if (!queryContext.open || waits.length === 0) return undefined
+    if (!queryContext.open) {
+        for (const wait of waits) resolution.markPromiseHandled(wait)
+        return undefined
+    }
+    if (waits.length === 0) return undefined
     return operationLifecycle.continueInternal(
         queryContext,
         Promise.all(waits),
@@ -205,8 +209,9 @@ function collectFencedErrorWaits(value, queryContext) {
                 walk(child)
             } else if (languageValues.isError(child)) {
                 queryContext.found(child)
-            } else if (languageValues.isPromise(child, queryContext.operationContext)) {
-                waits.push(collectPromiseErrors(node, key, child))
+            } else if (languageValues.isPending(child, queryContext.operationContext)) {
+                const wait = collectPromiseErrors(node, key, child)
+                if (languageValues.isPending(wait, queryContext.operationContext)) waits.push(wait)
             } else if (languageValues.isTraversable(child, queryContext.operationContext)) {
                 walk(child)
             }
@@ -231,7 +236,7 @@ function collectFencedErrorWaits(value, queryContext) {
                 return collectFencedErrorWaits(value, queryContext)
             }),
         )
-        return operationLifecycle.observeFatal(queryContext, result)
+        return result
     }
 }
 
@@ -272,7 +277,7 @@ function walkObservationPath(
             key,
             operationContext,
         )
-        if (languageValues.isPromise(value, operationContext)) {
+        if (languageValues.isPending(value, operationContext)) {
             return propertyVersions.continuePropertyValue(
                 parent,
                 key,
@@ -319,6 +324,7 @@ function walkObservationPath(
             ? errorUtils.catchRawUserCodeFailure(
                 traverse,
                 onUserCodeFailure,
+                operationContext,
             )
             : errorUtils.catchUserCodeFailure(
                 traverse,

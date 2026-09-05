@@ -1,5 +1,4 @@
 import * as runtime from "../../src/index.js"
-import { setFatalErrorReporter } from "../../src/error.js"
 
 const reported = []
 const unhandled = []
@@ -17,15 +16,12 @@ function suspendedRoot() {
         configurable: true,
     })
     const operationContext = {
-        execution: new runtime.Execution(),
+        execution: new runtime.Execution(error => reported.push(error)),
         errorContext: "fixture",
     }
     return { chain: new runtime.Chain(promise, operationContext), operationContext, resolve, root }
 }
 
-setFatalErrorReporter(error => {
-    reported.push(error)
-})
 process.on("unhandledRejection", error => {
     unhandled.push(error)
 })
@@ -51,7 +47,6 @@ setImmediate(() => {
         returnsUndefined: assignResult === undefined && deleteResult === undefined,
         reportCount: reported.length,
         unhandledCount: unhandled.length,
-        sameErrors: reported.every(error => unhandled.includes(error)),
         messages: reported.map(error => error.message),
         valuesUnchanged: assigned.root.hidden === 0 && deleted.root.hidden === 0,
     }))

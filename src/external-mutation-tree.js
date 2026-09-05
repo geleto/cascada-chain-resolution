@@ -14,6 +14,7 @@ class ExternalMutationTree {
         root,
         operationContext,
         factsOf,
+        readPlacement,
         scopeMutationPaths,
         propertyMutationPaths,
     ) {
@@ -58,8 +59,7 @@ class ExternalMutationTree {
             for (const [key, childRequest] of Object.entries(
                 request._children,
             )) {
-                const child = languageProperties
-                    .getLanguagePlacementDescriptor(value, key, operationContext)
+                const child = readPlacement(value, key)
                 if (child) {
                     walkRequests(child.value, childRequest, [...path, key])
                 }
@@ -88,8 +88,7 @@ class ExternalMutationTree {
                 value,
                 operationContext,
             )) {
-                const child = languageProperties
-                    .getLanguagePlacementDescriptor(value, key, operationContext)
+                const child = readPlacement(value, key)
                 if (!child) continue
                 const result = scanScope(child.value, ancestors, completed)
                 cyclic ||= result.cyclic
@@ -110,8 +109,8 @@ class ExternalMutationTree {
         function admittedTypeOf(value) {
             if (!metadata.isObjectLike(value)) return undefined
             if (languageValues.isError(value)) return languageValues.TYPE_ERROR
-            if (languageValues.isPromise(value, operationContext)) return undefined
             const facts = factsOf(value)
+            if (!facts && languageValues.isPending(value, operationContext)) return undefined
             if (!facts) {
                 throw new Error(
                     "Context tree reached an identity outside the " +

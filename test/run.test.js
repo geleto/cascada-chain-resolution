@@ -21,12 +21,12 @@ import {
     lookupPath,
     propertyVersions,
     readPath,
-    reportFatalError,
+    submitFatal,
     metaOf,
     managedState,
     managedStateClass,
     run,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -939,16 +939,10 @@ describe("run", () => {
         const pending = deferred()
         const chain = new Chain([pending.promise, pending.promise])
         const source = chain._state.value
-        const source0 = propertyVersions.getOrCreatePromiseMirror(
-            source,
-            "0",
-            pending.promise,
-        )
-        const source1 = propertyVersions.getOrCreatePromiseMirror(
-            source,
-            "1",
-            pending.promise,
-        )
+        propertyVersions.getPropertyPlacement(source, "0").captureVersion()
+        const source0 = propertyVersions.getPromiseMirror(source, "0")
+        propertyVersions.getPropertyPlacement(source, "1").captureVersion()
+        const source1 = propertyVersions.getPromiseMirror(source, "1")
 
         expect(source0 === source1).to.be(false)
         run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
@@ -2325,32 +2319,27 @@ describe("run", () => {
         comparison.resolve(0)
     })
 
-    it("propagates a RuntimeError returned by a comparator", () => {
-        const source = [2, 1]
-        const chain = new Chain(source)
-        const failure = new errorUtils.RuntimeError(
-            new Error("fatal comparator result"),
-            "comparator internals",
-        )
+    it("propagates a FatalError returned by a comparator", () => {
         let reported
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
-        try {
-            const caught = thrownBy(() => run(
-                chain,
-                [],
-                "sort",
-                [() => failure],
-                { mutationScopeDepth: 0 },
-            ))
+        const source = [2, 1]
+        const chain = new Chain(source)
+        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
+            throw new Error("fatal comparator result")
+        }))
+        const caught = thrownBy(() => run(
+            chain,
+            [],
+            "sort",
+            [() => failure],
+            { mutationScopeDepth: 0 },
+        ))
 
-            expect(caught).to.be(failure)
-            expect(reported).to.be(failure)
-            expect(source).to.eql([2, 1])
-        } finally {
-            setFatalErrorReporter()
-        }
+        expect(caught).to.be(failure)
+        expect(reported).to.be(failure)
+        expect(source).to.eql([2, 1])
     })
 
     it("attributes String conversion failures to conversion", () => {
@@ -2934,7 +2923,7 @@ describe("run", () => {
         const failure = new Error("fatal argument preparation")
         const broken = {
             then() {
-                reportFatalError(failure)
+                submitFatal(failure)
             },
         }
         const receiver = {}
@@ -2971,7 +2960,7 @@ describe("run", () => {
         const failure = new Error("concat preparation failed")
         const broken = {
             then() {
-                reportFatalError(failure)
+                submitFatal(failure)
             },
         }
 
@@ -3015,7 +3004,7 @@ describe("run", () => {
 
         failing.resolve(new Proxy([1], {
             ownKeys() {
-                reportFatalError(failure)
+                submitFatal(failure)
             },
         }))
         expect(errorCause(await result.catch(error => error))).to.be(failure)
@@ -3159,17 +3148,16 @@ describe("run", () => {
     })
 
     it("reports a bookkeeping failure during replay fatally", () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const element = { value: 1 }
         const chain = new Chain([element, 2])
         hasError(chain, [])
         // Corrupt downward closure: the element is still reachable from an
         // indexed owner but no longer carries its own counter.
         delete metaOf(element).parents
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const failure = thrownBy(() => run(chain, [], "reverse", [], { mutationScopeDepth: 0 }))
 
         expect(failure instanceof Error).to.be(true)
@@ -3207,7 +3195,7 @@ describe("run", () => {
 
         for (const invoke of cases) {
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
             const failure = thrownBy(invoke)
@@ -3218,7 +3206,6 @@ describe("run", () => {
             )
             expect(reported).to.be(failure)
         }
-        setFatalErrorReporter()
     })
 
     it("poisons Array mutation when preparation reflection fails", () => {

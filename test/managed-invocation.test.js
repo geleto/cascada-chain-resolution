@@ -13,10 +13,10 @@ import {
     metaOf,
     readPath,
     managedStateClass,
-    reportFatalError,
+    submitFatal,
     runtime,
     run,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -323,6 +323,10 @@ describe("managed invocation", () => {
     })
 
     it("reports a prototype accessor added after registration fatally", () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         class Value {
             read() {
                 return 1
@@ -334,11 +338,6 @@ describe("managed invocation", () => {
                 return () => 2
             },
         })
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const failure = thrownBy(() => run(
             new Chain(new Value()),
             [],
@@ -347,8 +346,6 @@ describe("managed invocation", () => {
             {},
 
         ))
-        setFatalErrorReporter()
-
         expect(failure.message).to.be(
             "Managed class prototype accessor changed",
         )
@@ -356,6 +353,10 @@ describe("managed invocation", () => {
     })
 
     it("rejects synchronous Cascada reentry from a managed-class method", () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const observed = new Chain({ value: 1 })
         class Value {
             read() {
@@ -363,11 +364,6 @@ describe("managed invocation", () => {
             }
         }
         managedStateClass(Value)
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const failure = thrownBy(() => run(
             new Chain(new Value()),
             [],
@@ -376,8 +372,6 @@ describe("managed invocation", () => {
             {},
 
         ))
-        setFatalErrorReporter()
-
         expect(failure.message).to.be(
             "Cascada cannot be re-entered from supported user code",
         )
@@ -859,11 +853,6 @@ describe("managed invocation", () => {
             },
         }
         const chain = new Chain(value)
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const result = run(
             chain,
             [],
@@ -878,11 +867,8 @@ describe("managed invocation", () => {
         await flushMicrotasks()
         completion.reject(failure)
         const rejection = await result.catch(error => error)
-        setFatalErrorReporter()
-
         expect(errorCause(rejection)).to.be(failure)
         expect(chain._state.value).to.be(rejection)
-        expect(reported).to.be(undefined)
     })
 
     it("protects an observation receiver through direct rejection", async () => {
@@ -973,6 +959,30 @@ describe("managed invocation", () => {
         const failure = await result
 
         expect(failure instanceof Error).to.be(true)
+        expect(chain._state.value).to.be(failure)
+    })
+
+    it("rejects callable then properties created by managed mutation", () => {
+        const value = {
+            change() {
+                this.then = () => {
+                    throw new Error("receiver was invoked as a Promise")
+                }
+                return "done"
+            },
+        }
+        const chain = new Chain(value)
+
+        const failure = run(
+            chain,
+            [],
+            "change",
+            [],
+            { mutationScopeDepth: 0 },
+        )
+
+        expect(failure).to.be.a(runtime.PoisonError)
+        expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
         expect(chain._state.value).to.be(failure)
     })
 
@@ -1374,7 +1384,7 @@ describe("managed invocation", () => {
         let fail = false
         const broken = new Proxy({}, {
             ownKeys() {
-                if (fail) reportFatalError(new Error("receiver failed"))
+                if (fail) submitFatal(new Error("receiver failed"))
                 return []
             },
         })
@@ -1403,7 +1413,7 @@ describe("managed invocation", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(receiver).readLeaseCount).to.be(undefined)
+        expect(metaOf(receiver).readLeaseCount).to.be(1)
     })
 
     it("abandons late receiver work after fatal argument preparation", async () => {
@@ -1416,7 +1426,7 @@ describe("managed invocation", () => {
         let fail = false
         const broken = new Proxy({}, {
             ownKeys() {
-                if (fail) reportFatalError(new Error("argument failed"))
+                if (fail) submitFatal(new Error("argument failed"))
                 return []
             },
         })
@@ -1443,15 +1453,13 @@ describe("managed invocation", () => {
                 return []
             },
         })
-        importValue(late, "prepared late receiver child")
-        reflected = false
         receiverValue.resolve(late)
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(readPath(chain, ["child"])).to.be(late)
-        expect(metaOf(receiver).readLeaseCount).to.be(undefined)
-        expect(metaOf(late).readLeaseCount).to.be(undefined)
-        verifyRefCounts(chain._state.value)
+        expect(metaOf(receiver).placementVersions.child.value)
+            .to.be(receiverValue.promise)
+        expect(metaOf(receiver).readLeaseCount).to.be(1)
+        expect(metaOf(late)).to.be(undefined)
     })
 })

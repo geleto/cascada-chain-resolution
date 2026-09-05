@@ -9,12 +9,13 @@ import {
     readPath,
     managedStateClass,
     importValue,
-    reportFatalError,
+    submitFatal,
     deferred,
     flushMicrotasks,
+    getPromiseMirror,
     hasError,
     run,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -393,26 +394,17 @@ describe("path assignment", () => {
                 return Reflect.get(value, key, receiver)
             },
         })
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
         let observed
         let mutation
         let chain
-        try {
-            observed = lookupPath(new Chain(array), ["length"])
-            chain = new Chain(array)
-            mutation = assignPath(chain, ["length"], 1)
-        } finally {
-            setFatalErrorReporter()
-        }
+        observed = lookupPath(new Chain(array), ["length"])
+        chain = new Chain(array)
+        mutation = assignPath(chain, ["length"], 1)
 
         expect(errorCause(observed)).to.be(failure)
         expect(errorCause(mutation)).to.be(failure)
         expect(chain._state.value).to.be(mutation)
         expect(target).to.eql([1, 2])
-        expect(reported).to.be(undefined)
     })
 
     it("turns physical property traps into mutation poison", () => {
@@ -607,23 +599,22 @@ describe("path assignment", () => {
     })
 
     it("abandons late Array-length conversion after a fatal branch", async () => {
+        let reported
+        useTestExecution(error => {
+            reported ??= error
+        })
         const failing = deferred()
         const late = deferred()
         let fail = false
         const broken = new Proxy([1], {
             getOwnPropertyDescriptor(target, key) {
-                if (fail) reportFatalError(new Error("conversion failed"))
+                if (fail) submitFatal(new Error("conversion failed"))
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
         importValue(broken, "prepared fatal conversion value")
         fail = true
         const chain = new Chain([1, 2, 3])
-        let reported
-        setFatalErrorReporter(error => {
-            reported ??= error
-        })
-
         const input = [failing.promise, late.promise]
         assignPath(chain, ["length"], input)
         failing.resolve(broken)
@@ -636,16 +627,12 @@ describe("path assignment", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        importValue(lateValue, "prepared late conversion value")
-        reflected = false
         late.resolve(lateValue)
         await flushMicrotasks()
 
         expect(reported?.message).to.be("conversion failed")
         expect(reflected).to.be(false)
-        expect(readPath(new Chain(input), ["1"])).to.be(lateValue)
-        fail = false
-        verifyRefCounts(input)
+        expect(getPromiseMirror(input, "1").value).to.be(late.promise)
     })
 
     it("keeps deferred Array length on its captured receiver version", async () => {

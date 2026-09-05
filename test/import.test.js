@@ -2,7 +2,6 @@ import {
     Chain,
     expect,
     runtime,
-    setFatalErrorReporter,
     getRefCounter,
     buildRefIndex,
     metaOf,
@@ -26,22 +25,15 @@ import {
 describe("import", () => {
     it("requires an operation context", () => {
         const root = {}
-        let reported
         let caught
 
-        setFatalErrorReporter(error => {
-            reported = error
-        })
         try {
             runtime.import(root)
         } catch (error) {
             caught = error
-        } finally {
-            setFatalErrorReporter()
         }
 
-        expect(reported).to.be(caught)
-        expect(caught instanceof Error).to.be(true)
+        expect(caught).to.be.a(runtime.FatalError)
         expect(metaOf(root)).to.be(undefined)
     })
 
@@ -116,7 +108,7 @@ describe("import", () => {
         const root = { pending: pending.promise }
         const originalKeys = Reflect.ownKeys(root)
         const earlierRead = readPath(new Chain(root), ["pending"])
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
 
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
 
@@ -125,7 +117,7 @@ describe("import", () => {
         expect(Reflect.ownKeys(root)).to.eql(originalKeys)
         expect(metaOf(root).imported).to.be(undefined)
         expect(metaOf(root).shared).to.be(true)
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
 
         const resolved = { done: true }
         pending.resolve(resolved)
@@ -279,13 +271,13 @@ describe("import", () => {
         const first = importValue({ child }, "first wrapper")
         const second = importValue({ child }, "second wrapper")
 
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
 
         pending.resolve(second)
         expect(await observed).to.be(second)
         await flushMicrotasks()
 
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         expect(child.pending).to.be(second)
         buildRefIndex(second)
         expect(hasCycleCut(child, "pending")).to.be(true)
@@ -455,7 +447,7 @@ describe("import", () => {
         expect(metaOf(leaf).imported).to.be(true)
     })
 
-    it("canonicalizes one Promise identity across placements", async () => {
+    it("subscribes at each placement of one Promise identity", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const root = {
@@ -464,9 +456,9 @@ describe("import", () => {
         }
 
         importValue(root, "repeated promise")
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         buildRefIndex(root)
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
 
         const resolved = { nested: {} }
         pending.resolve(resolved)
@@ -1766,11 +1758,11 @@ describe("import", () => {
             ["pending"],
             false,
         )
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         const root = { child }
 
         importValue(root, "runtime mirror back-edge")
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         pending.resolve(root)
         expect(await earlierRead).to.be(root)
         await flushMicrotasks()
@@ -1858,11 +1850,11 @@ describe("import", () => {
         const chain = new Chain(root)
         assignPath(chain, ["sibling"], 1)
         const copy = chain._state.value
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         buildRefIndex(copy)
         expect(hasCycleCut(root, "pending")).to.be(false)
         expect(hasCycleCut(copy, "pending")).to.be(true)

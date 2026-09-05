@@ -17,7 +17,7 @@ import {
     readPath,
     metaOf,
     exportValue,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     verifyRefCounts,
 } from "./support.js"
@@ -43,7 +43,7 @@ describe("getErrors", () => {
                 },
             })
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
 
@@ -70,7 +70,7 @@ describe("getErrors", () => {
                 },
             })
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
 
@@ -80,7 +80,7 @@ describe("getErrors", () => {
         }
     })
 
-    it("closes before a delayed query-only reflection failure escapes", async () => {
+    it("stops settlement after a delayed query-only reflection failure", async () => {
         for (const query of [hasError, getErrors]) {
             const outer = deferred()
             const inner = deferred()
@@ -95,7 +95,7 @@ describe("getErrors", () => {
                 },
             })
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
 
@@ -116,9 +116,8 @@ describe("getErrors", () => {
             await flushMicrotasks()
 
             expect(scans).to.be(2)
-            expect(readPath(new Chain(value), ["inner"])).to.eql({
-                ready: true,
-            })
+            expect(metaOf(value).placementVersions.inner.value)
+                .to.be(inner.promise)
         }
     })
 
@@ -132,7 +131,7 @@ describe("getErrors", () => {
                 },
             })
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
 
@@ -164,7 +163,7 @@ describe("getErrors", () => {
                 },
             })
             let reported
-            setFatalErrorReporter(error => {
+            useTestExecution(error => {
                 reported = error
             })
 
@@ -215,6 +214,7 @@ describe("getErrors", () => {
 
     it("reports a missing indexed promise mirror as fatal", () => {
         for (const query of [hasError, getErrors]) {
+            useTestExecution()
             const pending = deferred()
             const root = { pending: pending.promise }
             buildRefIndex(root)
@@ -421,7 +421,7 @@ describe("getErrors", () => {
 
         const result = getErrors(new Chain(second), [])
 
-        expect(registrations()).to.be(registrationsBeforeQuery)
+        expect(registrations()).to.be(registrationsBeforeQuery + 1)
         pending.reject(rejection)
         expectErrors(
             await result,
@@ -573,13 +573,13 @@ describe("getErrors", () => {
         const branchMeta = metaOf(branch)
         const childMeta = metaOf(child)
         const result = getErrors(new Chain(root), ["branch"])
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         expect(branchMeta.shared).to.be(true)
         expect(childMeta.shared).to.be(true)
 
         delayed.resolve({ repeated: child })
         await flushMicrotasks()
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         expect(metaOf(child)).to.be(childMeta)
 
         pending.reject("bad")
@@ -601,7 +601,7 @@ describe("getErrors", () => {
         const root = importValue(branch, "imported diamond")
         const result = getErrors(new Chain(root), [])
 
-        expect(registrations()).to.be(1)
+        expect(registrations()).to.be(2)
         expect(metaOf(leaf).shared).to.be(true)
 
         pending.reject("diamond failure")

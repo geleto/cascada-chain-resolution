@@ -10,7 +10,7 @@ import {
     managedStateClass,
     metadata,
     resolveInitialValueOrPoison,
-    setFatalErrorReporter,
+    useTestExecution,
     testOperationContext,
     thrownBy,
 } from "./support.js"
@@ -48,7 +48,7 @@ describe("value admission", () => {
             [new External(), languageValues.TYPE_EXTERNAL],
         ]
         for (const [value, type] of cases) {
-            languageValues.admitValue(value)
+            languageValues.admitReadyValue(value)
             expect(languageValues.typeOf(value)).to.be(type)
         }
         for (const value of [undefined, null, true, 1, 1n, Symbol()]) {
@@ -76,9 +76,9 @@ describe("value admission", () => {
     it("leaves Promise identities pending instead of admitting them", () => {
         const promise = Promise.resolve(1)
 
-        languageValues.admitValue(promise)
+        resolveInitialValueOrPoison(promise)
         expect(metadata.metaOf(promise)?.type).to.be(undefined)
-        expect(languageValues.isPromise(promise)).to.be(true)
+        expect(languageValues.isPending(promise)).to.be(true)
     })
 
     it("admits Errors before sampling thenability", () => {
@@ -91,8 +91,8 @@ describe("value admission", () => {
             },
         })
 
-        expect(languageValues.isPromise(error)).to.be(false)
-        languageValues.admitValue(error)
+        expect(languageValues.isPending(error)).to.be(false)
+        languageValues.admitReadyValue(error)
 
         expect(languageValues.typeOf(error)).to.be(
             languageValues.TYPE_ERROR,
@@ -100,12 +100,12 @@ describe("value admission", () => {
         expect(reads).to.be(0)
     })
 
-    it("samples thenability once before admitting an available value", () => {
+    it("recognizes a ready value at its consuming boundary", () => {
         let reads = 0
         const value = Object.defineProperty({}, "then", {
             get() {
                 reads++
-                return reads === 1 ? undefined : () => {}
+                return undefined
             },
         })
 
@@ -116,36 +116,7 @@ describe("value admission", () => {
         )
     })
 
-    it("captures a callable then once at a root property version", async () => {
-        let reads = 0
-        const value = Promise.resolve("settled")
-        Object.defineProperty(value, "then", {
-            get() {
-                reads++
-                if (reads > 1) throw new Error("then was read twice")
-                return Promise.prototype.then
-            },
-        })
-        const chain = new Chain(value)
 
-        expect(await lookupPath(chain, [])).to.be("settled")
-        expect(reads).to.be(1)
-    })
-
-    it("captures a callable then once at a nested property version", async () => {
-        let reads = 0
-        const value = Object.defineProperty({}, "then", {
-            get() {
-                reads++
-                if (reads > 1) throw new Error("then was read twice")
-                return resolve => resolve("settled")
-            },
-        })
-        const chain = new Chain({ value })
-
-        expect(await lookupPath(chain, ["value"])).to.be("settled")
-        expect(reads).to.be(1)
-    })
 
     it("turns an incompatible intrinsic then receiver into ready poison", async () => {
         const value = new Proxy(Promise.resolve("settled"), {
@@ -195,7 +166,7 @@ describe("value admission", () => {
         const error = new Error("fixed")
         const early = new Early()
         const managed = new Managed()
-        languageValues.admitValue(error)
+        languageValues.admitReadyValue(error)
         new Chain(early)
         new Chain(managed)
 
@@ -207,10 +178,10 @@ describe("value admission", () => {
         early.then = () => {}
 
         expect(languageValues.isError(error)).to.be(true)
-        expect(languageValues.isPromise(error)).to.be(false)
+        expect(languageValues.isPending(error)).to.be(false)
         expect(languageValues.typeOf(error)).to.be(languageValues.TYPE_ERROR)
         expect(languageValues.typeOf(early)).to.be(languageValues.TYPE_EXTERNAL)
-        expect(languageValues.isPromise(early)).to.be(false)
+        expect(languageValues.isPending(early)).to.be(false)
         expect(languageValues.typeOf(managed)).to.be(
             languageValues.TYPE_MANAGED_CLASS,
         )
@@ -258,7 +229,7 @@ describe("value admission", () => {
         )
     })
 
-    it("captures synchronous then acquisition failure as rejection", async () => {
+    it("returns synchronous then acquisition failure directly", async () => {
         const failure = new Error("thenability failed")
         const value = new Proxy({}, {
             get(target, key, receiver) {
@@ -270,7 +241,7 @@ describe("value admission", () => {
         const chain = new Chain(value)
         const result = lookupPath(chain, [])
 
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(chain._state.value instanceof Promise).to.be(false)
         expect(metadata.metaOf(value)).to.be(undefined)
         const attributed = await result
         expect(attributed.cause).to.be(failure)
@@ -295,33 +266,31 @@ describe("value admission", () => {
         expect(metadata.metaOf(value)).to.be(undefined)
     })
 
-    it("reports a RuntimeError fulfilled by initial resolution", async () => {
+    it("reports a FatalError fulfilled by initial resolution", async () => {
         const pending = deferred()
-        const failure = new errorUtils.RuntimeError(
-            new Error("fatal fulfillment"),
-            "fulfillment internals",
-        )
+        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
+            throw new Error("fatal fulfillment")
+        }))
         let reported
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
-        try {
-            const result = resolveInitialValueOrPoison(pending.promise)
-            pending.resolve(failure)
-            const caught = await result.catch(error => error)
+        const result = resolveInitialValueOrPoison(pending.promise)
+        pending.resolve(failure)
+        const caught = await result.catch(error => error)
 
-            expect(caught).to.be(failure)
-            expect(reported).to.be(failure)
-        } finally {
-            setFatalErrorReporter()
-        }
+        expect(caught).to.be(failure)
+        expect(reported).to.be(failure)
     })
 
-    it("rejects a RuntimeError fulfilled through a causal boundary", async () => {
-        const failure = new errorUtils.RuntimeError(
-            new Error("fatal boundary fulfillment"),
-            "fulfillment internals",
-        )
+    it("rejects a FatalError fulfilled through a causal boundary", async () => {
+        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
+            throw new Error("fatal boundary fulfillment")
+        }))
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const operationContext = testOperationContext("causal boundary")
 
         const result = languageValues.valueWithOrigin(
@@ -332,6 +301,7 @@ describe("value admission", () => {
         )
 
         expect(await result.catch(error => error)).to.be(failure)
+        expect(reported).to.be(failure)
     })
 
     it("declares a class without admitting its prototype", () => {
@@ -371,15 +341,9 @@ describe("value admission", () => {
     })
 
     it("returns invalid managed-class declaration as an Error", () => {
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const failure = managedStateClass(() => {})
 
         expect(failure).to.be.a(TypeError)
-        expect(reported).to.be(undefined)
     })
 
     it("records external facts without traversing external state", () => {

@@ -10,29 +10,18 @@ class Chain {
         entryMutable = undefined,
         externalMutationTree = undefined,
     ) {
-        errorUtils.runFatal(operationContext, () => {
+        errorUtils.runOrFailExecution(operationContext, () => {
             initialValue = languageValues.valueWithOrigin(
                 initialValue,
                 operationContext,
                 errorUtils.ERROR_KIND.ChainValueError,
                 errorUtils.ERROR_KIND.ChainValueRejected,
             )
-            languageValues.admitValue(initialValue, operationContext)
-            const rootState = { value: initialValue }
+            const rootState = {}
             languageValues.admitReadyValue(
-                rootState,
-                operationContext,
-                languageValues.TYPE_RECORD,
-                Object.prototype,
+                rootState, operationContext, languageValues.TYPE_RECORD, Object.prototype,
             )
-            if (languageValues.isPromise(initialValue, operationContext)) {
-                propertyVersions.getOrCreatePromiseMirror(
-                    rootState,
-                    "value",
-                    initialValue,
-                    operationContext,
-                )
-            }
+            propertyVersions.assignProperty(rootState, "value", initialValue, operationContext)
             this._state = rootState
             this._execution = operationContext.execution
             // Entry-only tri-state: absent on ordinary Chains, false for a

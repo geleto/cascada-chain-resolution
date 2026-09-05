@@ -53,29 +53,21 @@ function exportManyValues(values, owner) {
 function exportValues(values, owner, resultFromValues, ownsOwner) {
     const operationContext = owner.operationContext
     const exportContext = new ExportContext(values.length, owner)
-    let result
-    try {
-        const readiness = values.map((value, position) =>
-            prepareExportValue(value, position, exportContext))
-        result = operationLifecycle.continueInternalAll(
-            owner,
-            readiness,
-            () => finishExport(exportContext, resultFromValues),
-        )
-    } catch (error) {
-        exportContext.release()
-        operationLifecycle.close(owner)
-        throw error
-    }
-    if (languageValues.isPromise(result, operationContext)) {
+    const readiness = values.map((value, position) =>
+        prepareExportValue(value, position, exportContext))
+    const result = operationLifecycle.continueInternalAll(
+        owner,
+        readiness,
+        () => finishExport(exportContext, resultFromValues),
+    )
+    if (languageValues.isPending(result, operationContext)) {
         exportContext.unregisterRelease = operationLifecycle.registerRelease(
             owner,
             () => exportContext.release(),
         )
     }
-    return ownsOwner
-        ? operationLifecycle.closeWhenDone(owner, result)
-        : result
+    if (!ownsOwner) return result
+    return operationLifecycle.closeWhenDone(owner, result)
 }
 
 function prepareExportValue(value, position, exportContext) {
@@ -140,7 +132,7 @@ function walkExportValue(value, exportContext, position) {
             ),
         )
         if (languageValues.isError(child)) continue
-        if (languageValues.isPromise(child, exportContext.owner.operationContext)) {
+        if (languageValues.isPending(child, exportContext.owner.operationContext)) {
             // Reserve the key before settlement can reorder it.
             if (exportContext.copyBySource) writeOutputProperty(
                 exportContext.copyBySource.get(value),
@@ -152,7 +144,7 @@ function walkExportValue(value, exportContext, position) {
                 position,
                 () => walkExportPromise(value, key, child, exportContext, position),
             )
-            if (!languageValues.isError(readiness)) waits.push(readiness)
+            if (languageValues.isPending(readiness, exportContext.owner.operationContext)) waits.push(readiness)
             continue
         }
 
@@ -191,7 +183,7 @@ function walkExportPromise(parent, key, promise, exportContext, position) {
         promise,
         exportContext.owner.operationContext,
         value => {
-            if (!operationLifecycle.mayContinue(exportContext.owner)) return undefined
+            if (!exportContext.owner.open) return undefined
             return runExportTransition(exportContext, position, () => {
                 const readiness = walkExportValue(value, exportContext, position)
                 if (exportContext.copyBySource) writeOutputProperty(
@@ -203,7 +195,7 @@ function walkExportPromise(parent, key, promise, exportContext, position) {
             })
         },
     )
-    return operationLifecycle.observeFatal(exportContext.owner, result)
+    return result
 }
 
 function runExportTransition(exportContext, position, transition) {

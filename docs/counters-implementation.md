@@ -39,9 +39,10 @@ current component is fully published before queued targets are indexed, so a
 back edge cannot re-enter an active frame. A completed indexed child can be
 connected directly, preserving exact alias multiplicity.
 
-Promise placements receive mirrors during this walk but are not entered until
-their logical values publish. `parents` is installed last, after all properties
-and required mirrors are complete.
+Property reads normalize newly reached placements and install mirrors only for
+actually pending outcomes. The index counts those pending edges without entering
+them until their logical values publish; it installs no independent resolver.
+`parents` is installed last, after all properties and required mirrors are complete.
 
 This algorithm accepts cyclic runtime and imported data equally. Import does
 not prepare the graph for ref-indexing.
@@ -71,14 +72,16 @@ parents, mirrors, and cuts are never copied as metadata.
 
 ## Promise mirrors
 
-One `PromiseMirror` represents one property version. A logically pending
+One `PromiseMirror` represents one actually pending property version. A logically pending
 property contributes one pending Promise. Its first FIFO resolver publishes the
 result through the same property transition as an ordinary assignment.
 
 Each mirror's `value` is the authoritative logical edge. Imported physical
 properties keep their Promise, runtime-owned live properties also write through,
-and detached versions retain their private mirror value. These storage choices
-do not change the counter rules.
+and detached versions retain their private mirror value. A synchronously
+consumed custom thenable contributes its final logical value directly, or
+through a fixed overlay over imported storage, and has no pending count. These
+storage choices do not change the counter rules.
 
 Distinct logical ArrayView properties have distinct mirrors even when they
 share a physical slot. Refcounting reads each mirror's logical edge, independent

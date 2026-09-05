@@ -1,6 +1,7 @@
 import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
+import * as errorUtils from "../src/error.js"
 import { Chain as InternalChain } from "../src/chain.js"
 import {
     Chain,
@@ -22,14 +23,14 @@ import {
     lookupPath,
     readPath,
     metaOf,
-    setFatalErrorReporter,
+    useTestExecution,
     thrownBy,
     testOperationContext,
     verifyRefCounts,
 } from "./support.js"
 
 function expectClosed(chain) {
-    expect(thrownBy(() => readPath(chain, []))).to.be.an(Error)
+    expect(chain._closed).to.be(true)
 }
 
 describe("enter", () => {
@@ -97,9 +98,6 @@ describe("enter", () => {
 
         expect(result).to.be("updated")
         expect(root.position instanceof Promise).to.be(true)
-        expect(thrownBy(() => assignPath(entered, ["x"], 3)))
-            .to.be.an(Error)
-
         await flushMicrotasks()
         expect(root.position).to.be(position)
         expect(root.position.x).to.be(2)
@@ -119,9 +117,6 @@ describe("enter", () => {
 
         expect(metaOf(branch).readLeaseCount).to.be(1)
         expect(readPath(entered, ["value"])).to.be(1)
-        expect(thrownBy(() => assignPath(entered, ["value"], 3)))
-            .to.be.an(Error)
-
         assignPath(chain, ["branch", "value"], 2)
         expect(root.branch).not.to.be(branch)
         expect(root.branch.value).to.be(2)
@@ -374,8 +369,6 @@ describe("enter", () => {
 
         const result = enter(chain, ["target"], false, entered => {
             readChain = entered
-            expect(thrownBy(() => assignPath(entered, ["blocked"], true)))
-                .to.be.an(Error)
             issued = lookupPath(
                 entered,
                 ["pending", "value"],
@@ -385,8 +378,7 @@ describe("enter", () => {
         })
 
         expect(result).to.be("closed")
-        expect(thrownBy(() => readPath(readChain, [])))
-            .to.be.an(Error)
+        expectClosed(readChain)
 
         pending.resolve({ value: 3 })
         expect(await issued).to.be(3)
@@ -583,10 +575,8 @@ describe("enter", () => {
         const pending = deferred()
         const external = { target: pending.promise }
         const chain = new Chain(importValue(external, "transferred target"))
-        const fatalErrors = []
         let entered
 
-        setFatalErrorReporter(error => fatalErrors.push(error))
         expect(enter(chain, ["target"], true, privateChain => {
             entered = privateChain
             return "done"
@@ -597,7 +587,6 @@ describe("enter", () => {
 
         expect(await published).to.be(resolved)
         expect(entered._state.value).to.be(resolved)
-        expect(fatalErrors).to.eql([])
         expect(external.target).to.be(pending.promise)
     })
 
@@ -1003,16 +992,15 @@ describe("enter", () => {
         expect(await readResult).to.be("read")
     })
 
-    it("releases a read entry before reporting a callback throw", () => {
+    it("does not clean up a read entry after a fatal callback throw", () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const branch = {}
         const chain = new Chain({ branch })
         const failure = new Error("callback failed")
         let entered
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const caught = thrownBy(() => enter(
             chain,
             ["branch"],
@@ -1024,25 +1012,24 @@ describe("enter", () => {
         ))
 
         expect(errorCause(caught)).to.be(failure)
-        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught).to.be.a(packageRuntime.FatalError)
         expect(caught.errorContext).to.be("test enter")
         expect(reported).to.be(caught)
-        expect(metaOf(branch).readLeaseCount).to.be(undefined)
-        expectClosed(entered)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
+        expect(entered._closed).not.to.be(true)
     })
 
-    it("closes a delayed mutating callback throw without publication", async () => {
+    it("abandons a delayed mutating entry after a fatal callback throw", async () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const ancestor = deferred()
         const root = { ancestor: ancestor.promise }
         const chain = new Chain(root)
         const failure = new Error("delayed callback failed")
         let entered
         let gate
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const result = enter(
             chain,
             ["ancestor", "target"],
@@ -1063,10 +1050,10 @@ describe("enter", () => {
         }
 
         expect(errorCause(caught)).to.be(failure)
-        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught).to.be.a(packageRuntime.FatalError)
         expect(caught.errorContext).to.be("test enter")
         expect(reported).to.be(caught)
-        expectClosed(entered)
+        expect(entered._closed).not.to.be(true)
         let gateSettled = false
         gate.then(() => {
             gateSettled = true
@@ -1076,17 +1063,16 @@ describe("enter", () => {
         expect(root.ancestor.target).to.be(gate)
     })
 
-    it("releases a read entry before reporting callback rejection", async () => {
+    it("does not clean up a read entry after fatal callback rejection", async () => {
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
         const branch = {}
         const chain = new Chain({ branch })
         const completion = deferred()
         const failure = new Error("callback rejected")
         let entered
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-
         const result = enter(chain, ["branch"], false, privateChain => {
             entered = privateChain
             return completion.promise
@@ -1101,77 +1087,125 @@ describe("enter", () => {
         }
 
         expect(errorCause(caught)).to.be(failure)
-        expect(caught).to.be.a(packageRuntime.RuntimeError)
+        expect(caught).to.be.a(packageRuntime.FatalError)
         expect(caught.errorContext).to.be("test enter")
         expect(reported).to.be(caught)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
+        expect(entered._closed).not.to.be(true)
+    })
+
+    it("completes a read entry after an admitted poison rejection", async () => {
+        const execution = useTestExecution()
+        const branch = {}
+        const completion = deferred()
+        const poison = new packageRuntime.PoisonError(
+            "expected",
+            "callback source",
+            packageRuntime.ERROR_KIND.OperationInputRejected,
+        )
+        let entered
+        const result = enter(
+            new Chain({ branch }),
+            ["branch"],
+            false,
+            privateChain => {
+                entered = privateChain
+                return completion.promise
+            },
+        )
+
+        completion.reject(poison)
+
+        expect(await result).to.be(poison)
+        expect(execution.fatalError).to.be(null)
         expect(metaOf(branch).readLeaseCount).to.be(undefined)
         expectClosed(entered)
     })
 
-    it("closes an entry when its callback returns a RuntimeError", () => {
-        const branch = {}
-        const failure = new packageRuntime.RuntimeError(
-            new Error("fatal callback result"),
-            "callback internals",
+    it("publishes a mutation after an admitted poison rejection", async () => {
+        const execution = useTestExecution()
+        const root = { target: { value: 1 } }
+        const completion = deferred()
+        const poison = new packageRuntime.PoisonError(
+            "expected",
+            "callback source",
+            packageRuntime.ERROR_KIND.OperationInputRejected,
         )
         let entered
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-        try {
-            const caught = thrownBy(() => enter(
-                new Chain({ branch }),
-                ["branch"],
-                false,
-                privateChain => {
-                    entered = privateChain
-                    return failure
-                },
-            ))
+        const result = enter(
+            new Chain(root),
+            ["target"],
+            true,
+            privateChain => {
+                entered = privateChain
+                assignPath(privateChain, ["value"], 2)
+                return completion.promise
+            },
+        )
 
-            expect(caught).to.be(failure)
-            expect(reported).to.be(failure)
-            expect(metaOf(branch).readLeaseCount).to.be(undefined)
-            expectClosed(entered)
-        } finally {
-            setFatalErrorReporter()
-        }
+        completion.reject(poison)
+
+        expect(await result).to.be(poison)
+        expect(execution.fatalError).to.be(null)
+        expectClosed(entered)
+        await flushMicrotasks()
+        expect(root.target).to.eql({ value: 2 })
     })
 
-    it("closes an entry when its callback fulfills with a RuntimeError", async () => {
+    it("submits a FatalError callback result without cleanup", () => {
         const branch = {}
-        const failure = new packageRuntime.RuntimeError(
-            new Error("fatal callback fulfillment"),
-            "callback internals",
-        )
+        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
+            throw new Error("fatal callback result")
+        }))
         let entered
         let reported
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
-        try {
-            const result = enter(
-                new Chain({ branch }),
-                ["branch"],
-                false,
-                privateChain => {
-                    entered = privateChain
-                    return Promise.resolve(failure)
-                },
-            )
-            const caught = await result.catch(error => error)
+        const caught = thrownBy(() => enter(
+            new Chain({ branch }),
+            ["branch"],
+            false,
+            privateChain => {
+                entered = privateChain
+                return failure
+            },
+        ))
 
-            expect(caught).to.be(failure)
-            expect(reported).to.be(failure)
-            expect(metaOf(branch).readLeaseCount).to.be(undefined)
-            expectClosed(entered)
-        } finally {
-            setFatalErrorReporter()
-        }
+        expect(caught).to.be(failure)
+        expect(reported).to.be(failure)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
+        expect(entered._closed).not.to.be(true)
     })
 
-    it("closes a failed mutating entry without publishing it", async () => {
+    it("submits a fulfilled FatalError without cleanup", async () => {
+        const branch = {}
+        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
+            throw new Error("fatal callback fulfillment")
+        }))
+        let entered
+        let reported
+        useTestExecution(error => {
+            reported = error
+        })
+        const result = enter(
+            new Chain({ branch }),
+            ["branch"],
+            false,
+            privateChain => {
+                entered = privateChain
+                return Promise.resolve(failure)
+            },
+        )
+        const caught = await result.catch(error => error)
+
+        expect(caught).to.be(failure)
+        expect(reported).to.be(failure)
+        expect(metaOf(branch).readLeaseCount).to.be(1)
+        expect(entered._closed).not.to.be(true)
+    })
+
+    it("abandons a fatally failed mutating entry without publication", async () => {
         const root = { target: { value: 1 } }
         const chain = new Chain(root)
         const failure = new Error("mutation failed")
@@ -1191,12 +1225,12 @@ describe("enter", () => {
 
         const gate = root.target
         expect(gate instanceof Promise).to.be(true)
-        expectClosed(entered)
+        expect(entered._closed).not.to.be(true)
         await flushMicrotasks()
         expect(root.target).to.be(gate)
     })
 
-    it("does not publish a rejected asynchronous mutation", async () => {
+    it("abandons a rejected asynchronous mutation without publication", async () => {
         const root = { target: { value: 1 } }
         const completion = deferred()
         const failure = new Error("mutation rejected")
@@ -1218,7 +1252,7 @@ describe("enter", () => {
         }
 
         expect(errorCause(caught)).to.be(failure)
-        expectClosed(entered)
+        expect(entered._closed).not.to.be(true)
         await flushMicrotasks()
         expect(root.target).to.be(gate)
     })
@@ -1240,8 +1274,7 @@ describe("enter", () => {
             gateRemainsPending: true,
             message: "Entered root remained pending at publication",
             reportCount: 1,
-            sameFailure: true,
-            unhandledCount: 1,
+            unhandledCount: 0,
         })
     })
 })

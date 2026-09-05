@@ -329,6 +329,29 @@ describe("state declarations", () => {
         )
     })
 
+    it("rejects callable then methods on managed prototype chains", () => {
+        class Base {
+            then(resolve) {
+                resolve("assimilated")
+            }
+        }
+        class Registered extends Base {}
+        class Declared extends Base {}
+        const registered = new Registered()
+        const declared = new Declared()
+        declared.then = undefined
+
+        expect(managedStateClass(Registered)).to.be.a(TypeError)
+        expect(managedState(declared)).to.be.a(TypeError)
+
+        new Chain(registered)
+        new Chain(declared)
+        expect(metadata.metaOf(registered)).to.be(undefined)
+        expect(metadata.metaOf(declared).type).to.be(
+            languageValues.TYPE_EXTERNAL,
+        )
+    })
+
     it("rejects callable non-constructors as managed classes", () => {
         const prototype = {}
         let prototypeReads = 0

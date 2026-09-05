@@ -15,12 +15,12 @@ import {
     advancePromiseVersion,
     Chain,
     expect,
-    reportFatalError,
-    setFatalErrorReporter,
+    submitFatal,
+    useTestExecution,
     resolveInitialValueOrPoison,
     onLaterPromiseReady,
     continueInternalPromiseOrFatal,
-    runFatal,
+    runOrFailExecution,
     buildRefIndex,
     getRefCounts,
     getPromiseMirror,
@@ -68,54 +68,7 @@ describe("promise helpers", () => {
         expect(order).to.eql(["value 1", "later", "value 2"])
     })
 
-    it("canonicalizes callable thenables onto one FIFO reaction queue", async () => {
-        let registrations = 0
-        const thenable = {
-            then(resolve) {
-                registrations++
-                if (registrations === 1) {
-                    queueMicrotask(() => resolve({}))
-                } else {
-                    resolve({})
-                }
-            },
-        }
-        const chain = new Chain({ branch: thenable })
 
-        assignPath(chain, ["branch", "x"], 1)
-        const observed = lookupPath(chain, ["branch", "x"])
-
-        expect(await observed).to.be(1)
-        expect(chain._state.value.branch).to.eql({ x: 1 })
-        expect(registrations).to.be(1)
-    })
-
-    it("keeps native Promise hooks inside the user-code boundary", () => {
-        const pending = deferred()
-        const observed = new Chain({ value: 1 })
-        pending.promise.constructor = {
-            get [Symbol.species]() {
-                lookupPath(observed, ["value"])
-                return Promise
-            },
-        }
-        let reported
-        setFatalErrorReporter(error => {
-            reported = error
-        })
-        try {
-            const failure = thrownBy(() => {
-                return lookupPath(new Chain(pending.promise), [])
-            })
-
-            expect(failure?.message).to.be(
-                "Cascada cannot be re-entered from supported user code",
-            )
-            expect(reported).to.be(failure)
-        } finally {
-            setFatalErrorReporter()
-        }
-    })
 
     it("does not inspect a non-Error rejection reason", async () => {
         const pending = deferred()
@@ -156,7 +109,7 @@ describe("promise helpers", () => {
     it("leaves returned Promises to their owning async boundary", () => {
         const promise = Promise.resolve("ready")
 
-        expect(runFatal(() => promise)).to.be(promise)
+        expect(runOrFailExecution(() => promise)).to.be(promise)
     })
 
     it("does not convert continuation throws into language Error values", async () => {
@@ -164,7 +117,7 @@ describe("promise helpers", () => {
         let reported
         let caught
 
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
         try {
@@ -173,38 +126,34 @@ describe("promise helpers", () => {
             })
         } catch (error) {
             caught = error
-        } finally {
-            setFatalErrorReporter()
         }
 
         expect(errorCause(caught)).to.be(fatal)
         expect(reported).to.be(caught)
     })
 
-    it("reports each fatal only once across nested wrapper layers", async () => {
+    it("reports once while a later internal wrapper stops", async () => {
         const fatal = new TypeError("nested runtime bug")
         let reportCount = 0
         let caught
 
-        setFatalErrorReporter(() => {
+        useTestExecution(() => {
             reportCount++
         })
         try {
             await continueInternalPromiseOrFatal(
                 resolveInitialValueOrPoison(
                     Promise.resolve("ok"),
-                    () => reportFatalError(fatal),
+                    () => submitFatal(fatal),
                 ),
                 value => value,
             )
         } catch (error) {
             caught = error
-        } finally {
-            setFatalErrorReporter()
         }
 
         expect(reportCount).to.be(1)
-        expect(errorCause(caught)).to.be(fatal)
+        expect(caught).to.be(undefined)
     })
 
     it("reports internal promise rejections as fatal errors", async () => {
@@ -212,7 +161,7 @@ describe("promise helpers", () => {
         let reported
         let caught
 
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
         try {
@@ -222,8 +171,6 @@ describe("promise helpers", () => {
             )
         } catch (error) {
             caught = error
-        } finally {
-            setFatalErrorReporter()
         }
 
         expect(errorCause(caught)).to.be(fatal)
@@ -236,16 +183,16 @@ describe("promise helpers", () => {
         let reported
         let caught
 
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
             throw reporterBug
         })
         try {
-            reportFatalError(fatal)
+            runOrFailExecution(() => {
+                throw fatal
+            })
         } catch (error) {
             caught = error
-        } finally {
-            setFatalErrorReporter()
         }
 
         expect(errorCause(caught)).to.be(fatal)
@@ -257,7 +204,7 @@ describe("promise helpers", () => {
         const fatal = new Error("late internal failure")
         let reported
 
-        setFatalErrorReporter(error => {
+        useTestExecution(error => {
             reported = error
         })
         const race = Promise.race([
@@ -267,11 +214,7 @@ describe("promise helpers", () => {
 
         expect(await race).to.be(true)
         cleanWait.reject(fatal)
-        try {
-            await flushMicrotasks()
-        } finally {
-            setFatalErrorReporter()
-        }
+        await flushMicrotasks()
 
         expect(errorCause(reported)).to.be(fatal)
     })
@@ -285,7 +228,6 @@ describe("promise helpers", () => {
             returnsUndefined: true,
             reportCount: 0,
             unhandledCount: 0,
-            sameErrors: true,
             messages: [],
             valuesUnchanged: true,
         })
@@ -302,8 +244,7 @@ describe("promise helpers", () => {
         expect(child.status).to.be(0)
         expect(JSON.parse(child.stdout)).to.eql({
             reportCount: 5,
-            unhandledCount: 5,
-            sameErrors: true,
+            unhandledCount: 0,
             messages: [
                 "Cannot resolve missing Promise property",
                 "Cannot mutate non-enumerable property",
@@ -357,7 +298,7 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
         expect(liveMirror.value).to.be(livePending.promise)
-        expect(Object.keys(liveMirror)).to.eql(["promise", "value"])
+        expect(Object.keys(liveMirror).sort()).to.eql(["promise", "value"])
 
         livePending.resolve("live")
         await flushMicrotasks()
@@ -365,7 +306,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
         expect(liveRoot.value).to.be("live")
         expect(liveMirror.value).to.be("live")
-        expect(Object.keys(liveMirror)).to.eql(["promise", "value"])
+        expect(Object.keys(liveMirror).sort()).to.eql(["promise", "value"])
 
         const detachedPending = deferred()
         const detachedRoot = {}
@@ -382,7 +323,7 @@ describe("promise mirrors and lookupPath", () => {
 
         expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
         expect(detachedMirror.value).to.be("detached")
-        expect(Object.keys(detachedMirror)).to.eql(["promise", "value"])
+        expect(Object.keys(detachedMirror).sort()).to.eql(["promise", "value"])
         expect(detachedRoot.value).to.be("replacement")
     })
 

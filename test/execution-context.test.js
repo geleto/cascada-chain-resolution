@@ -7,7 +7,6 @@ import { readPath } from "../src/observations.js"
 import {
     expect,
     flushMicrotasks,
-    setFatalErrorReporter,
     thrownBy,
 } from "./support.js"
 
@@ -16,14 +15,8 @@ function operationContext(execution, errorContext) {
 }
 
 function expectFatal(work) {
-    let reported
-    setFatalErrorReporter(error => {
-        reported = error
-    })
     const failure = thrownBy(work)
-    setFatalErrorReporter()
-    expect(failure instanceof Error).to.be(true)
-    expect(reported).to.be(failure)
+    expect(failure).to.be.a(runtime.FatalError)
     return failure
 }
 
@@ -259,7 +252,7 @@ describe("operation context", () => {
         expect(failure.errorContext).to.be(0)
     })
 
-    it("samples and canonicalizes thenables independently per execution", async () => {
+    it("subscribes independently without execution-local thenability state", async () => {
         let samples = 0
         let invocations = 0
         const resolved = {}
@@ -268,7 +261,7 @@ describe("operation context", () => {
                 samples++
                 return resolve => {
                     invocations++
-                    resolve(resolved)
+                    return resolve(resolved)
                 }
             },
         })
@@ -282,8 +275,8 @@ describe("operation context", () => {
         const secondChain = new runtime.Chain(thenable, secondOperationContext)
         await flushMicrotasks()
 
-        expect(samples).to.be(2)
-        expect(invocations).to.be(2)
+        expect(samples).to.be(3)
+        expect(invocations).to.be(3)
         expect(readPath(firstChain, [], firstOperationContext)).to.be(resolved)
         expect(readPath(sibling, [], firstOperationContext)).to.be(resolved)
         expect(readPath(secondChain, [], secondOperationContext)).to.be(resolved)
@@ -364,7 +357,7 @@ describe("operation context", () => {
         new runtime.Chain(value, firstOperationContext)
         new runtime.Chain(value, secondOperationContext)
 
-        propertyVersions.buildRefIndex(value, firstOperationContext)
+        refcounts.buildRefIndex(value, firstOperationContext)
 
         expect(refcounts.getRefCounter(value, firstOperationContext)).not.to.be(undefined)
         expect(refcounts.getRefCounter(value, secondOperationContext)).to.be(undefined)

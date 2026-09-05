@@ -37,7 +37,7 @@ function verifyReachable(node, seen, operationContext) {
                 languageValues.isTraversable(child, operationContext) &&
                 !getRefCounter(child, operationContext)
             ) {
-                fatal("Ref-indexed parent contains non-ref-indexed child")
+                fatal("Ref-indexed parent contains non-ref-indexed child", operationContext)
             }
 
             promiseCount += state.promiseCount
@@ -51,11 +51,11 @@ function verifyReachable(node, seen, operationContext) {
         if (counter.promiseCount !== promiseCount ||
             counter.errorCount !== errorCount ||
             counter.cycleCutCount !== cycleCutCount) {
-            fatal("Counter totals are inconsistent")
+            fatal("Counter totals are inconsistent", operationContext)
         }
         for (const [child, count] of childEdges) {
             if (getRefCounter(child, operationContext).parents.get(node) !== count) {
-                fatal("Parent edge count is inconsistent")
+                fatal("Parent edge count is inconsistent", operationContext)
             }
         }
         verifyStoredParentEdges(node, operationContext)
@@ -73,7 +73,7 @@ function verifyReachable(node, seen, operationContext) {
             languageValues.isTraversable(child, operationContext) &&
             !getRefCounter(child, operationContext)
         ) {
-            fatal("Ref-indexed parent contains non-ref-indexed child")
+            fatal("Ref-indexed parent contains non-ref-indexed child", operationContext)
         }
         verifyReachable(child, seen, operationContext)
     }
@@ -88,28 +88,28 @@ function verifyCycleCuts(node, operationContext) {
     const meta = metadata.metaOf(node, operationContext)
     const plainCuts = meta?.cycleCuts
     if (plainCuts && !(plainCuts instanceof Set)) {
-        fatal("Plain cycle cuts must be stored in a Set")
+        fatal("Plain cycle cuts must be stored in a Set", operationContext)
     }
 
     if (plainCuts) {
         for (const key of plainCuts) {
             if (typeof key !== "string") {
-                fatal("Cycle cut keys must be strings")
+                fatal("Cycle cut keys must be strings", operationContext)
             }
             if (!languageProperties.hasLanguageProperty(node, key, operationContext)) {
-                fatal("Cycle cut names a missing or non-enumerable property")
+                fatal("Cycle cut names a missing or non-enumerable property", operationContext)
             }
-            if (languageValues.isPromise(
+            if (languageValues.isPending(
                 languageProperties.readLanguageProperty(node, key, operationContext),
                 operationContext,
             )) {
-                fatal("Pending Promise property also has a cycle cut")
+                fatal("Pending Promise property also has a cycle cut", operationContext)
             }
             if (!languageValues.isTraversable(
                 languageProperties.readLanguageProperty(node, key, operationContext),
                 operationContext,
             )) {
-                fatal("Cycle cut must contain a traversable value")
+                fatal("Cycle cut must contain a traversable value", operationContext)
             }
         }
     }
@@ -131,14 +131,14 @@ function verifyCycleCuts(node, operationContext) {
             descriptor?.enumerable &&
             "value" in descriptor
         const physicalMatches = Object.is(descriptor?.value, mirror?.value)
-        const preservedPromise = !languageValues.isPromise(
+        const preservedPromise = !languageValues.isPending(
             mirror?.value,
             operationContext,
-        ) && languageValues.isPromise(descriptor?.value, operationContext)
+        ) && languageValues.isPending(descriptor?.value, operationContext)
         const validStorage = (imported || descriptor?.writable) &&
             (physicalMatches || preservedPromise)
         if (!validShape || !validStorage) {
-            fatal("Live Promise mirror has no valid language property")
+            fatal("Live Promise mirror has no valid language property", operationContext)
         }
     }
 }
@@ -147,10 +147,10 @@ function verifyStoredParentEdges(node, operationContext) {
     const counter = getRefCounter(node, operationContext)
     for (const [parent, count] of counter.parents) {
         if (!languageValues.isTraversable(parent, operationContext)) {
-            fatal("Parent edge points to a non-traversable value")
+            fatal("Parent edge points to a non-traversable value", operationContext)
         }
         if (!getRefCounter(parent, operationContext)) {
-            fatal("Parent edge points to non-ref-indexed parent")
+            fatal("Parent edge points to non-ref-indexed parent", operationContext)
         }
 
         let actualCount = 0
@@ -163,7 +163,7 @@ function verifyStoredParentEdges(node, operationContext) {
             }
         }
         if (actualCount !== count) {
-            fatal("Parent edge count is inconsistent")
+            fatal("Parent edge count is inconsistent", operationContext)
         }
     }
 }
@@ -172,7 +172,9 @@ function verifyParentGraph(node, states, operationContext) {
     if (!getRefCounter(node, operationContext)) return
     const state = states.get(node)
     if (state === "done") return
-    if (state === "active") fatal("Ref-count parent graph contains a cycle")
+    if (state === "active") {
+        fatal("Ref-count parent graph contains a cycle", operationContext)
+    }
 
     states.set(node, "active")
     for (const parent of getRefCounter(node, operationContext).parents.keys()) {
@@ -188,12 +190,12 @@ function recountProperty(node, key, operationContext) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
-    if (languageValues.isPromise(child, operationContext)) {
+    if (languageValues.isPending(child, operationContext)) {
         if (!mirror) {
-            fatal("Indexed promise property has no mirror")
+            fatal("Indexed promise property has no mirror", operationContext)
         }
         if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
-            fatal("Pending Promise property also has a cycle cut")
+            fatal("Pending Promise property also has a cycle cut", operationContext)
         }
         child = undefined
         promiseCount = 1
@@ -222,8 +224,8 @@ function getRefCounter(node, operationContext) {
     return meta?.parents ? meta : undefined
 }
 
-function fatal(message) {
-    errorUtils.reportFatalError(new Error(message))
+function fatal(message, operationContext) {
+    errorUtils.failExecution(operationContext, new Error(message))
 }
 
 export { verifyRefCounts }

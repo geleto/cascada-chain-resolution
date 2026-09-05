@@ -10,7 +10,7 @@ The runtime recognizes these value categories:
   bigints.
 - **Promise:** any object or function with a callable `then` property.
 - **Language Error:** a recoverable `PoisonError` occurrence or a native host
-  Error awaiting contextualization. Fatal `RuntimeError` is excluded.
+  Error awaiting contextualization. Fatal `FatalError` is excluded.
 - **Managed value:** an Array, record, managed class instance, or internal
   `ArrayView`. Managed values have traversable language properties.
 - **External value:** any other non-null non-Promise object. It retains exact
@@ -18,8 +18,17 @@ The runtime recognizes these value categories:
 - **Function:** stored as terminal data and executable only in a supported call
   position.
 
-A language data object must not rely on a callable `then` property because the
-kernel and JavaScript Promise resolution both treat it as a Promise.
+A successful non-Promise language-data result cannot expose a callable `then`
+through native property lookup. Ready assignment returns and publishes
+`PropertyValidation` for an own placement, a Promise-backed placement applies
+the same rule on fulfillment, and managed mutation receiver validation rejects
+one introduced by host code. Managed-class declaration and snapshot adoption
+also reject callable `then` methods on the retained prototype chain, which must
+remain stable. Standard prototypes and exact external identities follow their
+existing stability/read-only contracts. A non-callable `then` remains ordinary
+data. This is required because native Promise result transport would otherwise
+assimilate the object only on an asynchronous path and break sequential
+equivalence.
 
 Prototype methods on managed class instances are outside the language-property
 surface.
@@ -76,21 +85,56 @@ calls. Each operation:
 3. registers all continuations needed at its current program position; and
 4. returns before unresolved data is available.
 
-A callable thenable is captured once only when Cascada needs FIFO ordering among
-continuations on that source: to advance or consume a captured version, resume
-or finish a transition, or perform settlement bookkeeping before later Cascada
-use. Returning a result alone does not capture or replace it. Native Promises
-and custom thenables use the same source-neutral cached settlement Promise. The
-kernel invokes the captured `then` once with callbacks that fulfill one private,
-non-thenable first-settlement record and ignores the derived value returned by
-that invocation. A native Promise subclass may therefore execute its species
-machinery, as JavaScript requires, but that derived Promise never becomes kernel
-settlement or FIFO state. Each causal boundary interprets the raw record with its
-retained operation context. Native-Promise fulfillment is checked for Error but
-is not resampled for thenability; a fulfilled nested non-native thenable instead
-continues through execution-local capture. Later consumers preserve the
-boundary's contextualized Error. The record never escapes or receives a raw
-native Promise resolver.
+Native Promises with standard behavior and supported ordered custom thenables
+provide their own settlement, subscriptions, FIFO delivery, and chaining. Each
+required Cascada continuation subscribes through the common helper at its
+program position. Its closure carries the registering operation context, which a
+causal boundary uses when it creates a new failure. An already-ready custom
+thenable may invoke the continuation synchronously, and Cascada preserves that
+synchronous progress. A later ready subscription cannot overtake an earlier
+registered callback still awaiting delivery. A synchronous callback throw
+escapes the `then` call; a later callback throw rejects the returned chain. A
+pending subscription returns the chain supplied by the source. Only such a
+pending returned chain participates in aggregate waits, protection lifetimes,
+or outward fatal-result delivery. The kernel keeps no captured callable, thenability cache, canonical
+Promise, first-settlement record, subscriber queue, Promise-species path, or
+thenable-cycle mechanism. A supported custom thenable supplies a final,
+non-thenable fulfillment value and owns nested assimilation. Later consumers
+preserve an already contextualized Error.
+
+The `then` call is a trusted scheduling protocol, not a general host callback;
+its body may re-enter Cascada only through the supplied continuation. Raw input
+recognition still preserves Error, Function, and fixed admitted-category
+semantics before it reads `then`.
+
+The first ordinary property read normalizes a newly reached placement. A ready
+outcome uses direct storage where writable, or the existing fixed overlay where
+physical storage must be preserved. Only pending work creates a changing mirror.
+Indexing and remapping read these logical versions without a separate resolver
+installation path. Validation that forbids retained thenables inspects the
+logical data without consuming it.
+
+The returned transition result is the readiness test. A transition consumes any
+further possible thenable before returning. Therefore, after Error, Function,
+and fixed admitted-category precedence, a thenable remaining in this trusted
+result position is actually pending. Callback execution and writes into mirrors, aggregate slots, receivers, or query state
+are semantic effects, not readiness flags. The runtime adds no separate
+callback-ran or backwrite-observed state.
+
+Readiness is scoped to the required dependency. A path that has selected its
+target does not acquire prefix protection because the target operation returns
+an independent pending result; completed receiver publication or source capture
+likewise has no lifetime to extend. Retain one path-local `pathSelectionComplete`
+fact, set immediately before invoking the selected target operation, or reuse a
+retained selected target with exactly that meaning. It identifies the owner of
+pending work rather than callback execution or result readiness. Before a
+subscription can invoke its callback synchronously, initialize callback-visible
+staging, captured versions, and publication required regardless of readiness.
+Install pending-only gates, changing mirrors, leases, and registrations after
+the subscription returns pending and before the issuing stack returns.
+Run-to-completion excludes asynchronous delivery in that interval. Semantic
+entry protection still precedes `onEntered` regardless of its result readiness.
+
 Every consumer of a Promise-backed property registers through that property's
 captured mirror, so its synchronous continuation observes all earlier
 consumers and none issued later.
@@ -146,12 +190,11 @@ Structural classification is a conservative probe rather than a failure
 boundary: if user-controlled reflection cannot establish a supported managed
 shape, admission keeps the exact identity as external and creates no language
 Error. A fatal established during that execution-bound reflection still wins.
-Declaration thenability sampling is instead contextless and local to one
-declaration. It preserves Error values before sampling, rejects callable
-thenables, and returns an ordinary validation Error if a nonfatal throw from a
-`then` getter prevents the declaration from establishing a safe input. An
-escaping `RuntimeError` remains fatal. The probe creates no execution state,
-poison, Promise, or synthetic thenable.
+Declaration thenability recognition is instead contextless and direct. It
+preserves Error values first, rejects callable thenables, and returns an ordinary
+validation Error if an unsupported identity cannot be inspected safely. An
+escaping `FatalError` remains fatal. The probe creates no execution state,
+thenability cache, poison, Promise, or synthetic thenable.
 
 All genuine arrays retain their existing path regardless of realm or subclass;
 array subclass prototypes and methods are deliberately normalized away.
@@ -179,16 +222,17 @@ trusts its arbitrary source payload but explicitly checks the minimal routing
 invariants: a missing context or execution mismatch is a fatal integration error
 before graph access.
 
-For a ready root, import returns its admitted logical value after one
-transactional synchronous walk. For a Promise root, one operation Promise
-performs the same work on fulfillment before exposing the result; a raw
-rejection is contextualized to the import operation.
+For a ready root, including a custom thenable consumed synchronously, import
+returns its admitted logical value after one transactional synchronous walk.
+For an actually pending Promise root, one operation Promise performs the same
+work on fulfillment before exposing the result; a raw rejection is
+contextualized to the import operation.
 
 Import:
 
 - records origin and marks newly imported managed identities shared;
 - retains already admitted identities without rescanning or changing origin, except when managed mutation-result import must establish ownership throughout a managed mutation result;
-- registers continuations for nested Promises without awaiting them; and
+- consumes nested possible Promises and retains continuations only for returned pending work; and
 - does not build subtree counters.
 
 Newly reached host objects receive external metadata recording their admitted
@@ -196,9 +240,24 @@ category and origin. Import traverses only new managed identities and stops at
 external identities, Functions, and Errors. A nested native Error remains
 physical host data while a fixed placement overlay stores its logical wrapper.
 Import commits no metadata or placement version from a synchronous segment
-whose enumeration or descriptor lookup fails. A nested Promise property is not replaced: its mirror keeps the logical value
-while imported storage retains the Promise. Frozen imported managed data
+whose enumeration or descriptor lookup fails. A nested pending Promise property is not replaced: its mirror keeps the logical value
+while imported storage retains the Promise. A synchronously consumed custom
+thenable likewise remains physical host data, but its final value uses a fixed
+overlay rather than a Promise mirror. Frozen imported managed data
 therefore follows the same path as writable imported managed data.
+
+Synchronous custom deliveries reuse the segment's staging walk and identity
+map. One segment-local lifecycle fact transitions from `staging` to either
+`committed` or `abandoned`. Subscriptions that remain pending gain import and
+publication authority only on commit. Release staging collections on either
+terminal transition; retain only the lifecycle fact and captured work needed by
+owned reactions. Abandoned callbacks return after the common execution and
+segment checks without admission or publication, and no committed version needs
+their settlement. Keep their reactions handled without cancelling the source.
+Later delivery for a committed placement starts a new segment. Initial external-tree discovery reads staged
+logical overlays and admission facts together, follows synchronous custom
+outcomes, and stops at pending values. It neither resubscribes nor commits early;
+later delivery creates no tree leaves.
 
 External code must not mutate an imported graph after import. Native code must
 receive traversable Cascada data through `export`, not through a direct runtime
@@ -272,15 +331,20 @@ commit, the violated runtime invariant is fatal.
 ## Placement versions
 
 A placement overlay holds the logical value when physical storage must remain
-unchanged. A Promise mirror is a changing overlay for one Promise-backed
-property version. A nested native Error in imported storage uses a fixed overlay
-for its contextualized occurrence. Both use the same parent-key map and detach
+unchanged. A Promise mirror is a changing overlay for one actually pending
+Promise-backed property version. A final logical value over different imported
+physical storage—such as a contextualized native Error or synchronously consumed
+custom thenable—uses a fixed overlay. Both use the same parent-key map and detach
 when that placement is replaced or deleted.
 
-One mirror represents one Promise-backed property version. Assigning the same
-Promise again, copying the property, or retaining it in a distinct ArrayView
-creates a new mirror at that operation's FIFO position. ArrayViews may still
-share the property's physical backing slot.
+One mirror represents one actually pending Promise-backed property version.
+Assigning the same pending Promise again, copying the property, or retaining it
+in a distinct ArrayView creates a new mirror at that operation's FIFO position.
+ArrayViews may still share the property's physical backing slot. A custom
+thenable consumed synchronously publishes its final value directly in
+runtime-owned storage. Imported storage remains physically unchanged and uses a
+fixed logical overlay for that final value; neither case installs a Promise
+mirror.
 
 The mirror's `value` field is the property version's authoritative logical
 value. Its first resolver's continuation closure captures the import operation
@@ -291,10 +355,10 @@ use FIFO readiness and read that published value instead of reinterpreting the
 raw settlement payload. A live runtime-owned version normally
 writes through to its physical property. If writeback reflection fails, its
 Error remains logical in the mirror and the physical Promise is preserved. An
-imported version always preserves the external Promise.
+imported pending version always preserves the external Promise.
 
-A fork uses the canonical Promise only as a FIFO readiness signal and samples
-its source mirror at the fork position. Retained ArrayView properties have
+A fork subscribes to the source mirror through the common FIFO continuation path
+and reads that mirror at the fork position. Retained ArrayView properties have
 distinct mirrors even when they share a physical backing slot, so their logical
 edges and later operations remain independent.
 
@@ -316,19 +380,21 @@ failure-kind vocabulary.
 
 Runtime construction uses protected factories and private semantic brands. The public
 construction boundary validates only its private token; trusted factories receive the
-authoritative kind and source, whose call-site inventory is checked statically rather
-than revalidated on every construction. Each completed Error is frozen; compound child arrays are copied
+authoritative kind and source directly rather than revalidating trusted internal calls.
+Focused construction and route tests verify those outcomes. Each completed Error is frozen; compound child arrays are copied
 and frozen first. Prototype shape alone is not trusted, and arbitrary cause properties
-are not copied into a wrapper. Precise predicates distinguish poison, `RuntimeError`,
-and an unclassified native Error before any thenability sampling. Kernel Errors
+are not copied into a wrapper. Precise predicates distinguish poison, `FatalError`,
+and an unclassified native Error before ordinary thenability recognition. Kernel Errors
 expose only `name`, unformatted `message`, opaque `errorContext`, optional exact
 `cause`, poison `kind`, and compound-only `.errors`; source presentation belongs
 to a separate higher-runtime diagnostic view.
 
-`CompoundPoisonError` flattens nested compounds, preserves semantic logical
-collection order, and deduplicates exact leaf identity only. Different occurrence
-wrappers remain distinct even when they share one cause. Each surviving leaf
-keeps its context and kind.
+`CompoundPoisonError` flattens nested compounds and shares collection-local
+raw-cause/source-context/kind deduplication with `getErrors`. Child order and the
+retained representative are unspecified; different contexts or kinds remain
+distinct. Existing contextualized Errors propagate by reference. No persistent
+Error cache or cross-construction wrapper identity is required. See the bounded
+[Error-handling nondeterminism](data-limitations.md#allowed-nondeterminism-in-error-handling) contract.
 
 Synchronous failures from supported user code and exact reflection hooks become
 language Errors at those boundaries. One narrow host-boundary helper catches
@@ -336,16 +402,17 @@ only the exact action, checks fatal state, and preserves or contextualizes its
 outcome; the owning semantic boundary then applies the graph effect. Adjacent
 runtime work remains outside that catch and is fatal. Explicit conservative
 probes are different: their local catch returns only the specified opaque or
-validation outcome and never constructs poison or hides runtime fatality.
+validation outcome and never constructs poison or hides execution fatality.
 A language-outcome transition preserves poison only when its contract admits a
 language Error. A poison escaping cleanup, scheduling, bookkeeping, or another
-runtime-only transition is a fatal trusted-contract violation.
+fatal-on-escape transition is a fatal trusted-contract violation.
 A direct Error result always means its boundary failed, whether returned,
 fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
 effect in every case; an Error cannot be a successful direct payload.
-Supported host code may synchronously issue nested Cascada operations, including
-within the same execution. They use their own explicit operation contexts and
-the ordinary ordering mechanisms.
+Supported host code must not synchronously re-enter Cascada. The outer
+transition has not yet published an ordering point, so attempted re-entry is a
+fatal host-contract violation. Higher-runtime nested dispatch occurs outside an
+active host boundary.
 
 A raw data-Promise rejection is contextualized once in the first import,
 mirror, validation, or publication continuation already required by its causal
@@ -355,10 +422,10 @@ consumers use FIFO readiness and read the earlier mirror publication. No
 attribution is persisted on the source Promise or metadata, and no forwarding
 Promise exists only to attach it.
 
-Internal failures become `RuntimeError`, retain the owning operation's context,
+Internal failures become `FatalError`, retain the owning operation's context,
 and are reported once by each execution they close. They are never admitted or
 queried as language data. A
-`RuntimeError` physically received by return, fulfillment, throw, rejection, or
+`FatalError` physically received by return, fulfillment, throw, rejection, or
 graph traversal is submitted to the current execution before success handling.
 Continuation failures, invariant violations, and rejected internal aggregate
 waits follow this path. Its frozen prototype has an own non-callable `then` so
@@ -375,7 +442,8 @@ The runtime consequences are deliberately small:
   clears only the outward public results currently pending, and then invokes the
   execution's captured reporter as best-effort notification. It walks no task,
   owner, gate, phase, aggregate, or internal wait and creates no asynchronous
-  global throw.
+  global throw. The public query is an own, non-configurable, read-only getter,
+  so prototype replacement or property shadowing cannot hide the stored state.
 - Public entry throws an already-stored fatal synchronously. A transition that
   detects a new fatal submits and propagates it; a later continuation that merely
   observes failed execution returns. Checks occur only at public entry, common
@@ -384,18 +452,29 @@ The runtime consequences are deliberately small:
   awaited by shutdown.
 - Every ready public result stays direct. Only an actually pending direct result
   receives one outward wrapper and removable fatal-reject action. Normal
-  settlement unregisters it; fatal commit rejects it even when its ordinary
-  dependency never settles. There is no shared fatal Promise, result history,
+  outward settlement unregisters it before delivery. Internal source settlement
+  only queues that transition, so a fatal committed before it runs rejects the
+  still-pending wrapper; once it runs, later fatality cannot alter the delivered
+  result. Fatal commit also rejects when the ordinary dependency never settles.
+  There is no shared fatal Promise, result history,
   root-only special case, final exposure check, execution-idle counter, or
   quiescence barrier. A higher runtime calls the same unwrapped core operations
   through the package's trusted integration subpath and applies this exposure
   rule only to the outward results it owns; no dynamic public/internal mode is
   passed into an operation.
+- A direct result remains pending for all boundary processing and publication
+  that can still change the operation's specified outcome. Fire-and-register
+  returns are issuance outcomes whose gates order later dependent operations;
+  nested result Promises and short-circuited siblings are independent once they
+  cannot change that outcome. Script completion uses common export before the
+  outward wrapper, so reachable nested availability and Error collection remain
+  in the final result. A late fatal from independent work is stored and reported
+  but cannot revise an already delivered result.
 - Operation owners remain local open/closed facts for finishing one live
   operation and releasing its operation-only resources. They are never registered
   with the execution. If fatality makes a gate, phase, or aggregate unobservable,
   it may remain pending; any still-pending outward result fails independently.
-- A `RuntimeError` may close and report independently in another execution. A
+- A `FatalError` may close and report independently in another execution. A
   contextless fatal call throws synchronously and reports nowhere unless that
   Error later reaches an execution.
 
@@ -403,8 +482,9 @@ The runtime consequences are deliberately small:
 
 ### `assignPath(chain, path, value, operationContext, mutationScopeDepth = path.length)`
 
-Assigns or replaces the target. It creates a fresh mirror when `value` is a
-Promise, performs copy-on-write or representation materialization where
+Assigns or replaces the target. It consumes a possible Promise first and creates
+a fresh mirror only when the returned resolver transition remains pending. A
+ready custom outcome is assigned directly. It then performs copy-on-write or representation materialization where
 required, and updates existing refcounts. Success returns `undefined`; a ready
 failed transition publishes and returns its Error. A suspended call still
 returns `undefined`; any later failure is published only in the graph.
@@ -445,7 +525,7 @@ Performs an exclusive repair-only operation at an existing fixed external
 location. It clears repairable external phase poison, invokes no host code,
 repairs no managed graph Error, and returns `undefined` directly or through a
 Promise when it must wait for path resolution or earlier external work. Repair
-records no actual use and cannot establish a location or mutation authority. It
+creates no registration and cannot establish or transfer mutation authority. It
 stops at the first external boundary; an opaque suffix, including a pending
 segment, is not consumed.
 
@@ -463,14 +543,14 @@ Returns host-ready data for the branch captured at its issue position.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
 - Several Errors return a `CompoundPoisonError`. Nested compounds are flattened
-  and exact leaf identity is deduplicated. Different occurrence wrappers remain
-  distinct even when they share a cause. Logical collection order is semantic.
+  and raw-cause/source-context/kind equivalence is deduplicated. Different contexts
+  or kinds remain distinct; Error order is unspecified.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
 pending export rejects with its final single or combined rejecting-thenable
 Error. A synchronous reflection failure returns a contextual export Error. Other unexpected
-traversal failures and rejected internal readiness become fatal `RuntimeError`.
+traversal failures and rejected internal readiness become fatal `FatalError`.
 Rejected data Promises retain the source boundary that introduced them.
 
 ### `hasError(chain, path, operationContext)`
@@ -544,7 +624,7 @@ The compiler and host layer must:
 - use non-sharing lookup only for internal inspection or proven final transfer;
 - send traversable output to native code only through `export`;
 - evaluate assignment right-hand sides before mutating their destinations; and
-- treat fatal kernel exceptions as integration/runtime failures rather than
+- treat fatal kernel exceptions as fatal integration failures rather than
   language Error values.
 
 The kernel relies on these rules instead of validating trusted data for aliases

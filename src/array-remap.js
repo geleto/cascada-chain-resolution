@@ -2,6 +2,7 @@ import * as arrayViews from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
+import * as refcounts from "./refcounts.js"
 
 const KIND_ADD = 0
 const KIND_DELETE = 1
@@ -251,7 +252,7 @@ function createArrayFromRemap(
     )
     placeRemap(output, remap, operationContext, 0, retained)
     if (refIndexSource !== undefined) {
-        propertyVersions.indexValueIfSourceIndexed(
+        refcounts.indexValueIfSourceIndexed(
             refIndexSource,
             output,
             operationContext,
@@ -298,7 +299,7 @@ function placePlacement(
     const stringKey = String(key)
 
     const value = placement.value
-    if (languageValues.isPromise(value, operationContext)) {
+    if (languageValues.isPending(value, operationContext)) {
         propertyVersions.placePromiseVersion(
             placement.mirror,
             value,

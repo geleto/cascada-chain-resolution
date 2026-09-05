@@ -2,8 +2,6 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as resolution from "./resolution.js"
 
-const ignore = () => {}
-
 class OperationOwner {
     open = true
 
@@ -17,13 +15,9 @@ class OperationOwner {
 }
 
 // An owner supplies `open` and idempotent `close()`. Existing operation-work
-// owners implement this directly. Shared Promise and property settlement
-// remains outside it and always finishes. Callers close owners only through
+// owners implement this directly. In a live execution, shared Promise and
+// property settlement remains outside it. Callers close owners only through
 // close() below so registered resources are released in the same transition.
-function mayContinue(operation) {
-    return operation.open === true
-}
-
 function close(operation) {
     try {
         if (operation.open) operation.close()
@@ -43,7 +37,7 @@ function close(operation) {
 }
 
 function registerRelease(operation, release) {
-    if (!mayContinue(operation)) {
+    if (!operation.open) {
         release()
         return undefined
     }
@@ -59,37 +53,18 @@ function registerRelease(operation, release) {
     }
 }
 
-function observeFatal(operation, result, onFatal = ignore) {
-    if (!languageValues.isPromise(result, operation.operationContext)) return result
-    resolution.observeResultPromise(
-        result,
-        operation.operationContext,
-        ignore,
-        reason => {
-            close(operation)
-            onFatal(reason)
-        },
-    )
-    return result
-}
-
 function run(operation, transition) {
-    if (!mayContinue(operation)) return undefined
-    try {
-        return transition()
-    } catch (error) {
-        close(operation)
-        throw error
-    }
+    if (operation.operationContext.execution.fatalError !== null) return undefined
+    return operation.open ? transition() : undefined
 }
 
 function continueResult(operation, result, onReady, continueValue) {
     return run(
         operation,
-        () => observeFatal(operation, continueValue(
+        () => continueValue(
             result,
-            value => mayContinue(operation) ? onReady(value) : undefined,
-        )),
+            value => operation.open ? onReady(value) : undefined,
+        ),
     )
 }
 
@@ -103,7 +78,7 @@ function resolveInitial(operation, value, onReady) {
             input,
             operation.operationContext,
             next,
-            () => mayContinue(operation),
+            () => operation.open,
         ),
     )
 }
@@ -147,14 +122,10 @@ function continueInternalAll(operation, results, onReady) {
     const values = new Array(results.length)
     const waits = []
     for (let index = 0; index < results.length; index++) {
-        const result = results[index]
-        if (!languageValues.isPromise(result, operation.operationContext)) {
-            values[index] = result
-            continue
-        }
-        waits.push(continueInternal(operation, result, value => {
+        const wait = continueInternal(operation, results[index], value => {
             values[index] = value
-        }))
+        })
+        if (languageValues.isPending(wait, operation.operationContext)) waits.push(wait)
     }
     if (waits.length === 0) {
         return continueInternal(operation, values, onReady)
@@ -188,18 +159,27 @@ function continuePreparedAll(operation, results, onReady) {
 }
 
 function closeWhenDone(operation, result) {
-    // Unlike observeFatal, final fulfillment also closes the operation.
-    if (!languageValues.isPromise(result, operation.operationContext)) {
-        close(operation)
-        return result
+    const operationContext = operation.operationContext
+    try {
+        return languageValues.consumeValue(
+            result,
+            operationContext,
+            value => errorUtils.runOrFailExecution(operationContext, () => {
+                close(operation)
+                return value
+            }),
+            reason => {
+                throw errorUtils.runOrFailExecution(operationContext, () => {
+                    if (!(reason instanceof errorUtils.PoisonError)) throw reason
+                    close(operation)
+                    return reason
+                })
+            },
+        )
+    } catch (failure) {
+        if (failure instanceof errorUtils.PoisonError) return failure
+        throw failure
     }
-    resolution.observeResultPromise(
-        result,
-        operation.operationContext,
-        () => close(operation),
-        () => close(operation),
-    )
-    return result
 }
 
 export {
@@ -211,8 +191,6 @@ export {
     continuePrepared,
     continuePreparedAll,
     OperationOwner,
-    mayContinue,
-    observeFatal,
     registerRelease,
     resolveInitial,
     run,

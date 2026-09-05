@@ -2,6 +2,7 @@ import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import { normalizePropertyValue } from "./property-versions.js"
 
 const ORDINARY_PROPERTY = 0
 const ARRAY_LENGTH = 1
@@ -35,6 +36,10 @@ function propertyValidationError(message, operationContext) {
         operationContext,
         errorUtils.ERROR_KIND.PropertyValidation,
     )
+}
+
+function isCallableThenPlacement(key, value) {
+    return key === "then" && typeof value === "function"
 }
 
 function normalizePathSegment(segment, operationContext) {
@@ -220,11 +225,9 @@ function readLanguageProperty(parent, key, operationContext) {
         logicalParent,
         operationContext,
     )?.placementVersions?.[key]
-    const value = version
-        ? version.value
-        : getLanguagePlacementDescriptor(parent, key, operationContext)?.value
-    languageValues.admitValue(value, operationContext)
-    return value
+    if (version) return version.value
+    const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
+    return normalizePropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
 }
 
 function hasLanguageProperty(parent, key, operationContext) {
@@ -274,6 +277,7 @@ export {
     getLanguagePropertyDescriptor,
     getLanguagePlacementDescriptor,
     hasLanguageProperty,
+    isCallableThenPlacement,
     normalizePathSegment,
     propertyMutationRequiresCopy,
     propertyValidationError,

@@ -5,13 +5,11 @@ import * as metadata from "./meta.js"
 
 function externalState(value) {
     return declarationBoundary(() => {
-        const isPromise = languageValues.createPromiseProbe()
         if (errorUtils.isFatalError(value)) throw value
         if (languageValues.isError(value)) return value
         const failure = validateDeclarationTarget(
             value,
             "externalState",
-            isPromise,
         )
         if (failure) return failure
 
@@ -26,13 +24,11 @@ function externalState(value) {
 
 function managedState(value) {
     return declarationBoundary(() => {
-        const isPromise = languageValues.createPromiseProbe()
         if (errorUtils.isFatalError(value)) throw value
         if (languageValues.isError(value)) return value
         const rootFailure = validateDeclarationTarget(
             value,
             "managedState",
-            isPromise,
         )
         if (rootFailure) return rootFailure
         if (
@@ -59,11 +55,6 @@ function managedState(value) {
 
         function walk(identity, root = false) {
             if (languageValues.isError(identity)) return undefined
-            if (isPromise(identity)) {
-                return errorUtils.hostValidationError(
-                    "managedState cannot contain a Promise",
-                )
-            }
             if (!metadata.isObjectLike(identity)) {
                 return undefined
             }
@@ -72,13 +63,16 @@ function managedState(value) {
             }
             if (visited.has(identity)) return undefined
             visited.add(identity)
+            if (!root && errorUtils.runUserCode(() => typeof identity.then === "function")) {
+                return errorUtils.hostValidationError("managedState cannot contain a Promise")
+            }
 
             const declaration = metadata.identityDeclarationOf(identity)
             if (declaration === metadata.DECLARATION_EXTERNAL) {
                 return undefined
             }
 
-            const facts = metadata.inspectMetaFacts(identity)
+            const facts = metadata.inspectDeclarationMetaFacts(identity)
             if (facts.type === languageValues.TYPE_EXTERNAL) {
                 if (!facts.admittedPrototype) {
                     return root
@@ -155,14 +149,14 @@ function isConstructor(value) {
     }
 }
 
-function validateDeclarationTarget(value, api, isPromise) {
+function validateDeclarationTarget(value, api) {
     if (!metadata.isObjectLike(value)) {
         return errorUtils.hostValidationError(`${api} requires an object`)
     }
     if (typeof value === "function") {
         return errorUtils.hostValidationError(`${api} cannot declare a Function`)
     }
-    if (isPromise(value)) {
+    if (errorUtils.runUserCode(() => typeof value.then === "function")) {
         return errorUtils.hostValidationError(`${api} cannot declare a Promise`)
     }
     return undefined

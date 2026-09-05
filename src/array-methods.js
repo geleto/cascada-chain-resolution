@@ -9,6 +9,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
+import * as resolution from "./resolution.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -310,7 +311,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
             invocationContext,
         )
         if (languageValues.isError(prepared)) return prepared
-        if (languageValues.isPromise(prepared, invocationContext.operationContext)) {
+        if (languageValues.isPending(prepared, invocationContext.operationContext)) {
             pending.push(operationLifecycle.continuePrepared(
                 invocationContext,
                 prepared,
@@ -515,7 +516,7 @@ function compareExported(comparator, left, right, operationContext) {
             errorUtils.ERROR_KIND.UserCallThrew,
         )
     }
-    if (languageValues.isPromise(result, operationContext)) {
+    if (errorUtils.runUserCode(() => languageValues.isPending(result, operationContext))) {
         throw errorUtils.validationError(
             "Promise-returning Array sort comparators are unsupported",
             operationContext,
@@ -543,51 +544,27 @@ function includes(
     if (start >= length) return false
     const pending = []
     for (let index = start; index < length; index++) {
-        const key = String(index)
-        if (!languageProperties.hasLanguageProperty(
-            thisValue,
-            key,
-            invocationContext.operationContext,
-        )) {
-            if (searchValue === undefined) return true
-            continue
-        }
-        const value = languageProperties.readLanguageProperty(
-            thisValue,
-            key,
-            invocationContext.operationContext,
+        const branch = operationLifecycle.continueInternal(
+            invocationContext,
+            propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationContext.operationContext),
+            matches,
         )
-        if (languageValues.isPromise(value, invocationContext.operationContext)) {
-            pending.push(key)
-        } else if (matches(value)) {
+        if (languageValues.isPending(branch, invocationContext.operationContext)) pending.push(branch)
+        else if (branch) {
+            for (const wait of pending) resolution.markPromiseHandled(wait)
             return true
         }
     }
     if (pending.length === 0) return false
 
     let remaining = pending.length
-    let resolveResult
-    let rejectResult
-    const result = new Promise((resolve, reject) => {
-        resolveResult = resolve
-        rejectResult = reject
-    })
-    for (const key of pending) {
-        const branch = operationLifecycle.continueInternal(
-            invocationContext,
-            propertyVersions.resolvePropertyValueAtKey(
-                thisValue,
-                key,
-                invocationContext.operationContext,
-            ),
-            value => {
-                if (matches(value)) return finish(true)
-                if (--remaining === 0) finish(false)
-            },
-        )
-        if (languageValues.isPromise(branch, invocationContext.operationContext)) {
-            operationLifecycle.observeFatal(invocationContext, branch, rejectResult)
-        }
+    const { promise: result, resolve: resolveResult } = Promise.withResolvers()
+    for (const wait of pending) {
+        const branch = operationLifecycle.continueInternal(invocationContext, wait, found => {
+            if (found) return finish(true)
+            if (--remaining === 0) finish(false)
+        })
+        resolution.markPromiseHandled(branch)
     }
     return result
 
@@ -621,10 +598,7 @@ function orderedIndexSearch(
     let index = backwards
         ? normalizeBackwardStart(fromIndex, length)
         : normalizeForwardStart(fromIndex, length)
-    const result = next()
-    if (!languageValues.isPromise(result, invocationContext.operationContext)) return result
-
-    return result
+    return next()
 
     function next() {
         while (index >= 0 && index < length) {
@@ -643,7 +617,7 @@ function orderedIndexSearch(
                 key,
                 invocationContext.operationContext,
             )
-            if (languageValues.isPromise(value, invocationContext.operationContext)) {
+            if (languageValues.isPending(value, invocationContext.operationContext)) {
                 return operationLifecycle.continueInternal(
                     invocationContext,
                     propertyVersions.resolvePropertyValueAtKey(

@@ -11,7 +11,6 @@ import {
     readPath,
     exportValue,
     importValue,
-    setFatalErrorReporter,
     deferred,
     errorCause,
     flushMicrotasks,
@@ -69,13 +68,7 @@ describe("Chain root state", () => {
                     throw failure
                 },
             })
-            let reported
-            setFatalErrorReporter(error => {
-                reported = error
-            })
-
             expect(errorCause(operation(value))).to.be(failure)
-            expect(reported).to.be(undefined)
         }
     })
 

@@ -17,14 +17,15 @@ function setProperty(
     operationContext,
     attachmentRoot = undefined,
 ) {
-    if (attachmentRoot && containsPromise(value, operationContext)) {
-        metadata.markShared(attachmentRoot, operationContext)
-    }
-    propertyVersions.assignProperty(parent, key, value, operationContext)
+    const result = propertyVersions.assignProperty(parent, key, value, operationContext)
+    if (attachmentRoot && containsPromise(
+        languageProperties.readLanguageProperty(parent, key, operationContext), operationContext,
+    )) metadata.markShared(attachmentRoot, operationContext)
+    return result
 }
 
 function containsPromise(value, operationContext, visited = new Set()) {
-    if (languageValues.isPromise(value, operationContext)) return true
+    if (languageValues.isPending(value, operationContext)) return true
     if (
         !languageValues.isTraversable(value, operationContext) ||
         visited.has(value)
@@ -94,11 +95,10 @@ function shallowCopyPathContainer(source, pathKey, attachmentRoot, operationCont
             key,
             operationContext,
         )
-        if (languageValues.isPromise(value, operationContext)) {
-            const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
+        if (languageValues.isPending(value, operationContext)) {
+            const sourceMirror = propertyVersions.requirePromiseMirror(
                 source,
                 key,
-                value,
                 operationContext,
             )
             propertyVersions.placePromiseVersion(
@@ -120,7 +120,7 @@ function shallowCopyPathContainer(source, pathKey, attachmentRoot, operationCont
             operationContext,
         )
     }
-    propertyVersions.indexValueIfSourceIndexed(source, destination, operationContext)
+    refcounts.indexValueIfSourceIndexed(source, destination, operationContext)
     return {
         value: destination,
         attachmentRoot,
@@ -196,7 +196,7 @@ function transformValue(
         ),
     )
 
-    if (!languageValues.isPromise(readiness, operation.operationContext)) {
+    if (!languageValues.isPending(readiness, operation.operationContext)) {
         const outcome = prepareMutationPublication(readiness)
         if (outcome.mutatedValue !== originalValue) {
             publishValue(outcome.mutatedValue)
@@ -216,19 +216,25 @@ function transformValue(
         })
         : undefined
     publishValue(mutatedValueGate)
-    operationLifecycle.continueInternal(
+    const publication = operationLifecycle.continueInternal(
         operation,
         readiness,
         outcome => {
             outcome = prepareMutationPublication(outcome)
             // This private publication gate has only a resolve capability.
-            operationLifecycle.continueInternal(operation, mutatedValueGate, () => {
-                if (returnResultPromise) resolveResult(outcome.result)
-                operationLifecycle.close(operation)
-            })
+            const completion = operationLifecycle.continueInternal(
+                operation,
+                mutatedValueGate,
+                () => {
+                    if (returnResultPromise) resolveResult(outcome.result)
+                    operationLifecycle.close(operation)
+                },
+            )
+            resolution.markPromiseHandled(completion)
             resolveMutatedValue(outcome.mutatedValue)
         },
     )
+    resolution.markPromiseHandled(publication)
     return result
 
     function normalizeMutationOutcome(outcome) {
@@ -274,13 +280,10 @@ function assignPath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         if (errorUtils.isFatalError(value)) throw value
-        if (!Error.isError(value)) {
-            languageValues.admitValue(value, operationContext)
-        }
         return walkMutationPath(
             chain,
             preparedPath,
@@ -290,14 +293,13 @@ function assignPath(
                     target.propertyKind ===
                     languageProperties.ORDINARY_PROPERTY
                 ) {
-                    setProperty(
+                    return setProperty(
                         target.parent,
                         target.key,
                         value,
                         operationContext,
                         target.attachmentRoot,
                     )
-                    return undefined
                 }
                 if (
                     target.propertyKind ===
@@ -359,7 +361,7 @@ function assignPath(
         return operationLifecycle.continuePrepared(
             operation,
             toArrayLength(value, operation),
-            length => {
+            length => errorUtils.catchUserCodeFailure(() => {
                 let mutatedValue = array
                 const representationCopy =
                     languageProperties.arrayLengthMutationRequiresCopy(
@@ -383,7 +385,8 @@ function assignPath(
                         operation.operationContext,
                     ),
                 }
-            },
+            }, operationContext, errorUtils.ERROR_KIND.PropertyMutationThrew,
+            failure => ({ mutatedValue: failure, result: failure })),
         )
     }
 }
@@ -425,13 +428,15 @@ function walkMutationPath(
     const rootState = chain._state
     const targetPath = ["value", ...path]
     let attachmentRoot
+    let pathSelectionComplete = false
     return walk(rootState, 0, () => {})
 
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
     // for every recursive frame.
     function complete(writeBack, next, targetResult = undefined) {
-        languageValues.admitValue(next, operationContext)
+        pathSelectionComplete = true
+        if (!languageValues.isPending(next, operationContext)) languageValues.admitReadyValue(next, operationContext)
         writeBack(next)
         const outcome = targetResult === undefined &&
             languageValues.isError(next)
@@ -467,6 +472,7 @@ function walkMutationPath(
             return complete(writeBack, key, key)
         }
         const atTarget = index === targetPath.length - 1
+        if (atTarget) pathSelectionComplete = true
         const propertyKind = languageProperties.classifyLanguageProperty(
             value,
             key,
@@ -573,7 +579,7 @@ function walkMutationPath(
         const child = present
             ? languageProperties.readLanguageProperty(parent, key, operationContext)
             : undefined
-        if (languageValues.isPromise(child, operationContext)) {
+        if (languageValues.isPending(child, operationContext)) {
             const pending = propertyVersions.continuePropertyValue(
                 parent,
                 key,
@@ -598,8 +604,12 @@ function walkMutationPath(
                     { parent, key },
                 ),
             )
-            writeBack(parent)
-            return onComplete === undefined ? undefined : pending
+            if (!pathSelectionComplete) writeBack(parent)
+            if (onComplete === undefined && languageValues.isPending(pending, operationContext)) {
+                resolution.markPromiseHandled(pending)
+                return undefined
+            }
+            return pending
         }
 
         return walk(
@@ -625,7 +635,7 @@ function deletePath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runFatal(operationContext, () => {
+    return errorUtils.runOrFailExecution(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         const deletesRoot = preparedPath.length === 0

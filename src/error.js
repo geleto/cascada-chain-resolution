@@ -1,4 +1,8 @@
+import { commitFatal } from "./execution.js"
+
 const CONTEXTLESS_ERROR_CONTEXT = Symbol("contextless Error source")
+const FATAL_ERROR_TOKEN = Symbol("FatalError construction")
+const fatalErrors = new WeakSet()
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
 
 const ERROR_KIND = Object.freeze({
@@ -81,30 +85,24 @@ class CompoundPoisonError extends PoisonError {
     }
 }
 
-class RuntimeError extends CascadaError {
-    #reported = false
-
-    constructor(cause, errorContext) {
+class FatalError extends Error {
+    constructor(token, cause, errorContext) {
+        if (token !== FATAL_ERROR_TOKEN) {
+            throw new TypeError("FatalError cannot be constructed directly")
+        }
         super(
-            errorMessage(cause, "Cascada runtime failed with a non-Error value"),
-            errorContext,
+            errorMessage(cause, "Cascada execution failed with a non-Error value"),
             { cause },
         )
-        this.name = "RuntimeError"
-    }
-
-    report(reporter) {
-        if (!this.#reported) {
-            this.#reported = true
-            try {
-                reporter(this)
-            } catch {
-                // Reporting must never replace the fatal error being thrown.
-            }
-        }
-        throw this
+        this.name = "FatalError"
+        this.errorContext = errorContext
+        fatalErrors.add(this)
+        Object.freeze(this)
     }
 }
+
+Object.defineProperty(FatalError.prototype, "then", { value: undefined })
+Object.freeze(FatalError.prototype)
 
 class UserCodeFailure extends Error {
     constructor(error) {
@@ -113,38 +111,31 @@ class UserCodeFailure extends Error {
     }
 }
 
-let fatalReporter = () => {}
 let userCodeDepth = 0
 
-function reportFatalError(error) {
-    const failure = Error.isError(error) && error instanceof RuntimeError
-        ? error
-        : new RuntimeError(error, CONTEXTLESS_ERROR_CONTEXT)
-    return failure.report(fatalReporter)
+function createFatalError(reason, errorContext) {
+    return isFatalError(reason)
+        ? reason
+        : new FatalError(FATAL_ERROR_TOKEN, reason, errorContext)
 }
 
-function setFatalErrorReporter(reporter = () => {}) {
-    fatalReporter = reporter
+function failExecution(operationContext, reason) {
+    const candidate = createFatalError(reason, operationContext.errorContext)
+    throw commitFatal(operationContext.execution, candidate)
 }
 
-function runFatal(operationContext, fn, value = undefined) {
+function runOrFailExecution(operationContext, fn, value = undefined) {
     if (
         operationContext?.execution === undefined ||
         operationContext.errorContext === undefined
     ) {
-        return reportFatalError(new RuntimeError(
-            new TypeError("Operation context requires execution and errorContext"),
-            CONTEXTLESS_ERROR_CONTEXT,
-        ))
+        return runContextlessFatal(() => {
+            throw new TypeError("Operation context requires execution and errorContext")
+        })
     }
-    return runFatalWork(operationContext.errorContext, fn, value)
-}
+    const fatalError = operationContext.execution.fatalError
+    if (fatalError !== null) throw fatalError
 
-function runContextlessFatal(fn, value = undefined) {
-    return runFatalWork(CONTEXTLESS_ERROR_CONTEXT, fn, value)
-}
-
-function runFatalWork(errorContext, fn, value) {
     try {
         if (userCodeDepth > 0) {
             throw new Error("Cascada cannot be re-entered from supported user code")
@@ -153,21 +144,26 @@ function runFatalWork(errorContext, fn, value) {
     } catch (error) {
         const userFailure = Error.isError(error) &&
             error instanceof UserCodeFailure
-        if (userFailure) {
-            // Contextless configuration preserves the raw host failure. At an
-            // operation boundary, an uncaught signal means its owner failed to
-            // classify supported user code and is therefore a runtime bug.
-            if (errorContext === CONTEXTLESS_ERROR_CONTEXT) {
-                return error.error
-            }
+        return failExecution(
+            operationContext,
+            userFailure ? error.error : error,
+        )
+    }
+}
+
+function runContextlessFatal(fn, value = undefined) {
+    try {
+        if (userCodeDepth > 0) {
+            throw new Error("Cascada cannot be re-entered from supported user code")
         }
-        const failure = Error.isError(error) && error instanceof RuntimeError
-            ? error
-            : new RuntimeError(
-                userFailure ? error.error : error,
-                errorContext,
-            )
-        return reportFatalError(failure)
+        return fn(value)
+    } catch (error) {
+        if (Error.isError(error) && error instanceof UserCodeFailure) {
+            // Declaration probes keep their transitional validation behavior
+            // until Phase 9D-A gives those local catches their final shape.
+            return error.error
+        }
+        throw createFatalError(error, CONTEXTLESS_ERROR_CONTEXT)
     }
 }
 
@@ -178,9 +174,8 @@ function runUserCode(fn) {
     try {
         return fn()
     } catch (error) {
-        if (Error.isError(error) && (
-            error instanceof RuntimeError ||
-            error instanceof UserCodeFailure
+        if (isFatalError(error) || (
+            Error.isError(error) && error instanceof UserCodeFailure
         )) {
             throw error
         }
@@ -191,20 +186,32 @@ function runUserCode(fn) {
 }
 
 function isFatalError(error) {
-    return Error.isError(error) && error instanceof RuntimeError
+    return Error.isError(error) && fatalErrors.has(error)
 }
 
 function catchUserCodeFailure(fn, operationContext, kind, onFailure = value => value) {
-    return catchRawUserCodeFailure(
-        fn,
-        error => onFailure(toPoison(error, operationContext, kind)),
-    )
+    try {
+        const result = fn()
+        const fatalError = operationContext.execution.fatalError
+        if (fatalError !== null) throw fatalError
+        return result
+    } catch (error) {
+        const fatalError = operationContext.execution.fatalError
+        if (fatalError !== null) throw fatalError
+        if (!Error.isError(error) || !(error instanceof UserCodeFailure)) throw error
+        return onFailure(toPoison(error.error, operationContext, kind))
+    }
 }
 
-function catchRawUserCodeFailure(fn, onFailure) {
+function catchRawUserCodeFailure(fn, onFailure, operationContext = undefined) {
     try {
-        return fn()
+        const result = fn()
+        const fatalError = operationContext?.execution.fatalError
+        if (fatalError) throw fatalError
+        return result
     } catch (error) {
+        const fatalError = operationContext?.execution.fatalError
+        if (fatalError) throw fatalError
         if (!Error.isError(error) || !(error instanceof UserCodeFailure)) throw error
         return onFailure(error.error)
     }
@@ -251,10 +258,9 @@ function* flattenErrors(errors) {
 
 function toPoison(reason, operationContext, kind) {
     const isError = Error.isError(reason)
-    if (isError && (
-        reason instanceof RuntimeError ||
-        reason instanceof PoisonError
-    )) return reason
+    if (isError && (isFatalError(reason) || reason instanceof PoisonError)) {
+        return reason
+    }
     return new PoisonError(
         errorMessage(reason, "User code failed with a non-Error value"),
         operationContext.errorContext,
@@ -285,19 +291,18 @@ export {
     CompoundPoisonError,
     CONTEXTLESS_ERROR_CONTEXT,
     ERROR_KIND,
+    FatalError,
     PoisonError,
-    RuntimeError,
     catchRawUserCodeFailure,
     catchUserCodeFailure,
     combineErrors,
+    failExecution,
     hostValidationError,
     isFatalError,
     pathAccessError,
-    reportFatalError,
     runContextlessFatal,
-    runFatal,
+    runOrFailExecution,
     runUserCode,
-    setFatalErrorReporter,
     toPoison,
     validationError,
 }

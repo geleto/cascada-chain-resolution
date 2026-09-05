@@ -103,11 +103,8 @@ describe("ArrayView", () => {
         const pending = deferred()
         const source = [pending.promise, 2]
         new Chain(source)
-        const sourceMirror = propertyVersions.getOrCreatePromiseMirror(
-            source,
-            "0",
-            pending.promise,
-        )
+        propertyVersions.getPropertyPlacement(source, "0").captureVersion()
+        const sourceMirror = propertyVersions.getPromiseMirror(source, "0")
         const pushed = run(new Chain(source), [], "push", [3], {})
         const grownChain = new Chain(pushed)
         assignPath(grownChain, ["4"], 5)

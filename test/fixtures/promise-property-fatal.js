@@ -1,5 +1,4 @@
 import * as runtime from "../../src/index.js"
-import { setFatalErrorReporter } from "../../src/error.js"
 
 const reported = []
 const unhandled = []
@@ -11,7 +10,7 @@ function pendingProperty(changeDescriptor, settledValue = "settled") {
     })
     const root = {}
     const operationContext = {
-        execution: new runtime.Execution(),
+        execution: new runtime.Execution(error => reported.push(error)),
         errorContext: "fixture",
     }
     runtime.assignPath(
@@ -27,9 +26,6 @@ function pendingProperty(changeDescriptor, settledValue = "settled") {
     return root
 }
 
-setFatalErrorReporter(error => {
-    reported.push(error)
-})
 process.on("unhandledRejection", error => {
     unhandled.push(error)
 })
@@ -74,7 +70,6 @@ setImmediate(() => {
     process.stdout.write(JSON.stringify({
         reportCount: reported.length,
         unhandledCount: unhandled.length,
-        sameErrors: reported.every(error => unhandled.includes(error)),
         messages: reported.map(error => error.message),
     }))
 })

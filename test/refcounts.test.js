@@ -19,6 +19,7 @@ import {
     flushMicrotasks,
     expectCounts,
     thrownBy,
+    useTestExecution,
 } from "./support.js"
 
 function keyScanProbe(target) {
@@ -650,6 +651,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(wrongCount)).message).to.be(
             "Counter totals are inconsistent",
         )
+        useTestExecution()
 
         const missing = {}
         missing.self = missing
@@ -659,6 +661,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(missing)).message).to.be(
             "Cycle cut names a missing or non-enumerable property",
         )
+        useTestExecution()
 
         const primitive = {}
         primitive.self = primitive
@@ -668,6 +671,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(primitive)).message).to.be(
             "Cycle cut must contain a traversable value",
         )
+        useTestExecution()
 
         const nonStringKey = { 1: {} }
         buildRefIndex(nonStringKey)
@@ -675,6 +679,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(nonStringKey)).message).to.be(
             "Cycle cut keys must be strings",
         )
+        useTestExecution()
 
         const pending = deferred()
         const mirrored = { pending: pending.promise }
@@ -684,11 +689,14 @@ describe("subtree counters", () => {
             "Pending Promise property also has a cycle cut",
         )
 
-        delete metaOf(mirrored).cycleCuts
-        delete mirrored.pending
-        expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
+        useTestExecution()
+        const detachedMirror = { pending: deferred().promise }
+        buildRefIndex(detachedMirror)
+        delete detachedMirror.pending
+        expect(thrownBy(() => verifyRefCounts(detachedMirror)).message).to.be(
             "Live Promise mirror has no valid language property",
         )
+        useTestExecution()
 
         const nonWritable = { pending: deferred().promise }
         buildRefIndex(nonWritable)
@@ -701,10 +709,12 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(nonWritable)).message).to.be(
             "Live Promise mirror has no valid language property",
         )
+        useTestExecution()
 
         const overlaid = { pending: deferred().promise }
         buildRefIndex(overlaid)
-        metaOf(overlaid).placementVersions.pending.value = {}
+        const unindexed = new Chain({})._state.value
+        metaOf(overlaid).placementVersions.pending.value = unindexed
         expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
@@ -717,6 +727,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(missingChildIndexRoot)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
+        useTestExecution()
 
         const cutTarget = {}
         const cutMiddle = {}
@@ -729,6 +740,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(cutOwner)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
+        useTestExecution()
 
         const missingReverseChild = {}
         const missingReverseRoot = { child: missingReverseChild }
@@ -737,6 +749,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(missingReverseRoot)).message).to.be(
             "Parent edge count is inconsistent",
         )
+        useTestExecution()
 
         const primitiveParentChild = {}
         buildRefIndex(primitiveParentChild)
@@ -744,6 +757,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(primitiveParentChild)).message).to.be(
             "Parent edge points to a non-traversable value",
         )
+        useTestExecution()
 
         const unindexedParentChild = {}
         const unindexedParent = { child: unindexedParentChild }
@@ -753,6 +767,7 @@ describe("subtree counters", () => {
         expect(thrownBy(() => verifyRefCounts(unindexedParentChild)).message).to.be(
             "Parent edge points to non-ref-indexed parent",
         )
+        useTestExecution()
 
         const detachedChild = {}
         const detachedParent = { child: detachedChild }

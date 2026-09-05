@@ -1,40 +1,154 @@
-// --- Notation ---------------------------------------------------------------
-//   a.k.y = 1   -> assignPath(a, ["k", "y"], 1)
-//   = a.k.y     -> lookupPath(a, ["k", "y"])
-//   delete a.k  -> deletePath(a, ["k"])
-//   P(V)        -> a promise P that resolves to value V
-//
-// A Promise mirror owns one logical property version. Assignment and discovery
-// consume raw settlement; retained and exclusive placements sample a captured
-// source mirror at their own FIFO positions.
-
-// Load-bearing helper contract:
-// The initial resolver converts data rejection through
-// resolveInitialValueOrPoison.
-// Later resolvers use onLaterPromiseReady and read the state published by that
-// first FIFO reaction instead of consuming the raw settlement again.
-
-export { Chain, ContextChain } from "./chain.js"
-export { Execution } from "./execution.js"
-export {
+import { Chain, ContextChain } from "./chain.js"
+import {
     CascadaError,
     CompoundPoisonError,
     ERROR_KIND,
+    FatalError,
+    isFatalError,
     PoisonError,
-    RuntimeError,
 } from "./error.js"
-
-export {
-    assignPath, deletePath,
-} from "./mutations.js"
-
-export {
-    exportPath as export, getErrors, hasError, lookupPath,
+import { registerFatalResultRejection, Execution } from "./execution.js"
+import { enter as enterCore } from "./enter.js"
+import {
+    exportPath,
+    getErrors as getErrorsCore,
+    hasError as hasErrorCore,
+    lookupPath as lookupPathCore,
 } from "./observations.js"
-
-export { enter } from "./enter.js"
-export { import } from "./import.js"
-export { run } from "./run.js"
-export {
-    externalState, managedState, managedStateClass,
+import { import as importCore } from "./import.js"
+import {
+    assignPath as assignPathCore,
+    deletePath as deletePathCore,
+} from "./mutations.js"
+import { run as runCore } from "./run.js"
+import * as languageValues from "./language-values.js"
+import { markPromiseHandled } from "./resolution.js"
+import {
+    externalState,
+    managedState,
+    managedStateClass,
 } from "./state-declarations.js"
+
+function exposeResultOrFatal(operationContext, result) {
+    if (
+        Error.isError(result) ||
+        !languageValues.isPending(result, operationContext)
+    ) return result
+
+    const execution = operationContext.execution
+    const {
+        promise: exposedResult,
+        resolve,
+        reject,
+    } = Promise.withResolvers()
+    const unregister = registerFatalResultRejection(execution, reject)
+    const settle = (settlement, value) => {
+        unregister()
+        settlement(value)
+    }
+    const bridge = languageValues.consumeValue(
+        result,
+        operationContext,
+        value => settle(resolve, value),
+        reason => settle(reject, reason),
+    )
+    markPromiseHandled(bridge)
+    return exposedResult
+}
+
+function importValue(value, operationContext) {
+    const result = importCore(value, operationContext)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function lookupPath(chain, path, operationContext) {
+    const result = lookupPathCore(chain, path, operationContext)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function exportValue(chain, path, operationContext) {
+    const result = exportPath(chain, path, operationContext)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function hasError(chain, path, operationContext) {
+    const result = hasErrorCore(chain, path, operationContext)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function getErrors(chain, path, operationContext) {
+    const result = getErrorsCore(chain, path, operationContext)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function run(chain, path, method, args, operationContext, facts) {
+    const result = runCore(chain, path, method, args, operationContext, facts)
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function enter(chain, path, operationContext, entryMutable, onEntered) {
+    const result = enterCore(
+        chain,
+        path,
+        operationContext,
+        entryMutable,
+        onEntered,
+    )
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function assignPath(
+    chain,
+    path,
+    value,
+    operationContext,
+    mutationScopeDepth = path.length,
+) {
+    const result = assignPathCore(
+        chain,
+        path,
+        value,
+        operationContext,
+        mutationScopeDepth,
+    )
+    return exposeResultOrFatal(operationContext, result)
+}
+
+function deletePath(
+    chain,
+    path,
+    operationContext,
+    mutationScopeDepth = path.length,
+) {
+    const result = deletePathCore(
+        chain,
+        path,
+        operationContext,
+        mutationScopeDepth,
+    )
+    return exposeResultOrFatal(operationContext, result)
+}
+
+export {
+    assignPath,
+    CascadaError,
+    Chain,
+    CompoundPoisonError,
+    ContextChain,
+    deletePath,
+    enter,
+    ERROR_KIND,
+    Execution,
+    exportValue as export,
+    externalState,
+    FatalError,
+    getErrors,
+    hasError,
+    importValue as import,
+    isFatalError,
+    lookupPath,
+    managedState,
+    managedStateClass,
+    PoisonError,
+    run,
+}

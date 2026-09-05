@@ -47,8 +47,8 @@ import {
     ContextChain,
     ERROR_KIND,
     Execution,
+    FatalError,
     PoisonError,
-    RuntimeError,
     assignPath,
     deletePath,
     enter,
@@ -57,6 +57,7 @@ import {
     getErrors,
     hasError,
     import as importValue,
+    isFatalError,
     lookupPath,
     managedState,
     managedStateClass,
@@ -80,10 +81,19 @@ Managed records, Arrays, and class instances are traversable. Primitives,
 Functions, Errors, and external identities are terminal values. Records and
 Arrays default to managed; class instances default to external.
 
-### `new Execution()`
+### `new Execution(reporter?)`
 
 Creates runtime state shared by related Chains. Every operation context in one
-execution carries this exact identity.
+execution carries this exact identity. The optional reporter is captured when
+the execution is created and is called once with that execution's first fatal
+`FatalError`; reporting is notification and cannot replace the failure.
+`execution.fatalError` is a read-only query that is `null` until then.
+
+Fatal failure rejects every public operation result that is still pending.
+Already completed results stay completed, and ready results remain synchronous.
+Internal work simply stops when a common continuation next observes the failed
+execution; source Promises are not cancelled and private gates are not settled
+for shutdown.
 
 ### Operation context
 
@@ -93,14 +103,16 @@ identifies the source operation and may differ for every call.
 
 ### Errors
 
-`CascadaError` is the base for runtime-created failures. `PoisonError` is
-recoverable language data; `CompoundPoisonError` contains its flattened,
-cause-deduplicated leaves in `.errors`; `RuntimeError` is a reported fatal
-runtime failure. Each has an opaque `.errorContext`; poison errors also have a
-stable `.kind`. A native host Error consumed by Cascada becomes a `PoisonError`
-whose `.cause` is that Error. Propagation preserves the contextualized
-occurrence; it does not replace its source with the context of a later
-operation. `ERROR_KIND` exports the shared Cascada failure-kind vocabulary.
+`PoisonError` is recoverable language data and currently extends the transitional
+`CascadaError` base. `CompoundPoisonError` contains its flattened,
+cause-deduplicated leaves in `.errors`. `FatalError` extends native `Error`
+directly and is an execution-ending failure; applications recognize it with
+`isFatalError` rather than constructing it. Each has an opaque
+`.errorContext`; poison errors also have a stable `.kind`. A native host Error
+consumed by Cascada becomes a `PoisonError` whose `.cause` is that Error.
+Propagation preserves the contextualized occurrence rather than replacing its
+source with a later operation. `ERROR_KIND` exports the shared failure-kind
+vocabulary.
 
 ### `new Chain(initialValue, operationContext)`
 
@@ -121,9 +133,11 @@ empty property path replaces the root and likewise creates no authority.
 
 Admits externally owned data and returns its logical root.
 
-For an available root, the original root is returned synchronously after its
-reachable graph is classified. A Promise root returns a Promise for the
-admitted result. Nested Promises are registered without waiting for them.
+For an available root, including a custom thenable consumed synchronously, the
+admitted logical root is returned synchronously after its reachable graph is classified.
+An actually pending Promise root returns a Promise for the admitted result.
+Nested possible Promises are consumed as reached; only returned pending chains
+remain registered after the synchronous import segment.
 Imported identities are protected by copy-on-write, so Cascada mutations never
 modify their host representation. Application code must not mutate the imported
 graph after admission.
@@ -182,8 +196,11 @@ published through the gate; the callback's own result is returned from `enter`.
 A mutating entry requires a mutable parent Chain.
 
 If path resolution produces a language `Error`, the callback is not invoked and
-the Error is returned. A callback throw or rejected callback Promise is fatal,
-closes the temporary Chain, and does not publish its private state.
+the Error is returned. Returning poison, or rejecting the callback's direct
+Promise with poison, completes the entry normally. A callback throw or any
+other rejected callback Promise is fatal, abandons the temporary Chain with the
+failed execution, and does not publish its private state or run fatal-specific
+cleanup.
 
 ### `export(chain, path, operationContext)`
 
@@ -198,7 +215,7 @@ returned. Several leaves produce a `CompoundPoisonError`; nested compounds are
 flattened and repeated native causes are kept once in logical collection order.
 The result is a Promise when the complete snapshot or Error set depends on
 pending data. A language Error keeps the full scan running; a fatal
-`RuntimeError` stops it.
+`FatalError` stops it.
 
 ### `hasError(chain, path, operationContext)`
 
@@ -235,8 +252,9 @@ declaration is harmless; invalid or conflicting input returns a validation
 `Error`. A late declaration never reclassifies an admitted identity and is
 unsupported because it can affect that identity's admission in a later
 execution. Managed classes keep semantic state in own enumerable string-keyed
-data properties and cannot require prototype accessors, private fields, Symbols,
-hidden mutable state, or native internal slots.
+data properties and cannot expose prototype accessors or a callable prototype
+`then`, or require private fields, Symbols, hidden mutable state, or native
+internal slots.
 
 ### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`
 

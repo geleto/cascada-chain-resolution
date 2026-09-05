@@ -1,7 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
-import * as metadata from "./meta.js"
-import * as propertyVersions from "./property-versions.js"
+import { prepareImportedData } from "./import-preparation.js"
 
 const CONTEXT_IMPORT_POLICY = {
     valueKind: errorUtils.ERROR_KIND.ContextValueError,
@@ -50,43 +49,28 @@ function importData(
     importPolicy,
     externalMutationTreeSetup = undefined,
 ) {
-    return errorUtils.runFatal(operationContext, () => {
-        if (!languageValues.isPromise(value, operationContext)) {
-            return prepareRoot(value, externalMutationTreeSetup)
-        }
-        return languageValues.continuePromise(
-            value,
-            operationContext,
-            resolvedValue => errorUtils.runFatal(
+    return errorUtils.runOrFailExecution(operationContext, () => {
+        // Discovery belongs only to work completed in the issuing segment.
+        // Later root fulfillment starts ordinary import without tree authority.
+        try {
+            return languageValues.consumeValue(
+                value,
                 operationContext,
-                prepareRoot,
-                resolvedValue,
-            ),
-            reason => {
-                throw errorUtils.toPoison(
-                    reason,
-                    operationContext,
-                    importPolicy.rejectionKind,
-                )
-            },
-        )
-
-        function prepareRoot(root, treeSetup = undefined) {
-            if (errorUtils.isFatalError(root)) throw root
-            if (Error.isError(root)) {
-                return errorUtils.toPoison(
-                    root,
-                    operationContext,
-                    importPolicy.valueKind,
-                )
-            }
-            if (!metadata.isObjectLike(root)) return root
-            return propertyVersions.prepareImportedValue(
-                root,
-                operationContext,
-                importPolicy,
-                treeSetup,
+                root => errorUtils.runOrFailExecution(operationContext, () =>
+                    prepareImportedData(root, operationContext, importPolicy, externalMutationTreeSetup)),
+                reason => {
+                    throw errorUtils.runOrFailExecution(operationContext, () => {
+                        const failure = errorUtils.toPoison(reason, operationContext, importPolicy.rejectionKind)
+                        if (errorUtils.isFatalError(failure)) throw failure
+                        return failure
+                    })
+                },
             )
+        } catch (failure) {
+            if (failure instanceof errorUtils.PoisonError) return failure
+            throw failure
+        } finally {
+            externalMutationTreeSetup = undefined
         }
     })
 }
