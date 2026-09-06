@@ -69,9 +69,12 @@ custom thenable:
 - may invoke a callback synchronously when its outcome is already available; and
 - returns the callback result directly when it invokes the callback synchronously, or a supported thenable representing that callback's eventual result when delivery is pending.
 
-If a synchronously invoked callback throws, that throw escapes the `then` call
-synchronously. If callback delivery is pending, a later callback throw rejects
-the chain returned by `then`. An implementation that cannot provide this
+If a callback delivered before its own subscription returns throws, that throw
+escapes that `then` call synchronously. Once a subscription returns pending, a
+later callback throw rejects its returned chain, including when another
+subscription drains that older callback synchronously. Catching that older
+throw to reject its chain is required; swallowing a throw from the currently
+supplied synchronous callback is unsupported. An implementation that cannot provide this
 sync-first chain contract should expose a native Promise instead.
 
 A custom thenable delivers a final non-thenable fulfillment value; it owns any
@@ -89,7 +92,11 @@ The `then` invocation is a trusted scheduling protocol, not a general host-code
 callback: its implementation performs its own subscription, delivery, and
 chaining work, and must not call back into Cascada synchronously except through
 the supplied callbacks. Cascada does not add state merely to diagnose violations
-of that contract.
+of that contract. At subscription exit, on return or throw, it checks the
+subscribing operation's execution and propagates any authoritative fatal before
+processing the result. No-op rejection subscriptions use the same boundary;
+their handlers retain rejection ownership after failure. This adds no queue or
+restriction on valid delivery of older pending callbacks.
 
 After consuming a possible thenable, Cascada derives readiness only from the
 returned transition result. A transition that finishes synchronously returns

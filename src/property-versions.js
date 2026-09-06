@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
@@ -148,7 +149,7 @@ function preparePropertyVersion(owner, key, version, operationContext, retained 
     )
     if (languageValues.isPending(publication, operationContext)) {
         version.promise = true
-        resolution.markPromiseHandled(publication)
+        markPromiseHandled(publication, operationContext)
     }
     return publication
 }
@@ -207,7 +208,7 @@ function placePromiseVersion(
     )
     if (languageValues.isPending(publication, operationContext)) {
         mirror.promise = true
-        resolution.markPromiseHandled(publication)
+        markPromiseHandled(publication, operationContext)
     }
     replaceProperty(owner, key, mirror.promise ? mirror : undefined, mirror.value, operationContext)
     return mirror

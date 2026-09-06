@@ -1,5 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
+import { runSubscription } from "./thenable-subscription.js"
 
 const {
     TYPE_ARRAY,
@@ -56,7 +57,8 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
     // The source owns FIFO scheduling. In particular, its supplied callback
     // must run outside the generic host-code re-entry guard.
     try {
-        return Reflect.apply(then, value, [fulfilled, rejected])
+        return runSubscription(operationContext, () =>
+            Reflect.apply(then, value, [fulfilled, rejected]))
     } catch (reason) {
         // A synchronous continuation throw belongs to the continuation. Calling
         // the rejection continuation again would deliver one outcome twice.

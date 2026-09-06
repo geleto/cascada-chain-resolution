@@ -1,8 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 
-const ignore = () => {}
-
 // A direct value runs immediately. Data-Promise rejection becomes a Poison
 // before the continuation runs; continuation throws are Fatal. Initial
 // operation work may be abandoned before admission; graph settlement omits
@@ -62,18 +60,8 @@ function continueInternalResultOrFatal(
     )
 }
 
-function markPromiseHandled(promise) {
-    // These callbacks cannot reject or assimilate a fulfilled payload. Their
-    // returned chain therefore needs no recursive observer.
-    if (promise !== null && typeof promise === "object" &&
-        !Error.isError(promise) && typeof promise.then === "function") {
-        promise.then(ignore, ignore)
-    }
-}
-
 export {
     continueInternalResultOrFatal,
-    markPromiseHandled,
     continueWhenSettled,
     continueInitialValue,
 }

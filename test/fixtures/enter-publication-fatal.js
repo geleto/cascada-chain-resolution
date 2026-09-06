@@ -1,6 +1,5 @@
-import { Chain } from "../../src/chain.js"
-import { enter } from "../../src/enter.js"
-import { Execution } from "../../src/execution.js"
+import assert from "node:assert/strict"
+import * as runtime from "../../src/index.js"
 
 const reported = []
 const unhandled = []
@@ -13,15 +12,29 @@ process.on("unhandledRejection", error => {
 
 const root = { target: {} }
 const operationContext = {
-    execution: new Execution(reportFatal),
+    execution: new runtime.Execution(reportFatal),
     errorContext: "fixture",
 }
+const pending = runtime.import(new Promise(() => {}), operationContext).catch(error => error)
 let entered
-enter(new Chain(root, operationContext), ["target"], operationContext, true, privateChain => {
-    entered = privateChain
-    // Simulate compiler/host corruption that bypasses the root transition.
-    privateChain._state.value = Promise.resolve({ invalid: true })
-})
+let escaped
+try {
+    runtime.enter(new runtime.Chain(root, operationContext), ["target"], operationContext, true, privateChain => {
+        entered = privateChain
+        // Simulate runtime corruption that bypasses the root transition.
+        privateChain._state.value = process.argv[2] === "ready"
+            ? Promise.resolve({ invalid: true })
+            : new Promise(() => {})
+    })
+} catch (failure) {
+    escaped = failure
+}
+assert.equal(runtime.isFatalError(escaped), true)
+assert.equal(escaped, operationContext.execution.fatalError)
+assert.equal(escaped.errorContext, operationContext.errorContext)
+assert.equal(escaped.cause.message, "Pending property has no mirror")
+assert.deepEqual(reported, [escaped])
+assert.equal(await pending, escaped)
 const gate = root.target
 
 const closed = entered._closed === true

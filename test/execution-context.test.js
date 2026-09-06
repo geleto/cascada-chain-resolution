@@ -4,6 +4,7 @@ import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as runtime from "../src/index.js"
 import { readPath } from "../src/observations.js"
+import { runInternalStep } from "../src/error.js"
 import {
     expect,
     flushMicrotasks,
@@ -44,65 +45,68 @@ describe("operation context", () => {
         expect(chain._state.value).to.eql({ value: 1 })
     })
 
-    it("rejects another execution before touching its graph state", () => {
-        const first = new runtime.Execution()
-        const second = new runtime.Execution()
-        const firstOperationContext = operationContext(first, "first")
-        const secondOperationContext = operationContext(second, "second")
-        class Service {}
-        const service = new Service()
-        const value = { count: 1, service }
-        const chain = new runtime.ContextChain(
-            value,
-            firstOperationContext,
-            [["service"]],
-        )
-        const externalMutationTree = chain._externalMutationTree
-        let externalTreeRead = false
-        Object.defineProperty(chain, "_externalMutationTree", {
-            get() {
-                externalTreeRead = true
-                return externalMutationTree
-            },
-        })
-        let entered = false
-        const operations = [
-            () => runtime.lookupPath(chain, ["count"], secondOperationContext),
-            () => readPath(chain, ["count"], secondOperationContext),
-            () => runtime.export(chain, [], secondOperationContext),
-            () => runtime.hasError(chain, [], secondOperationContext),
-            () => runtime.getErrors(chain, [], secondOperationContext),
-            () => runtime.assignPath(
-                chain,
-                ["count"],
-                2,
-                secondOperationContext,
-            ),
-            () => runtime.deletePath(chain, ["count"], secondOperationContext),
-            () => runtime.run(
-                chain,
-                [],
-                "toString",
-                [],
-                secondOperationContext,
-                {},
-            ),
-            () => runtime.enter(
-                chain,
-                ["service"],
-                secondOperationContext,
-                false,
-                () => { entered = true },
-            ),
-        ]
-        for (const operation of operations) expectFatal(operation)
+    for (const [name, operation] of [
+        ["lookupPath", (chain, ctx) => runtime.lookupPath(chain, ["count"], ctx)],
+        ["readPath", (chain, ctx) => readPath(chain, ["count"], ctx)],
+        ["export", (chain, ctx) => runtime.export(chain, [], ctx)],
+        ["hasError", (chain, ctx) => runtime.hasError(chain, [], ctx)],
+        ["getErrors", (chain, ctx) => runtime.getErrors(chain, [], ctx)],
+        ["assignPath", (chain, ctx) => runtime.assignPath(chain, ["count"], 2, ctx)],
+        ["deletePath", (chain, ctx) => runtime.deletePath(chain, ["count"], ctx)],
+        ["run", (chain, ctx) => runtime.run(chain, [], "read", [], ctx, {})],
+        ["enter", (chain, ctx, effect) => runtime.enter(chain, ["service"], ctx, false, effect)],
+    ]) {
+        it(name + " rejects another execution before touching its graph state", () => {
+            const first = new runtime.Execution()
+            const reports = []
+            const second = new runtime.Execution(error => reports.push(error))
+            const firstContext = operationContext(first, "source initialization")
+            const secondContext = operationContext(second, name)
+            let effects = 0
+            const effect = () => { effects++ }
+            class Service {}
+            const service = new Service()
+            const value = { count: 1, service, read: effect }
+            const chain = new runtime.ContextChain(value, firstContext, [["service"]])
+            const externalMutationTree = chain._externalMutationTree
+            let externalTreeRead = false
+            Object.defineProperty(chain, "_externalMutationTree", {
+                get() {
+                    externalTreeRead = true
+                    return externalMutationTree
+                },
+            })
 
-        expect(value.count).to.be(1)
-        expect(entered).to.be(false)
-        expect(externalTreeRead).to.be(false)
-        expect(metadata.metaOf(value, secondOperationContext)).to.be(undefined)
-        expect(second._externalIdentities.get(service)).to.be(undefined)
-    })
+            expect(second.fatalError).to.be(null)
+            const failure = expectFatal(() => operation(chain, secondContext, effect))
+            expect(failure).to.be(second.fatalError)
+            expect(failure.cause.message).to.be("Operation context execution does not match Chain")
+            expect(failure.errorContext).to.be(secondContext.errorContext)
+            expect(reports).to.eql([failure])
+            expect(first.fatalError).to.be(null)
+            expect(value.count).to.be(1)
+            expect(effects).to.be(0)
+            expect(externalTreeRead).to.be(false)
+            expect(metadata.metaOf(value, secondContext)).to.be(undefined)
+            expect(second._externalIdentities.get(service)).to.be(undefined)
+        })
+
+        it(name + " rejects a failed execution with a correctly bound Chain", () => {
+            const execution = new runtime.Execution()
+            const ctx = operationContext(execution, name)
+            let effects = 0
+            const effect = () => { effects++ }
+            const value = { count: 1, service: {}, read: effect }
+            const chain = new runtime.Chain(value, ctx)
+            const failure = expectFatal(() => runInternalStep(ctx, () => {
+                throw new Error("execution already failed")
+            }))
+
+            expect(expectFatal(() => operation(chain, ctx, effect))).to.be(failure)
+            expect(value.count).to.be(1)
+            expect(effects).to.be(0)
+        })
+    }
 
     it("isolates imported mutation state by execution", () => {
         const first = new runtime.Execution()
@@ -282,7 +286,7 @@ describe("operation context", () => {
         expect(readPath(secondChain, [], secondOperationContext)).to.be(resolved)
     })
 
-    it("retains the contexts that first sample and invoke a thenable", async () => {
+    it("attributes then access and invocation failures to their operation contexts", async () => {
         const acquisitionExecution = new runtime.Execution()
         const acquisitionOperationContext = operationContext(
             acquisitionExecution,

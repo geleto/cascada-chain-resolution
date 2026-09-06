@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "../src/thenable-subscription.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 import * as errors from "../src/error.js"
@@ -6,10 +7,17 @@ import * as resolution from "../src/resolution.js"
 import * as lifecycle from "../src/operation-lifecycle.js"
 import * as properties from "../src/property-versions.js"
 import * as metadata from "../src/meta.js"
-import { ready, rejected, OrderedThenable } from "./ordered-thenable.js"
+import { ready, rejected, OrderedThenable, ChainedThenable } from "./ordered-thenable.js"
 
 const context = (reporter = () => {}) => ({ execution: new runtime.Execution(reporter), errorContext: {} })
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve() }
+
+function existingFatal() {
+    const seed = context()
+    try { errors.runInternalStep(seed, () => { throw new Error("original failure") }) }
+    catch (failure) { return failure }
+    assert.fail("Expected a fatal failure")
+}
 
 // ResolvedValue-style direct return and the conforming rejecting protocol.
 // Cascada's legacy PoisonedValue catches callback throws; it is intentionally
@@ -52,6 +60,108 @@ describe("supported thenables", () => {
         assert.deepEqual(order, [1, 2])
         assert.equal(resolution.continueInitialValue(source, ctx, () => 3), 3)
         assert.equal(source.subscriptions, 3)
+    })
+
+    for (const [name, issue] of [
+        ["import", (source, ctx) => runtime.import(source, ctx)],
+        ["Chain construction", (source, ctx) => new runtime.Chain(source, ctx)],
+        ["ContextChain construction", (source, ctx) => new runtime.ContextChain(source, ctx)],
+    ]) {
+        it("propagates an older queued fatal during " + name, async () => {
+            const fatal = existingFatal()
+            const reports = []
+            const earlier = context(error => reports.push(error))
+            const later = { execution: earlier.execution, errorContext: { operation: name } }
+            const waiting = runtime.import(new Promise(() => {}), earlier).catch(error => error)
+            const source = new OrderedThenable()
+            const chain = new runtime.Chain(source, earlier)
+            const originalRoot = chain._state.value
+            source.flushOnSubscribe = true
+            source.resolve(fatal)
+
+            assert.throws(() => issue(source, later), error => error === fatal)
+            assert.equal(earlier.execution.fatalError, fatal)
+            assert.deepEqual(reports, [fatal])
+            assert.equal(await waiting, fatal)
+            await flush()
+            assert.equal(chain._state.value, originalRoot)
+        })
+    }
+
+    for (const exit of ["pending", "invocation throw", "ownership subscription"]) {
+        it("preserves an older queued fatal across " + exit, async () => {
+            const reports = []
+            const ctx = context(error => reports.push(error))
+            const fatal = existingFatal()
+            class ThrowingSubscription extends OrderedThenable {
+                then(onFulfilled, onRejected) {
+                    if (this.outcome) {
+                        this.flush()
+                        throw new Error("invocation failed after queued delivery")
+                    }
+                    return super.then(onFulfilled, onRejected)
+                }
+            }
+            const source = exit === "invocation throw"
+                ? new ThrowingSubscription() : new OrderedThenable()
+            new runtime.Chain(source, ctx)
+            const waiting = runtime.import(new Promise(() => {}), ctx).catch(error => error)
+            source.flushOnSubscribe = true
+            source.deferReady = exit === "pending"
+            source.resolve(fatal)
+            assert.throws(() => exit === "ownership subscription"
+                ? markPromiseHandled(source, ctx)
+                : runtime.import(source, ctx), error => error === fatal)
+            assert.equal(await waiting, fatal)
+            assert.deepEqual(reports, [fatal])
+            await flush()
+        })
+    }
+
+    for (const boundary of ["property ownership", "outward bridge"]) {
+        it("owns fatal rejection during custom derived " + boundary, async () => {
+            const reports = []
+            const ctx = context(error => reports.push(error))
+            const source = new ChainedThenable()
+            const chain = new runtime.Chain({}, ctx)
+            const cause = new Error("older transition failed")
+            const earlier = resolution.continueInternalResultOrFatal(source, ctx, () => { throw cause })
+            markPromiseHandled(earlier, ctx)
+            const waiting = runtime.import(new Promise(() => {}), ctx).catch(error => error)
+            source.resolve(1)
+
+            if (boundary === "outward bridge") {
+                // Core import returns pending. Its bridge then delivers the
+                // older failure; the native executor owns the exposed rejection.
+                const result = runtime.import(source, ctx)
+                assert.equal(result instanceof Promise, true)
+                await assert.rejects(result, error => error === ctx.execution.fatalError)
+            } else {
+                assert.throws(() => runtime.assignPath(chain, ["value"], source, ctx),
+                    error => error === ctx.execution.fatalError)
+                assert.equal(Object.hasOwn(chain._state.value, "value"), false)
+            }
+            const fatal = ctx.execution.fatalError
+            assert.equal(fatal.cause, cause)
+            assert.equal(fatal.errorContext, ctx.errorContext)
+            assert.deepEqual(reports, [fatal])
+            assert.equal(await waiting, fatal)
+            await flush()
+        })
+    }
+
+    it("keeps another execution live when shared scheduling delivers a fatal", async () => {
+        const failed = context()
+        const live = context()
+        const source = new OrderedThenable()
+        const cause = new Error("first execution failed")
+        const earlier = resolution.continueInternalResultOrFatal(source, failed, () => { throw cause })
+        const observed = earlier.catch(error => error)
+        source.flushOnSubscribe = true
+        source.resolve(42)
+        assert.equal(runtime.import(source, live), 42)
+        assert.equal((await observed).cause, cause)
+        assert.equal(live.execution.fatalError, null)
     })
 
     for (const pending of [false, true]) {
@@ -198,7 +308,7 @@ describe("supported thenables", () => {
         const chain = new runtime.Chain({ items: ready([1, never]) }, ctx)
         const removed = runtime.run(chain, ["items"], "pop", [], ctx, { mutationScopeDepth: 1 })
         assert.equal(values.isPending(removed, ctx), true)
-        resolution.markPromiseHandled(removed)
+        markPromiseHandled(removed, ctx)
         assert.deepEqual(runtime.lookupPath(chain, ["items"], ctx), [1])
         assert.equal(runtime.run(chain, ["items"], "push", [2], ctx, { mutationScopeDepth: 1 }), 2)
     })
@@ -363,13 +473,13 @@ describe("supported thenables", () => {
         const ctx = context()
         const pending = Promise.withResolvers()
         const source = { then: (f, r) => pending.promise.then(f, r) }
-        resolution.markPromiseHandled(source)
+        markPromiseHandled(source, context())
         const result = runtime.import(source, ctx)
         const observed = assert.rejects(result, error => error === ctx.execution.fatalError)
         assert.throws(() => errors.runInternalStep(ctx, () => { throw new Error("fatal") }), runtime.isFatalError)
         await observed
         pending.reject(new Error("late rejection"))
         await flush()
-        resolution.markPromiseHandled(rejected(new Error("ready rejection")))
+        markPromiseHandled(rejected(new Error("ready rejection")), context())
     })
 })

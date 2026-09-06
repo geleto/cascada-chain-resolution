@@ -47,8 +47,9 @@ runtime. Invocation is defined in [`run.md`](run.md) and
 
 ## Chain roots
 
-An `Execution` owns the metadata, Promise sampling, and external identity facts
-shared by related Chains. Each constructor and operation receives an operation
+An `Execution` owns the graph metadata, property versions, and external identity
+facts shared by related Chains. Supported thenables own their subscriptions,
+settlement, and FIFO delivery. Each constructor and operation receives an operation
 context `{ execution, errorContext }`; its execution must match the Chain, while
 its error context identifies that operation's source.
 
@@ -92,8 +93,12 @@ program position. Its closure carries the registering operation context, which a
 causal boundary uses when it creates a new failure. An already-ready custom
 thenable may invoke the continuation synchronously, and Cascada preserves that
 synchronous progress. A later ready subscription cannot overtake an earlier
-registered callback still awaiting delivery. A synchronous callback throw
-escapes the `then` call; a later callback throw rejects the returned chain. A
+registered callback still awaiting delivery. A callback delivered before its
+own subscription returns lets its throw escape that call. A callback delivered
+after its subscription returned pending rejects its own chain on failure, even
+when a newer subscription drains it synchronously. Subscription exit checks the
+subscribing execution on return or throw and propagates its authoritative fatal
+before processing a result, including for no-op ownership subscriptions. A
 pending subscription returns the chain supplied by the source. Only such a
 pending returned chain participates in aggregate waits, protection lifetimes,
 or outward fatal-result delivery. The kernel keeps no captured callable, thenability cache, canonical
@@ -448,7 +453,7 @@ The runtime consequences are deliberately small:
 - Public entry throws an already-stored fatal synchronously. A transition that
   detects a new fatal submits and propagates it; a later continuation that merely
   observes failed execution returns. Checks occur only at public entry, common
-  continuation resumption, host-boundary exit, and scheduler dispatch. Synchronous
+  continuation resumption, host-boundary exit, subscription exit, and scheduler dispatch. Synchronous
   JavaScript is not interrupted, and source Promises are neither cancelled nor
   awaited by shutdown.
 - Every ready operation result stays direct. Only an actually pending direct result
@@ -457,6 +462,9 @@ The runtime consequences are deliberately small:
   only queues that transition, so a fatal committed before it runs rejects the
   still-pending wrapper; once it runs, later fatality cannot alter the delivered
   result. Fatal commit also rejects when the ordinary dependency never settles.
+  The native outward Promise executor owns bridge-subscription failure, so no
+  rejected wrapper is lost before it can be returned. Constructors instead use
+  public entry and the common host/subscription checks, with no outward wrapper.
   There is no shared fatal Promise, result history,
   root-only special case, final return check, execution-idle counter, or
   quiescence barrier. A higher runtime calls the same unwrapped core operations

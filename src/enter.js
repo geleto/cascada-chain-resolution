@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
@@ -202,24 +203,11 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
     // Registration happens only after callback issuance has stopped. The root
     // mirror and all earlier private commands therefore update rootState.value
     // first in the same FIFO delivery.
-    const mirror = propertyVersions.getPromiseMirror(
+    const mirror = propertyVersions.requirePromiseMirror(
         rootState,
         "value",
         operationContext,
     )
-    if (!mirror) {
-        // Preserve publication ordering for corrupt raw Promise state: issuance
-        // is already closed; report the invariant failure from this FIFO slot.
-        const publication = resolution.continueWhenSettled(
-            value,
-            operationContext,
-            () => {
-                throw new Error("Entered root remained pending at publication")
-            },
-        )
-        resolution.markPromiseHandled(publication)
-        return
-    }
     const publication = propertyVersions.continuePromiseVersion(
         value,
         mirror,
@@ -231,7 +219,7 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
             resolveGate(publishedValue)
         },
     )
-    resolution.markPromiseHandled(publication)
+    markPromiseHandled(publication, operationContext)
 }
 
 export { enter }

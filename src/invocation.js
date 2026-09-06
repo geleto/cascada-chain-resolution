@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportManyValues } from "./export.js"
 import * as imports from "./import.js"
@@ -52,7 +53,7 @@ class InvocationContext {
                 () => undefined,
                 this.operationContext,
             )
-            resolution.markPromiseHandled(protection)
+            markPromiseHandled(protection, this.operationContext)
         }
     }
 
@@ -233,7 +234,7 @@ function createLeaseLedger(operationContext) {
             return ready
         })
         if (!languageValues.isPending(retained, operationContext)) return retained
-        resolution.markPromiseHandled(retained)
+        markPromiseHandled(retained, operationContext)
         return value
     }
 

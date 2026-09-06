@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
@@ -551,7 +552,7 @@ function includes(
         )
         if (languageValues.isPending(branch, invocationContext.operationContext)) pending.push(branch)
         else if (branch) {
-            for (const wait of pending) resolution.markPromiseHandled(wait)
+            for (const wait of pending) markPromiseHandled(wait, invocationContext.operationContext)
             return true
         }
     }
@@ -564,7 +565,7 @@ function includes(
             if (found) return finish(true)
             if (--remaining === 0) finish(false)
         })
-        resolution.markPromiseHandled(branch)
+        markPromiseHandled(branch, invocationContext.operationContext)
     }
     return result
 

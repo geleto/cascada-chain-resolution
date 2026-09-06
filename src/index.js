@@ -4,6 +4,7 @@ import {
     CompoundPoisonError,
     ERROR_KIND,
     FatalError,
+    failExecution,
     isFatalError,
     PoisonError,
 } from "./error.js"
@@ -22,7 +23,7 @@ import {
 } from "./mutations.js"
 import { run as runCore } from "./run.js"
 import * as languageValues from "./language-values.js"
-import { markPromiseHandled } from "./resolution.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 import {
     externalState,
     managedState,
@@ -36,24 +37,27 @@ function returnOperationResult(operationContext, result) {
     ) return result
 
     const execution = operationContext.execution
-    const {
-        promise: exposedResult,
-        resolve,
-        reject,
-    } = Promise.withResolvers()
-    const unregister = registerFatalResultRejection(execution, reject)
-    const settle = (settlement, value) => {
-        unregister()
-        settlement(value)
-    }
-    const bridge = languageValues.thenValue(
-        result,
-        value => settle(resolve, value),
-        reason => settle(reject, reason),
-        operationContext,
-    )
-    markPromiseHandled(bridge)
-    return exposedResult
+    return new Promise((resolve, reject) => {
+        const unregister = registerFatalResultRejection(execution, reject)
+        const settle = (settlement, value) => {
+            unregister()
+            settlement(value)
+        }
+        // The executor owns an escaping subscription failure as well as normal
+        // delivery, so the outward Promise cannot be rejected and then lost.
+        try {
+            const bridge = languageValues.thenValue(
+                result,
+                value => settle(resolve, value),
+                reason => settle(reject, reason),
+                operationContext,
+            )
+            markPromiseHandled(bridge, operationContext)
+        } catch (failure) {
+            unregister()
+            failExecution(operationContext, failure)
+        }
+    })
 }
 
 function importValue(value, operationContext) {

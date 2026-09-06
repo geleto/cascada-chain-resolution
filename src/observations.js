@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportValue } from "./export.js"
 import * as languageProperties from "./language-properties.js"
@@ -161,7 +162,7 @@ function collectFencedErrorWaits(value, queryContext) {
     walk(value)
     // A synchronous Error proof abandons observed waits, not an aggregate.
     if (!queryContext.open) {
-        for (const wait of waits) resolution.markPromiseHandled(wait)
+        for (const wait of waits) markPromiseHandled(wait, queryContext.operationContext)
         return undefined
     }
     if (waits.length === 0) return undefined

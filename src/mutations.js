@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
@@ -230,11 +231,11 @@ function transformValue(
                     operationLifecycle.close(operation)
                 },
             )
-            resolution.markPromiseHandled(completion)
+            markPromiseHandled(completion, operation.operationContext)
             resolveMutatedValue(outcome.mutatedValue)
         },
     )
-    resolution.markPromiseHandled(publication)
+    markPromiseHandled(publication, operation.operationContext)
     return result
 
     function normalizeMutationOutcome(outcome) {
@@ -606,7 +607,7 @@ function walkMutationPath(
             )
             if (!pathSelectionComplete) writeBack(parent)
             if (onComplete === undefined && languageValues.isPending(pending, operationContext)) {
-                resolution.markPromiseHandled(pending)
+                markPromiseHandled(pending, operationContext)
                 return undefined
             }
             return pending

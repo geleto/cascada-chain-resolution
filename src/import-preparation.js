@@ -1,3 +1,4 @@
+import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { ExternalMutationTree } from "./external-mutation-tree.js"
 import * as languageProperties from "./language-properties.js"
@@ -106,7 +107,7 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
                 )
                 if (languageValues.isPending(publication, operationContext)) {
                     version.promise = true
-                    resolution.markPromiseHandled(publication)
+                    markPromiseHandled(publication, operationContext)
                 } else if (version.value === child) placements.delete(key)
                 if (failure) break
 

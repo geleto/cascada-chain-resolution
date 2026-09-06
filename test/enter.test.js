@@ -1257,24 +1257,26 @@ describe("enter", () => {
         expect(root.target).to.be(gate)
     })
 
-    it("reports raw Promise corruption at the publication boundary", () => {
-        const fixture = fileURLToPath(new URL(
-            "./fixtures/enter-publication-fatal.js",
-            import.meta.url,
-        ))
-        const child = spawnSync(
-            process.execPath,
-            [fixture],
-            { encoding: "utf8" },
-        )
+    for (const readiness of ["pending", "ready"]) {
+        it("reports " + readiness + " raw Promise corruption immediately at publication", () => {
+            const fixture = fileURLToPath(new URL(
+                "./fixtures/enter-publication-fatal.js",
+                import.meta.url,
+            ))
+            const child = spawnSync(
+                process.execPath,
+                ["--unhandled-rejections=strict", fixture, readiness],
+                { encoding: "utf8" },
+            )
 
-        expect(child.status).to.be(0)
-        expect(JSON.parse(child.stdout)).to.eql({
-            closed: true,
-            gateRemainsPending: true,
-            message: "Entered root remained pending at publication",
-            reportCount: 1,
-            unhandledCount: 0,
+            expect(child.status).to.be(0)
+            expect(JSON.parse(child.stdout)).to.eql({
+                closed: true,
+                gateRemainsPending: true,
+                message: "Pending property has no mirror",
+                reportCount: 1,
+                unhandledCount: 0,
+            })
         })
-    })
+    }
 })
