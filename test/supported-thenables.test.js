@@ -73,6 +73,26 @@ describe("supported thenables", () => {
         })
     }
 
+    it("does not redeliver a ready rejection when its continuation throws", () => {
+        const ctx = context()
+        const reason = new Error("rejected")
+        let calls = 0
+        assert.throws(
+            () => values.thenValue(
+                rejected(reason),
+                value => value,
+                error => {
+                    calls++
+                    throw error
+                },
+                ctx,
+            ),
+            error => error === reason,
+        )
+        assert.equal(calls, 1)
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
     it("normalizes ready root and property values without changing mirrors", () => {
         const ctx = context()
         const root = { count: ready(1) }

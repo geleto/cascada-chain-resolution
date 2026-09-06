@@ -27,16 +27,13 @@ class ErrorQueryContext {
     run(chain, path, onResolved) {
         return errorUtils.runInternalStep(this.operationContext, () => {
             chain._assertOperationContext(this.operationContext)
-            return operationLifecycle.doOperationWorkIfStillRelevant(this, () => {
-                const result = walkObservationPath(
-                    chain,
-                    path,
-                    this.operationContext,
-                    value => onResolved(value, this),
-                    error => this.fail(error),
-                )
-                return result
-            })
+            return walkObservationPath(
+                chain,
+                path,
+                this.operationContext,
+                value => onResolved(value, this),
+                error => this.fail(error),
+            )
         })
     }
 
@@ -127,10 +124,7 @@ function searchForFirstError(value, queryContext) {
         operationLifecycle.continueInternalResultOrFatal(
             queryContext,
             readiness,
-            () => operationLifecycle.doOperationWorkIfStillRelevant(
-                queryContext,
-                () => queryContext.finish(false),
-            ),
+            () => queryContext.finish(false),
         ),
     ])
 }
@@ -223,7 +217,8 @@ function collectFencedErrorWaits(value, queryContext) {
             key,
             promise,
             queryContext.operationContext,
-            value => operationLifecycle.doOperationWorkIfStillRelevant(queryContext, () => {
+            value => {
+                if (!queryContext.open) return undefined
                 if (languageValues.isError(value)) {
                     queryContext.found(value)
                     return undefined
@@ -233,7 +228,7 @@ function collectFencedErrorWaits(value, queryContext) {
                 }
 
                 return collectFencedErrorWaits(value, queryContext)
-            }),
+            },
         )
         return result
     }

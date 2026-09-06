@@ -139,10 +139,7 @@ function invokeMethod(
         mutation,
         args,
     )
-    const result = operationLifecycle.doOperationWorkIfStillRelevant(
-        invocationContext,
-        () => accessReceiver(invokeWithReceiver),
-    )
+    const result = accessReceiver(invokeWithReceiver)
 
     if (
         !invocationContext.receiverReached &&

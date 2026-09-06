@@ -183,7 +183,6 @@ function walkExportPromise(parent, key, promise, exportContext, position) {
         promise,
         exportContext.owner.operationContext,
         value => {
-            if (!exportContext.owner.open) return undefined
             return runExportTransition(exportContext, position, () => {
                 const readiness = walkExportValue(value, exportContext, position)
                 if (exportContext.copyBySource) writeOutputProperty(
@@ -199,9 +198,8 @@ function walkExportPromise(parent, key, promise, exportContext, position) {
 }
 
 function runExportTransition(exportContext, position, transition) {
-    return operationLifecycle.doOperationWorkIfStillRelevant(exportContext.owner, () => {
-        return runExportStep(exportContext, position, transition)
-    })
+    if (!exportContext.owner.open) return undefined
+    return runExportStep(exportContext, position, transition)
 }
 
 function createOutputContainer(value, operationContext) {

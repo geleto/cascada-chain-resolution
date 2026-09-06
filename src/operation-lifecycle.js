@@ -53,18 +53,14 @@ function releaseOnClose(operation, release) {
     }
 }
 
-function doOperationWorkIfStillRelevant(operation, work) {
-    if (operation.operationContext.execution.fatalError !== null) return undefined
-    return operation.open ? work() : undefined
-}
-
 function continueResult(operation, result, onReady, continueValue) {
-    return doOperationWorkIfStillRelevant(
-        operation,
-        () => continueValue(
-            result,
-            value => operation.open ? onReady(value) : undefined,
-        ),
+    if (
+        operation.operationContext.execution.fatalError !== null ||
+        !operation.open
+    ) return undefined
+    return continueValue(
+        result,
+        value => operation.open ? onReady(value) : undefined,
     )
 }
 
@@ -190,7 +186,6 @@ export {
     continueAllInternalResultsOrFatal,
     continuePrepared,
     continuePreparedAll,
-    doOperationWorkIfStillRelevant,
     OperationOwner,
     releaseOnClose,
     resolveInitial,

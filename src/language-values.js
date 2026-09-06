@@ -24,8 +24,17 @@ function isPending(value, operationContext) {
 }
 
 function thenValue(value, onFulfilled, onRejected, operationContext) {
-    const fulfilled = wrapContinuation(operationContext, onFulfilled)
-    const rejected = wrapContinuation(operationContext, onRejected)
+    let continuationStarted = false
+    const wrapContinuation = continuation => resolved => {
+        // This distinguishes a callback escape from a failure before delivery.
+        // It is not a readiness signal; the returned result remains authoritative.
+        continuationStarted = true
+        return operationContext.execution.fatalError === null
+            ? continuation(resolved)
+            : undefined
+    }
+    const fulfilled = wrapContinuation(onFulfilled)
+    const rejected = wrapContinuation(onRejected)
     if (errorUtils.isFatalError(value)) throw value
     if (value === null || typeof value !== "object" || Error.isError(value) ||
         metadata.metaOf(value, operationContext)) return fulfilled(value)
@@ -49,17 +58,14 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
     try {
         return Reflect.apply(then, value, [fulfilled, rejected])
     } catch (reason) {
+        // A synchronous continuation throw belongs to the continuation. Calling
+        // the rejection continuation again would deliver one outcome twice.
+        if (continuationStarted) throw reason
         if (errorUtils.isFatalError(reason)) throw reason
         return rejected(errorUtils.toPoison(
             reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationThrew,
         ))
     }
-}
-
-function wrapContinuation(operationContext, continuation) {
-    return value => operationContext.execution.fatalError === null
-        ? continuation(value)
-        : undefined
 }
 
 function valueWithOrigin(value, operationContext, valueKind, rejectionKind) {
