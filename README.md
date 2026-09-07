@@ -103,15 +103,17 @@ identifies the source operation and may differ for every call.
 
 ### Errors
 
-`PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Constructors are protected; trusted runtime code uses the factories from `cascada-chain-resolution/integration`. Complete wrappers and compound child arrays are frozen.
+`PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Trusted runtime code uses the factories from `cascada-chain-resolution/integration`; direct construction is outside the supported API. Complete wrappers and compound child arrays are frozen.
 
 A poison retains its exact native `.cause`, opaque `.errorContext`, and stable `.kind`. Later propagation preserves them. Compounds and `getErrors` flatten and deduplicate by cause, source-context identity, and kind, with unspecified order. Exact causes follow the [diagnostic payload contract](docs/data-limitations.md#errors).
 
-The current Phase 9D-A checkpoint keeps poison non-thenable. Ordinary data rejection is contextualized as poison by its causal continuation and may fulfill an operation Promise with that value; a failed pending Error query explicitly rejects with `QueryReflectionFailed`. Phase 9D-B installs rejecting poison thenables and completes the uniform Promise-rejection transport.
+A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Ready Error results can be inspected directly, and pending normalized graph operations fulfill with the same logical Error after required processing. Raw native Errors receive causal attribution before thenability recognition. FatalError stays non-thenable and is never graph data.
 
-### Trusted higher-runtime integration
+The final graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) adds `lookupPrimitiveValue` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects with its ordinary `.error`.
 
-The [integration subpath](docs/integration.md) exposes unwrapped core work, Error factories, causal method-result import, and the same guarded host/continuation primitives used by the kernel. Internal composition calls no outward wrapper; its final facade calls `returnOperationResult` once.
+### Higher-runtime integration
+
+The source currently implements Phase 9D-A, including its `./integration` surface and pending-query failure rejection. Phase 9D-B completes the [public higher-runtime API](docs/integration.md), removes that subpath and the query rejection wrapper, and adds primitive expression extraction. Cascada then uses only the documented root API; graph values stay in operation Chains and expression failures use the separate container.
 
 ### `new Chain(initialValue, operationContext)`
 

@@ -10,8 +10,9 @@ The runtime recognizes these value categories:
   bigints.
 - **Promise:** a supported thenable consumed for availability after preserving
   Error, Function, and admitted-category semantics.
-- **Language Error:** a recoverable `PoisonError` occurrence or a native host
-  Error awaiting contextualization. Fatal `FatalError` is excluded.
+- **Error value:** a recoverable `PoisonError` or `CompoundPoisonError`, both
+  synchronously recognizable ordinary non-thenable Errors. A raw native Error must
+  be contextualized at its causal boundary. Fatal `FatalError` is excluded.
 - **Managed value:** an Array, record, managed class instance, or internal
   `ArrayView`. Managed values have traversable language properties.
 - **External value:** any other non-null non-Promise object. It retains exact
@@ -391,6 +392,8 @@ no source Promise, parent, key, import context, or import policy.
 
 ## Errors and fatal failures
 
+Normalized kernel results have shape `T | PoisonError | Promise<T | PoisonError>`. Ordinary Errors safely fulfill Promises. The separate immutable non-Error `PoisonedValue` stores one `.error` and supplies sync-first rejection only for expression transport. Native await rejects with that ordinary Error; returning the Error from a rejection handler can fulfill successfully. Its `then` returns itself without a callable rejection handler, otherwise directly returns the handler result and lets throws escape. `FatalError` remains non-thenable and never enters language data.
+
 The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` is the only guarded semantic registration entry. `consumeValue`, property-version advancement, and `collectInputs` are distinct semantic bodies using that entry. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact external escape can reach the fatal envelope. Export uses one visited set and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
 
 A raw failure is contextualized at its first causal boundary. `PoisonError`
@@ -492,10 +495,11 @@ The runtime consequences are deliberately small:
   public entry and the common host/subscription checks, with no outward wrapper.
   There is no shared fatal Promise, result history,
   root-only special case, final return check, execution-idle counter, or
-  quiescence barrier. A higher runtime calls the same unwrapped core operations
-  through the package's trusted integration subpath and applies this return
-  rule only to the outward results it owns; no dynamic public/internal mode is
-  passed into an operation.
+  quiescence barrier. Cascada calls the documented public API; each kernel
+  operation owns its pending result. Guarded composition helpers register none.
+  A higher-runtime operation with additional required work owns its separate
+  final completion, and aliases delegate an existing result unchanged. No
+  dynamic public/internal mode is passed into a graph operation.
 - A direct result remains pending for all boundary processing and publication
   that can still change the operation's specified outcome. Fire-and-register
   returns are issuance outcomes whose gates order later dependent operations;
@@ -536,6 +540,10 @@ still returns `undefined`; any later failure is published only in the graph.
 
 Extracts the value captured at the path and marks a returned graph identity
 shared. The result is synchronous unless path resolution crosses a Promise.
+
+### `lookupPrimitiveValue(chain, path, operationContext)`
+
+Reuse ordinary path observation and return `Primitive | PoisonedValue | Promise<Primitive>`. Accept null, undefined, String, Number, Boolean, BigInt, and Symbol primitives. Preserve an existing Error and convert it at the outward expression boundary; otherwise a non-primitive produces `ExpectedPrimitive` at this operation without coercion, deep export, descendant inspection, or source mutation. Pending failure rejects with an ordinary Error, and ready failure returns its non-Error PoisonedValue container. Required processing precedes final settlement. The compiler selects this API for all graph results entering primitive expressions. Implementation belongs to Phase 9D-B.
 
 ### `readPath(chain, path, operationContext)`
 
@@ -585,8 +593,8 @@ Returns host-ready data for the branch captured at its issue position.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
-pending export rejects with its final single or combined rejecting-thenable
-Error. A synchronous reflection failure returns a contextual export Error. Other unexpected
+pending export fulfills with its final single or combined ordinary Error.
+Final native script delivery applies its explicit failure conversion after export. A synchronous reflection failure returns a contextual export Error. Other unexpected
 traversal failures and rejected internal readiness become fatal `FatalError`.
 Rejected data Promises retain the source boundary that introduced them.
 
@@ -609,7 +617,7 @@ The operation never marks or pins the branch.
 
 If supported user-controlled reflection fails while traversing the query, the
 operation instead produces `QueryReflectionFailed`. A ready query returns that
-poison directly and a pending query rejects with that same poison. It is not a
+poison directly and a pending query fulfills with that same ordinary Error. It is not a
 positive answer and is not an Error found in the graph.
 
 ### `getErrors(chain, path, operationContext)`
@@ -631,7 +639,7 @@ may group a separate view by shared cause identity.
 The operation never marks or pins the branch. It returns the array directly
 when no wait is required and otherwise returns a Promise for that array.
 
-`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, not an element of the collected Array: a ready query returns that poison directly and a pending query rejects with it. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
+`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, not an element of the collected Array: a ready query returns that poison directly and a pending query fulfills with that ordinary Error. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
 
 ## Ref-index contract
 

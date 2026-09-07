@@ -192,6 +192,8 @@ A `run` receiver path ending at either intrinsic `length` selects a number, neve
 
 ## Errors
 
+`run` returns `T | PoisonError | Promise<T | PoisonError>`. A ready Error is directly inspectable; a pending call fulfills with its ordinary Error after required graph effects and complete preparation. A result retained by Cascada goes into an operation Chain; `lookupPrimitiveValue` supplies rejecting transport only when that result enters an expression.
+
 A mutation may capture an independent removed-value Error before replaying its receiver. If replay also fails, publish the replay failure at the receiver and combine both failures for the operation result. A pending independent result waits only in that result; receiver publication remains immediate. Nested removed-result payload remains unconsumed.
 
 A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. A mutation rejected after receiver classification installs its validation Error at that path and returns the same Error.

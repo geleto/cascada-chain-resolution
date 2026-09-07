@@ -36,7 +36,7 @@ Public `import(value, operationContext)` creates no static external mutation tre
 
 ## Promise boundaries
 
-A custom root thenable consumed synchronously returns the ready imported root directly. An actually pending root returns one operation Promise. Fulfillment completes the same import before exposing its value. Rejection remains rejection, with a raw reason contextualized to the import operation and an existing contextualized reason preserved.
+A custom root thenable consumed synchronously returns the ready imported root directly. An actually pending root returns one operation Promise. Its causal completion finishes the same import before exposing the value or ordinary contextual Error. Raw rejection receives the import source and kind; an existing contextualized Error is preserved. A supplied PoisonedValue delivers its ordinary Error through the supported rejection callback and is never admitted as graph data.
 
 A nested pending Promise belongs to its captured property version. Its fulfillment imports newly exposed data before publishing the logical value, while rejection publishes a contextual language Error attributed to this import boundary. Imported physical storage keeps the original Promise; the mirror stores its logical settlement without writeback. A custom thenable that delivers synchronously is already final for this segment: runtime-owned storage publishes its final value directly, while unchanged imported storage uses a fixed logical overlay rather than a Promise mirror. Runtime-owned pending Promise properties retain ordinary writeback.
 

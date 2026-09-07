@@ -70,12 +70,14 @@ A clean receiver is published through the ordinary mutation transition. A receiv
 
 Every managed result is imported without deep-copying it. An observation uses ordinary import. A mutation returning its working receiver returns the published receiver. Every other mutation uses managed mutation-result import: it traverses even an already admitted managed root and marks every reached managed identity shared. A mutation can move a result descendant onto a shorter receiver path, where sharing only the result root would not protect it. Managed mutation-result import protects that descendant without result-provenance state. Its cost is one identity traversal of the non-receiver mutation result.
 
+Managed operation results have shape `T | PoisonError | Promise<T | PoisonError>`. Required completion publishes the logical outcome and returns or fulfills with its ordinary Error. Only a result extracted for an expression uses rejecting transport through `lookupPrimitiveValue`.
+
 A Promise nested inside a synchronous result is ordinary imported data and does not extend the call. A possible Promise returned directly by the method is consumed through the common helper; a sync-first custom outcome continues the call directly, while a returned pending chain is the call completion:
 
 - An observation keeps its receiver leases until settlement. Fulfillment imports the value; rejection leaves the receiver unchanged and preserves an existing contextual failure or wraps a raw reason at the invocation boundary.
 - A mutation keeps its private receiver behind the ordinary transition gate. Fulfillment imports the value, validates the receiver, and publishes one mutation outcome. Rejection contextualizes the same way and poisons the receiver with that occurrence.
 - A direct Error is call failure whether it is returned, fulfilled, thrown, or rejected. An observation returns it; a mutation normally poisons its receiver with it after the defined graph effect.
-- Any recoverable mutation failure normally poisons the receiver and becomes the operation result; pending transport rejects only after that graph effect is published. If replacing the receiver with an Error would remove a live external mutation-tree leaf, discard the private receiver, preserve the original managed state, and return the Error instead.
+- Any recoverable mutation failure normally poisons the receiver and becomes the operation result; pending transport fulfills with that ordinary Error only after the required graph effect is published. If replacing the receiver with an Error would remove a live external mutation-tree leaf, discard the private receiver, preserve the original managed state, and return the Error instead.
 
 A synchronous method throw, explicit returned Error, direct Error fulfillment,
 and direct-result rejection follow the same causal and graph-effect rules for

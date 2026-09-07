@@ -110,7 +110,7 @@ sync-first chain contract should expose a native Promise instead.
 A custom thenable delivers a final non-thenable fulfillment value; it owns any
 nested assimilation before invoking the fulfillment callback. Native Promises
 retain native assimilation. This contract admits Cascada's sync-first resolved
-values and rejecting Errors without imposing a microtask on ready work.
+values and rejecting expression containers without imposing a microtask on ready work.
 
 Cascada invokes `then` through its common continuation helper at the operation's
 program position. The thenable itself owns subscription storage, settlement,
@@ -162,6 +162,8 @@ Failure payloads are diagnostic data. An exact native cause may retain its nativ
 `PoisonError` is recoverable language data. It records an opaque source context, a stable failure kind, and the exact raw cause. Once contextualized, it propagates by reference without changing its source. Separate introductions may construct distinct immutable wrappers. Collection treats wrappers as equivalent when their raw cause, source-context identity, and kind match; physical wrapper identity is not a cross-construction guarantee.
 
 `CompoundPoisonError` contains flattened leaves in `.errors` and preserves each retained leaf's attribution. It and `getErrors` use the same semantic deduplication rule above, with unspecified order and no persistent Error cache. Different source contexts or kinds remain distinct even when the cause is the same. A present cause is compared even when it is `undefined`, `null`, `false`, zero, or `NaN`; causeless validation leaves use their own identity and remain distinct.
+
+Both poison types are ordinary non-thenable **graph Errors**, recognized synchronously with `isPoisonError`. Normalized graph operations return or fulfill with them as data. The separate expression-facing PoisonedValue is not an Error; it retains one Error in `.error` and rejects await/native assimilation with that Error. Public `lookupPrimitiveValue` accepts only JavaScript primitives and returns `Primitive | PoisonedValue | Promise<Primitive>`; it performs no object coercion or descendant traversal. Input consumption converts a supplied expression failure to its ordinary Error before graph admission, preserving source and cause. Raw native Errors acquire attribution at their causal boundary and are recognized before any `then` property is read. Diagnostic views are separate safe non-thenable data.
 
 `FatalError` represents an execution-ending internal defect, broken invariant, or unsafe
 host failure. It is reported and rethrown, never treated as language data.
