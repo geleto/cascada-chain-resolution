@@ -23,20 +23,6 @@ import {
 } from "./support.js"
 
 describe("import", () => {
-    it("requires an operation context", () => {
-        const root = {}
-        let caught
-
-        try {
-            runtime.import(root)
-        } catch (error) {
-            caught = error
-        }
-
-        expect(caught).to.be.a(runtime.FatalError)
-        expect(metaOf(root)).to.be(undefined)
-    })
-
     it("protects imported managed roots", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos

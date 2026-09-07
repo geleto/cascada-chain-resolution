@@ -1,6 +1,6 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import { collectInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -29,7 +29,7 @@ function exportValues(values, owner, onResult) {
     let outputs = new Array(values.length)
     let unregister
     const readiness = values.map((value, position) =>
-        languageValues.consumeValue(
+        internalSteps.consumeValue(
             value,
             operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
@@ -41,7 +41,7 @@ function exportValues(values, owner, onResult) {
             owner,
         ),
     )
-    const result = collectInputs(
+    const result = internalSteps.collectInputs(
         readiness,
         operationContext,
         () => {
@@ -106,7 +106,7 @@ function exportValues(values, owner, onResult) {
         }
         const keys = []
         step(() => {
-            for (const key of languageProperties.languageKeyCandidates(
+            for (const key of languageProperties.enumerableLanguageKeyCandidates(
                 value,
                 operationContext,
             )) {
@@ -158,7 +158,7 @@ function exportValues(values, owner, onResult) {
         }
         return waits.length === 0
             ? undefined
-            : operationLifecycle.continueOperation(
+            : internalSteps.continueOperation(
                   Promise.all(waits),
                   operationContext,
                   () => undefined,
@@ -170,7 +170,7 @@ function exportValues(values, owner, onResult) {
 
 function createOutputContainer(value, operationContext) {
     const meta = metadata.requireMeta(value, operationContext)
-    return meta.type === metadata.TYPE_ARRAY
+    return meta.type === metadata.TYPE.Array
         ? new Array(arrayViews.logicalArrayLength(value, operationContext))
         : Object.create(meta.admittedPrototype)
 }

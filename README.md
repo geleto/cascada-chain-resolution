@@ -233,7 +233,7 @@ Promise for the Array.
 Separately contextualized occurrences of one native Error remain distinct here.
 Export groups those occurrences by their shared native cause.
 
-### State declarations
+### Data declarations
 
 `externalState(value)` declares one exact record, Array, or class instance
 external and returns it. The declaration is shallow.
@@ -251,8 +251,8 @@ declaration is harmless; invalid or conflicting input returns a validation
 `Error`. A late declaration never reclassifies an admitted identity and is
 unsupported because it can affect that identity's admission in a later
 execution. Managed classes keep semantic state in own enumerable string-keyed
-data properties and cannot expose prototype accessors or a callable prototype
-`then`, or require private fields, Symbols, hidden mutable state, or native
+data properties. Prototype accessors are not Cascada methods, and a managed
+prototype cannot expose a callable or accessor `then` or require private fields, Symbols, hidden mutable state, or native
 internal slots.
 
 ### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`

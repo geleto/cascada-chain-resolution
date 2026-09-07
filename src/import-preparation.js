@@ -1,4 +1,4 @@
-import { continueOperation } from "./operation-lifecycle.js"
+import { continueOperation } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { ExternalMutationTree } from "./external-mutation-tree.js"

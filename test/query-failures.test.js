@@ -10,7 +10,7 @@ const flush = async () => {
 }
 
 // The same physical descriptor/keys helpers serve query indexing and export.
-// These cases distinguish their host escapes from adjacent trusted failures.
+// These cases distinguish their external escapes from adjacent trusted failures.
 describe("query and export failure boundaries", () => {
     for (const operation of [
         runtime.hasError,
@@ -95,7 +95,7 @@ describe("query and export failure boundaries", () => {
         const known = kernel.createPoisonError(
             new Error("known"),
             ctx,
-            kernel.ERROR_KIND.HostCallFailed,
+            kernel.ERROR_KIND.InvocationFailed,
         )
         const reveal = Promise.withResolvers()
         const cause = new Error("query scan")

@@ -67,7 +67,7 @@ function getLanguagePropertyDescriptor(parent, key, operationContext) {
     }
     return arrayViews.isArrayView(parent, operationContext)
         ? parent.descriptor(key, operationContext)
-        : errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
+        : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
           )
 }
 
@@ -93,7 +93,7 @@ function propertyMutationRequiresCopy(
         return !isDataPlacement(descriptor) || !descriptor.writable
     }
 
-    const extensible = errorUtils.runHostAction(operationContext, () => Object.isExtensible(projected),
+    const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(projected),
     )
     if (!extensible) return true
     if (!Array.isArray(projected) || !arrayViews.isArrayIndex(key)) {
@@ -193,7 +193,7 @@ function writeLanguageProperty(parent, key, value, operationContext) {
         parent.set(String(key), value, operationContext)
         return
     }
-    errorUtils.runHostAction(operationContext, () => {
+    errorUtils.runExternalAction(operationContext, () => {
         if (Object.hasOwn(parent, key)) {
             parent[key] = value
             return
@@ -241,17 +241,17 @@ function deleteLanguageProperty(parent, key, operationContext) {
     parent = arrayViews.projectionOf(parent, operationContext)
     if (arrayViews.isArrayView(parent, operationContext))
         return parent.delete(String(key), operationContext)
-    return errorUtils.runHostAction(operationContext, () => delete parent[key])
+    return errorUtils.runExternalAction(operationContext, () => delete parent[key])
 }
 
-// Capture candidate keys before consuming values. Descriptor failures belong
-// to individual candidates; only failed key discovery makes an interior unknown.
-function* languageKeyCandidates(value, operationContext) {
+// Capture candidates before descriptor checks so one failing Proxy descriptor
+// cannot hide later siblings from complete Error collection.
+function* enumerableLanguageKeyCandidates(value, operationContext) {
     if (arrayViews.isLogicalArray(value, operationContext)) {
         yield* arrayViews.arrayKeyCandidates(value, operationContext)
         return
     }
-    const keys = errorUtils.runHostAction(operationContext, () =>
+    const keys = errorUtils.runExternalAction(operationContext, () =>
         Reflect.ownKeys(value),
     )
 
@@ -265,7 +265,7 @@ function enumerableLanguageKeys(value, operationContext) {
         return arrayViews.enumerableArrayKeys(value, operationContext)
     }
     const placements = []
-    for (const key of languageKeyCandidates(value, operationContext)) {
+    for (const key of enumerableLanguageKeyCandidates(value, operationContext)) {
         const descriptor = getLanguagePlacementDescriptor(value, key, operationContext)
         if (descriptor) placements.push(key)
     }
@@ -289,7 +289,7 @@ export {
     getLanguagePlacementDescriptor,
     hasLanguageProperty,
     isCallableThenPlacement,
-    languageKeyCandidates,
+    enumerableLanguageKeyCandidates,
     normalizePathSegment,
     propertyMutationRequiresCopy,
     propertyValidationError,

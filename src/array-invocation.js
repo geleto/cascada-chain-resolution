@@ -1,8 +1,7 @@
-import { prepareInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as operationLifecycle from "./operation-lifecycle.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
@@ -82,7 +81,7 @@ function prepareArrayMethodArguments(methodDefinition, invocationContext) {
         }
         const result = input(args[index], invocationContext)
         readiness.push(
-            operationLifecycle.continueOperation(
+            internalSteps.continueOperation(
                 result,
                 invocationContext.operationContext,
                 value => {
@@ -100,7 +99,7 @@ function prepareArrayMethodArguments(methodDefinition, invocationContext) {
             prepared[index] = invocationContext.retainArgument(args[index])
         }
     }
-    return prepareInputs(
+    return internalSteps.prepareInputs(
         readiness,
         invocationContext.operationContext,
         () => prepared,
@@ -137,7 +136,7 @@ function invokeArrayObservationMethod(
         // Mutators change the receiver remap; observations return one.
         if (methodDefinition.methodResult === undefined) remap = result
     }
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         remap,
         invocationContext.operationContext,
         remap =>
@@ -185,7 +184,7 @@ function invokeArrayMutationMethod(
     }
 
     if (methodDefinition.remap) {
-        return operationLifecycle.continueOperation(
+        return internalSteps.continueOperation(
             methodDefinition.remap(preparedArguments, invocationContext),
             invocationContext.operationContext,
             remap =>
@@ -210,7 +209,7 @@ function invokeArrayMutationMethod(
         invocationContext.operationContext,
     )
     // The intrinsic and its remap traps are trusted work on prepared inputs.
-    // Exact host reflection escapes to the operation's marker consumer.
+    // Exact external reflection escapes to the operation's marker consumer.
     const nativeResult = Reflect.apply(
         methodDefinition.intrinsic,
         mutation.working,
@@ -226,7 +225,7 @@ function invokeArrayMutationMethod(
         if (copiesReceiver) mutation.materialize()
         const returnsReceiver = methodDefinition.methodResult === RETURN_RECEIVER
         // Capture removed property versions before committing the receiver.
-        const result = returnsReceiver
+        let result = returnsReceiver
             ? undefined
             : methodDefinition.methodResult(
                 nativeResult,
@@ -234,19 +233,30 @@ function invokeArrayMutationMethod(
                 invocationContext,
             )
 
-        const mutatedValue = copiesReceiver
-            ? arrayRemaps.createArrayFromRemap(
+        const mutatedValue = runArrayStep(invocationContext, () => {
+            if (copiesReceiver) return arrayRemaps.createArrayFromRemap(
                 mutation.remap,
                 invocationContext.operationContext,
                 undefined,
                 sourceSurvives,
             )
-            : thisValue
-        if (!copiesReceiver) mutation.apply()
-        return {
-            mutatedValue,
-            result: returnsReceiver ? mutatedValue : result,
+            mutation.apply()
+            return thisValue
+        })
+        if (returnsReceiver) result = mutatedValue
+        else if (errorUtils.isPoisonError(mutatedValue)) {
+            // Publish receiver failure now; only the independent result waits.
+            result = internalSteps.collectInputs(
+                [mutatedValue, result],
+                invocationContext.operationContext,
+                values => errorUtils.combineErrors(
+                    values.filter(errorUtils.isPoisonError),
+                    "Array mutation failed",
+                ),
+                invocationContext,
+            )
         }
+        return { mutatedValue, result }
     }
 }
 

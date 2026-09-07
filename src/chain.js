@@ -1,5 +1,6 @@
 import * as errorUtils from "./error.js"
 import { importContext } from "./import.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
 
@@ -10,10 +11,10 @@ class Chain {
         entryMutable = undefined,
         externalMutationTree = undefined,
     ) {
-        errorUtils.runInternalStep(operationContext, () => {
+        internalSteps.runInternalStep(operationContext, () => {
             const rootState = {}
             languageValues.admitReadyValue(
-                rootState, operationContext, languageValues.TYPE_RECORD, Object.prototype,
+                rootState, operationContext, languageValues.TYPE.Record, Object.prototype,
             )
             propertyVersions.assignProperty(
                 rootState,

@@ -2,6 +2,7 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -13,7 +14,7 @@ import { walkObservationPath } from "./observations.js"
 import * as propertyVersions from "./property-versions.js"
 
 function enter(chain, path, operationContext, entryMutable, onEntered) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         path = [...path]
         const externalMutationTree = chain._externalMutationTree?.findBranch(path)
@@ -37,7 +38,7 @@ function runEnteredCallback(
     const result = onEntered(enteredChain)
     const fatalError = operationContext.execution.fatalError
     if (fatalError !== null) throw fatalError
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         result,
         operationContext,
         finish,

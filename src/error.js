@@ -1,14 +1,5 @@
-import { commitFatal } from "./execution.js"
-
-const ERROR_TOKEN = Symbol("Kernel Error construction")
-const poisonErrors = new WeakSet()
-const fatalErrors = new WeakSet()
-const hostFailures = new WeakMap()
+const externalThrows = new WeakMap()
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
-const MISSING_OPERATION_CONTEXT = Object.freeze({
-    operation: "runtime entry",
-    problem: "missing operation context or execution binding",
-})
 
 const ERROR_KIND = Object.freeze({
     ChainValueFailed: "ChainValueFailed",
@@ -26,7 +17,7 @@ const ERROR_KIND = Object.freeze({
     QueryReflectionFailed: "QueryReflectionFailed",
     MissingFunction: "MissingFunction",
     NotAFunction: "NotAFunction",
-    HostCallFailed: "HostCallFailed",
+    InvocationFailed: "InvocationFailed",
     ControlledCallbackFailed: "ControlledCallbackFailed",
     InvalidCallbackResult: "InvalidCallbackResult",
     ScalarConversionFailed: "ScalarConversionFailed",
@@ -60,139 +51,102 @@ const ERROR_KIND = Object.freeze({
 })
 
 class PoisonError extends Error {
-    constructor(token, message, errorContext, kind, options) {
-        if (token !== ERROR_TOKEN)
-            throw new TypeError("PoisonError cannot be constructed directly")
+    constructor(message, errorContext, kind, options) {
         super(message, options)
         this.name = "PoisonError"
         this.errorContext = errorContext
         this.kind = kind
-        poisonErrors.add(this)
     }
 }
 
 class CompoundPoisonError extends PoisonError {
-    constructor(token, errors, message) {
-        if (token !== ERROR_TOKEN)
-            throw new TypeError(
-                "CompoundPoisonError cannot be constructed directly",
-            )
-        const kind = errors.every(error => error.kind === errors[0].kind)
-            ? errors[0].kind
+    constructor(leaves, message) {
+        const kind = leaves.every(error => error.kind === leaves[0].kind)
+            ? leaves[0].kind
             : ERROR_KIND.Multiple
-        super(token, message, errors[0].errorContext, kind)
+        super(message, leaves[0].errorContext, kind)
         this.name = "CompoundPoisonError"
-        this.errors = Object.freeze([...errors])
+        this.errors = Object.freeze(leaves)
     }
 }
 
 class FatalError extends Error {
-    constructor(token, cause, errorContext) {
-        if (token !== ERROR_TOKEN)
-            throw new TypeError("FatalError cannot be constructed directly")
+    constructor(cause, errorContext) {
         super(
             errorMessage(cause, "Cascada execution failed with a non-Error value"),
             { cause },
         )
         this.name = "FatalError"
         this.errorContext = errorContext
-        fatalErrors.add(this)
     }
 }
 
-Object.defineProperty(FatalError.prototype, "then", { value: undefined })
-Object.freeze(FatalError.prototype)
-// Poison prototypes receive their final then method and freeze in Phase 9D-B.
+// PoisonError receives its sync-first then method in Phase 9D-B.
 
 function isPoisonError(error) {
-    return poisonErrors.has(error)
+    return Error.isError(error) && error instanceof PoisonError
 }
 function isFatalError(error) {
-    return fatalErrors.has(error)
+    return Error.isError(error) && error instanceof FatalError
 }
 
 function createFatalError(reason, errorContext) {
     return isFatalError(reason)
         ? reason
-        : Object.freeze(new FatalError(ERROR_TOKEN, reason, errorContext))
+        : Object.freeze(new FatalError(reason, errorContext))
 }
 
 function failExecution(operationContext, reason) {
-    throw commitFatal(
-        operationContext.execution,
+    throw operationContext.execution.fail(
         createFatalError(reason, operationContext.errorContext),
     )
-}
-
-let hostCodeDepth = 0
-
-// Conservative probes use this guard with their own exact catch and outcome.
-function enterHostCode() {
-    hostCodeDepth++
-}
-function leaveHostCode() {
-    hostCodeDepth--
-}
-function assertOutsideHostCode() {
-    if (hostCodeDepth > 0)
-        throw new Error("Cascada cannot be re-entered from supported host code")
-}
-
-function runInternalStep(operationContext, work, value) {
-    // One check covers Chain construction and the trusted integration entry.
-    // A source-only context is a plausible integration mistake at this boundary.
-    // Diagnose missing routing, without inspecting source data or inventing an execution.
-    const execution = operationContext?.execution
-    if (execution === undefined || execution === null) {
-        throw createFatalError(
-            new TypeError("Operation context with an execution is required"),
-            MISSING_OPERATION_CONTEXT,
-        )
-    }
-    const fatal = execution.fatalError
-    if (fatal !== null) throw fatal
-    return runWithFatalGuard(operationContext, work, value)
 }
 
 // Entry and continuation callers select live work before this shared envelope.
 // It classifies escaping defects; it does not repeat their routing/lifetime checks.
 function runWithFatalGuard(operationContext, work, value) {
     try {
-        assertOutsideHostCode()
+        if (operationContext.execution._externalActionActive) {
+            throw new Error(
+                "Cascada execution cannot be re-entered from external code",
+            )
+        }
         return work(value)
     } catch (reason) {
         failExecution(
             operationContext,
-            hostFailures.has(reason) ? hostFailures.get(reason) : reason,
+            externalThrows.has(reason) ? externalThrows.get(reason) : reason,
         )
     }
 }
 
 // Only this exact-action producer creates the private escape marker. The owning
 // operation supplies classification after shared graph helpers unwind.
-function runHostAction(operationContext, action) {
+function runExternalAction(operationContext, action) {
+    const execution = operationContext.execution
+    const previousExternalActionActive = execution._externalActionActive
     let result
     let failure
     let failed = false
-    enterHostCode()
+    execution._externalActionActive = true
     try {
         result = action()
     } catch (reason) {
         failed = true
         failure = reason
     } finally {
-        leaveHostCode()
+        execution._externalActionActive = previousExternalActionActive
     }
-    const fatal = operationContext.execution.fatalError
+    const fatal = execution.fatalError
     if (fatal !== null) throw fatal
     if (!failed) return result
     if (isFatalError(failure)) failExecution(operationContext, failure)
     const marker = {}
-    hostFailures.set(marker, failure)
+    externalThrows.set(marker, failure)
     throw marker
 }
 
-// Consume only runHostAction's private escape marker. An ordinary internal throw
+// Consume only runExternalAction's private escape marker. An ordinary internal throw
 // passes through unchanged to the fatal guard, even when it is a PoisonError.
 function catchExternalThrow(
     work,
@@ -204,8 +158,8 @@ function catchExternalThrow(
     try {
         return work()
     } catch (reason) {
-        if (!hostFailures.has(reason)) throw reason
-        failure = hostFailures.get(reason)
+        if (!externalThrows.has(reason)) throw reason
+        failure = externalThrows.get(reason)
     }
     // Contextualization and the owning transition's failure effect are outside
     // recovery. A defect in either must escape to the fatal envelope.
@@ -214,9 +168,9 @@ function catchExternalThrow(
 
 // A complete language-result boundary also contextualizes returned native Errors.
 // Shared reflection helpers instead use the producer/consumer split above.
-function runHostBoundary(operationContext, kind, action) {
+function runExternalBoundary(operationContext, kind, action) {
     const value = catchExternalThrow(
-        () => runHostAction(operationContext, action),
+        () => runExternalAction(operationContext, action),
         operationContext,
         kind,
     )
@@ -230,8 +184,7 @@ function createPoisonError(reason, operationContext, kind) {
     if (isPoisonError(reason)) return reason
     return Object.freeze(
         new PoisonError(
-            ERROR_TOKEN,
-            errorMessage(reason, "Host action failed with a non-Error value"),
+            errorMessage(reason, "External action failed with a non-Error value"),
             operationContext.errorContext,
             kind,
             { cause: reason },
@@ -242,7 +195,6 @@ function createPoisonError(reason, operationContext, kind) {
 function validationError(message, operationContext, kind) {
     return Object.freeze(
         new PoisonError(
-            ERROR_TOKEN,
             message,
             operationContext.errorContext,
             kind,
@@ -250,7 +202,7 @@ function validationError(message, operationContext, kind) {
     )
 }
 
-function hostValidationError(message) {
+function declarationValidationError(message) {
     return new TypeError(message)
 }
 
@@ -264,20 +216,23 @@ function pathAccessError(value, operationContext) {
     )
 }
 
-// One operation-local equivalence rule serves every complete Error collector.
-function collectErrors(errors) {
+// Every CompoundPoisonError already contains leaves, so one-level expansion is
+// sufficient for both compound construction and Error queries.
+function flattenAndDeduplicateErrors(errors) {
     const distinct = []
     const causes = new Map()
-    for (const error of errors) add(error)
-    return distinct
-
-    function add(error) {
+    for (const error of errors) {
         if (!isPoisonError(error))
             throw new TypeError("Error collection requires poison")
         if (error instanceof CompoundPoisonError) {
-            for (const child of error.errors) add(child)
-            return
+            for (const leaf of error.errors) addLeaf(leaf)
+        } else {
+            addLeaf(error)
         }
+    }
+    return distinct
+
+    function addLeaf(error) {
         const cause = Object.hasOwn(error, "cause") ? error.cause : error
         let sources = causes.get(cause)
         if (!sources) causes.set(cause, (sources = new Map()))
@@ -290,12 +245,12 @@ function collectErrors(errors) {
 }
 
 function combineErrors(errors, message) {
-    const distinct = collectErrors(errors)
-    if (distinct.length === 0)
+    const leaves = flattenAndDeduplicateErrors(errors)
+    if (leaves.length === 0)
         throw new TypeError("Error combination requires at least one poison")
-    return distinct.length === 1
-        ? distinct[0]
-        : Object.freeze(new CompoundPoisonError(ERROR_TOKEN, distinct, message))
+    return leaves.length === 1
+        ? leaves[0]
+        : Object.freeze(new CompoundPoisonError(leaves, message))
 }
 
 function errorMessage(reason, objectFallback) {
@@ -319,21 +274,17 @@ export {
     ERROR_KIND,
     FatalError,
     PoisonError,
-    assertOutsideHostCode,
     catchExternalThrow,
-    collectErrors,
     combineErrors,
     createPoisonError,
-    enterHostCode,
     failExecution,
-    hostValidationError,
+    declarationValidationError,
+    flattenAndDeduplicateErrors,
     isFatalError,
     isPoisonError,
-    leaveHostCode,
     pathAccessError,
-    runHostAction,
-    runHostBoundary,
-    runInternalStep,
+    runExternalAction,
+    runExternalBoundary,
     runWithFatalGuard,
     validationError,
 }

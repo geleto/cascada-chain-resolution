@@ -40,7 +40,7 @@ class ExternalMutationTree {
 
         function walkRequests(value, request, path) {
             const type = admittedTypeOf(value)
-            if (type === languageValues.TYPE_EXTERNAL) {
+            if (type === languageValues.TYPE.External) {
                 addLeaf(value, path)
                 return
             }
@@ -69,7 +69,7 @@ class ExternalMutationTree {
 
         function scanScope(value, ancestors, completed) {
             const type = admittedTypeOf(value)
-            if (type === languageValues.TYPE_EXTERNAL) {
+            if (type === languageValues.TYPE.External) {
                 return {
                     paths: [{ identity: value, path: [] }],
                     cyclic: false,
@@ -110,7 +110,7 @@ class ExternalMutationTree {
         function admittedTypeOf(value) {
             if (!metadata.isObjectLike(value)) return undefined
             if (errorUtils.isPoisonError(value))
-                return languageValues.TYPE_ERROR
+                return languageValues.TYPE.Error
             const facts = factsOf(value)
             if (!facts && languageValues.isPending(value, operationContext)) return undefined
             if (!facts) {

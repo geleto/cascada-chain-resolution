@@ -1,4 +1,4 @@
-import { collectInputs } from "../src/input-collection.js"
+import * as internalSteps from "../src/internal-step.js"
 import { markPromiseHandled } from "../src/thenable-subscription.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
@@ -14,7 +14,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 
 function existingFatal() {
     const seed = context()
-    try { errors.runInternalStep(seed, () => { throw new Error("original failure") }) }
+    try { internalSteps.runInternalStep(seed, () => { throw new Error("original failure") }) }
     catch (failure) { return failure }
     assert.fail("Expected a fatal failure")
 }
@@ -26,12 +26,12 @@ describe("supported thenables", () => {
     it("uses direct transitions for ready inputs and nested continuation work", () => {
         const ctx = context()
         assert.equal(
-            values.consumeValue(
+            internalSteps.consumeValue(
                 ready(2),
                 ctx,
                 errors.ERROR_KIND.OperationInputFailed,
                 value =>
-                    values.consumeValue(
+                    internalSteps.consumeValue(
                         ready(3),
                         ctx,
                         errors.ERROR_KIND.OperationInputFailed,
@@ -41,7 +41,7 @@ describe("supported thenables", () => {
             5,
         )
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = collectInputs(
+        const result = internalSteps.collectInputs(
             [ready(1), 2, ready(3)],
             ctx,
             items => items,
@@ -69,14 +69,14 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const order = []
-        const first = values.consumeValue(
+        const first = internalSteps.consumeValue(
             source,
             ctx,
             errors.ERROR_KIND.OperationInputFailed,
             () => order.push(1),
         )
         source.resolve("ready")
-        const second = values.consumeValue(
+        const second = internalSteps.consumeValue(
             source,
             ctx,
             errors.ERROR_KIND.OperationInputFailed,
@@ -87,7 +87,7 @@ describe("supported thenables", () => {
         await Promise.all([first, second])
         assert.deepEqual(order, [1, 2])
         assert.equal(
-            values.consumeValue(
+            internalSteps.consumeValue(
                 source,
                 ctx,
                 errors.ERROR_KIND.OperationInputFailed,
@@ -163,7 +163,7 @@ describe("supported thenables", () => {
                 const source = new ChainedThenable()
                 const chain = new runtime.Chain({}, ctx)
                 const cause = new Error("older transition failed")
-                const earlier = lifecycle.continueOperation(source, ctx, () => {
+                const earlier = internalSteps.continueOperation(source, ctx, () => {
                     throw cause
                 })
                 markPromiseHandled(earlier, ctx)
@@ -196,7 +196,7 @@ describe("supported thenables", () => {
         const live = context()
         const source = new OrderedThenable()
         const cause = new Error("first execution failed")
-        const earlier = lifecycle.continueOperation(source, failed, () => {
+        const earlier = internalSteps.continueOperation(source, failed, () => {
             throw cause
         })
         const observed = earlier.catch(error => error)
@@ -216,7 +216,7 @@ describe("supported thenables", () => {
                 const source = pending ? new OrderedThenable() : ready(1)
                 const cause = new Error("transition failed")
                 const run = () =>
-                    lifecycle.continueOperation(source, ctx, () => {
+                    internalSteps.continueOperation(source, ctx, () => {
                         throw cause
                     })
                 if (pending) {
@@ -293,7 +293,7 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = collectInputs(
+        const result = internalSteps.collectInputs(
             [ready(1), source],
             ctx,
             items => items,
@@ -327,7 +327,7 @@ describe("supported thenables", () => {
                 const ctx = context(error => reports.push(error))
                 let fatal
                 try {
-                    errors.runInternalStep(
+                    internalSteps.runInternalStep(
                         {
                             execution: new runtime.Execution(),
                             errorContext: "fatal fixture",
@@ -532,7 +532,7 @@ describe("supported thenables", () => {
         new runtime.Chain(external, ctx)
         Object.defineProperty(external, "then", { get: fail })
         for (const value of [error, fn, external]) {
-            const result = values.consumeValue(
+            const result = internalSteps.consumeValue(
                 value,
                 ctx,
                 errors.ERROR_KIND.OperationInputFailed,
@@ -548,7 +548,7 @@ describe("supported thenables", () => {
         markPromiseHandled(source, context())
         const result = runtime.import(source, ctx)
         const observed = assert.rejects(result, error => error === ctx.execution.fatalError)
-        assert.throws(() => errors.runInternalStep(ctx, () => { throw new Error("fatal") }), runtime.isFatalError)
+        assert.throws(() => internalSteps.runInternalStep(ctx, () => { throw new Error("fatal") }), runtime.isFatalError)
         await observed
         pending.reject(new Error("late rejection"))
         await flush()

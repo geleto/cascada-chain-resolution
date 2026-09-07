@@ -1,5 +1,4 @@
 import { failExecution, isFatalError } from "./error.js"
-import { registerFatalResultRejection } from "./execution.js"
 import * as languageValues from "./language-values.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
@@ -13,7 +12,7 @@ function returnOperationResult(operationContext, result) {
 
     const execution = operationContext.execution
     return new Promise((resolve, reject) => {
-        const unregister = registerFatalResultRejection(execution, reject)
+        const unregister = execution.registerFatalResultRejection(reject)
         const settle = (settlement, value) => {
             unregister()
             settlement(value)

@@ -1,4 +1,4 @@
-import * as operationLifecycle from "../src/operation-lifecycle.js"
+import * as internalSteps from "../src/internal-step.js"
 import expect from "expect.js"
 
 import * as runtime from "../src/index.js"
@@ -182,7 +182,7 @@ function hasCycleCut(value, key) {
 }
 
 function runInternalStep(work) {
-    return errorUtils.runInternalStep(
+    return internalSteps.runInternalStep(
         testOperationContext("test fatal work"),
         work,
     )
@@ -273,7 +273,7 @@ const testMetadata = {
 }
 
 function consumeValue(value, fn) {
-    return languageValues.consumeValue(
+    return internalSteps.consumeValue(
         value,
         testOperationContext("test initial resolution"),
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -282,7 +282,7 @@ function consumeValue(value, fn) {
 }
 
 function advanceSettledValue(promise, fn) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         promise,
         testOperationContext("test later resolution"),
         fn,
@@ -291,7 +291,7 @@ function advanceSettledValue(promise, fn) {
 }
 
 function continueOperation(internalResult, onFulfilled) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         internalResult,
         testOperationContext("test internal continuation"),
         onFulfilled,

@@ -2,6 +2,7 @@ import * as runtime from "../src/index.js"
 import { runInNewContext } from "node:vm"
 import assert from "node:assert/strict"
 import * as errorUtils from "../src/error.js"
+import * as internalSteps from "../src/internal-step.js"
 
 import {
     testOperationContext,
@@ -462,11 +463,11 @@ describe("run", () => {
 
         expect(run(chain, [], "managed", [], {})).to.be(managed)
         expect(metaOf(managed).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(await run(chain, [], "external", [], {})).to.be(external)
         expect(metaOf(external).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -2358,7 +2359,7 @@ describe("run", () => {
         const source = [2, 1]
         const chain = new Chain(source)
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            internalSteps.runInternalStep(
                 {
                     execution: new runtime.Execution(),
                     errorContext: "fatal fixture",
@@ -3204,10 +3205,9 @@ describe("run", () => {
         expect(reported).to.be(failure)
     })
 
-    it("rejects synchronous Cascada reentry from supported user code", () => {
-        const observed = new Chain({ value: 1 })
+    it("rejects synchronous same-execution reentry from external code", () => {
         const cases = [
-            () => {
+            observed => {
                 const receiver = {}
                 Object.defineProperty(receiver, "reenter", {
                     enumerable: true,
@@ -3217,7 +3217,7 @@ describe("run", () => {
                 })
                 return run(new Chain(receiver), [], "reenter", [], {})
             },
-            () => run(
+            observed => run(
                 new Chain([2, 1]),
                 [],
                 "sort",
@@ -3225,7 +3225,7 @@ describe("run", () => {
                 { mutationScopeDepth: 0 },
 
             ),
-            () => lookupPath(new Chain(new Proxy({}, {
+            observed => lookupPath(new Chain(new Proxy({}, {
                 getOwnPropertyDescriptor() {
                     readPath(observed, [])
                 },
@@ -3237,11 +3237,12 @@ describe("run", () => {
             useTestExecution(error => {
                 reported = error
             })
-            const failure = thrownBy(invoke)
+            const observed = new Chain({ value: 1 })
+            const failure = thrownBy(() => invoke(observed))
 
             expect(failure instanceof Error).to.be(true)
             expect(failure.message).to.be(
-                "Cascada cannot be re-entered from supported host code",
+                "Cascada execution cannot be re-entered from external code",
             )
             expect(reported).to.be(failure)
         }
@@ -3296,14 +3297,19 @@ describe("run", () => {
 
         for (const { method, source = [1, 2], handler } of cases) {
             const failure = new Error(`${method} replay failed`)
+            const removed = source.at(-1)
             const receiver = new Proxy(source, handler(failure))
             const chain = new Chain(receiver)
             buildRefIndex(receiver)
 
             const result = run(chain, [], method, [], { mutationScopeDepth: 0 })
 
-            expect(errorCause(result)).to.be(failure)
-            expect(chain._state.value).to.be(result)
+            if (Error.isError(removed)) {
+                expect(result.errors).to.have.length(2)
+                assert(result.errors.some(error => error.cause === removed))
+                assert(result.errors.some(error => error.cause === failure))
+            } else expect(errorCause(result)).to.be(failure)
+            expect(errorCause(chain._state.value)).to.be(failure)
             verifyRefCounts(receiver)
         }
     })

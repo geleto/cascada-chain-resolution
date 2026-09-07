@@ -1,4 +1,4 @@
-import { prepareInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
@@ -15,7 +15,7 @@ function getManagedMethodDescription(invocationContext) {
     const { mutation, receiver } = invocationContext
     const receiverType = languageValues.typeOf(receiver, invocationContext.operationContext)
     // Preparation resolves receiver contents but never changes its admitted type.
-    const selectMethod = receiverType === languageValues.TYPE_RECORD
+    const selectMethod = receiverType === languageValues.TYPE.Record
         ? selectManagedRecordMethod
         : selectManagedClassMethod
     return {
@@ -56,7 +56,7 @@ function getManagedMethodDescription(invocationContext) {
 }
 
 function prepareManagedReceiverAndArguments(invocationContext) {
-    return prepareInputs(
+    return internalSteps.prepareInputs(
         [
             resolveAndLeaseReceiverGraph(invocationContext),
             invocationContext.exportArguments(),
@@ -81,7 +81,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         visited: new WeakSet(),
     }
     let unregisterRelease
-    const readiness = languageValues.consumeValue(
+    const readiness = internalSteps.consumeValue(
         receiver,
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -97,7 +97,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
             release,
         )
     }
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         readiness,
         invocationContext.operationContext,
         finish,
@@ -122,7 +122,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 
         const keys = []
         catchFailure(() => {
-            for (const key of languageProperties.languageKeyCandidates(
+            for (const key of languageProperties.enumerableLanguageKeyCandidates(
                 value,
                 invocationContext.operationContext,
             )) {
@@ -200,7 +200,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 function combineReadiness(invocationContext, waits) {
     if (waits.length === 0) return undefined
     if (waits.length === 1) return waits[0]
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         Promise.all(waits),
         invocationContext.operationContext,
         () => undefined,
@@ -246,18 +246,18 @@ function selectManagedClassMethod(receiver, invocationContext) {
     ).admittedPrototype
     while (
         prototype !== null &&
-        !errorUtils.runHostAction(operationContext, () =>
+        !errorUtils.runExternalAction(operationContext, () =>
             metadata.isPlainObjectPrototype(prototype),
         )
     ) {
-        const descriptor = errorUtils.runHostAction(
+        const descriptor = errorUtils.runExternalAction(
             operationContext,
             () => Object.getOwnPropertyDescriptor(prototype, method),
         )
         if (descriptor) {
             if (!("value" in descriptor)) {
                 const failure = errorUtils.validationError(
-                    "Managed class prototype accessor changed",
+                    "Managed class methods must be data properties",
                     operationContext,
                     errorUtils.ERROR_KIND.InvalidManagedReceiver,
                 )
@@ -272,7 +272,7 @@ function selectManagedClassMethod(receiver, invocationContext) {
                     operationContext,
                 )
         }
-        prototype = errorUtils.runHostAction(
+        prototype = errorUtils.runExternalAction(
             operationContext,
             () => Object.getPrototypeOf(prototype),
         )
@@ -362,7 +362,7 @@ function materializeObservationReceiver(receiver, invocationContext) {
                 operationContext,
             )
             if (
-                propertyVersions.getPromiseMirror(source, key, operationContext) !==
+                propertyVersions.getPlacementVersion(source, key, operationContext) !==
                 undefined
             ) {
                 const descriptor = languageProperties
@@ -461,7 +461,7 @@ function isolateMutationReceiver(receiver, invocationContext) {
 function requiresIsolation(value, operationContext) {
     return metadata.requiresCopyOnWrite(value, operationContext) ||
         refcounts.getRefCounter(value, operationContext) !== undefined ||
-        propertyVersions.hasPromiseMirrors(value, operationContext) ||
+        propertyVersions.hasPlacementVersions(value, operationContext) ||
         arrayViews.requiresArrayMaterialization(value, operationContext)
 }
 
@@ -496,7 +496,7 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
 
 function invokeObservation(callable, receiver, args, operationContext) {
     return imports.importMethodResult(
-        invocation.invokeHostFunction(
+        invocation.invokeFunction(
             callable,
             receiver,
             args,
@@ -507,13 +507,13 @@ function invokeObservation(callable, receiver, args, operationContext) {
 }
 
 function invokeMutation(callable, receiver, args, operationContext) {
-    const result = invocation.invokeHostFunction(
+    const result = invocation.invokeFunction(
         callable,
         receiver,
         args,
         operationContext,
     )
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         result,
         operationContext,
         complete,
@@ -524,15 +524,15 @@ function invokeMutation(callable, receiver, args, operationContext) {
         const failure = errorUtils.createPoisonError(
             reason,
             operationContext,
-            errorUtils.ERROR_KIND.HostCallFailed,
+            errorUtils.ERROR_KIND.InvocationFailed,
         )
         return { mutatedValue: failure, result: failure }
     }
 
     function complete(value) {
         if (Error.isError(value)) return failed(value)
-        // Direct host failure poisons the receiver. Importing an independent
-        // result can fail separately after the host has completed its mutation.
+        // Direct method failure poisons the receiver. Importing an independent
+        // result can fail separately after the method has completed its mutation.
         const imported =
             value === receiver
                 ? receiver
@@ -603,7 +603,7 @@ function validateReceiver(receiver, operationContext) {
         if (!languageValues.isTraversable(value, operationContext)) return
         const keys = []
         inspect(() => {
-            for (const key of languageProperties.languageKeyCandidates(
+            for (const key of languageProperties.enumerableLanguageKeyCandidates(
                 value,
                 operationContext,
             )) {
@@ -641,11 +641,11 @@ function validateReceiver(receiver, operationContext) {
 
     function hasUnsafeNativeThen(value) {
         for (let current = value; current !== null;) {
-            const descriptor = errorUtils.runHostAction(operationContext, () =>
+            const descriptor = errorUtils.runExternalAction(operationContext, () =>
                 Object.getOwnPropertyDescriptor(current, "then"),
             )
             if (descriptor) return !("value" in descriptor) || typeof descriptor.value === "function"
-            current = errorUtils.runHostAction(operationContext, () => Object.getPrototypeOf(current),
+            current = errorUtils.runExternalAction(operationContext, () => Object.getPrototypeOf(current),
             )
         }
         return false

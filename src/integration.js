@@ -14,7 +14,7 @@ export {
     externalState,
     managedState,
     managedStateClass,
-} from "./state-declarations.js"
+} from "./data-declarations.js"
 export { returnOperationResult } from "./operation-result.js"
 export {
     PoisonError,
@@ -27,8 +27,7 @@ export {
     failExecution,
     isPoisonError,
     isFatalError,
-    runHostBoundary,
-    runInternalStep,
+    runExternalBoundary,
 } from "./error.js"
-export { continueOperation } from "./operation-lifecycle.js"
+export { continueOperation, runInternalStep } from "./internal-step.js"
 export { isPending } from "./language-values.js"

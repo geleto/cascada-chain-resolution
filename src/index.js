@@ -26,7 +26,7 @@ import {
     externalState,
     managedState,
     managedStateClass,
-} from "./state-declarations.js"
+} from "./data-declarations.js"
 
 function importValue(value, operationContext) {
     const result = importCore(value, operationContext)

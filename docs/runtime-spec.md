@@ -26,7 +26,7 @@ checks native lookup on the receiver and every traversable managed descendant,
 including non-enumerable own properties, Array non-index properties, and
 inherited descriptors. Callable data properties and accessors produce
 `InvalidManagedReceiver` without invoking accessors. Managed-class declaration
-and snapshot adoption also reject callable `then` on the retained prototype
+and snapshot adoption also reject callable or accessor `then` on the retained prototype
 chain, which must remain stable. Standard prototypes remain stable. Exact
 Functions and external identities used as successful non-Promise values must
 have a stable native `then` lookup that safely yields a non-callable value from
@@ -228,10 +228,11 @@ Every host-provided root must pass through:
 runtime.import(value, operationContext)
 ```
 
-`operationContext` carries the execution and source-error information. The kernel
-trusts its arbitrary source payload but explicitly checks the minimal routing
-invariants: a missing context or execution mismatch is a fatal integration error
-before graph access.
+`operationContext` carries the execution and source-error information as trusted
+compiler/runtime control state. A malformed root integration call produces an
+ordinary JavaScript programming error without constructing a contextless fatal
+outcome. A defect escaping work under a valid operation context enters its fatal
+guard normally. Chain/execution mismatch remains fatal before graph access.
 
 For a ready root, including a custom thenable consumed synchronously, import
 returns its admitted logical value after one transactional synchronous walk.
@@ -339,6 +340,15 @@ materialize ordinary writable storage before committing. It is not a language
 failure. If the selected representation still cannot perform a preflighted
 commit, the violated runtime invariant is fatal.
 
+Managed storage may use a host-supplied Proxy under the
+[managed-storage contract](data-limitations.md#proxies-in-managed-storage).
+Each primitive write, definition, or deletion implements the requested operation
+on success and leaves the represented graph unchanged on failure. Storage work
+precedes placement-version and refcount commit. This is a trusted restriction,
+with no Proxy detection or rollback machinery; it does not require whole-operation
+atomicity for managed methods or external mutations. Internal Array remapping
+Proxies remain runtime control representations.
+
 ## Placement versions
 
 A placement overlay holds the logical value when physical storage must remain
@@ -365,7 +375,8 @@ value; a resulting Error carries its own context and kind. Later continuations
 use FIFO readiness and read that published value instead of reinterpreting the
 raw settlement payload. A live runtime-owned version normally
 writes through to its physical property. If writeback reflection fails, its
-Error remains logical in the mirror and the physical Promise is preserved. An
+Error remains logical in the mirror and the previous physical value is preserved,
+whether it is still a Promise or was published by an earlier transition. An
 imported pending version always preserves the external Promise.
 
 A fork subscribes to the source mirror through the common FIFO continuation path
@@ -380,7 +391,7 @@ no source Promise, parent, key, import context, or import policy.
 
 ## Errors and fatal failures
 
-The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` is the only guarded semantic registration entry. `consumeValue`, property-version advancement, and `collectInputs` are distinct semantic bodies using that entry. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact host escape can reach the fatal envelope. Export uses one visited set and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
+The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` is the only guarded semantic registration entry. `consumeValue`, property-version advancement, and `collectInputs` are distinct semantic bodies using that entry. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact external escape can reach the fatal envelope. Export uses one visited set and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
 
 A raw failure is contextualized at its first causal boundary. `PoisonError`
 stores that boundary's opaque `errorContext` and stable `kind`; a wrapped host
@@ -391,26 +402,32 @@ another causal occurrence creates another wrapper rather than changing the
 earlier occurrence. The public `ERROR_KIND` object defines the shared Cascada
 failure-kind vocabulary.
 
-Runtime construction uses protected factories and private semantic brands. The public
-construction boundary validates only its private token; trusted factories receive the
-authoritative kind and source directly rather than revalidating trusted internal calls.
-Focused construction and route tests verify those outcomes. Each completed Error is frozen; compound child arrays are copied
-and frozen first. Prototype shape alone is not trusted, and arbitrary cause properties
-are not copied into a wrapper. Precise predicates distinguish poison, `FatalError`,
+Runtime construction uses shared factories. Semantic recognition first establishes native
+Error identity with `Error.isError`, then uses ordinary `instanceof` inheritance. This avoids
+prototype traversal for arbitrary non-Error Proxies; standard Error prototype chains must remain
+unmodified. Trusted factories receive the authoritative kind and source directly rather
+than revalidating trusted internal calls. The programming API adds no token or registry to defend against deliberate direct
+construction, subclassing, or prototype mutation. Each factory-produced Error is frozen;
+compound child arrays are copied and frozen first, and arbitrary cause properties are not
+copied into a wrapper. Precise predicates distinguish poison, `FatalError`,
 and an unclassified native Error before ordinary thenability recognition. Kernel Errors
 expose only `name`, unformatted `message`, opaque `errorContext`, optional exact
 `cause`, poison `kind`, and compound-only `.errors`; source presentation belongs
 to a separate higher-runtime diagnostic view.
 
-`CompoundPoisonError` flattens nested compounds and shares collection-local
-raw-cause/source-context/kind deduplication with `getErrors`. Child order and the
+The `combineErrors` factory expands direct compound inputs to their already-flat
+children and shares collection-local raw-cause/source-context/kind deduplication
+with `getErrors`. It returns a sole distinct leaf unchanged before allocating an
+Error. For several leaves, the constructor trusts and freezes the finalized
+leaf-only `.errors` array; the factory freezes the complete compound. Recursive
+flattening is unnecessary. Child order and the
 retained representative are unspecified; different contexts or kinds remain
 distinct. Existing contextualized Errors propagate by reference. No persistent
 Error cache or cross-construction wrapper identity is required. See the bounded
 [Error-handling nondeterminism](data-limitations.md#allowed-nondeterminism-in-error-handling) contract.
 
 Synchronous failures from supported user code and exact reflection hooks become
-language Errors at those boundaries. One narrow host-boundary helper catches
+language Errors at those boundaries. One narrow external-boundary helper catches
 only the exact action, checks fatal state, and preserves or contextualizes its
 outcome; the owning semantic boundary then applies the graph effect. Adjacent
 runtime work remains outside that catch and is fatal. Explicit conservative
@@ -422,10 +439,11 @@ fatal-on-escape transition is a fatal trusted-contract violation.
 A direct Error result always means its boundary failed, whether returned,
 fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
 effect in every case; an Error cannot be a successful direct payload.
-Supported host code must not synchronously re-enter Cascada. The outer
-transition has not yet published an ordering point, so attempted re-entry is a
-fatal host-contract violation. Higher-runtime nested dispatch occurs outside an
-active host boundary.
+Supported external code must not synchronously re-enter the same execution. The
+outer transition has not yet published an ordering point, so attempted
+same-execution re-entry is a fatal host-contract violation. A separate execution
+may start immediately. Compiler-controlled script calls and recursion are
+internal work rather than external actions.
 
 A raw data-Promise rejection is contextualized once in the first import,
 mirror, validation, or publication continuation already required by its causal
@@ -441,10 +459,9 @@ queried as language data. A
 `FatalError` physically received by return, fulfillment, throw, rejection, or
 graph traversal is submitted to the current execution before success handling.
 Continuation failures, invariant violations, and rejected internal aggregate
-waits follow this path. Its frozen prototype has an own non-callable `then` so
-native Promise assimilation cannot turn the fatal branch into Cascada's
-thenable language-Error branch if `Error.prototype` is modified. This targeted
-protocol invariant does not imply general support for modified primordials.
+waits follow this path. `FatalError` has no callable `then` under the supported
+stable standard Error prototype contract; the runtime does not harden shared
+Error prototypes against deliberate modification.
 
 [`error-handling.md`](error-handling.md) is authoritative for the fatal lifecycle,
 operation-result delivery, reporter behavior, Error surface, and Promise ownership.
@@ -461,7 +478,7 @@ The runtime consequences are deliberately small:
 - Public entry throws an already-stored fatal synchronously. A transition that
   detects a new fatal submits and propagates it; a later continuation that merely
   observes failed execution returns. Checks occur only at public entry, common
-  continuation resumption, host-boundary exit, subscription exit, and scheduler dispatch. Synchronous
+  continuation resumption, external-boundary exit, subscription exit, and scheduler dispatch. Synchronous
   JavaScript is not interrupted, and source Promises are neither cancelled nor
   awaited by shutdown.
 - Every ready operation result stays direct. Only an actually pending direct result
@@ -541,7 +558,7 @@ repair-and-call on a selected external boundary.
 ### `repairPath(chain, path, operationContext)`
 
 Performs an exclusive repair-only operation at an existing fixed external
-location. It clears repairable external phase poison, invokes no host code,
+location. It clears repairable external phase poison, invokes no external code,
 repairs no managed graph Error, and returns `undefined` directly or through a
 Promise when it must wait for path resolution or earlier external work. Repair
 creates no registration and cannot establish or transfer mutation authority. It
@@ -561,8 +578,9 @@ Returns host-ready data for the branch captured at its issue position.
   immediately; export does not build a ref index, mark ownership, or pin.
 - The first reachable Error disables further output allocation and writes, but
   traversal continues through every captured Promise so the result is complete.
-- Several Errors return a `CompoundPoisonError`. Nested compounds are flattened
-  and raw-cause/source-context/kind equivalence is deduplicated. Different contexts
+- Several Errors return a `CompoundPoisonError`. Direct compounds expand to their
+  invariant leaf arrays and raw-cause/source-context/kind equivalence is
+  deduplicated. Different contexts
   or kinds remain distinct; Error order is unspecified.
 - Cycle cuts alone do not prevent successful output.
 

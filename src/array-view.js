@@ -26,7 +26,7 @@ class ArrayView {
         languageValues.admitReadyValue(
             this,
             operationContext,
-            languageValues.TYPE_ARRAY,
+            languageValues.TYPE.Array,
         )
         metadata.requireMeta(this, operationContext).arrayView = this
     }
@@ -56,12 +56,12 @@ class ArrayView {
         ) return false
         if (backingLength + count > 0xffffffff) return false
         if (
-            !errorUtils.runHostAction(operationContext, () =>
+            !errorUtils.runExternalAction(operationContext, () =>
                 Object.isExtensible(backing),
             )
         )
             return false
-        const descriptor = errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(backing, "length"),
+        const descriptor = errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(backing, "length"),
         )
         return descriptor?.writable === true
     }
@@ -108,7 +108,7 @@ class ArrayView {
         const physical = this.#physicalKey(key)
         return physical === undefined
             ? undefined
-            : errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(
+            : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(
                 this._backing,
                 physical,
             ),
@@ -127,7 +127,7 @@ class ArrayView {
             throw new Error("Cannot write outside an ArrayView range")
         }
         const backing = this._backing
-        errorUtils.runHostAction(operationContext, () => {
+        errorUtils.runExternalAction(operationContext, () => {
             if (Object.hasOwn(backing, physical)) {
                 backing[physical] = value
             } else {
@@ -146,7 +146,7 @@ class ArrayView {
         const physical = this.#physicalKey(key)
         return (
             physical === undefined ||
-            errorUtils.runHostAction(
+            errorUtils.runExternalAction(
                 operationContext,
                 () => delete this._backing[physical],
             )
@@ -177,12 +177,12 @@ class ArrayView {
         if (this._end !== backingLength) return false
         if (backingLength + count > 0xffffffff) return false
         if (
-            !errorUtils.runHostAction(operationContext, () => Object.isExtensible(this._backing),
+            !errorUtils.runExternalAction(operationContext, () => Object.isExtensible(this._backing),
             )
         ) {
             return false
         }
-        const descriptor = errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(this._backing, "length"),
+        const descriptor = errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(this._backing, "length"),
         )
         return descriptor?.writable === true
     }
@@ -200,7 +200,7 @@ function isArrayView(value, operationContext) {
 
 function isLogicalArray(value, operationContext) {
     return metadata.metaOf(value, operationContext)?.type ===
-        languageValues.TYPE_ARRAY
+        languageValues.TYPE.Array
 }
 
 function hasArrayAncestor(ancestry, array) {
@@ -229,11 +229,11 @@ function backingOf(value, operationContext) {
 }
 
 function physicalArrayLength(array, operationContext) {
-    return errorUtils.runHostAction(operationContext, () => array.length)
+    return errorUtils.runExternalAction(operationContext, () => array.length)
 }
 
 function extendPhysicalArray(array, count, operationContext) {
-    errorUtils.runHostAction(operationContext, () => {
+    errorUtils.runExternalAction(operationContext, () => {
         array.length += count
     })
 }
@@ -272,7 +272,7 @@ function enumerableArrayKeys(
     for (const key of arrayKeyCandidates(projection, operationContext, start, end)) {
         const descriptor = projection instanceof ArrayView
             ? projection.descriptor(key, operationContext)
-            : errorUtils.runHostAction(operationContext, () =>
+            : errorUtils.runExternalAction(operationContext, () =>
                 Object.getOwnPropertyDescriptor(projection, key),
             )
         if (isDataPlacement(descriptor)) keys[key] = true
@@ -299,7 +299,7 @@ function* arrayKeyCandidates(
     end = offset + Math.min(extent, end ?? extent)
 
     if (start === 0 && end === backingLength) {
-        const ownKeys = errorUtils.runHostAction(operationContext, () =>
+        const ownKeys = errorUtils.runExternalAction(operationContext, () =>
             Reflect.ownKeys(backing),
         )
         // Proxies may list indexes out of order; logical Arrays use index order.

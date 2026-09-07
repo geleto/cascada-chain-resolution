@@ -2,6 +2,7 @@ import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportManyValues } from "./export.js"
 import * as imports from "./import.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
@@ -39,7 +40,7 @@ class InvocationContext extends operationLifecycle.OperationOwner {
 
     retainArgumentsUntilReceiverReached() {
         for (const value of this.args) {
-            const protection = operationLifecycle.continueOperation(
+            const protection = internalSteps.continueOperation(
                 value,
                 this.operationContext,
                 resolved => {
@@ -67,24 +68,24 @@ class InvocationContext extends operationLifecycle.OperationOwner {
     }
 }
 
-function invokeHostFunction(
+function invokeFunction(
     callable,
     thisValue,
     args,
     operationContext,
-    kind = errorUtils.ERROR_KIND.HostCallFailed,
+    kind = errorUtils.ERROR_KIND.InvocationFailed,
 ) {
-    return errorUtils.runHostBoundary(operationContext, kind, () => Reflect.apply(callable, thisValue, args),
+    return errorUtils.runExternalBoundary(operationContext, kind, () => Reflect.apply(callable, thisValue, args),
     )
 }
 
-function getHostMethodDescription(callable, invocationContext) {
+function getFunctionMethodDescription(callable, invocationContext) {
     return {
         admitMethodResult: value => imports.importMethodResult(
             value,
             invocationContext.operationContext,
         ),
-        invoke: args => invokeHostFunction(
+        invoke: args => invokeFunction(
             callable,
             invocationContext.receiver,
             args,
@@ -128,7 +129,7 @@ function invokeMethod(
     ) {
         invocationContext.retainArgumentsUntilReceiverReached()
     }
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         result,
         operationContext,
         finish,
@@ -155,7 +156,7 @@ function invokeMethod(
         invocationContext.retainReceiver(methodDescription.receiverToLease)
         invocationContext.releaseArgumentsAwaitingReceiver()
 
-        return operationLifecycle.continueOperation(
+        return internalSteps.continueOperation(
             preparedArguments,
             invocationContext.operationContext,
             invokePrepared,
@@ -195,7 +196,7 @@ function createLeaseLedger(operationContext) {
 
     function retain(value) {
         if (closed || values.has(value)) return value
-        const retained = languageValues.consumeValue(
+        const retained = internalSteps.consumeValue(
             value,
             operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
@@ -220,8 +221,8 @@ function createLeaseLedger(operationContext) {
 }
 
 export {
-    getHostMethodDescription,
+    getFunctionMethodDescription,
     invokeMethod,
-    invokeHostFunction,
+    invokeFunction,
     methodNotCallableError,
 }

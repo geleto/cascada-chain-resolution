@@ -1,17 +1,9 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { continueOperation } from "./operation-lifecycle.js"
 import { runSubscription } from "./thenable-subscription.js"
 
 const {
-    TYPE_ARRAY,
-    TYPE_ERROR,
-    TYPE_EXTERNAL,
-    TYPE_FUNCTION,
-    TYPE_MANAGED_CLASS,
-    TYPE_PRIMITIVE,
-    TYPE_RECORD,
-    TYPE_STRING,
+    TYPE,
     isTraversableType,
 } = metadata
 
@@ -31,7 +23,7 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
     )
         return onFulfilled(value)
 
-    const then = errorUtils.runHostBoundary(
+    const then = errorUtils.runExternalBoundary(
         operationContext,
         errorUtils.ERROR_KIND.ThenAccessFailed,
         () => {
@@ -73,33 +65,6 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
     }
 }
 
-// Initial value consumption is a causal boundary. Later property continuations
-// consume the source mirror's published value and never contextualize it again.
-function consumeValue(
-    value,
-    operationContext,
-    kind,
-    onValue = value => value,
-    owner,
-) {
-    const accept = value => {
-        if (Error.isError(value))
-            value = errorUtils.createPoisonError(value, operationContext, kind)
-        admitReadyValue(value, operationContext)
-        return onValue(value)
-    }
-    return continueOperation(
-        value,
-        operationContext,
-        accept,
-        reason =>
-            accept(
-                errorUtils.createPoisonError(reason, operationContext, kind),
-            ),
-        owner,
-    )
-}
-
 function admitReadyValue(
     value,
     operationContext,
@@ -118,8 +83,8 @@ function admitReadyValue(
 }
 
 function typeOf(value, operationContext) {
-    if (typeof value === "string") return TYPE_STRING
-    if (!metadata.isObjectLike(value)) return TYPE_PRIMITIVE
+    if (typeof value === "string") return TYPE.String
+    if (!metadata.isObjectLike(value)) return TYPE.Primitive
     const type = metadata.metaOf(value, operationContext)?.type
     if (type === undefined) throw new TypeError("Value was not admitted")
     return type
@@ -130,16 +95,8 @@ function isTraversable(value, operationContext) {
 }
 
 export {
-    TYPE_ARRAY,
-    TYPE_ERROR,
-    TYPE_EXTERNAL,
-    TYPE_FUNCTION,
-    TYPE_MANAGED_CLASS,
-    TYPE_PRIMITIVE,
-    TYPE_RECORD,
-    TYPE_STRING,
+    TYPE,
     admitReadyValue,
-    consumeValue,
     isPending,
     isTraversable,
     isTraversableType,

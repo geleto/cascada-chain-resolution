@@ -169,15 +169,25 @@ describe("managed invocation", () => {
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
-    it("rejects prototype accessors and excludes Object.prototype methods", () => {
+    it("ignores prototype accessors and excludes Object.prototype methods", () => {
+        let getterCalls = 0
         class WithAccessor {
             get value() {
+                getterCalls++
                 return 1
             }
+
+            read() {
+                return 2
+            }
         }
-        expect(
-            managedStateClass(WithAccessor) instanceof TypeError,
-        ).to.be(true)
+        expect(managedStateClass(WithAccessor)).to.be(undefined)
+        const chain = new Chain(new WithAccessor())
+        expect(run(chain, [], "read", [], {})).to.be(2)
+        expect(run(chain, [], "value", [], {}).kind).to.be(
+            runtime.ERROR_KIND.InvalidManagedReceiver,
+        )
+        expect(getterCalls).to.be(0)
 
         class Value {}
         managedStateClass(Value)
@@ -349,12 +359,12 @@ describe("managed invocation", () => {
 
         )
         expect(failure.message).to.be(
-            "Managed class prototype accessor changed",
+            "Managed class methods must be data properties",
         )
         expect(reported).to.be(undefined)
     })
 
-    it("rejects synchronous Cascada reentry from a managed-class method", () => {
+    it("rejects synchronous same-execution reentry from a managed-class method", () => {
         let reported
         useTestExecution(error => {
             reported = error
@@ -375,7 +385,7 @@ describe("managed invocation", () => {
 
         ))
         expect(failure.message).to.be(
-            "Cascada cannot be re-entered from supported host code",
+            "Cascada execution cannot be re-entered from external code",
         )
         expect(reported).to.be(failure)
     })
@@ -816,7 +826,7 @@ describe("managed invocation", () => {
 
         expect(failure.cause).to.be(cause)
         expect(failure.errorContext).to.be("test run")
-        expect(failure.kind).to.be(runtime.ERROR_KIND.HostCallFailed)
+        expect(failure.kind).to.be(runtime.ERROR_KIND.InvocationFailed)
         expect(chain._state.value).to.be(value)
         expect(Object.hasOwn(value, "result")).to.be(false)
     })
@@ -1302,7 +1312,7 @@ describe("managed invocation", () => {
         expect(await readPath(new Chain(nested), ["value"])).to.be(1)
     })
 
-    it("materializes logical Arrays before managed host code", () => {
+    it("materializes logical Arrays before managed external code", () => {
         const source = [1, , 3]
         const view = run(new Chain(source), [], "slice", [0, 3], {})
         class Holder {

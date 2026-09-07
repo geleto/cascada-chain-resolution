@@ -28,7 +28,7 @@ describe("complete failure outcomes", () => {
                     return Reflect.getOwnPropertyDescriptor(value, key)
                 },
             })
-            const receiver = { read() { assert.fail("failed preparation must not invoke host code") } }
+            const receiver = { read() { assert.fail("failed preparation must not invoke external code") } }
             if (route === "receiver") receiver.graph = graph
             const chain = new runtime.Chain(route === "export" ? graph : receiver, ctx)
             const result = route === "export"
@@ -243,7 +243,7 @@ describe("complete failure outcomes", () => {
     it("deduplicates an existing poison shared by result import and receiver validation", () => {
         const ctx = context()
         const original = context(ctx.execution)
-        const poison = kernel.createPoisonError(new Error("shared failure"), original, runtime.ERROR_KIND.HostCallFailed)
+        const poison = kernel.createPoisonError(new Error("shared failure"), original, runtime.ERROR_KIND.InvocationFailed)
         const output = new Proxy({}, { ownKeys() { throw poison } })
         const chain = new runtime.Chain({ change() { this.bad = poison; return output } }, ctx)
         assert.equal(runtime.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 }), poison)

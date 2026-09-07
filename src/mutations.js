@@ -1,4 +1,4 @@
-import { collectInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
@@ -59,11 +59,11 @@ function createEmptyContainerCopy(source, operationContext) {
     const sourceMeta = metadata.requireMeta(source, operationContext)
     const type = sourceMeta.type
     let destination
-    if (type === languageValues.TYPE_ARRAY) {
+    if (type === languageValues.TYPE.Array) {
         destination = new Array(arrayViews.logicalArrayLength(source, operationContext))
     } else if (
-        type === languageValues.TYPE_RECORD ||
-        type === languageValues.TYPE_MANAGED_CLASS
+        type === languageValues.TYPE.Record ||
+        type === languageValues.TYPE.ManagedClass
     ) {
         destination = Object.create(sourceMeta.admittedPrototype)
     } else {
@@ -129,14 +129,11 @@ function shallowCopyPathContainer(source, pathKey, attachmentRoot, operationCont
 }
 
 function transformProperty(
-    parent,
-    key,
-    attachmentRoot,
+    target,
     operationContext,
-    prepareInput,
     transform,
-    returnResultPromise = true,
 ) {
+    const { parent, key, attachmentRoot } = target
     const placement = propertyVersions.getPropertyPlacement(
         parent,
         key,
@@ -148,48 +145,49 @@ function transformProperty(
     return transformValue(
         placement?.resolveValue(),
         attachmentRoot,
-        prepareInput(operation),
         transform,
-        value => setProperty(
-            parent,
-            key,
-            value,
+        value => errorUtils.catchExternalThrow(
+            () => {
+                setProperty(parent, key, value, operationContext, attachmentRoot)
+                return propertyVersions.getPromiseMirror(parent, key, operationContext)
+            },
             operationContext,
-            attachmentRoot,
+            errorUtils.ERROR_KIND.PropertyMutationFailed,
+            failure => {
+                const failedValue = errorUtils.isPoisonError(value)
+                    ? errorUtils.combineErrors([value, failure], "Mutation publication failed")
+                    : failure
+                target.replaceReceiver(failedValue)
+                return failedValue
+            },
         ),
         operation,
-        returnResultPromise,
+        true,
     )
 }
 
 function transformValue(
     value,
     attachmentRoot,
-    preparedInput,
     transform,
     publishValue,
     operation,
     returnResultPromise,
 ) {
     let originalValue
-    const readiness = collectInputs(
-        [value, preparedInput],
+    const readiness = internalSteps.collectInputs(
+        [value],
         operation.operationContext,
-        values =>
+        ([resolvedTargetValue]) =>
             recoverMutationFailure(() => {
-                const [resolvedTargetValue, preparedArguments] = values
                 originalValue = resolvedTargetValue
                 operation.mustPreserveValue = mustPreserveValue(
                     resolvedTargetValue,
                     attachmentRoot,
                     operation.operationContext,
                 )
-                return operationLifecycle.continueOperation(
-                    transform(
-                        resolvedTargetValue,
-                        preparedArguments,
-                        operation,
-                    ),
+                return internalSteps.continueOperation(
+                    transform(resolvedTargetValue, operation),
                     operation.operationContext,
                     normalizeMutationOutcome,
                     undefined,
@@ -201,11 +199,12 @@ function transformValue(
 
     if (!languageValues.isPending(readiness, operation.operationContext)) {
         const outcome = prepareMutationPublication(readiness)
+        let failure
         if (outcome.mutatedValue !== originalValue) {
-            publishValue(outcome.mutatedValue)
+            failure = publishValue(outcome.mutatedValue)
         }
         operationLifecycle.close(operation)
-        return outcome.result
+        return includePublicationFailure(outcome.result, failure, operation.operationContext)
     }
 
     let resolveMutatedValue
@@ -218,24 +217,48 @@ function transformValue(
             resolveResult = resolve
         })
         : undefined
-    publishValue(mutatedValueGate)
-    const publication = operationLifecycle.continueOperation(
+    const mirror = publishValue(mutatedValueGate)
+    let operationResult
+    if (!errorUtils.isPoisonError(mirror)) {
+        // Subscribe at issuance, after the shared publication resolver and before
+        // later operations can advance this captured version. Registering only
+        // when readiness settles would let their Errors enter this result.
+        const completion = internalSteps.continueOperation(
+            mutatedValueGate,
+            operation.operationContext,
+            () => {
+                operationLifecycle.close(operation)
+                if (returnResultPromise) resolveResult(
+                    includePublicationFailure(
+                        operationResult,
+                        mirror.value,
+                        operation.operationContext,
+                    ),
+                )
+            },
+            undefined,
+            operation,
+        )
+        markPromiseHandled(completion, operation.operationContext)
+    }
+    const publication = internalSteps.continueOperation(
         readiness,
         operation.operationContext,
         outcome => {
             outcome = prepareMutationPublication(outcome)
+            if (errorUtils.isPoisonError(mirror)) {
+                // Failed gate installation already replaced the enclosing
+                // receiver. Retain the in-flight result without publishing again.
+                operationLifecycle.close(operation)
+                resolveResult(includePublicationFailure(
+                    outcome.result,
+                    mirror,
+                    operation.operationContext,
+                ))
+                return
+            }
+            operationResult = outcome.result
             // This private publication gate has only a resolve capability.
-            const completion = operationLifecycle.continueOperation(
-                mutatedValueGate,
-                operation.operationContext,
-                () => {
-                    if (returnResultPromise) resolveResult(outcome.result)
-                    operationLifecycle.close(operation)
-                },
-                undefined,
-                operation,
-            )
-            markPromiseHandled(completion, operation.operationContext)
             resolveMutatedValue(outcome.mutatedValue)
         },
         undefined,
@@ -280,6 +303,21 @@ function transformValue(
     }
 }
 
+// Publication and an independent result can both fail. Waiting for the result
+// does not extend the completed publication's owner or receiver protection.
+function includePublicationFailure(result, publishedValue, operationContext) {
+    if (!errorUtils.isPoisonError(publishedValue) || result === publishedValue) return result
+    return internalSteps.collectInputs(
+        [result, publishedValue],
+        operationContext,
+        values => values[0] === publishedValue ? publishedValue
+            : errorUtils.combineErrors(
+                values.filter(errorUtils.isPoisonError),
+                "Mutation publication failed",
+            ),
+    )
+}
+
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
 function assignPath(
     chain,
@@ -288,7 +326,7 @@ function assignPath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         if (errorUtils.isFatalError(value)) throw value
@@ -323,7 +361,6 @@ function assignPath(
                 return transformValue(
                     target.receiver,
                     target.attachmentRoot,
-                    undefined,
                     transformArrayLength,
                     target.replaceReceiver,
                     new operationLifecycle.OperationOwner(operationContext),
@@ -361,8 +398,8 @@ function assignPath(
         return extended
     }
 
-    function transformArrayLength(array, _input, operation) {
-        return operationLifecycle.continueOperation(
+    function transformArrayLength(array, operation) {
+        return internalSteps.continueOperation(
             toArrayLength(value, operation),
             operation.operationContext,
             length => {
@@ -405,7 +442,7 @@ function assignPath(
 }
 
 function toArrayLength(value, operation) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         conversion.toNumberValue(value, operation),
         operation.operationContext,
         number => {
@@ -446,6 +483,8 @@ function walkMutationPath(
     const targetPath = ["value", ...path]
     let attachmentRoot
     let pathSelectionComplete = false
+    let operationResult
+    let publicationValue
     return walk(rootState, 0, () => {})
 
     // Completion follows synchronous reconstruction through every enclosing
@@ -454,12 +493,23 @@ function walkMutationPath(
     function complete(writeBack, next, targetResult = undefined) {
         pathSelectionComplete = true
         if (!languageValues.isPending(next, operationContext)) languageValues.admitReadyValue(next, operationContext)
-        writeBack(next)
         const outcome =
             targetResult === undefined && errorUtils.isPoisonError(next)
                 ? next
                 : targetResult
-        return onComplete ? onComplete(outcome) : outcome
+        publicationValue = next
+        operationResult = outcome
+        writeBack(next)
+        return onComplete ? onComplete(operationResult) : operationResult
+    }
+
+    function completeTarget(target, writeBack) {
+        let nextReceiver = target.receiver
+        const result = onTarget({
+            ...target,
+            replaceReceiver(next) { nextReceiver = next },
+        })
+        return complete(writeBack, nextReceiver, result)
     }
 
     function walk(value, index, writeBack, placement = undefined) {
@@ -467,7 +517,16 @@ function walkMutationPath(
             () => walkReady(value, index, writeBack, placement),
             operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed,
-            failure => complete(writeBack, failure, failure),
+            failure => {
+                const failedValue = errorUtils.isPoisonError(publicationValue)
+                    ? errorUtils.combineErrors([publicationValue, failure], "Mutation publication failed")
+                    : failure
+                return complete(
+                    writeBack,
+                    failedValue,
+                    includePublicationFailure(operationResult, failedValue, operationContext),
+                )
+            },
         )
     }
 
@@ -503,19 +562,14 @@ function walkMutationPath(
         }
         if (propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             if (atTarget) {
-                let nextReceiver = value
                 // Publish intrinsic replacement through the captured edge;
                 // its original Promise mirror may since have detached.
-                const targetResult = onTarget({
+                return completeTarget({
                     ...placement,
                     attachmentRoot,
                     propertyKind,
-                    replaceReceiver(next) {
-                        nextReceiver = next
-                    },
                     receiver: value,
-                })
-                return complete(writeBack, nextReceiver, targetResult)
+                }, writeBack)
             }
             return walk(
                 languageProperties.readLanguageProperty(value, key, operationContext),
@@ -573,14 +627,13 @@ function walkMutationPath(
             attachmentRoot = copied.attachmentRoot
         }
         if (atTarget) {
-            const targetResult = onTarget({
+            return completeTarget({
                 parent,
                 key,
                 attachmentRoot,
                 propertyKind,
                 receiver: parent,
-            })
-            return complete(writeBack, parent, targetResult)
+            }, writeBack)
         }
 
         const present = languageProperties.hasLanguageProperty(
@@ -602,6 +655,7 @@ function walkMutationPath(
                     index + 1,
                     next => {
                         if (next !== propertyValue) {
+                            publicationValue = next
                             // An imported parent was copied before descent, so
                             // this property version is runtime-owned.
                             propertyVersions.advancePromiseVersion(
@@ -609,6 +663,11 @@ function walkMutationPath(
                                 key,
                                 mirror,
                                 next,
+                                operationContext,
+                            )
+                            operationResult = includePublicationFailure(
+                                operationResult,
+                                mirror.value,
                                 operationContext,
                             )
                         }
@@ -632,6 +691,7 @@ function walkMutationPath(
                     writeBack(value)
                     return
                 }
+                publicationValue = next
                 setProperty(parent, key, next, operationContext)
                 writeBack(parent)
             },
@@ -647,7 +707,7 @@ function deletePath(
     operationContext,
     mutationScopeDepth = path.length,
 ) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
         const deletesRoot = preparedPath.length === 0

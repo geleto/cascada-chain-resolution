@@ -130,13 +130,14 @@ function verifyCycleCuts(node, operationContext) {
             Object.hasOwn(mirror, "value") &&
             descriptor?.enumerable &&
             "value" in descriptor
-        const physicalMatches = Object.is(descriptor?.value, mirror?.value)
-        const preservedPromise = !languageValues.isPending(
+        // A settled version may overlay any previous physical value when
+        // writeback fails, including after an earlier successful settlement.
+        const validValue = !languageValues.isPending(
             mirror?.value,
             operationContext,
-        ) && languageValues.isPending(descriptor?.value, operationContext)
+        ) || Object.is(descriptor?.value, mirror?.value)
         const validStorage = (imported || descriptor?.writable) &&
-            (physicalMatches || preservedPromise)
+            validValue
         if (!validShape || !validStorage) {
             fatal("Live Promise mirror has no valid language property", operationContext)
         }

@@ -1,6 +1,3 @@
-import * as errorUtils from "./error.js"
-import { thenValue } from "./language-values.js"
-
 class OperationOwner {
     open = true
     constructor(operationContext) {
@@ -42,38 +39,4 @@ function releaseOnClose(operation, release) {
     }
 }
 
-const unexpectedRejection = reason => {
-    throw reason
-}
-
-// A trusted continuation defines its own Error semantics. Shared settlement
-// omits an owner; operation-local work stops after that owner's closure.
-function continueOperation(
-    value,
-    operationContext,
-    onFulfilled,
-    onRejected = unexpectedRejection,
-    owner,
-) {
-    const fatal = operationContext.execution.fatalError
-    if (fatal !== null) throw fatal
-    if (errorUtils.isFatalError(value))
-        errorUtils.failExecution(operationContext, value)
-    if (owner && !owner.open) return undefined
-    const guard = callback => result => {
-        if (
-            operationContext.execution.fatalError !== null ||
-            (owner && !owner.open)
-        )
-            return undefined
-        return errorUtils.runWithFatalGuard(operationContext, callback, result)
-    }
-    return thenValue(
-        value,
-        guard(onFulfilled),
-        guard(onRejected),
-        operationContext,
-    )
-}
-
-export { OperationOwner, close, releaseOnClose, continueOperation }
+export { OperationOwner, close, releaseOnClose }

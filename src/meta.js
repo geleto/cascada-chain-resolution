@@ -1,13 +1,15 @@
 import * as errorUtils from "./error.js"
 
-const TYPE_ERROR = 1
-const TYPE_ARRAY = 2
-const TYPE_FUNCTION = 3
-const TYPE_STRING = 4
-const TYPE_PRIMITIVE = 5
-const TYPE_RECORD = 6
-const TYPE_MANAGED_CLASS = 7
-const TYPE_EXTERNAL = 8
+const TYPE = Object.freeze({
+    Error: 1,
+    Array: 2,
+    Function: 3,
+    String: 4,
+    Primitive: 5,
+    Record: 6,
+    ManagedClass: 7,
+    External: 8,
+})
 
 const DECLARATION_MANAGED = 1
 const DECLARATION_EXTERNAL = 2
@@ -34,7 +36,7 @@ function getOrCreateMeta(
                 ? { type }
                 : { type, admittedPrototype }
         if (
-            (meta.type === TYPE_RECORD || meta.type === TYPE_MANAGED_CLASS) &&
+            (meta.type === TYPE.Record || meta.type === TYPE.ManagedClass) &&
             meta.admittedPrototype === undefined
         ) {
             throw new TypeError("Managed container admission requires a prototype")
@@ -50,51 +52,49 @@ function getOrCreateMeta(
 // traps. If it cannot identify managed structure, preserving the exact value
 // as external is always safe.
 function inspectAdmissionMetaFacts(value, operationContext) {
+    const execution = operationContext.execution
+    const previousExternalActionActive = execution._externalActionActive
     let facts
     let fatal
-    errorUtils.enterHostCode()
+    execution._externalActionActive = true
     try {
         facts = classifyTypeFacts(value)
     } catch (reason) {
         if (errorUtils.isFatalError(reason)) fatal = reason
-        else facts = { type: TYPE_EXTERNAL }
+        else facts = { type: TYPE.External }
     } finally {
-        errorUtils.leaveHostCode()
+        execution._externalActionActive = previousExternalActionActive
     }
-    if (operationContext.execution.fatalError !== null)
-        throw operationContext.execution.fatalError
+    if (execution.fatalError !== null) throw execution.fatalError
     if (fatal) errorUtils.failExecution(operationContext, fatal)
     return facts
 }
 
 function inspectDeclarationMetaFacts(value) {
-    errorUtils.enterHostCode()
     try {
         return classifyTypeFacts(value)
     } catch (reason) {
         if (errorUtils.isFatalError(reason)) throw reason
-        return { type: TYPE_EXTERNAL }
-    } finally {
-        errorUtils.leaveHostCode()
+        return { type: TYPE.External }
     }
 }
 
 function classifyTypeFacts(value) {
     // This order is the admission-precedence contract.
-    if (Error.isError(value)) return { type: TYPE_ERROR }
-    if (typeof value === "function") return { type: TYPE_FUNCTION }
+    if (Error.isError(value)) return { type: TYPE.Error }
+    if (typeof value === "function") return { type: TYPE.Function }
     const declaration = IDENTITY_DECLARATIONS.get(value)
-    if (declaration === DECLARATION_EXTERNAL) return { type: TYPE_EXTERNAL }
-    if (Array.isArray(value)) return { type: TYPE_ARRAY }
+    if (declaration === DECLARATION_EXTERNAL) return { type: TYPE.External }
+    if (Array.isArray(value)) return { type: TYPE.Array }
 
     const admittedPrototype = Object.getPrototypeOf(value)
     if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype))
-        return { type: TYPE_RECORD, admittedPrototype }
+        return { type: TYPE.Record, admittedPrototype }
 
     return declaration === DECLARATION_MANAGED ||
         MANAGED_PROTOTYPES.has(admittedPrototype)
-        ? { type: TYPE_MANAGED_CLASS, admittedPrototype }
-        : { type: TYPE_EXTERNAL, admittedPrototype }
+        ? { type: TYPE.ManagedClass, admittedPrototype }
+        : { type: TYPE.External, admittedPrototype }
 }
 
 function isPlainObjectPrototype(prototype) {
@@ -145,9 +145,9 @@ function requiresCopyOnWrite(value, operationContext) {
 }
 
 function isTraversableType(type) {
-    return type === TYPE_ARRAY ||
-        type === TYPE_RECORD ||
-        type === TYPE_MANAGED_CLASS
+    return type === TYPE.Array ||
+        type === TYPE.Record ||
+        type === TYPE.ManagedClass
 }
 
 function hasReadLease(value, operationContext) {
@@ -193,14 +193,7 @@ function isImported(value, operationContext) {
 }
 
 export {
-    TYPE_ARRAY,
-    TYPE_ERROR,
-    TYPE_EXTERNAL,
-    TYPE_FUNCTION,
-    TYPE_MANAGED_CLASS,
-    TYPE_PRIMITIVE,
-    TYPE_RECORD,
-    TYPE_STRING,
+    TYPE,
     DECLARATION_EXTERNAL,
     DECLARATION_MANAGED,
     addManagedPrototype,

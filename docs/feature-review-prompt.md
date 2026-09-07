@@ -24,7 +24,7 @@ For every operation introduced or affected by the feature, trace this full timel
 3. Ordering dependencies and protection are registered.
 4. Ready work runs synchronously.
 5. Required pending values settle and continuations resume.
-6. Validation, selection, boundary processing, and user or host code run.
+6. Validation, selection, boundary processing, and user or external code run.
 7. State and bookkeeping changes are published atomically.
 8. Results and failures cross their boundaries.
 9. Gates, phases, leases, borrows, reservations, and other temporary authority are released.
@@ -157,7 +157,7 @@ For every possible failure, classify the exact boundary that failed:
 
 - language Error or poison;
 - Promise rejection;
-- supported user/host-code failure;
+- supported user/external-code failure;
 - validation failure;
 - representation limitation requiring materialization;
 - violated internal contract or host behavior that makes runtime invariants untrustworthy and is therefore fatal.
@@ -166,7 +166,7 @@ Verify that:
 
 - no Error is lost when several inputs or descendants fail;
 - required preparation continues only where needed to collect defined failures;
-- user or host code is not invoked after preparation prevents it;
+- user or external code is not invoked after preparation prevents it;
 - an observational failure does not mutate state or poison mutation scope unless explicitly specified;
 - mutation poison is published in operation order;
 - repair has precise authority and ordering and cannot clear unrelated or later failure;

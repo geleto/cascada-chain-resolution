@@ -1,6 +1,9 @@
 import * as errorUtils from "../src/error.js"
 import * as runtime from "../src/index.js"
-import { continueOperation } from "../src/operation-lifecycle.js"
+import {
+    continueOperation,
+    runInternalStep,
+} from "../src/internal-step.js"
 import {
     testOperationContext,
     deferred,
@@ -18,10 +21,10 @@ function failedBy(operationContext, reason) {
 }
 
 describe("fatal execution", () => {
-    it("constructs immutable, branded, non-thenable FatalErrors", async () => {
+    it("constructs immutable, non-thenable FatalErrors", async () => {
         const cause = new Error("contextless failure")
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            runInternalStep(
                 {
                     execution: new runtime.Execution(),
                     errorContext: "fatal fixture",
@@ -41,32 +44,8 @@ describe("fatal execution", () => {
             .to.be(false)
         expect(failure.cause).to.be(cause)
         expect(Object.isFrozen(failure)).to.be(true)
-        expect(Object.isFrozen(runtime.FatalError.prototype)).to.be(true)
-        expect(Object.hasOwn(runtime.FatalError.prototype, "then")).to.be(true)
         expect(failure.then).to.be(undefined)
-        expect(thrownBy(() => new runtime.FatalError()))
-            .to.be.a(TypeError)
-
-        const oldThen = Object.getOwnPropertyDescriptor(Error.prototype, "then")
-        Object.defineProperty(Error.prototype, "then", {
-            configurable: true,
-            value(resolve) {
-                resolve("assimilated")
-            },
-        })
-        try {
-            expect(await Promise.resolve(failure)).to.be(failure)
-        } finally {
-            if (oldThen) Object.defineProperty(Error.prototype, "then", oldThen)
-            else delete Error.prototype.then
-        }
-
-        const spoof = new Error("not fatal")
-        Object.setPrototypeOf(spoof, runtime.FatalError.prototype)
-        const execution = new runtime.Execution()
-        const context = operationContext(execution)
-        expect(runtime.import(spoof, context)).to.be.a(runtime.PoisonError)
-        expect(execution.fatalError).to.be(null)
+        expect(await Promise.resolve(failure)).to.be(failure)
     })
 
     it("keeps and reports one authoritative failure per execution", () => {
@@ -128,7 +107,7 @@ describe("fatal execution", () => {
         expect(throwingExecution.fatalError).to.be(preserved)
     })
 
-    it("does not expose private execution state as the reporter receiver", () => {
+    it("does not use the execution as the reporter receiver", () => {
         let reporterThis
         const execution = new runtime.Execution(function () {
             reporterThis = this
@@ -187,59 +166,6 @@ describe("fatal execution", () => {
         expect(failure).to.be(nestedFailure)
         expect(execution.fatalError).to.be(failure)
         expect(execution._metadata.has(input)).to.be(false)
-    })
-
-    it("contextualizes native Errors without inspecting their prototype chain", async () => {
-        async function verify(start) {
-            const execution = new runtime.Execution()
-            const context = operationContext(execution)
-            const contextualizationFailure = new Error("contextualization failed")
-            const reason = new Error("host failure")
-            Object.setPrototypeOf(reason, new Proxy(Error.prototype, {
-                getPrototypeOf() {
-                    throw contextualizationFailure
-                },
-            }))
-
-            const result = start(reason, context)
-            const failure = await result.catch(error => error)
-
-            expect(failure).to.be.a(runtime.PoisonError)
-            expect(failure.cause).to.be(reason)
-            expect(execution.fatalError).to.be(null)
-        }
-
-        await verify((reason, context) => runtime.import(
-            Promise.reject(reason),
-            context,
-        ))
-        await verify((reason, context) => {
-            const chain = new runtime.Chain(Promise.resolve(reason), context)
-            return runtime.lookupPath(chain, [], context)
-        })
-        await verify((reason, context) => {
-            const chain = new runtime.Chain({
-                change() {
-                    return Promise.reject(reason)
-                },
-            }, context)
-            return runtime.run(
-                chain,
-                [],
-                "change",
-                [],
-                context,
-                { mutationScopeDepth: 0 },
-            )
-        })
-        await verify((reason, context) => {
-            const root = runtime.import({ pending: Promise.reject(reason) }, context)
-            return runtime.lookupPath(
-                new runtime.Chain(root, context),
-                ["pending"],
-                context,
-            )
-        })
     })
 
     it("rejects every pending operation result without waiting for its source", async () => {
@@ -563,7 +489,7 @@ describe("fatal execution", () => {
 
     it("submits an existing FatalError rejected at a public boundary", async () => {
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            runInternalStep(
                 {
                     execution: new runtime.Execution(),
                     errorContext: "fatal fixture",
@@ -597,7 +523,7 @@ describe("fatal execution", () => {
         expect(thrownBy(() => runtime.externalState(external)))
             .to.be(undefined)
         expect(
-            thrownBy(() => errorUtils.runInternalStep(context, () => true)),
+            thrownBy(() => runInternalStep(context, () => true)),
         ).to.be(execution.fatalError)
     })
 })

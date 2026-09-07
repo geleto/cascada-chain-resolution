@@ -1,5 +1,6 @@
 import * as arrayInvocation from "./array-invocation.js"
 import * as errorUtils from "./error.js"
+import * as internalSteps from "./internal-step.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -11,7 +12,7 @@ import {
 import { walkObservationPath } from "./observations.js"
 
 function run(chain, path, method, args, operationContext, facts) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const mutationScopeDepth = facts.mutationScopeDepth
         path = [...path]
@@ -55,12 +56,9 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
                 return error
             }
             return transformProperty(
-                target.parent,
-                target.key,
-                target.attachmentRoot,
+                target,
                 operationContext,
-                () => undefined,
-                (receiver, _prepared, mutationContext) => invokeWithReceiver(
+                (receiver, mutationContext) => invokeWithReceiver(
                     receiver,
                     mutationContext.present,
                     mutationContext.mustPreserveValue,
@@ -94,12 +92,12 @@ function getMethodDescription(invocationContext) {
     }
 
     const type = languageValues.typeOf(receiver, invocationContext.operationContext)
-    if (type === languageValues.TYPE_ARRAY) {
+    if (type === languageValues.TYPE.Array) {
         return arrayInvocation.getArrayMethodDescription(invocationContext)
     }
     if (
-        type === languageValues.TYPE_RECORD ||
-        type === languageValues.TYPE_MANAGED_CLASS
+        type === languageValues.TYPE.Record ||
+        type === languageValues.TYPE.ManagedClass
     ) {
         return managedInvocation.getManagedMethodDescription(invocationContext)
     }
@@ -110,13 +108,13 @@ function getMethodDescription(invocationContext) {
             errorUtils.ERROR_KIND.UnsupportedMutation,
         )
     }
-    if (type === languageValues.TYPE_STRING) {
+    if (type === languageValues.TYPE.String) {
         const callable = getStringMethod(
             method,
             invocationContext.operationContext,
         )
         if (errorUtils.isPoisonError(callable)) return callable
-        return invocation.getHostMethodDescription(callable, invocationContext)
+        return invocation.getFunctionMethodDescription(callable, invocationContext)
     }
     return errorUtils.validationError(
         "run receiver does not support methods",

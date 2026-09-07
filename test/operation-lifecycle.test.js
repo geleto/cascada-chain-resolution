@@ -1,11 +1,13 @@
-import { collectInputs } from "../src/input-collection.js"
 import assert from "node:assert/strict"
 import {
     OperationOwner,
     close,
     releaseOnClose,
-    continueOperation,
 } from "../src/operation-lifecycle.js"
+import {
+    collectInputs,
+    continueOperation,
+} from "../src/internal-step.js"
 import { createPoisonError, ERROR_KIND } from "../src/error.js"
 import { testOperationContext, deferred, flushMicrotasks } from "./support.js"
 

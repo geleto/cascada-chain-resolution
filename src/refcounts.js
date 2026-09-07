@@ -90,7 +90,7 @@ function buildRefIndex(value, operationContext) {
     const active = new Set()
     count(value)
 
-    // No host reflection or subscription remains. Publish the complete region,
+    // No external reflection or subscription remains. Publish the complete region,
     // including cut targets, before adding its reverse edges to existing indexes.
     for (const { meta, counter } of staged.values()) {
         if (counter) Object.assign(meta, counter)

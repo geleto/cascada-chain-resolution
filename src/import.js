@@ -1,31 +1,37 @@
 import * as errorUtils from "./error.js"
-import { continueOperation } from "./operation-lifecycle.js"
+import * as internalSteps from "./internal-step.js"
 import { prepareImportedData } from "./import-preparation.js"
 
-const CONTEXT_IMPORT = { kind: errorUtils.ERROR_KIND.ContextValueFailed }
-const METHOD_RESULT = { kind: errorUtils.ERROR_KIND.HostCallFailed }
-const MUTATION_RESULT = {
-    kind: errorUtils.ERROR_KIND.HostCallFailed,
-    retainAdmittedDescendants: true,
+const IMPORT_POLICY = {
+    Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed },
+    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed },
+    ManagedMutationMethodResult: {
+        kind: errorUtils.ERROR_KIND.InvocationFailed,
+        retainAdmittedDescendants: true,
+    },
 }
 
 function importValue(value, operationContext) {
-    return importData(value, operationContext, CONTEXT_IMPORT)
+    return importData(value, operationContext, IMPORT_POLICY.Context)
 }
 
 function importMethodResult(value, operationContext) {
-    return importData(value, operationContext, METHOD_RESULT)
+    return importData(value, operationContext, IMPORT_POLICY.MethodResult)
 }
 
 function importManagedMutationMethodResult(value, operationContext) {
-    return importData(value, operationContext, MUTATION_RESULT)
+    return importData(
+        value,
+        operationContext,
+        IMPORT_POLICY.ManagedMutationMethodResult,
+    )
 }
 
 function importContext(value, operationContext, externalMutationTreeSetup) {
     return importData(
         value,
         operationContext,
-        CONTEXT_IMPORT,
+        IMPORT_POLICY.Context,
         externalMutationTreeSetup,
     )
 }
@@ -36,9 +42,9 @@ function importData(
     policy,
     externalMutationTreeSetup,
 ) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         try {
-            return continueOperation(
+            return internalSteps.continueOperation(
                 value,
                 operationContext,
                 root =>

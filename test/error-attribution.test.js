@@ -12,6 +12,7 @@ import {
     testOperationContext,
 } from "./support.js"
 import * as errorUtils from "../src/error.js"
+import * as internalSteps from "../src/internal-step.js"
 import * as runtime from "../src/index.js"
 
 describe("causal Error attribution", () => {
@@ -30,7 +31,6 @@ describe("causal Error attribution", () => {
             "ExternalPropertyReadFailed",
             "ExternalPropertyWriteFailed",
             "ExternalRepairFailed",
-            "HostCallFailed",
             "ImportBindingMissing",
             "ImportReflectionFailed",
             "IncompatibleOperands",
@@ -43,6 +43,7 @@ describe("causal Error attribution", () => {
             "InvalidManagedReceiver",
             "InvalidPathSegment",
             "InvalidTextValue",
+            "InvocationFailed",
             "IteratorFailed",
             "LoadFailed",
             "LookupReflectionFailed",
@@ -298,14 +299,14 @@ describe("causal Error attribution", () => {
         ).catch(error => error)
 
         expect(errorCause(thrownResult)).to.be(thrown)
-        expect(thrownResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(thrownResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
         expect(thrownResult.errorContext).to.be("test run")
         expect(errorCause(returnedResult)).to.be(returned)
-        expect(returnedResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(returnedResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
         expect(errorCause(fulfilledResult)).to.be(fulfilled)
-        expect(fulfilledResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(fulfilledResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
         expect(errorCause(rejectedResult)).to.be(rejected)
-        expect(rejectedResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(rejectedResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
     })
 
     it("preserves an imported Promise's source through copy-on-write", async () => {
@@ -350,10 +351,10 @@ describe("causal Error attribution", () => {
 
         expect(ready.cause).to.be(readyCause)
         expect(ready.errorContext).to.be("test run")
-        expect(ready.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(ready.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
         expect(pending.cause).to.be(rejectionCause)
         expect(pending.errorContext).to.be("test run")
-        expect(pending.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
+        expect(pending.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
     })
 
     it("flattens compounds and retains different causal kinds", () => {
@@ -368,12 +369,12 @@ describe("causal Error attribution", () => {
         const duplicate = errorUtils.createPoisonError(
             firstCause,
             context,
-            errorUtils.ERROR_KIND.HostCallFailed,
+            errorUtils.ERROR_KIND.InvocationFailed,
         )
         const second = errorUtils.createPoisonError(
             secondCause,
             context,
-            errorUtils.ERROR_KIND.HostCallFailed,
+            errorUtils.ERROR_KIND.InvocationFailed,
         )
         const nested = errorUtils.combineErrors([duplicate, second], "nested")
 
@@ -401,12 +402,12 @@ describe("causal Error attribution", () => {
         const failure = errorUtils.createPoisonError(
             native,
             testOperationContext("host failure"),
-            errorUtils.ERROR_KIND.HostCallFailed,
+            errorUtils.ERROR_KIND.InvocationFailed,
         )
 
         expect(reads).to.be(0)
         expect(failure.message).to.be(
-            "Host action failed with a non-Error value",
+            "External action failed with a non-Error value",
         )
         expect(failure.cause).to.be(native)
     })
@@ -418,7 +419,7 @@ describe("causal Error attribution", () => {
         const context = testOperationContext("fatal operation", execution)
         let failure
         try {
-            errorUtils.runInternalStep(context, () => {
+            internalSteps.runInternalStep(context, () => {
                 throw cause
             })
         } catch (error) {
@@ -438,7 +439,7 @@ describe("causal Error attribution", () => {
             ),
         ).to.throwException(error => expect(error).to.be(failure))
         try {
-            errorUtils.runInternalStep(context, () => {
+            internalSteps.runInternalStep(context, () => {
                 throw failure
             })
         } catch (error) {
@@ -447,26 +448,4 @@ describe("causal Error attribution", () => {
         expect(reported).to.eql([failure])
     })
 
-    it("reports an invalid PoisonError definition as fatal", () => {
-        let reported
-        const execution = new runtime.Execution(error => {
-            reported = error
-        })
-        const context = testOperationContext("invalid poison", execution)
-        let failure
-        try {
-            errorUtils.runInternalStep(context, () => new errorUtils.PoisonError(
-                "invalid",
-                undefined,
-                "",
-            ))
-        } catch (error) {
-            failure = error
-        }
-
-        expect(failure).to.be.a(runtime.FatalError)
-        expect(failure.cause).to.be.a(TypeError)
-        expect(failure.errorContext).to.be("invalid poison")
-        expect(reported).to.be(failure)
-    })
 })

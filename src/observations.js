@@ -1,6 +1,7 @@
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportValue } from "./export.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
@@ -19,7 +20,7 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
         this.visited = undefined
     }
     run(chain, path, onResolved) {
-        return errorUtils.runInternalStep(this.operationContext, () => {
+        return internalSteps.runInternalStep(this.operationContext, () => {
             chain._assertOperationContext(this.operationContext)
             const result = walkObservationPath(
                 chain,
@@ -34,7 +35,7 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
             // Phase 9D-A: reject this query's failure while poison is non-thenable.
             // Phase 9D-B removes this local transport when poison assimilates itself.
             return new Promise((resolve, reject) => {
-                const completion = operationLifecycle.continueOperation(
+                const completion = internalSteps.continueOperation(
                     result,
                     this.operationContext,
                     value =>
@@ -69,7 +70,7 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
         const outcome = new Promise(resolve => {
             this.resolveOutcome = resolve
         })
-        const completed = operationLifecycle.continueOperation(
+        const completed = internalSteps.continueOperation(
             readiness,
             this.operationContext,
             () => this.finish(result()),
@@ -84,7 +85,7 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path, operationContext) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => {
             metadata.markShared(value, operationContext)
@@ -95,7 +96,7 @@ function lookupPath(chain, path, operationContext) {
 
 // A temporary read or ownership transfer does not create another owner.
 function readPath(chain, path, operationContext) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(chain, path, operationContext, value => value)
     })
@@ -103,7 +104,7 @@ function readPath(chain, path, operationContext) {
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path, operationContext) {
-    return errorUtils.runInternalStep(operationContext, () => {
+    return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         return walkObservationPath(
             chain,
@@ -149,7 +150,7 @@ function getErrorsAtPathValue(value, queryContext) {
     else if (languageValues.isTraversable(value, queryContext.operationContext))
         readiness = collectFencedErrorWaits(value, queryContext)
     return queryContext.complete(readiness, () =>
-        errorUtils.collectErrors(queryContext.errors),
+        errorUtils.flattenAndDeduplicateErrors(queryContext.errors),
     )
 }
 
@@ -174,7 +175,7 @@ function collectFencedErrorWaits(value, queryContext) {
         return undefined
     }
     if (waits.length === 0) return undefined
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         Promise.all(waits),
         queryContext.operationContext,
         () => undefined,

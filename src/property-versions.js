@@ -1,7 +1,7 @@
-import * as operationLifecycle from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
+import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -59,11 +59,11 @@ function getPromiseMirror(owner, key, operationContext) {
     return version?.promise === true ? version : undefined
 }
 
-function hasPromiseMirrors(owner, operationContext) {
+function hasPlacementVersions(owner, operationContext) {
     const versions = metadata.metaOf(owner, operationContext)?.placementVersions
     if (!versions) return false
     for (const key in versions) {
-        if (versions[key].promise === true) return true
+        return true
     }
     return false
 }
@@ -94,7 +94,7 @@ function continuePromiseVersion(
     onValue,
     operation,
 ) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         promise,
         operationContext,
         () => onValue(mirror.value),
@@ -177,7 +177,7 @@ function preparePropertyVersion(
     retained = false,
     kind = errorUtils.ERROR_KIND.OperationInputFailed,
 ) {
-    const publication = languageValues.consumeValue(
+    const publication = internalSteps.consumeValue(
         version.value,
         operationContext,
         kind,
@@ -305,24 +305,26 @@ function commitPromiseValue(
     operationContext,
     writeBack,
 ) {
-    function admitFailure(failure) {
-        languageValues.admitReadyValue(failure, operationContext)
-        return failure
+    function recordFailure(failure) {
+        // Publishing an already failed value can fail independently. Each retry
+        // retains the accumulated diagnostic instead of replacing an earlier cause.
+        value = errorUtils.isPoisonError(value)
+            ? errorUtils.combineErrors([value, failure], "Property publication failed")
+            : failure
+        languageValues.admitReadyValue(value, operationContext)
+        return value
     }
     const commit = errorUtils.catchExternalThrow(
         () => prepareCommit(value, writeBack),
         operationContext,
         errorUtils.ERROR_KIND.PropertyMutationFailed,
-        failure => {
-            value = admitFailure(failure)
-            return prepareCommit(value, writeBack)
-        },
+        failure => prepareCommit(recordFailure(failure), writeBack),
     )
     errorUtils.catchExternalThrow(
         commit,
         operationContext,
         errorUtils.ERROR_KIND.PropertyMutationFailed,
-        failure => prepareCommit(admitFailure(failure), false)(),
+        failure => prepareCommit(recordFailure(failure), false)(),
     )
 
     function prepareCommit(nextValue, canWriteBack) {
@@ -342,7 +344,7 @@ function commitPromiseValue(
                 ),
                 operationContext,
                 errorUtils.ERROR_KIND.PropertyMutationFailed,
-                admitFailure,
+                recordFailure,
             )
             if (failure) {
                 nextValue = failure
@@ -369,8 +371,9 @@ function commitPromiseValue(
 
 function replaceProperty(owner, key, mirror, value, operationContext) {
     commitProperty(owner, key, value, operationContext, () => {
-        detachPlacementVersion(owner, key, operationContext)
         languageProperties.writeLanguageProperty(owner, key, value, operationContext)
+        // Failed storage work must leave the old logical version available.
+        detachPlacementVersion(owner, key, operationContext)
         if (mirror) installPlacementVersion(owner, key, mirror, operationContext)
     })
 }
@@ -378,9 +381,9 @@ function replaceProperty(owner, key, mirror, value, operationContext) {
 // Callers validate deletion semantics before this atomic edge removal.
 function removeProperty(owner, key, operationContext, remove) {
     commitProperty(owner, key, undefined, operationContext, () => {
-        detachPlacementVersion(owner, key, operationContext)
         if (remove) remove()
         else languageProperties.deleteLanguageProperty(owner, key, operationContext)
+        detachPlacementVersion(owner, key, operationContext)
     })
 }
 
@@ -436,7 +439,7 @@ function commitArrayLength(array, length, operationContext) {
         if (view) view.setLength(nextLength, operationContext)
         else {
             // A logical Array may be a Proxy whose set trap runs here.
-            errorUtils.runHostAction(operationContext, () => {
+            errorUtils.runExternalAction(operationContext, () => {
                 array.length = nextLength
             })
         }
@@ -469,6 +472,10 @@ function prepareRetainedArrayProperties(
         )
         if (!languageValues.isPending(value, operationContext)) {
             metadata.markShared(value, operationContext)
+            // Views share physical backing, but every retained placement keeps
+            // its logical value, including a fixed Error or custom-thenable outcome.
+            if (getPlacementVersion(source, sourceKey, operationContext))
+                installFixedPlacementVersion(destination, destinationKey, value, operationContext)
             continue
         }
         placePromiseVersion(
@@ -492,7 +499,8 @@ export {
     requirePromiseMirror,
     getPropertyPlacement,
     getPromiseMirror,
-    hasPromiseMirrors,
+    getPlacementVersion,
+    hasPlacementVersions,
     isPropertyPlacement,
     placePromiseVersion,
     commitPromiseValue,

@@ -2,7 +2,7 @@
 
 ## Causal completion
 
-Receiver preparation and argument export complete their entire required Error frontier before invocation. A direct method Error poisons the receiver with `HostCallFailed` whether returned, thrown, fulfilled, or rejected. Importing an independent successful result graph is a separate boundary: its `ImportReflectionFailed` outcome does not discard valid receiver mutation. The direct host-result continuation makes this decision before result import. A prototype accessor safely detected before invocation returns `InvalidManagedReceiver`. Operation resources close through the common idempotent owner transition after final call completion; a component finishing preparation does not close sibling collection.
+Receiver preparation and argument export complete their entire required Error frontier before invocation. A direct method Error poisons the receiver with `InvocationFailed` whether returned, thrown, fulfilled, or rejected. Importing an independent successful result graph is a separate boundary: its `ImportReflectionFailed` outcome does not discard valid receiver mutation. The direct host-result continuation makes this decision before result import. A prototype accessor safely detected before invocation returns `InvalidManagedReceiver`. Operation resources close through the common idempotent owner transition after final call completion; a component finishing preparation does not close sibling collection.
 
 Developer-facing restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document describes the common invocation boundary for managed records and managed class instances.
 
@@ -19,7 +19,7 @@ Observation immutability is a trusted contract, not runtime enforcement. A viola
 Method reflection happens once, after receiver and argument preparation succeeds and before mutation isolation.
 
 - A record method is an own enumerable string-keyed placement whose prepared logical value is a Function. Accessors, non-enumerables, inherited properties, non-Functions, and extracted Functions are not record methods.
-- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Class declaration rejects prototype accessors and callable `then` methods so a copied instance cannot be assimilated only on an asynchronous result path. If method selection later detects an accessor, callable `then`, or another invalid prototype change before invoking host code or publishing state, the call returns `InvalidManagedReceiver` and preserves the original receiver. The violation is fatal only after it has made runtime state or ordering untrustworthy.
+- A class method is a Function-valued data property found on the admitted prototype chain up to, but excluding, `Object.prototype`. An own record placement with the same name hides it. Unrelated prototype accessors are permitted but are not Cascada methods and are never invoked by method selection. Class declaration rejects a callable or accessor `then` so a copied instance cannot be assimilated only on an asynchronous result path. If method selection reaches an accessor or later detects an unsafe `then` or another invalid prototype change before invoking external code or publishing state, the call returns `InvalidManagedReceiver` and preserves the original receiver. The violation is fatal only after it has made runtime state or ordering untrustworthy.
 - `constructor` is never callable.
 
 Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the prepared receiver, not nested Cascada invocations.
@@ -44,7 +44,7 @@ Preparation consumes the complete receiver graph because method code may read an
 
 Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
-Observation materialization copies only paths needed to expose logical storage. Its receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
+Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise mirrors can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
 
 Arguments cross the host boundary through one `exportManyValues` operation. Managed argument graphs are independent copies with aliases, cycles, Array structure, and admitted prototypes preserved across argument positions. Functions and external identities remain exact. Receiver and argument identities are not cross-remapped, and managed invocation adds no argument-source leases after export capture.
 
@@ -55,7 +55,7 @@ Direct JavaScript mutation must not change protected managed state or invalidate
 - the receiver root when the owning path transition already requires its old value to survive;
 - any reached identity requiring ordinary COW;
 - any reached refcount-indexed identity;
-- any identity owning a live Promise mirror; and
+- any identity owning a placement version, fixed or Promise-backed; and
 - any logical Array requiring materialization.
 
 Refcount indexing is downward-closed. An indexed identity cannot be mutated in place because arbitrary JavaScript changes bypass edge deltas, parent links, counters, and cycle cuts. Publishing a fresh identity through an ordinary placement transition is what makes the replacement visible to existing bookkeeping.
@@ -83,11 +83,17 @@ the failed call. A Promise nested inside a successful result is independent data
 its later Error does not poison an already published valid receiver. Later
 operations preserve every contextualized Error's attribution.
 
-Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronous Cascada re-entry is forbidden. Independent work started after the host call returns uses its own explicit operation context, but the direct host Promise must not depend on work ordered behind its active receiver gate or external phase.
+Asynchronous receiver access and any inspection of a read-only exact external argument must belong to the direct Promise and finish before it settles. Detached access and receiver exposure through a nested result Promise are trusted contract violations. Exact observation-only external identities may be retained or returned inertly because this transfers no authority. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule. Synchronous re-entry into the same execution is forbidden. A separate script execution may start immediately; independent work in this execution may start after the host call returns, but the direct host Promise must not depend on work ordered behind its active receiver gate or external phase.
 
 ## Managed-code contract
 
 Managed class semantic state uses own enumerable string-keyed data properties. A managed method keeps mutable semantic state in `this`, receives other state through explicit arguments, and does not depend on mutable parent, closure, module, private-field, Symbol, non-enumerable, accessor, or internal-slot state. Method code does not change traversable prototypes, descriptors, or extensibility.
+
+A method may create managed data backed by a Proxy only under the
+[managed-storage contract](data-limitations.md#proxies-in-managed-storage).
+The restriction on individual storage traps does not prevent a method from
+mutating its working receiver and then throwing or rejecting; the ordinary
+receiver-failure rules still apply.
 
 Managed code may inspect and mutate exported managed argument copies. Exact Functions and external identities remain read-only. An external identity nested in the receiver is an opaque leaf; explicit external access must use its own ordered operation rather than being hidden inside managed code.
 

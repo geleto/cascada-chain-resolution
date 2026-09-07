@@ -3,7 +3,6 @@ import { isArrayIndex } from "./array-view.js"
 import * as metadata from "./meta.js"
 
 function externalState(value) {
-    errorUtils.assertOutsideHostCode()
     if (errorUtils.isFatalError(value)) throw value
     if (Error.isError(value)) return value
     const failure = validateTarget(value, "externalState")
@@ -15,7 +14,6 @@ function externalState(value) {
 }
 
 function managedState(value) {
-    errorUtils.assertOutsideHostCode()
     if (errorUtils.isFatalError(value)) throw value
     if (Error.isError(value)) return value
     const failure = validateTarget(value, "managedState")
@@ -59,16 +57,16 @@ function managedState(value) {
         )
             return undefined
         const facts = metadata.inspectDeclarationMetaFacts(identity)
-        if (facts.type === metadata.TYPE_EXTERNAL) {
+        if (facts.type === metadata.TYPE.External) {
             if (!facts.admittedPrototype)
                 return root
-                    ? errorUtils.hostValidationError(
+                    ? errorUtils.declarationValidationError(
                           "managedState cannot inspect this prototype",
                       )
                     : undefined
             declarations.add(identity)
             prototypes.add(facts.admittedPrototype)
-        } else if (facts.type === metadata.TYPE_MANAGED_CLASS) {
+        } else if (facts.type === metadata.TYPE.ManagedClass) {
             declarations.add(identity)
             prototypes.add(facts.admittedPrototype)
         } else if (!metadata.isTraversableType(facts.type)) return undefined
@@ -95,19 +93,18 @@ function managedState(value) {
 }
 
 function managedStateClass(...classes) {
-    errorUtils.assertOutsideHostCode()
     const prototypes = new Set()
     for (const ManagedClass of classes) {
         if (errorUtils.isFatalError(ManagedClass)) throw ManagedClass
         if (Error.isError(ManagedClass)) return ManagedClass
-        if (typeof ManagedClass !== "function" || !isConstructor(ManagedClass))
-            return errorUtils.hostValidationError(
-                "managedStateClass requires constructors",
+        if (typeof ManagedClass !== "function")
+            return errorUtils.declarationValidationError(
+                "managedStateClass requires functions",
             )
         const prototype = inspectDeclaration(() => ManagedClass.prototype)
         if (Error.isError(prototype)) return prototype
         if (!metadata.isObjectLike(prototype))
-            return errorUtils.hostValidationError(
+            return errorUtils.declarationValidationError(
                 "managedStateClass requires object prototypes",
             )
         const failure = validateManagedPrototype(prototype)
@@ -124,43 +121,26 @@ function validateManagedPrototype(prototype) {
         )
         if (Error.isError(plain)) return plain
         if (plain) return undefined
-        const keys = inspectDeclaration(() => Reflect.ownKeys(current))
-        if (Error.isError(keys)) return keys
-        for (const key of keys) {
-            const descriptor = inspectDeclaration(() =>
-                Object.getOwnPropertyDescriptor(current, key),
-            )
-            if (Error.isError(descriptor)) return descriptor
-            if (descriptor && !("value" in descriptor))
-                return errorUtils.hostValidationError(
-                    "Managed class prototypes cannot contain accessors",
-                )
-            if (key === "then" && typeof descriptor?.value === "function")
-                return errorUtils.hostValidationError(
-                    "Managed class prototypes cannot contain a callable then",
-                )
-        }
+        const descriptor = inspectDeclaration(() =>
+            Object.getOwnPropertyDescriptor(current, "then"),
+        )
+        if (Error.isError(descriptor)) return descriptor
+        if (
+            descriptor &&
+            (!("value" in descriptor) || typeof descriptor.value === "function")
+        ) return errorUtils.declarationValidationError(
+            "Managed class prototypes cannot contain an unsafe then",
+        )
         current = inspectDeclaration(() => Object.getPrototypeOf(current))
         if (Error.isError(current)) return current
     }
 }
 
-function isConstructor(value) {
-    try {
-        Reflect.construct(new Proxy(value, {
-            construct: () => ({}),
-        }), [])
-        return true
-    } catch {
-        return false
-    }
-}
-
 function validateTarget(value, api) {
     if (!metadata.isObjectLike(value))
-        return errorUtils.hostValidationError(api + " requires an object")
+        return errorUtils.declarationValidationError(api + " requires an object")
     if (typeof value === "function")
-        return errorUtils.hostValidationError(
+        return errorUtils.declarationValidationError(
             api + " cannot declare a Function",
         )
     const thenable = inspectDeclaration(() => {
@@ -170,12 +150,12 @@ function validateTarget(value, api) {
     })
     if (Error.isError(thenable)) return thenable
     if (thenable)
-        return errorUtils.hostValidationError(api + " cannot declare a Promise")
+        return errorUtils.declarationValidationError(api + " cannot declare a Promise")
 }
 
 function conflictError(api, existing) {
     const requested = existing === "managed" ? "external" : "managed"
-    return errorUtils.hostValidationError(
+    return errorUtils.declarationValidationError(
         api +
             " cannot declare this value " +
             requested +
@@ -186,7 +166,6 @@ function conflictError(api, existing) {
 
 // This is a contextless declaration probe, not an execution failure boundary.
 function inspectDeclaration(action) {
-    errorUtils.enterHostCode()
     try {
         return action()
     } catch (reason) {
@@ -196,8 +175,6 @@ function inspectDeclaration(action) {
             : new Error("Could not inspect declaration input", {
                   cause: reason,
               })
-    } finally {
-        errorUtils.leaveHostCode()
     }
 }
 

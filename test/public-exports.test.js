@@ -31,7 +31,7 @@ exportsByEntry["./integration"] = {
         "validationError",
         "combineErrors",
         "failExecution",
-        "runHostBoundary",
+        "runExternalBoundary",
         "runInternalStep",
         "continueOperation",
         "isPending",

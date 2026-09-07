@@ -1,23 +1,22 @@
-import { prepareInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 
 const stringConcat = String.prototype.concat
 const arrayJoin = Array.prototype.join
 
 function toStringValue(value, ancestry, operation) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         toPrimitiveValue(value, ancestry, operation),
         operation.operationContext,
         primitive => {
             if (errorUtils.isPoisonError(primitive)) return primitive
-            return invocation.invokeHostFunction(
+            return invocation.invokeFunction(
                 stringConcat,
                 "",
                 [primitive],
@@ -31,13 +30,13 @@ function toStringValue(value, ancestry, operation) {
 }
 
 function toNumberValue(value, operation) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         toPrimitiveValue(value, undefined, operation),
         operation.operationContext,
         primitive => {
             if (errorUtils.isPoisonError(primitive)) return primitive
 
-            return errorUtils.runHostBoundary(
+            return errorUtils.runExternalBoundary(
                 operation.operationContext,
                 errorUtils.ERROR_KIND.ScalarConversionFailed,
                 () => +primitive,
@@ -49,7 +48,7 @@ function toNumberValue(value, operation) {
 }
 
 function toPrimitiveValue(value, ancestry, operation) {
-    return languageValues.consumeValue(
+    return internalSteps.consumeValue(
         value,
         operation.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -75,7 +74,7 @@ function toPrimitiveValue(value, ancestry, operation) {
                 )
             ) return resolved
             const type = languageValues.typeOf(resolved, operation.operationContext)
-            if (type === languageValues.TYPE_RECORD) {
+            if (type === languageValues.TYPE.Record) {
                 return metadata.requireMeta(
                     resolved,
                     operation.operationContext,
@@ -83,7 +82,7 @@ function toPrimitiveValue(value, ancestry, operation) {
                     ? conversionError(operation.operationContext)
                     : "[object Object]"
             }
-            return type === languageValues.TYPE_MANAGED_CLASS
+            return type === languageValues.TYPE.ManagedClass
                 ? "[object Object]"
                 : conversionError(operation.operationContext)
         },
@@ -92,7 +91,7 @@ function toPrimitiveValue(value, ancestry, operation) {
 }
 
 function toIntegerOrInfinity(value, operation) {
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         toNumberValue(value, operation),
         operation.operationContext,
         number => {
@@ -142,7 +141,7 @@ function joinLogicalArray(
                     )
                 )
                     return ""
-                return operationLifecycle.continueOperation(
+                return internalSteps.continueOperation(
                     propertyVersions.resolvePropertyValueAtKey(
                         array,
                         key,
@@ -163,11 +162,11 @@ function joinLogicalArray(
             errorUtils.ERROR_KIND.ScalarConversionFailed,
         )
     }
-    return prepareInputs(
+    return internalSteps.prepareInputs(
         conversions,
         operationContext,
         values =>
-            invocation.invokeHostFunction(
+            invocation.invokeFunction(
                 arrayJoin,
                 values,
                 [separator],

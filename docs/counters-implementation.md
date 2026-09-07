@@ -89,8 +89,15 @@ property contributes one pending Promise. Its first FIFO resolver publishes the
 result through the same property transition as an ordinary assignment.
 
 Each mirror's `value` is the authoritative logical edge. Imported physical
-properties keep their Promise, runtime-owned live properties also write through,
-and detached versions retain their private mirror value. A synchronously
+properties keep their Promise, runtime-owned live properties also write through
+when publication succeeds, and detached versions retain their private mirror
+value. Failed writeback can leave a settled mirror over any previous physical
+value, including a ready value published by an earlier transition. Counters
+follow the logical value. The [managed-storage contract](data-limitations.md#proxies-in-managed-storage)
+requires failed primitive writes, definitions, and deletions to leave the graph
+unchanged, so the previous version remains valid until a replacement commits.
+Complete fallible storage work before committing placement and refcount changes;
+no Proxy-specific recovery or rollback is needed. A synchronously
 consumed custom thenable contributes its final logical value directly, or
 through a fixed overlay over imported storage, and has no pending count. These
 storage choices do not change the counter rules.

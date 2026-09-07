@@ -2,6 +2,7 @@ import { spawnSync } from "child_process"
 import { fileURLToPath } from "url"
 import * as packageRuntime from "../src/index.js"
 import * as errorUtils from "../src/error.js"
+import * as internalSteps from "../src/internal-step.js"
 import { Chain as InternalChain } from "../src/chain.js"
 import {
     Chain,
@@ -1155,7 +1156,7 @@ describe("enter", () => {
     it("submits a FatalError callback result without cleanup", () => {
         const branch = {}
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            internalSteps.runInternalStep(
                 {
                     execution: new packageRuntime.Execution(),
                     errorContext: "fatal fixture",
@@ -1189,7 +1190,7 @@ describe("enter", () => {
     it("submits a fulfilled FatalError without cleanup", async () => {
         const branch = {}
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            internalSteps.runInternalStep(
                 {
                     execution: new packageRuntime.Execution(),
                     errorContext: "fatal fixture",

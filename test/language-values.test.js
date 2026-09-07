@@ -16,18 +16,21 @@ import {
     thrownBy,
 } from "./support.js"
 import * as errorUtils from "../src/error.js"
+import * as internalSteps from "../src/internal-step.js"
 
 describe("value admission", () => {
     it("uses distinct named numeric categories", () => {
+        expect(languageValues.TYPE).to.be(metadata.TYPE)
+        expect(Object.isFrozen(languageValues.TYPE)).to.be(true)
         const types = [
-            languageValues.TYPE_ERROR,
-            languageValues.TYPE_ARRAY,
-            languageValues.TYPE_FUNCTION,
-            languageValues.TYPE_STRING,
-            languageValues.TYPE_PRIMITIVE,
-            languageValues.TYPE_RECORD,
-            languageValues.TYPE_MANAGED_CLASS,
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.Error,
+            languageValues.TYPE.Array,
+            languageValues.TYPE.Function,
+            languageValues.TYPE.String,
+            languageValues.TYPE.Primitive,
+            languageValues.TYPE.Record,
+            languageValues.TYPE.ManagedClass,
+            languageValues.TYPE.External,
         ]
         expect(types.every(Number.isInteger)).to.be(true)
         expect(new Set(types).size).to.be(types.length)
@@ -45,15 +48,15 @@ describe("value admission", () => {
                     testOperationContext(),
                     errorUtils.ERROR_KIND.OperationInputFailed,
                 ),
-                languageValues.TYPE_ERROR,
+                languageValues.TYPE.Error,
             ],
-            [[], languageValues.TYPE_ARRAY],
-            [new ArrayView([1]), languageValues.TYPE_ARRAY],
-            [() => {}, languageValues.TYPE_FUNCTION],
-            [{ push() {} }, languageValues.TYPE_RECORD],
-            [Object.create(null), languageValues.TYPE_RECORD],
-            [new Managed(), languageValues.TYPE_MANAGED_CLASS],
-            [new External(), languageValues.TYPE_EXTERNAL],
+            [[], languageValues.TYPE.Array],
+            [new ArrayView([1]), languageValues.TYPE.Array],
+            [() => {}, languageValues.TYPE.Function],
+            [{ push() {} }, languageValues.TYPE.Record],
+            [Object.create(null), languageValues.TYPE.Record],
+            [new Managed(), languageValues.TYPE.ManagedClass],
+            [new External(), languageValues.TYPE.External],
         ]
         for (const [value, type] of cases) {
             languageValues.admitReadyValue(value)
@@ -61,11 +64,11 @@ describe("value admission", () => {
         }
         for (const value of [undefined, null, true, 1, 1n, Symbol()]) {
             expect(languageValues.typeOf(value)).to.be(
-                languageValues.TYPE_PRIMITIVE,
+                languageValues.TYPE.Primitive,
             )
         }
         expect(languageValues.typeOf("text")).to.be(
-            languageValues.TYPE_STRING,
+            languageValues.TYPE.String,
         )
     })
 
@@ -78,7 +81,7 @@ describe("value admission", () => {
         const value = await lookupPath(chain, [])
 
         expect(metadata.metaOf(promise)?.type).to.be(undefined)
-        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE_ARRAY)
+        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE.Array)
     })
 
     it("leaves Promise identities pending instead of admitting them", () => {
@@ -102,7 +105,7 @@ describe("value admission", () => {
         expect(languageValues.isPending(error)).to.be(false)
         const poison = consumeValue(error)
 
-        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE_ERROR)
+        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE.Error)
         expect(reads).to.be(0)
     })
 
@@ -118,7 +121,7 @@ describe("value admission", () => {
         expect(consumeValue(value)).to.be(value)
         expect(reads).to.be(1)
         expect(languageValues.typeOf(value)).to.be(
-            languageValues.TYPE_RECORD,
+            languageValues.TYPE.Record,
         )
     })
 
@@ -156,7 +159,7 @@ describe("value admission", () => {
 
         new Chain(value)
 
-        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE_ARRAY)
+        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE.Array)
     })
 
     it("keeps type and class definition fixed after admission", () => {
@@ -183,11 +186,11 @@ describe("value admission", () => {
 
         expect(errorUtils.isPoisonError(poison)).to.be(true)
         expect(languageValues.isPending(error)).to.be(false)
-        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE_ERROR)
-        expect(languageValues.typeOf(early)).to.be(languageValues.TYPE_EXTERNAL)
+        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE.Error)
+        expect(languageValues.typeOf(early)).to.be(languageValues.TYPE.External)
         expect(languageValues.isPending(early)).to.be(false)
         expect(languageValues.typeOf(managed)).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         importValue(managed, "changed managed-class prototype")
         const managedChain = new Chain(managed)
@@ -196,7 +199,7 @@ describe("value admission", () => {
             Managed.prototype,
         )
         const late = new Chain(new Early())._state.value
-        expect(languageValues.typeOf(late)).to.be(languageValues.TYPE_MANAGED_CLASS)
+        expect(languageValues.typeOf(late)).to.be(languageValues.TYPE.ManagedClass)
     })
 
     it("does not reflect again after admission", () => {
@@ -213,7 +216,7 @@ describe("value admission", () => {
         const readsAtAdmission = prototypeReads
 
         Object.setPrototypeOf(target, Object.prototype)
-        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE_EXTERNAL)
+        expect(languageValues.typeOf(value)).to.be(languageValues.TYPE.External)
         expect(languageValues.isTraversable(value)).to.be(false)
         expect(prototypeReads).to.be(readsAtAdmission)
     })
@@ -229,7 +232,7 @@ describe("value admission", () => {
 
         expect(chain._state.value).to.be(value)
         expect(languageValues.typeOf(value)).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -251,7 +254,7 @@ describe("value admission", () => {
         expect(attributed.cause).to.be(failure)
         expect(chain._state.value).to.be(attributed)
         expect(languageValues.typeOf(attributed)).to.be(
-            languageValues.TYPE_ERROR,
+            languageValues.TYPE.Error,
         )
     })
 
@@ -273,7 +276,7 @@ describe("value admission", () => {
     it("reports a FatalError fulfilled by initial resolution", async () => {
         const pending = deferred()
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            internalSteps.runInternalStep(
                 {
                     execution: new runtime.Execution(),
                     errorContext: "fatal fixture",
@@ -297,7 +300,7 @@ describe("value admission", () => {
 
     it("rejects a FatalError fulfilled through a causal boundary", async () => {
         const failure = thrownBy(() =>
-            errorUtils.runInternalStep(
+            internalSteps.runInternalStep(
                 {
                     execution: new runtime.Execution(),
                     errorContext: "fatal fixture",
@@ -313,7 +316,7 @@ describe("value admission", () => {
         })
         const operationContext = testOperationContext("causal boundary")
 
-        const result = languageValues.consumeValue(
+        const result = internalSteps.consumeValue(
             Promise.resolve(failure),
             operationContext,
             errorUtils.ERROR_KIND.ChainValueFailed,
@@ -331,7 +334,7 @@ describe("value admission", () => {
 
         new Chain(Managed.prototype)
         expect(metadata.metaOf(Managed.prototype).type).to.be(
-            languageValues.TYPE_RECORD,
+            languageValues.TYPE.Record,
         )
     })
 

@@ -248,7 +248,7 @@ function createArrayFromRemap(
     languageValues.admitReadyValue(
         output,
         operationContext,
-        languageValues.TYPE_ARRAY,
+        languageValues.TYPE.Array,
     )
     placeRemap(output, remap, operationContext, 0, retained)
     if (refIndexSource !== undefined) {

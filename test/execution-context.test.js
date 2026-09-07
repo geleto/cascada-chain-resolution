@@ -4,7 +4,7 @@ import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as runtime from "../src/index.js"
 import { readPath } from "../src/observations.js"
-import { runInternalStep } from "../src/error.js"
+import { runInternalStep } from "../src/internal-step.js"
 import {
     expect,
     flushMicrotasks,
@@ -22,29 +22,6 @@ function expectFatal(work) {
 }
 
 describe("operation context", () => {
-    it("requires an operation context at every production boundary", () => {
-        expectFatal(() => new runtime.Chain({}))
-        expectFatal(() => new runtime.ContextChain({}))
-        expectFatal(() => runtime.import({}))
-
-        const execution = new runtime.Execution()
-        const initialization = operationContext(execution, "initialization")
-        const chain = new runtime.Chain({ value: 1 }, initialization)
-        const operations = [
-            () => runtime.lookupPath(chain, []),
-            () => readPath(chain, []),
-            () => runtime.export(chain, []),
-            () => runtime.hasError(chain, []),
-            () => runtime.getErrors(chain, []),
-            () => runtime.assignPath(chain, ["value"], 2),
-            () => runtime.deletePath(chain, ["value"]),
-            () => runtime.run(chain, [], "toString", []),
-            () => runtime.enter(chain, [], undefined, false, () => {}),
-        ]
-        for (const operation of operations) expectFatal(operation)
-        expect(chain._state.value).to.eql({ value: 1 })
-    })
-
     for (const [name, operation] of [
         ["lookupPath", (chain, ctx) => runtime.lookupPath(chain, ["count"], ctx)],
         ["readPath", (chain, ctx) => readPath(chain, ["count"], ctx)],
@@ -345,10 +322,10 @@ describe("operation context", () => {
         new runtime.Chain(value, secondOperationContext)
 
         expect(metadata.metaOf(value, firstOperationContext).type).to.be(
-            metadata.TYPE_EXTERNAL,
+            metadata.TYPE.External,
         )
         expect(metadata.metaOf(value, secondOperationContext).type).to.be(
-            metadata.TYPE_MANAGED_CLASS,
+            metadata.TYPE.ManagedClass,
         )
     })
 

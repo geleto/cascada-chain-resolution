@@ -11,7 +11,7 @@ import {
     metadata,
 } from "./support.js"
 
-describe("state declarations", () => {
+describe("data declarations", () => {
     it("uses managed records and Arrays and external classes by default", () => {
         class Value {}
         const record = {}
@@ -22,10 +22,10 @@ describe("state declarations", () => {
         new Chain(array)
         new Chain(instance)
 
-        expect(metadata.metaOf(record).type).to.be(languageValues.TYPE_RECORD)
-        expect(metadata.metaOf(array).type).to.be(languageValues.TYPE_ARRAY)
+        expect(metadata.metaOf(record).type).to.be(languageValues.TYPE.Record)
+        expect(metadata.metaOf(array).type).to.be(languageValues.TYPE.Array)
         expect(metadata.metaOf(instance).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -44,12 +44,12 @@ describe("state declarations", () => {
         new Chain(array)
         new Chain(child)
         expect(metadata.metaOf(record).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
         expect(metadata.metaOf(array).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
-        expect(metadata.metaOf(child).type).to.be(languageValues.TYPE_RECORD)
+        expect(metadata.metaOf(child).type).to.be(languageValues.TYPE.Record)
         expect(metadata.identityDeclarationOf(record)).to.be(
             metadata.DECLARATION_EXTERNAL,
         )
@@ -80,11 +80,11 @@ describe("state declarations", () => {
 
         const chain = new Chain(line)
         expect(metadata.metaOf(line).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(lookupPath(chain, ["start"])).to.be(point)
         expect(metadata.metaOf(point).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(metadata.identityDeclarationOf(line)).to.be(
             metadata.DECLARATION_MANAGED,
@@ -96,7 +96,7 @@ describe("state declarations", () => {
         const laterPoint = new Vec(2)
         new Chain(laterPoint)
         expect(metadata.metaOf(laterPoint).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -121,10 +121,10 @@ describe("state declarations", () => {
         new Chain(external)
 
         expect(metadata.metaOf(managed).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(metadata.metaOf(external).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -138,7 +138,7 @@ describe("state declarations", () => {
         new Chain(value)
 
         expect(metadata.metaOf(value).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(metadata.metaOf(value).admittedPrototype).to.be(
             Replacement.prototype,
@@ -166,17 +166,17 @@ describe("state declarations", () => {
         importValue({ managed })
 
         expect(metadata.metaOf(declaredExternal).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
         expect(metadata.metaOf(admittedExternal).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
         expect(metadata.metaOf(hidden)).to.be(undefined)
         expect(metadata.metaOf(managed).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(metadata.metaOf(managed.child).type).to.be(
-            languageValues.TYPE_RECORD,
+            languageValues.TYPE.Record,
         )
     })
 
@@ -195,7 +195,7 @@ describe("state declarations", () => {
 
         new Chain(opaque)
         expect(metadata.metaOf(opaque).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -206,14 +206,14 @@ describe("state declarations", () => {
         managedStateClass(Late)
 
         expect(metadata.metaOf(instance).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
         expect(managedState(instance)).to.be(instance)
 
         const record = {}
         new Chain(record)
         expect(externalState(record)).to.be(record)
-        expect(metadata.metaOf(record).type).to.be(languageValues.TYPE_RECORD)
+        expect(metadata.metaOf(record).type).to.be(languageValues.TYPE.Record)
     })
 
     it("walks declarations independently of execution admission", () => {
@@ -229,7 +229,7 @@ describe("state declarations", () => {
 
         new Chain(candidate)
         expect(metadata.metaOf(candidate).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
     })
 
@@ -251,10 +251,10 @@ describe("state declarations", () => {
         new Chain(managed)
         new Chain(external)
         expect(metadata.metaOf(managed).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
         expect(metadata.metaOf(external).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -269,7 +269,7 @@ describe("state declarations", () => {
         expect(managedState({ thenable })).to.be.an(Error)
         new Chain(child)
         expect(metadata.metaOf(child).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
@@ -308,9 +308,7 @@ describe("state declarations", () => {
     it("validates all managed classes before changing the registry", () => {
         class First {}
         class Invalid {
-            get value() {
-                return 1
-            }
+            then() {}
         }
         class Last {}
 
@@ -321,14 +319,14 @@ describe("state declarations", () => {
         new Chain(first)
         new Chain(last)
         expect(metadata.metaOf(first).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
         expect(metadata.metaOf(last).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
     })
 
-    it("rejects callable then methods on managed prototype chains", () => {
+    it("rejects unsafe then properties on managed prototype chains", () => {
         class Base {
             then(resolve) {
                 resolve("assimilated")
@@ -347,30 +345,18 @@ describe("state declarations", () => {
         new Chain(declared)
         expect(metadata.metaOf(registered)).to.be(undefined)
         expect(metadata.metaOf(declared).type).to.be(
-            languageValues.TYPE_EXTERNAL,
+            languageValues.TYPE.External,
         )
-    })
 
-    it("rejects callable non-constructors as managed classes", () => {
-        const prototype = {}
-        let prototypeReads = 0
-        const NonConstructor = new Proxy(() => {}, {
-            get(target, key, receiver) {
-                if (key === "prototype") prototypeReads++
-                return key === "prototype"
-                    ? prototype
-                    : Reflect.get(target, key, receiver)
-            },
-        })
-
-        expect(managedStateClass(NonConstructor)).to.be.an(Error)
-        expect(prototypeReads).to.be(0)
-
-        const value = Object.create(prototype)
-        new Chain(value)
-        expect(metadata.metaOf(value).type).to.be(
-            languageValues.TYPE_EXTERNAL,
-        )
+        let reads = 0
+        class WithThenAccessor {
+            get then() {
+                reads++
+                return undefined
+            }
+        }
+        expect(managedStateClass(WithThenAccessor)).to.be.a(TypeError)
+        expect(reads).to.be(0)
     })
 
     it("samples a managed class prototype once", () => {
@@ -389,7 +375,7 @@ describe("state declarations", () => {
         const value = new Managed()
         new Chain(value)
         expect(metadata.metaOf(value).type).to.be(
-            languageValues.TYPE_MANAGED_CLASS,
+            languageValues.TYPE.ManagedClass,
         )
     })
 

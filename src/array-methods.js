@@ -1,4 +1,4 @@
-import { prepareInputs } from "./input-collection.js"
+import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
@@ -135,7 +135,7 @@ function observeAt([index = 0], invocationContext) {
 }
 
 function numericInput(value, invocationContext) {
-    return languageValues.consumeValue(
+    return internalSteps.consumeValue(
         value,
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -152,7 +152,7 @@ function numericInput(value, invocationContext) {
 }
 
 function stringInput(value, invocationContext) {
-    return languageValues.consumeValue(
+    return internalSteps.consumeValue(
         value,
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -202,7 +202,7 @@ function transferElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         result,
         invocationContext.operationContext,
         value => value,
@@ -215,7 +215,7 @@ function retainElement(element, invocationContext) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         result,
         invocationContext.operationContext,
         value => {
@@ -252,7 +252,7 @@ function getViewLength(view) {
     return view.length
 }
 
-// Every Array step consumes exact host escapes before its continuation returns
+// Every Array step consumes exact external escapes before its continuation returns
 // to the fatal envelope. The same rule applies to ready and resumed work.
 function runArrayStep(invocationContext, work) {
     return errorUtils.catchExternalThrow(
@@ -262,9 +262,31 @@ function runArrayStep(invocationContext, work) {
     )
 }
 
+// Complete preparation keeps an unreadable placement as an Error input instead
+// of abandoning known siblings. Fix presence before resolving any property value.
+// Structural remaps keep their ordinary all-or-nothing capture contract.
+function collectArrayPlacements(array, invocationContext) {
+    const operationContext = invocationContext.operationContext
+    const placements = new Array(arrayViews.logicalArrayLength(array, operationContext))
+    for (const key of arrayViews.arrayKeyCandidates(array, operationContext)) {
+        const placement = runArrayStep(invocationContext, () =>
+            propertyVersions.getPropertyPlacement(array, key, operationContext),
+        )
+        if (placement !== undefined) {
+            languageProperties.writeLanguageProperty(
+                placements,
+                key,
+                placement,
+                operationContext,
+            )
+        }
+    }
+    return placements
+}
+
 function prepareConcatArguments(invocationContext) {
     const parts = invocationContext.args.map(item =>
-        languageValues.consumeValue(
+        internalSteps.consumeValue(
             item,
             invocationContext.operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
@@ -279,7 +301,7 @@ function prepareConcatArguments(invocationContext) {
             invocationContext,
         ),
     )
-    return prepareInputs(
+    return internalSteps.prepareInputs(
         parts,
         invocationContext.operationContext,
         values => values,
@@ -294,7 +316,7 @@ function captureRemap(array, operationContext) {
 }
 
 function createConcatRemap(parts, invocationContext) {
-    return invocation.invokeHostFunction(
+    return invocation.invokeFunction(
         arrayConcat,
         captureRemap(
             invocationContext.receiver,
@@ -307,7 +329,7 @@ function createConcatRemap(parts, invocationContext) {
 
 function flatRemap([depth = 1], invocationContext) {
     depth = Math.max(depth, 0)
-    return operationLifecycle.continueOperation(
+    return internalSteps.continueOperation(
         prepareFlatArray(
             invocationContext.receiver,
             depth,
@@ -317,7 +339,7 @@ function flatRemap([depth = 1], invocationContext) {
         invocationContext.operationContext,
         prepared => {
             if (errorUtils.isPoisonError(prepared)) return prepared
-            return invocation.invokeHostFunction(
+            return invocation.invokeFunction(
                 arrayFlat,
                 prepared,
                 [depth],
@@ -341,7 +363,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
                 errorUtils.ERROR_KIND.InvalidArrayOperation,
             )
         }
-        const source = arrayRemaps.createRemap(array, invocationContext.operationContext)
+        const source = collectArrayPlacements(array, invocationContext)
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
             ? { array, parent: ancestry }
@@ -354,7 +376,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
                 invocationContext,
             ),
         )
-        return prepareInputs(
+        return internalSteps.prepareInputs(
             parts,
             invocationContext.operationContext,
             values => {
@@ -370,8 +392,9 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
 
 function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
     return runArrayStep(invocationContext, () => {
+        if (errorUtils.isPoisonError(placement)) return placement
         if (depth === 0) return placement
-        return operationLifecycle.continueOperation(
+        return internalSteps.continueOperation(
             placement.resolveValue(),
             invocationContext.operationContext,
             value => arrayViews.isLogicalArray(value, invocationContext.operationContext)
@@ -385,7 +408,7 @@ function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
 
 function prepareSearchArguments(invocationContext) {
     const { args } = invocationContext
-    const searchResult = languageValues.consumeValue(
+    const searchResult = internalSteps.consumeValue(
         args[0],
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -395,7 +418,7 @@ function prepareSearchArguments(invocationContext) {
     const fromResult = args.length > 1
         ? conversion.toIntegerOrInfinity(args[1], invocationContext)
         : undefined
-    return prepareInputs(
+    return internalSteps.prepareInputs(
         [searchResult, fromResult],
         invocationContext.operationContext,
         readyValues => {
@@ -418,7 +441,7 @@ function join([separator], invocationContext) {
 function prepareSortArguments(invocationContext) {
     const { args } = invocationContext
     if (args[0] === undefined) return undefined
-    return languageValues.consumeValue(
+    return internalSteps.consumeValue(
         args[0],
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
@@ -442,13 +465,17 @@ function prepareToSortedRemap(comparator, invocationContext) {
 
 function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
     const thisValue = invocationContext.receiver
-    const source = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
+    const source = collectArrayPlacements(thisValue, invocationContext)
     const records = []
-    for (const placement of source) {
-        if (!placement) continue
+    for (const key of Object.keys(source)) {
+        const placement = source[key]
+        if (errorUtils.isPoisonError(placement)) {
+            records.push(placement)
+            continue
+        }
         records.push(
             runArrayStep(invocationContext, () =>
-                operationLifecycle.continueOperation(
+                internalSteps.continueOperation(
                     placement.resolveValue(),
                     invocationContext.operationContext,
                     value => ({ placement, value }),
@@ -458,21 +485,23 @@ function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
             ),
         )
     }
-    return prepareInputs(
+    // Failed captures remain inputs to conversion/export, alongside successfully
+    // resolved records. Only that complete preparation may decide to stop sorting.
+    return internalSteps.collectInputs(
         records,
         invocationContext.operationContext,
         ready => {
             const sortable = []
             const undefinedPlacements = []
             for (const record of ready) {
-                if (record.value === undefined) {
+                if (!errorUtils.isPoisonError(record) && record.value === undefined) {
                     undefinedPlacements.push(record.placement)
                 } else {
                     sortable.push(record)
                 }
             }
             if (sortable.length < 2) {
-                return finish(sortable)
+                return errorUtils.isPoisonError(sortable[0]) ? sortable[0] : finish(sortable)
             }
             return prepareAndSortRecords(sortable, comparator, invocationContext, finish)
 
@@ -496,8 +525,9 @@ function prepareAndSortRecords(
     finish,
 ) {
     if (comparator === undefined) {
-        const records = sortable.map(record =>
-            operationLifecycle.continueOperation(
+        const records = sortable.map(record => {
+            if (errorUtils.isPoisonError(record)) return record
+            return internalSteps.continueOperation(
                 conversion.toStringValue(record.value, undefined, invocationContext),
                 invocationContext.operationContext,
                 key => {
@@ -508,9 +538,9 @@ function prepareAndSortRecords(
                 },
                 undefined,
                 invocationContext,
-            ),
-        )
-        return prepareInputs(
+            )
+        })
+        return internalSteps.prepareInputs(
             records,
             invocationContext.operationContext,
             ready => {
@@ -525,8 +555,10 @@ function prepareAndSortRecords(
         )
     }
 
-    const snapshot = sortable.map(record => record.value)
-    return operationLifecycle.continueOperation(
+    const snapshot = sortable.map(record =>
+        errorUtils.isPoisonError(record) ? record : record.value,
+    )
+    return internalSteps.continueOperation(
         exportManyValues([snapshot], invocationContext),
         invocationContext.operationContext,
         readyValues => {
@@ -589,7 +621,7 @@ function comparePreparedKeys(left, right) {
 }
 
 function compareExported(comparator, left, right, operationContext) {
-    const result = invocation.invokeHostFunction(
+    const result = invocation.invokeFunction(
         comparator,
         undefined,
         [left, right],
@@ -597,14 +629,14 @@ function compareExported(comparator, left, right, operationContext) {
         errorUtils.ERROR_KIND.ControlledCallbackFailed,
     )
     if (errorUtils.isPoisonError(result)) throw result
-    const pending = errorUtils.runHostBoundary(
+    const pending = errorUtils.runExternalBoundary(
         operationContext,
         errorUtils.ERROR_KIND.ThenAccessFailed,
         () => languageValues.isPending(result, operationContext),
     )
     if (errorUtils.isPoisonError(pending)) throw pending
     if (pending) {
-        const observed = operationLifecycle.continueOperation(
+        const observed = internalSteps.continueOperation(
             result,
             operationContext,
             () => undefined,
@@ -635,7 +667,7 @@ function includes({ searchValue, fromIndex = 0 }, invocationContext) {
     if (start >= length) return false
     const pending = []
     for (let index = start; index < length; index++) {
-        const branch = operationLifecycle.continueOperation(
+        const branch = internalSteps.continueOperation(
             propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationContext.operationContext),
             invocationContext.operationContext,
             matches,
@@ -653,7 +685,7 @@ function includes({ searchValue, fromIndex = 0 }, invocationContext) {
     let remaining = pending.length
     const { promise: result, resolve: resolveResult } = Promise.withResolvers()
     for (const wait of pending) {
-        const branch = operationLifecycle.continueOperation(
+        const branch = internalSteps.continueOperation(
             wait,
             invocationContext.operationContext,
             found => {
@@ -720,7 +752,7 @@ function orderedIndexSearch(
                 if (
                     languageValues.isPending(value, invocationContext.operationContext)
                 ) {
-                    return operationLifecycle.continueOperation(
+                    return internalSteps.continueOperation(
                         propertyVersions.resolvePropertyValueAtKey(
                             thisValue,
                             key,
@@ -797,7 +829,7 @@ function deriveArrayView(start, end, invocationContext) {
 }
 
 function tryConcatArrayView(parts, invocationContext) {
-    const suffix = invocation.invokeHostFunction(
+    const suffix = invocation.invokeFunction(
         arrayConcat,
         [],
         parts,
