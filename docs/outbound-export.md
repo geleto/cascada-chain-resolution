@@ -6,7 +6,7 @@ Export is the single outbound graph boundary. It prepares an ordered batch of ho
 
 ## Copying
 
-One export operation uses one visited set per root and one source-to-output identity map for the batch. Separate visited sets preserve each root's Error domain; the shared map preserves aliases and cycles across argument positions.
+One export operation uses one visited set, one source-to-output identity map, and one Error accumulator across the entire batch. Shared inspection preserves aliases and cycles across argument positions. Required root positions remain ordered; semantic Error membership has no separate per-root domain.
 
 The copier:
 
@@ -17,18 +17,20 @@ The copier:
 - keeps Functions and external identities exact; and
 - emits no ArrayView, Promise mirror, metadata, counter, or other runtime representation.
 
-Each batch root retains its own result position. Wrapping the roots in an ordinary object or Array would incorrectly turn a top-level input Error into nested host data.
+Every successful output follows the native `then` contract in [`data-limitations.md`](data-limitations.md). Exact Functions and external leaves must have a stable native lookup that safely yields a non-callable value from their first use onward; ready and pending export both preserve those exact identities. Managed producers validate their native lookup surface before publication. Export copies only language placements and preserves admitted prototypes; it does not copy hidden properties or add an exact-value probe or result wrapper.
+
+Each successful batch root retains its own result position. Any reached Error prevents the whole host call after all required roots and nested branches finish collection.
 
 ## Errors
 
 The walk collects every contextual Error reached beneath each root. One
-occurrence is preserved. Several produce a `CompoundPoisonError`; combination
+semantic failure is preserved. Several produce a `CompoundPoisonError`; one final combination
 flattens nested compounds and deduplicates by raw cause, source-context identity,
 and kind, sharing the rule used by `getErrors`. Error order and representative
 wrapper/source are unspecified; successful batch-root positions remain ordered. Any
 Error prevents host invocation or assignment. No Error is exported.
 
-An Error discards partial output but does not stop the scan: pending captured branches may reveal other Errors. Export never starts a second `getErrors` operation.
+An Error discards partial output but does not stop the scan: pending captured branches may reveal other Errors. Capture candidate keys and validate each placement descriptor before consuming values. A descriptor failure contributes its Error while other known keys remain required; a key-list failure ends only the undiscoverable interior. The same rule applies to records, Arrays, and bounded ArrayViews, whose candidate walk stays inside the selected range. Export never starts a second `getErrors` operation.
 
 ## Promise ordering
 
@@ -50,4 +52,4 @@ The result is synchronous when every consumed frontier transition returns direct
 
 Export adds no owner or shared mark to its source. This relies on ordinary ownership rules: another valid Cascada owner marks managed data shared, and later mutation uses COW. Application code must not mutate data after passing it to Cascada. Exact external state remains governed by its own ordering and mutation authority; export grants none.
 
-`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/operation-lifecycle.js` owns guarded continuation and operation closure; observation and invocation code call the two export shapes directly.
+`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/input-collection.js` owns complete root readiness, and `src/operation-lifecycle.js` owns guarded continuation and operation closure; observation and invocation code call the two export shapes directly.

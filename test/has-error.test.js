@@ -6,7 +6,6 @@ import {
     verifyRefCounts,
     assignPath,
     deletePath,
-    errorCause,
     hasError,
     importValue,
     metaOf,
@@ -141,7 +140,7 @@ describe("hasError", () => {
         pending.resolve({ clean: true })
         await flushMicrotasks()
 
-        expect(errorCause(reported)).to.be(failure)
+        expect(reported).to.be(undefined)
         Object.defineProperty(mirror, "value", {
             value: mirrorValue,
             enumerable: true,

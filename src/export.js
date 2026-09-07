@@ -1,205 +1,171 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
+import { collectInputs } from "./input-collection.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 
-const keepValues = values => values
-const firstValue = values => values[0]
-
-class ExportContext {
-    constructor(inputCount, owner) {
-        this.owner = owner
-        this.copyBySource = new WeakMap()
-        this.collectedErrors = new Array(inputCount)
-        this.exportedValues = new Array(inputCount)
-        this.visited = Array.from(
-            { length: inputCount },
-            () => new WeakSet(),
-        )
-    }
-
-    discardCopies() {
-        this.copyBySource = undefined
-        this.exportedValues = undefined
-    }
-
-    release() {
-        const unregisterRelease = this.unregisterRelease
-        this.unregisterRelease = undefined
-        unregisterRelease?.()
-        this.copyBySource = undefined
-        this.collectedErrors = undefined
-        this.exportedValues = undefined
-        this.visited = undefined
-    }
-}
-
 function exportValue(value, operationContext) {
-    return exportValues(
-        [value],
-        new operationLifecycle.OperationOwner(operationContext),
-        firstValue,
-        true,
-    )
-}
-
-function exportManyValues(values, owner) {
-    return exportValues(values, owner, keepValues, false)
-}
-
-function exportValues(values, owner, resultFromValues, ownsOwner) {
-    const operationContext = owner.operationContext
-    const exportContext = new ExportContext(values.length, owner)
-    const readiness = values.map((value, position) =>
-        prepareExportValue(value, position, exportContext))
-    const result = operationLifecycle.continueAllInternalResultsOrFatal(
-        owner,
-        readiness,
-        () => finishExport(exportContext, resultFromValues),
-    )
-    if (languageValues.isPending(result, operationContext)) {
-        exportContext.unregisterRelease = operationLifecycle.releaseOnClose(
-            owner,
-            () => exportContext.release(),
-        )
-    }
-    if (!ownsOwner) return result
-    return operationLifecycle.closeWhenDone(owner, result)
-}
-
-function prepareExportValue(value, position, exportContext) {
-    return operationLifecycle.resolveInitial(exportContext.owner, value, resolved => {
-        return runExportTransition(exportContext, position, () => {
-            if (languageValues.isError(resolved)) {
-                collectError(exportContext, position, resolved)
-                return undefined
-            }
-            const readiness = walkExportValue(resolved, exportContext, position)
-            if (exportContext.copyBySource) {
-                exportContext.exportedValues[position] = outputValueOf(resolved, exportContext)
-            }
-            return readiness
-        })
+    const owner = new operationLifecycle.OperationOwner(operationContext)
+    return exportValues([value], owner, outcome => {
+        owner.close()
+        return errorUtils.isPoisonError(outcome) ? outcome : outcome[0]
     })
 }
 
-function walkExportValue(value, exportContext, position) {
-    if (languageValues.isError(value)) {
-        collectError(exportContext, position, value)
-        return undefined
-    }
-    if (!languageValues.isTraversable(value, exportContext.owner.operationContext)) {
-        return undefined
-    }
+function exportManyValues(values, owner) {
+    return exportValues(values, owner, values => values)
+}
 
-    const visited = exportContext.visited[position]
-    if (visited.has(value)) return undefined
-    visited.add(value)
-
-    if (exportContext.copyBySource && !exportContext.copyBySource.has(value)) {
-        const output = runExportStep(
-            exportContext,
-            position,
-            () => createOutputContainer(value, exportContext.owner.operationContext),
-        )
-        if (!languageValues.isError(output)) {
-            exportContext.copyBySource.set(value, output)
-        }
-    }
-
-    const keys = runExportStep(
-        exportContext,
-        position,
-        () => languageProperties.enumerableLanguageKeys(
+// All roots belong to one required frontier. Aliases share both inspection and
+// copies; one Error accumulator survives discarded output until every wait ends.
+function exportValues(values, owner, onResult) {
+    const operationContext = owner.operationContext
+    const visited = new WeakSet()
+    const errors = new Set()
+    let copies = new WeakMap()
+    let outputs = new Array(values.length)
+    let unregister
+    const readiness = values.map((value, position) =>
+        languageValues.consumeValue(
             value,
-            exportContext.owner.operationContext,
+            operationContext,
+            errorUtils.ERROR_KIND.OperationInputFailed,
+            resolved => {
+                const readiness = walk(resolved)
+                if (copies) outputs[position] = outputOf(resolved)
+                return readiness
+            },
+            owner,
         ),
     )
-    if (languageValues.isError(keys)) return undefined
-
-    const waits = []
-    for (const key of keys) {
-        const child = runExportStep(
-            exportContext,
-            position,
-            () => languageProperties.readLanguageProperty(
-                value,
-                key,
-                exportContext.owner.operationContext,
-            ),
-        )
-        if (languageValues.isError(child)) continue
-        if (languageValues.isPending(child, exportContext.owner.operationContext)) {
-            // Reserve the key before settlement can reorder it.
-            if (exportContext.copyBySource) writeOutputProperty(
-                exportContext.copyBySource.get(value),
-                key,
-                undefined,
-            )
-            const readiness = runExportStep(
-                exportContext,
-                position,
-                () => walkExportPromise(value, key, child, exportContext, position),
-            )
-            if (languageValues.isPending(readiness, exportContext.owner.operationContext)) waits.push(readiness)
-            continue
-        }
-
-        const readiness = walkExportValue(child, exportContext, position)
-        if (exportContext.copyBySource) writeOutputProperty(
-            exportContext.copyBySource.get(value),
-            key,
-            outputValueOf(child, exportContext),
-        )
-        if (readiness) waits.push(readiness)
-    }
-    return waits.length === 0
-        ? undefined
-        : operationLifecycle.continueInternalResultOrFatal(
-            exportContext.owner,
-            Promise.all(waits),
-            () => undefined,
-        )
-}
-
-function runExportStep(exportContext, position, step) {
-    // Only the exact user-code boundary becomes language Error data.
-    const result = errorUtils.catchUserCodeFailure(
-        step,
-        exportContext.owner.operationContext,
-        errorUtils.ERROR_KIND.ExportThrew,
-    )
-    if (languageValues.isError(result)) collectError(exportContext, position, result)
-    return result
-}
-
-function walkExportPromise(parent, key, promise, exportContext, position) {
-    const result = propertyVersions.continuePropertyValue(
-        parent,
-        key,
-        promise,
-        exportContext.owner.operationContext,
-        value => {
-            return runExportTransition(exportContext, position, () => {
-                const readiness = walkExportValue(value, exportContext, position)
-                if (exportContext.copyBySource) writeOutputProperty(
-                    exportContext.copyBySource.get(parent),
-                    key,
-                    outputValueOf(value, exportContext),
+    const result = collectInputs(
+        readiness,
+        operationContext,
+        () => {
+            const outcome = errors.size
+                ? errorUtils.combineErrors(
+                    errors,
+                    "Operation received multiple Errors",
                 )
-                return readiness
-            })
+                : outputs
+            unregister?.()
+            release()
+            return onResult(outcome)
         },
+        owner,
     )
+    if (languageValues.isPending(result, operationContext))
+        unregister = operationLifecycle.releaseOnClose(owner, release)
     return result
-}
 
-function runExportTransition(exportContext, position, transition) {
-    if (!exportContext.owner.open) return undefined
-    return runExportStep(exportContext, position, transition)
+    function release() {
+        copies = outputs = undefined
+        errors.clear()
+    }
+
+    function collect(error) {
+        errors.add(error)
+        copies = outputs = undefined
+    }
+
+    function step(action) {
+        const result = errorUtils.catchExternalThrow(
+            action,
+            operationContext,
+            errorUtils.ERROR_KIND.ExportReflectionFailed,
+        )
+        if (errorUtils.isPoisonError(result)) collect(result)
+        return result
+    }
+
+    function outputOf(value) {
+        return languageValues.isTraversable(value, operationContext)
+            ? copies.get(value)
+            : value
+    }
+
+    function walk(value) {
+        if (errorUtils.isPoisonError(value)) {
+            collect(value)
+            return undefined
+        }
+        if (
+            !languageValues.isTraversable(value, operationContext) ||
+            visited.has(value)
+        )
+            return undefined
+        visited.add(value)
+        if (copies) {
+            const output = step(() =>
+                createOutputContainer(value, operationContext),
+            )
+            if (copies) copies.set(value, output)
+        }
+        const keys = []
+        step(() => {
+            for (const key of languageProperties.languageKeyCandidates(
+                value,
+                operationContext,
+            )) {
+                const present = step(() => languageProperties.hasLanguageProperty(
+                    value,
+                    key,
+                    operationContext,
+                ))
+                if (present === true) keys.push(key)
+            }
+        })
+        const waits = []
+        for (const key of keys) {
+            const child = step(() =>
+                languageProperties.readLanguageProperty(
+                    value,
+                    key,
+                    operationContext,
+                ),
+            )
+            if (errorUtils.isPoisonError(child)) continue
+            let readiness
+            if (languageValues.isPending(child, operationContext)) {
+                // Fix output key order at capture, before any settlement.
+                if (copies)
+                    writeOutputProperty(copies.get(value), key, undefined)
+                readiness = propertyVersions.continuePropertyValue(
+                    value,
+                    key,
+                    child,
+                    operationContext,
+                    publish,
+                    owner,
+                )
+            } else readiness = publish(child)
+            if (languageValues.isPending(readiness, operationContext))
+                waits.push(readiness)
+
+            function publish(resolved) {
+                const readiness = walk(resolved)
+                if (copies)
+                    writeOutputProperty(
+                        copies.get(value),
+                        key,
+                        outputOf(resolved),
+                    )
+                return readiness
+            }
+        }
+        return waits.length === 0
+            ? undefined
+            : operationLifecycle.continueOperation(
+                  Promise.all(waits),
+                  operationContext,
+                  () => undefined,
+                  undefined,
+                  owner,
+              )
+    }
 }
 
 function createOutputContainer(value, operationContext) {
@@ -209,49 +175,14 @@ function createOutputContainer(value, operationContext) {
         : Object.create(meta.admittedPrototype)
 }
 
-function outputValueOf(value, exportContext) {
-    return languageValues.isTraversable(value, exportContext.owner.operationContext)
-        ? exportContext.copyBySource.get(value)
-        : value
-}
-
 function writeOutputProperty(parent, key, value) {
-    // Never let an inherited __proto__ setter change the copy's prototype.
+    // Never invoke an inherited setter on the fresh runtime-owned copy.
     Object.defineProperty(parent, key, {
         value,
         enumerable: true,
         writable: true,
         configurable: true,
     })
-}
-
-function collectError(exportContext, position, error) {
-    error = errorUtils.toPoison(
-        error,
-        exportContext.owner.operationContext,
-        errorUtils.ERROR_KIND.ExportValueError,
-    )
-    const errors = exportContext.collectedErrors[position] ??= new Set()
-    errors.add(error)
-    exportContext.discardCopies()
-}
-
-function finishExport(exportContext, resultFromValues) {
-    const errors = exportContext.collectedErrors
-        .map(errors => errors && errorUtils.combineErrors(
-            errors,
-            "export: branch contains errors",
-        ))
-        .filter(languageValues.isError)
-    const exportedValues = exportContext.exportedValues
-    exportContext.release()
-    if (errors.length > 0) {
-        return errorUtils.combineErrors(
-            errors,
-            "Operation received multiple Errors",
-        )
-    }
-    return resultFromValues(exportedValues)
 }
 
 export { exportManyValues, exportValue }

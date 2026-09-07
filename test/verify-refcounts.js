@@ -202,7 +202,7 @@ function recountProperty(node, key, operationContext) {
     } else if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
         child = undefined
         cycleCutCount = 1
-    } else if (languageValues.isError(child)) {
+    } else if (errorUtils.isPoisonError(child)) {
         errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
         const counter = getRefCounter(child, operationContext)

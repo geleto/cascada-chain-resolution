@@ -1098,10 +1098,10 @@ describe("enter", () => {
         const execution = useTestExecution()
         const branch = {}
         const completion = deferred()
-        const poison = new packageRuntime.PoisonError(
+        const poison = errorUtils.validationError(
             "expected",
-            "callback source",
-            packageRuntime.ERROR_KIND.OperationInputRejected,
+            testOperationContext("callback source"),
+            packageRuntime.ERROR_KIND.OperationInputFailed,
         )
         let entered
         const result = enter(
@@ -1126,10 +1126,10 @@ describe("enter", () => {
         const execution = useTestExecution()
         const root = { target: { value: 1 } }
         const completion = deferred()
-        const poison = new packageRuntime.PoisonError(
+        const poison = errorUtils.validationError(
             "expected",
-            "callback source",
-            packageRuntime.ERROR_KIND.OperationInputRejected,
+            testOperationContext("callback source"),
+            packageRuntime.ERROR_KIND.OperationInputFailed,
         )
         let entered
         const result = enter(
@@ -1154,9 +1154,17 @@ describe("enter", () => {
 
     it("submits a FatalError callback result without cleanup", () => {
         const branch = {}
-        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
-            throw new Error("fatal callback result")
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new packageRuntime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw new Error("fatal callback result")
+                },
+            ),
+        )
         let entered
         let reported
         useTestExecution(error => {
@@ -1180,9 +1188,17 @@ describe("enter", () => {
 
     it("submits a fulfilled FatalError without cleanup", async () => {
         const branch = {}
-        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
-            throw new Error("fatal callback fulfillment")
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new packageRuntime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw new Error("fatal callback fulfillment")
+                },
+            ),
+        )
         let entered
         let reported
         useTestExecution(error => {

@@ -1,11 +1,8 @@
+import * as errorUtils from "../src/error.js"
 import * as runtime from "../src/index.js"
+import { continueOperation } from "../src/operation-lifecycle.js"
 import {
-    runContextlessFatal,
-    runInternalStep,
-    failExecution,
-} from "../src/error.js"
-import { continueInternalResultOrFatal } from "../src/resolution.js"
-import {
+    testOperationContext,
     deferred,
     expect,
     flushMicrotasks,
@@ -17,18 +14,28 @@ function operationContext(execution, errorContext = "fatal test") {
 }
 
 function failedBy(operationContext, reason) {
-    return thrownBy(() => failExecution(operationContext, reason))
+    return thrownBy(() => errorUtils.failExecution(operationContext, reason))
 }
 
 describe("fatal execution", () => {
     it("constructs immutable, branded, non-thenable FatalErrors", async () => {
         const cause = new Error("contextless failure")
-        const failure = thrownBy(() => runContextlessFatal(() => {
-            throw cause
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new runtime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw cause
+                },
+            ),
+        )
 
         expect(failure).to.be.a(runtime.FatalError)
-        expect(failure instanceof runtime.CascadaError).to.be(false)
+        expect(Object.getPrototypeOf(runtime.FatalError.prototype)).to.be(
+            Error.prototype,
+        )
         expect(runtime.isFatalError(failure)).to.be(true)
         expect(runtime.isFatalError(Object.create(runtime.FatalError.prototype)))
             .to.be(false)
@@ -182,7 +189,7 @@ describe("fatal execution", () => {
         expect(execution._metadata.has(input)).to.be(false)
     })
 
-    it("makes failures during asynchronous Error contextualization fatal", async () => {
+    it("contextualizes native Errors without inspecting their prototype chain", async () => {
         async function verify(start) {
             const execution = new runtime.Execution()
             const context = operationContext(execution)
@@ -197,9 +204,9 @@ describe("fatal execution", () => {
             const result = start(reason, context)
             const failure = await result.catch(error => error)
 
-            expect(failure).to.be.a(runtime.FatalError)
-            expect(failure.cause).to.be(contextualizationFailure)
-            expect(execution.fatalError).to.be(failure)
+            expect(failure).to.be.a(runtime.PoisonError)
+            expect(failure.cause).to.be(reason)
+            expect(execution.fatalError).to.be(null)
         }
 
         await verify((reason, context) => runtime.import(
@@ -226,9 +233,12 @@ describe("fatal execution", () => {
             )
         })
         await verify((reason, context) => {
-            runtime.import({ pending: Promise.reject(reason) }, context)
-            const pending = new Promise(() => {})
-            return runtime.import(pending, context)
+            const root = runtime.import({ pending: Promise.reject(reason) }, context)
+            return runtime.lookupPath(
+                new runtime.Chain(root, context),
+                ["pending"],
+                context,
+            )
         })
     })
 
@@ -407,26 +417,26 @@ describe("fatal execution", () => {
         const chain = new runtime.Chain({ value: 1 }, context)
         let nestedFailure
 
-        const failure = thrownBy(() => runtime.enter(
-            chain,
-            [],
-            context,
-            true,
-            entered => {
+        const failure = thrownBy(() =>
+            runtime.enter(chain, [], context, true, entered => {
                 runtime.assignPath(entered, ["value"], 2, context)
-                nestedFailure = thrownBy(() => failExecution(
-                    context,
-                    new Error("nested fatal"),
-                ))
+                nestedFailure = thrownBy(() =>
+                    errorUtils.failExecution(
+                        context,
+                        new Error("nested fatal"),
+                    ),
+                )
                 return "ignored"
-            },
-        ))
+            }),
+        )
 
         expect(failure).to.be(nestedFailure)
         const gate = chain._state.value
         expect(gate).to.be.a(Promise)
         let settled = false
-        gate.then(() => { settled = true })
+        gate.then(() => {
+            settled = true
+        })
         await flushMicrotasks()
 
         expect(settled).to.be(false)
@@ -511,10 +521,10 @@ describe("fatal execution", () => {
     it("distinguishes a consumed poison outcome from a fatal-on-escape transition", async () => {
         const languageExecution = new runtime.Execution()
         const languageContext = operationContext(languageExecution, "language outcome")
-        const poison = new runtime.PoisonError(
+        const poison = errorUtils.validationError(
             "expected",
-            "poison source",
-            runtime.ERROR_KIND.OperationInputRejected,
+            testOperationContext("poison source"),
+            runtime.ERROR_KIND.OperationInputFailed,
         )
         const languageResult = runtime.import(Promise.reject(poison), languageContext)
 
@@ -523,7 +533,7 @@ describe("fatal execution", () => {
 
         const fatalExecution = new runtime.Execution()
         const fatalContext = operationContext(fatalExecution, "fatal-on-escape")
-        const escaped = await continueInternalResultOrFatal(
+        const escaped = await continueOperation(
             Promise.reject(poison),
             fatalContext,
             value => value,
@@ -552,9 +562,17 @@ describe("fatal execution", () => {
     })
 
     it("submits an existing FatalError rejected at a public boundary", async () => {
-        const failure = thrownBy(() => runContextlessFatal(() => {
-            throw new Error("existing fatal")
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new runtime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw new Error("existing fatal")
+                },
+            ),
+        )
         let reported
         const execution = new runtime.Execution(error => {
             reported = error
@@ -578,7 +596,8 @@ describe("fatal execution", () => {
             .to.be(undefined)
         expect(thrownBy(() => runtime.externalState(external)))
             .to.be(undefined)
-        expect(thrownBy(() => runInternalStep(context, () => true)))
-            .to.be(execution.fatalError)
+        expect(
+            thrownBy(() => errorUtils.runInternalStep(context, () => true)),
+        ).to.be(execution.fatalError)
     })
 })

@@ -1,3 +1,4 @@
+import { prepareInputs } from "./input-collection.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
@@ -14,23 +15,27 @@ function getManagedMethodDescription(invocationContext) {
     const { mutation, receiver } = invocationContext
     const receiverType = languageValues.typeOf(receiver, invocationContext.operationContext)
     // Preparation resolves receiver contents but never changes its admitted type.
-    const getMethod = receiverType === languageValues.TYPE_RECORD
-        ? getManagedRecordMethod
-        : getManagedClassMethod
+    const selectMethod = receiverType === languageValues.TYPE_RECORD
+        ? selectManagedRecordMethod
+        : selectManagedClassMethod
     return {
         leaseReceiverThroughResult: !mutation,
         prepareArguments: () =>
             prepareManagedReceiverAndArguments(invocationContext),
-        getMethod: prepared => getMethod(
-            prepared.receiver,
-            invocationContext,
-        ),
-        invoke(prepared, callable) {
+        invoke(prepared) {
+            // Selection follows complete preparation and precedes isolation.
+            // A rejected selection already carries its required mutation effect.
+            const callable = errorUtils.catchExternalThrow(
+                () => selectMethod(prepared.receiver, invocationContext),
+                invocationContext.operationContext,
+                errorUtils.ERROR_KIND.LookupReflectionFailed,
+            )
+            if (typeof callable !== "function") return callable
             const workingReceiver = prepareMethodReceiver(
                 prepared.receiver,
                 invocationContext,
             )
-            if (languageValues.isError(workingReceiver)) {
+            if (errorUtils.isPoisonError(workingReceiver)) {
                 return workingReceiver
             }
             return mutation
@@ -51,16 +56,20 @@ function getManagedMethodDescription(invocationContext) {
 }
 
 function prepareManagedReceiverAndArguments(invocationContext) {
-    return operationLifecycle.continuePreparedAll(
-        invocationContext,
+    return prepareInputs(
         [
             resolveAndLeaseReceiverGraph(invocationContext),
             invocationContext.exportArguments(),
         ],
-        ([preparedReceiver, exportedArgs]) => ({
-            receiver: preparedReceiver,
-            args: exportedArgs,
-        }),
+        invocationContext.operationContext,
+        readyValues => {
+            const [preparedReceiver, exportedArgs] = readyValues
+            return {
+                receiver: preparedReceiver,
+                args: exportedArgs,
+            }
+        },
+        invocationContext,
     )
 }
 
@@ -72,13 +81,15 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         visited: new WeakSet(),
     }
     let unregisterRelease
-    const readiness = operationLifecycle.resolveInitial(
-        invocationContext,
+    const readiness = languageValues.consumeValue(
         receiver,
+        invocationContext.operationContext,
+        errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             preparation.receiver = resolved
             return visit(resolved)
         },
+        invocationContext,
     )
     if (languageValues.isPending(readiness, invocationContext.operationContext)) {
         unregisterRelease = operationLifecycle.releaseOnClose(
@@ -86,20 +97,18 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
             release,
         )
     }
-    return operationLifecycle.continueInternalResultOrFatal(
-        invocationContext,
+    return operationLifecycle.continueOperation(
         readiness,
+        invocationContext.operationContext,
         finish,
+        undefined,
+        invocationContext,
     )
 
     function visit(value) {
         if (!invocationContext.open) return undefined
-        if (languageValues.isError(value)) {
-            preparation.errors.add(errorUtils.toPoison(
-                value,
-                invocationContext.operationContext,
-                errorUtils.ERROR_KIND.InvalidManagedReceiver,
-            ))
+        if (errorUtils.isPoisonError(value)) {
+            preparation.errors.add(value)
             return undefined
         }
         if (
@@ -111,13 +120,20 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         preparation.visited.add(value)
         invocationContext.retainReceiver(value)
 
-        const keys = catchFailure(
-            () => languageProperties.enumerableLanguageKeys(
+        const keys = []
+        catchFailure(() => {
+            for (const key of languageProperties.languageKeyCandidates(
                 value,
                 invocationContext.operationContext,
-            ),
-        )
-        if (keys === undefined) return undefined
+            )) {
+                const present = catchFailure(() => languageProperties.hasLanguageProperty(
+                    value,
+                    key,
+                    invocationContext.operationContext,
+                ))
+                if (present === true) keys.push(key)
+            }
+        })
 
         const waits = []
         for (const key of keys) {
@@ -149,7 +165,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
     }
 
     function catchFailure(step) {
-        return errorUtils.catchUserCodeFailure(
+        return errorUtils.catchExternalThrow(
             step,
             invocationContext.operationContext,
             errorUtils.ERROR_KIND.InvalidManagedReceiver,
@@ -184,15 +200,17 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 function combineReadiness(invocationContext, waits) {
     if (waits.length === 0) return undefined
     if (waits.length === 1) return waits[0]
-    return operationLifecycle.continueInternalResultOrFatal(
-        invocationContext,
+    return operationLifecycle.continueOperation(
         Promise.all(waits),
+        invocationContext.operationContext,
         () => undefined,
+        undefined,
+        invocationContext,
     )
 }
 
 // Common dispatch rejects `constructor` before either managed policy runs.
-function getManagedRecordMethod(receiver, invocationContext) {
+function selectManagedRecordMethod(receiver, invocationContext) {
     const present = languageProperties.hasLanguageProperty(
         receiver,
         invocationContext.method,
@@ -212,7 +230,7 @@ function getManagedRecordMethod(receiver, invocationContext) {
         )
 }
 
-function getManagedClassMethod(receiver, invocationContext) {
+function selectManagedClassMethod(receiver, invocationContext) {
     const { method, operationContext } = invocationContext
     if (languageProperties.hasLanguageProperty(receiver, method, operationContext)) {
         return errorUtils.validationError(
@@ -228,14 +246,24 @@ function getManagedClassMethod(receiver, invocationContext) {
     ).admittedPrototype
     while (
         prototype !== null &&
-        !metadata.isPlainObjectPrototype(prototype)
+        !errorUtils.runHostAction(operationContext, () =>
+            metadata.isPlainObjectPrototype(prototype),
+        )
     ) {
-        const descriptor = errorUtils.runUserCode(
+        const descriptor = errorUtils.runHostAction(
+            operationContext,
             () => Object.getOwnPropertyDescriptor(prototype, method),
         )
         if (descriptor) {
             if (!("value" in descriptor)) {
-                throw new Error("Managed class prototype accessor changed")
+                const failure = errorUtils.validationError(
+                    "Managed class prototype accessor changed",
+                    operationContext,
+                    errorUtils.ERROR_KIND.InvalidManagedReceiver,
+                )
+                return invocationContext.mutation
+                    ? { mutatedValue: receiver, result: failure }
+                    : failure
             }
             return typeof descriptor.value === "function"
                 ? descriptor.value
@@ -244,7 +272,8 @@ function getManagedClassMethod(receiver, invocationContext) {
                     operationContext,
                 )
         }
-        prototype = errorUtils.runUserCode(
+        prototype = errorUtils.runHostAction(
+            operationContext,
             () => Object.getPrototypeOf(prototype),
         )
     }
@@ -253,11 +282,8 @@ function getManagedClassMethod(receiver, invocationContext) {
 
 // Observation materialization path-copies only required representation changes.
 // Mutation isolation copies complete protected subgraphs before arbitrary writes.
-function prepareMethodReceiver(
-    receiver,
-    invocationContext,
-) {
-    return errorUtils.catchUserCodeFailure(
+function prepareMethodReceiver(receiver, invocationContext) {
+    return errorUtils.catchExternalThrow(
         () => {
             if (!invocationContext.mutation) {
                 return materializeObservationReceiver(receiver, invocationContext)
@@ -481,54 +507,52 @@ function invokeObservation(callable, receiver, args, operationContext) {
 }
 
 function invokeMutation(callable, receiver, args, operationContext) {
-    let callFailure
     const result = invocation.invokeHostFunction(
         callable,
         receiver,
         args,
         operationContext,
-        errorUtils.ERROR_KIND.UserCallThrew,
-        failure => callFailure = failure,
     )
-    if (callFailure) {
-        return { mutatedValue: callFailure, result: callFailure }
-    }
-    if (result === receiver) return finishMutation(receiver, receiver, operationContext)
-
-    // A mutation may detach an admitted result while retaining one of its
-    // descendants elsewhere in the receiver, so every result identity is shared.
-    const admittedResult = imports.importManagedMutationMethodResult(
+    return operationLifecycle.continueOperation(
         result,
         operationContext,
+        complete,
+        failed,
     )
-    return languageValues.thenValue(
-        admittedResult,
-        imported => errorUtils.runInternalStep(
+
+    function failed(reason) {
+        const failure = errorUtils.createPoisonError(
+            reason,
             operationContext,
-            () => finishMutation(receiver, imported, operationContext),
-        ),
-        reason => errorUtils.runInternalStep(operationContext, () => {
-            const failure = errorUtils.toPoison(
-                reason,
-                operationContext,
-                errorUtils.ERROR_KIND.UserCallThrew,
-            )
-            if (errorUtils.isFatalError(failure)) throw failure
-            return {
-                mutatedValue: failure,
-                result: admittedResult,
-            }
-        }),
-        operationContext,
-    )
+            errorUtils.ERROR_KIND.HostCallFailed,
+        )
+        return { mutatedValue: failure, result: failure }
+    }
+
+    function complete(value) {
+        if (Error.isError(value)) return failed(value)
+        // Direct host failure poisons the receiver. Importing an independent
+        // result can fail separately after the host has completed its mutation.
+        const imported =
+            value === receiver
+                ? receiver
+                : imports.importManagedMutationMethodResult(
+                      value,
+                      operationContext,
+                  )
+        return finishMutation(receiver, imported, operationContext)
+    }
 }
 
 function finishMutation(receiver, result, operationContext) {
-    return errorUtils.catchUserCodeFailure(
-        () => validateReceiver(receiver, operationContext),
-        operationContext, errorUtils.ERROR_KIND.InvalidManagedReceiver,
-    ) ?? {
-        mutatedValue: receiver,
+    const failure = validateReceiver(receiver, operationContext)
+    if (failure) {
+        result = errorUtils.isPoisonError(result)
+            ? errorUtils.combineErrors([failure, result], "Managed mutation failed")
+            : failure
+    }
+    return {
+        mutatedValue: failure ?? receiver,
         result,
     }
 }
@@ -536,8 +560,7 @@ function finishMutation(receiver, result, operationContext) {
 function validateReceiver(receiver, operationContext) {
     const visited = new Set()
     const errors = new Set()
-    let promiseError
-    let callableThenError
+    let unsafeThenError
     walk(receiver)
     return errors.size === 0
         ? undefined
@@ -547,50 +570,85 @@ function validateReceiver(receiver, operationContext) {
         )
 
     function walk(value) {
-        if (errorUtils.runUserCode(() => languageValues.isPending(value, operationContext))) {
+        if (Error.isError(value)) {
             errors.add(
-                promiseError ??= errorUtils.validationError(
-                    "Managed mutation receiver contains a Promise",
+                errorUtils.createPoisonError(
+                    value,
                     operationContext,
                     errorUtils.ERROR_KIND.InvalidManagedReceiver,
                 ),
             )
             return
         }
-        if (languageValues.isError(value)) {
-            errors.add(errorUtils.toPoison(
-                value,
+        if (value === null || typeof value !== "object" || visited.has(value)) return
+        visited.add(value)
+        const meta = metadata.metaOf(value, operationContext)
+        if (meta && !metadata.isTraversableType(meta.type)) return
+        const unsafeThen = inspect(() => hasUnsafeNativeThen(value))
+        if (errorUtils.isPoisonError(unsafeThen)) {
+            // Known managed structure still contributes its placement Errors.
+            // An unknown identity cannot be admitted after an unreadable probe.
+            if (!meta) return
+        } else if (unsafeThen) {
+            errors.add(unsafeThenError ??= errorUtils.validationError(
+                "Managed mutation receiver contains an unsafe then property",
                 operationContext,
                 errorUtils.ERROR_KIND.InvalidManagedReceiver,
             ))
-            return
+            // An unadmitted thenable is invalid availability, not graph data.
+            // An admitted managed receiver still contributes its other Errors.
+            if (!meta) return
         }
         languageValues.admitReadyValue(value, operationContext)
-        if (
-            !languageValues.isTraversable(value, operationContext) ||
-            visited.has(value)
-        ) return
-        visited.add(value)
-        for (const key of languageProperties.enumerableLanguageKeys(
-            value,
-            operationContext,
-        )) {
+        if (!languageValues.isTraversable(value, operationContext)) return
+        const keys = []
+        inspect(() => {
+            for (const key of languageProperties.languageKeyCandidates(
+                value,
+                operationContext,
+            )) {
+                const present = inspect(() => languageProperties.hasLanguageProperty(
+                    value,
+                    key,
+                    operationContext,
+                ))
+                if (present === true) keys.push(key)
+            }
+        })
+        for (const key of keys) {
             // Validation must inspect retained data without consuming it.
             const version = metadata.metaOf(value, operationContext).placementVersions?.[key]
-            const child = version ? version.value : languageProperties
-                .getLanguagePlacementDescriptor(value, key, operationContext)?.value
-            if (languageProperties.isCallableThenPlacement(key, child)) {
-                errors.add(
-                    callableThenError ??= errorUtils.validationError(
-                        "Managed mutation receiver contains a callable then property",
-                        operationContext,
-                        errorUtils.ERROR_KIND.InvalidManagedReceiver,
-                    ),
-                )
-                continue
-            }
+            const child = version ? version.value : inspect(() =>
+                languageProperties.getLanguagePlacementDescriptor(
+                    value,
+                    key,
+                    operationContext,
+                )?.value,
+            )
             walk(child)
         }
+    }
+
+    function inspect(action) {
+        const result = errorUtils.catchExternalThrow(
+            action,
+            operationContext,
+            errorUtils.ERROR_KIND.InvalidManagedReceiver,
+        )
+        if (errorUtils.isPoisonError(result)) errors.add(result)
+        return result
+    }
+
+    function hasUnsafeNativeThen(value) {
+        for (let current = value; current !== null;) {
+            const descriptor = errorUtils.runHostAction(operationContext, () =>
+                Object.getOwnPropertyDescriptor(current, "then"),
+            )
+            if (descriptor) return !("value" in descriptor) || typeof descriptor.value === "function"
+            current = errorUtils.runHostAction(operationContext, () => Object.getPrototypeOf(current),
+            )
+        }
+        return false
     }
 }
 

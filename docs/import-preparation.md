@@ -1,5 +1,9 @@
 # Imported data
 
+## Causal admission
+
+The context importer uses `ContextValueFailed`; causal host-result import uses `HostCallFailed` for ready native Errors and direct/nested rejections. Each first existing continuation retains its operation context and kind. `consumeValue` classifies initial inputs before ordinary admission; `admitReadyValue` accepts branded poison and treats an unclassified native Error as a missed-boundary defect. Shared settlement and copied mirrors preserve already contextualized values without assigning a consumer source. Fixed overlays hold native-Error wrappers without changing imported storage. Equivalent wrappers need no interning, including across import segments. Supported reflection uses the exact host-action marker and the segment's `ImportReflectionFailed` consumer; unrelated staging/bookkeeping failures remain fatal.
+
 `import(value, operationContext)` is the inbound host-data boundary. `operationContext` carries the execution and source-error information. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
 
 ## Context roots

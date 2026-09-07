@@ -1,3 +1,4 @@
+import * as operationLifecycle from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { Chain } from "./chain.js"
 import * as errorUtils from "./error.js"
@@ -10,7 +11,6 @@ import {
 } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
 
 function enter(chain, path, operationContext, entryMutable, onEntered) {
     return errorUtils.runInternalStep(operationContext, () => {
@@ -37,12 +37,12 @@ function runEnteredCallback(
     const result = onEntered(enteredChain)
     const fatalError = operationContext.execution.fatalError
     if (fatalError !== null) throw fatalError
-    return resolution.continueInternalResultOrFatal(
+    return operationLifecycle.continueOperation(
         result,
         operationContext,
         finish,
         reason => {
-            if (!(reason instanceof errorUtils.PoisonError)) throw reason
+            if (!errorUtils.isPoisonError(reason)) throw reason
             return finish(reason)
         },
     )
@@ -63,7 +63,7 @@ function enterReadOnly(
     externalMutationTree,
 ) {
     return walkObservationPath(chain, path, operationContext, value => {
-        if (languageValues.isError(value)) return value
+        if (errorUtils.isPoisonError(value)) return value
 
         const enteredChain = new Chain(
             value,

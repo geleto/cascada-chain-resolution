@@ -17,9 +17,9 @@ import {
     expect,
     submitFatal,
     useTestExecution,
-    continueInitialValue,
-    continueWhenSettled,
-    continueInternalResultOrFatal,
+    consumeValue,
+    advanceSettledValue,
+    continueOperation,
     runInternalStep,
     buildRefIndex,
     getRefCounts,
@@ -49,26 +49,15 @@ describe("promise helpers", () => {
         const pending = deferred()
         const order = []
 
-        continueInitialValue(
-            pending.promise,
-            () => order.push("value 1"),
-        )
-        continueWhenSettled(
-            pending.promise,
-            () => order.push("later"),
-        )
-        continueInitialValue(
-            pending.promise,
-            () => order.push("value 2"),
-        )
+        consumeValue(pending.promise, () => order.push("value 1"))
+        advanceSettledValue(pending.promise, () => order.push("later"))
+        consumeValue(pending.promise, () => order.push("value 2"))
 
         pending.resolve("done")
         await flushMicrotasks()
 
         expect(order).to.eql(["value 1", "later", "value 2"])
     })
-
-
 
     it("does not inspect a non-Error rejection reason", async () => {
         const pending = deferred()
@@ -97,7 +86,7 @@ describe("promise helpers", () => {
     })
 
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await continueInitialValue(
+        const value = await consumeValue(
             Promise.reject("data boom"),
             value => value,
         )
@@ -121,7 +110,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await continueInitialValue(Promise.resolve("ok"), () => {
+            await consumeValue(Promise.resolve("ok"), () => {
                 throw fatal
             })
         } catch (error) {
@@ -141,11 +130,8 @@ describe("promise helpers", () => {
             reportCount++
         })
         try {
-            await continueInternalResultOrFatal(
-                continueInitialValue(
-                    Promise.resolve("ok"),
-                    () => submitFatal(fatal),
-                ),
+            await continueOperation(
+                consumeValue(Promise.resolve("ok"), () => submitFatal(fatal)),
                 value => value,
             )
         } catch (error) {
@@ -165,10 +151,7 @@ describe("promise helpers", () => {
             reported = error
         })
         try {
-            await continueInternalResultOrFatal(
-                Promise.reject(fatal),
-                () => "ignored",
-            )
+            await continueOperation(Promise.reject(fatal), () => "ignored")
         } catch (error) {
             caught = error
         }
@@ -209,7 +192,7 @@ describe("promise helpers", () => {
         })
         const race = Promise.race([
             Promise.resolve(true),
-            continueInternalResultOrFatal(cleanWait.promise, () => false),
+            continueOperation(cleanWait.promise, () => false),
         ])
 
         expect(await race).to.be(true)
@@ -455,7 +438,7 @@ describe("promise mirrors and lookupPath", () => {
         const root = {}
 
         assignPath(new Chain(root), ["value"], pending.promise)
-        continueWhenSettled(pending.promise, () => buildRefIndex(root))
+        advanceSettledValue(pending.promise, () => buildRefIndex(root))
 
         pending.resolve({ bad: new Error("bad"), nested: nested.promise })
         await flushMicrotasks()
@@ -479,7 +462,7 @@ describe("promise mirrors and lookupPath", () => {
         let publishedCycleCut
         let countsAfterPublication
 
-        continueWhenSettled(pending.promise, () => {
+        advanceSettledValue(pending.promise, () => {
             publishedCycleCut = hasCycleCut(root, "value")
             countsAfterPublication = getRefCounts(root)
         })

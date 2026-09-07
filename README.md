@@ -24,7 +24,7 @@ See [`docs/data-limitations.md`](docs/data-limitations.md) before passing applic
 import * as cascada from "cascada-chain-resolution"
 
 const execution = new cascada.Execution()
-const operationContext = { execution, errorContext: "example" }
+const operationContext = Object.freeze({ execution, errorContext: "example" })
 const input = cascada.import(
     { profile: Promise.resolve({ name: "Ada" }) },
     operationContext,
@@ -42,7 +42,6 @@ console.log(await cascada.export(chain, [], operationContext))
 ```js
 import {
     Chain,
-    CascadaError,
     CompoundPoisonError,
     ContextChain,
     ERROR_KIND,
@@ -58,6 +57,7 @@ import {
     hasError,
     import as importValue,
     isFatalError,
+    isPoisonError,
     lookupPath,
     managedState,
     managedStateClass,
@@ -103,16 +103,15 @@ identifies the source operation and may differ for every call.
 
 ### Errors
 
-`PoisonError` is recoverable language data and currently extends the transitional
-`CascadaError` base. `CompoundPoisonError` contains its flattened,
-cause-deduplicated leaves in `.errors`. `FatalError` extends native `Error`
-directly and is an execution-ending failure; applications recognize it with
-`isFatalError` rather than constructing it. Each has an opaque
-`.errorContext`; poison errors also have a stable `.kind`. A native host Error
-consumed by Cascada becomes a `PoisonError` whose `.cause` is that Error.
-Propagation preserves the contextualized occurrence rather than replacing its
-source with a later operation. `ERROR_KIND` exports the shared failure-kind
-vocabulary.
+`PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Constructors are protected; trusted runtime code uses the factories from `cascada-chain-resolution/integration`. Complete wrappers and compound child arrays are frozen.
+
+A poison retains its exact native `.cause`, opaque `.errorContext`, and stable `.kind`. Later propagation preserves them. Compounds and `getErrors` flatten and deduplicate by cause, source-context identity, and kind, with unspecified order. Exact causes follow the [diagnostic payload contract](docs/data-limitations.md#errors).
+
+The current Phase 9D-A checkpoint keeps poison non-thenable. Ordinary data rejection is contextualized as poison by its causal continuation and may fulfill an operation Promise with that value; a failed pending Error query explicitly rejects with `QueryReflectionFailed`. Phase 9D-B installs rejecting poison thenables and completes the uniform Promise-rejection transport.
+
+### Trusted higher-runtime integration
+
+The [integration subpath](docs/integration.md) exposes unwrapped core work, Error factories, causal method-result import, and the same guarded host/continuation primitives used by the kernel. Internal composition calls no outward wrapper; its final facade calls `returnOperationResult` once.
 
 ### `new Chain(initialValue, operationContext)`
 

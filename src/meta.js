@@ -50,18 +50,33 @@ function getOrCreateMeta(
 // traps. If it cannot identify managed structure, preserving the exact value
 // as external is always safe.
 function inspectAdmissionMetaFacts(value, operationContext) {
-    return errorUtils.catchRawUserCodeFailure(
-        () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
-        () => ({ type: TYPE_EXTERNAL }),
-        operationContext,
-    )
+    let facts
+    let fatal
+    errorUtils.enterHostCode()
+    try {
+        facts = classifyTypeFacts(value)
+    } catch (reason) {
+        if (errorUtils.isFatalError(reason)) fatal = reason
+        else facts = { type: TYPE_EXTERNAL }
+    } finally {
+        errorUtils.leaveHostCode()
+    }
+    if (operationContext.execution.fatalError !== null)
+        throw operationContext.execution.fatalError
+    if (fatal) errorUtils.failExecution(operationContext, fatal)
+    return facts
 }
 
 function inspectDeclarationMetaFacts(value) {
-    return errorUtils.catchRawUserCodeFailure(
-        () => errorUtils.runUserCode(() => classifyTypeFacts(value)),
-        () => ({ type: TYPE_EXTERNAL }),
-    )
+    errorUtils.enterHostCode()
+    try {
+        return classifyTypeFacts(value)
+    } catch (reason) {
+        if (errorUtils.isFatalError(reason)) throw reason
+        return { type: TYPE_EXTERNAL }
+    } finally {
+        errorUtils.leaveHostCode()
+    }
 }
 
 function classifyTypeFacts(value) {
@@ -73,10 +88,8 @@ function classifyTypeFacts(value) {
     if (Array.isArray(value)) return { type: TYPE_ARRAY }
 
     const admittedPrototype = Object.getPrototypeOf(value)
-    if (
-        admittedPrototype === null ||
-        isPlainObjectPrototypeUnchecked(admittedPrototype)
-    ) return { type: TYPE_RECORD, admittedPrototype }
+    if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype))
+        return { type: TYPE_RECORD, admittedPrototype }
 
     return declaration === DECLARATION_MANAGED ||
         MANAGED_PROTOTYPES.has(admittedPrototype)
@@ -85,13 +98,6 @@ function classifyTypeFacts(value) {
 }
 
 function isPlainObjectPrototype(prototype) {
-    // Prototype and descriptor reflection can invoke Proxy traps.
-    return errorUtils.runUserCode(
-        () => isPlainObjectPrototypeUnchecked(prototype),
-    )
-}
-
-function isPlainObjectPrototypeUnchecked(prototype) {
     if (prototype === Object.prototype) return true
     if (prototype === null) return false
     if (Object.getPrototypeOf(prototype) !== null) return false
@@ -104,28 +110,6 @@ function isPlainObjectPrototypeUnchecked(prototype) {
             constructor,
             "prototype",
         )?.value === prototype
-}
-
-function validateManagedPrototype(prototype) {
-    for (
-        let current = prototype;
-        current !== null && !isPlainObjectPrototypeUnchecked(current);
-        current = Object.getPrototypeOf(current)
-    ) {
-        for (const key of Reflect.ownKeys(current)) {
-            const descriptor = Object.getOwnPropertyDescriptor(current, key)
-            if (descriptor && !("value" in descriptor)) {
-                throw new TypeError(
-                    "Managed class prototypes cannot contain accessors",
-                )
-            }
-            if (key === "then" && typeof descriptor?.value === "function") {
-                throw new TypeError(
-                    "Managed class prototypes cannot contain a callable then",
-                )
-            }
-        }
-    }
 }
 
 function identityDeclarationOf(value) {
@@ -237,5 +221,4 @@ export {
     requireMeta,
     requiresCopyOnWrite,
     setIdentityDeclaration,
-    validateManagedPrototype,
 }

@@ -13,12 +13,30 @@ const exportsByEntry = {
             "externalState", "managedState", "managedStateClass",
         ],
         configuration: ["Execution"],
-        recognition: ["isFatalError"],
+        recognition: ["isFatalError", "isPoisonError"],
         "Error data": [
-            "CascadaError", "CompoundPoisonError", "ERROR_KIND", "PoisonError",
+            "CompoundPoisonError",
+            "ERROR_KIND",
+            "PoisonError",
             "FatalError",
         ],
     },
+}
+
+exportsByEntry["./integration"] = {
+    ...exportsByEntry["."],
+    "trusted composition": [
+        "importMethodResult",
+        "createPoisonError",
+        "validationError",
+        "combineErrors",
+        "failExecution",
+        "runHostBoundary",
+        "runInternalStep",
+        "continueOperation",
+        "isPending",
+        "returnOperationResult",
+    ],
 }
 
 const packageManifest = JSON.parse(readFileSync(

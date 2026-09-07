@@ -78,7 +78,7 @@ function getMethodDescription(invocationContext) {
         receiver,
         receiverPresent,
     } = invocationContext
-    if (languageValues.isError(receiver)) return receiver
+    if (errorUtils.isPoisonError(receiver)) return receiver
     if (!receiverPresent) {
         return errorUtils.validationError(
             "run receiver path does not exist",
@@ -115,7 +115,7 @@ function getMethodDescription(invocationContext) {
             method,
             invocationContext.operationContext,
         )
-        if (languageValues.isError(callable)) return callable
+        if (errorUtils.isPoisonError(callable)) return callable
         return invocation.getHostMethodDescription(callable, invocationContext)
     }
     return errorUtils.validationError(

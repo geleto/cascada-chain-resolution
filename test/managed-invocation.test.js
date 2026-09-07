@@ -1,4 +1,5 @@
 import { runInNewContext } from "node:vm"
+import assert from "node:assert/strict"
 
 import {
     assignPath,
@@ -7,6 +8,7 @@ import {
     deferred,
     errorCause,
     expect,
+    exportValue,
     flushMicrotasks,
     importValue,
     lookupPath,
@@ -322,7 +324,7 @@ describe("managed invocation", () => {
         expect(value.value).to.be(1)
     })
 
-    it("reports a prototype accessor added after registration fatally", () => {
+    it("rejects a prototype accessor detected before invocation", () => {
         let reported
         useTestExecution(error => {
             reported = error
@@ -338,18 +340,18 @@ describe("managed invocation", () => {
                 return () => 2
             },
         })
-        const failure = thrownBy(() => run(
+        const failure = run(
             new Chain(new Value()),
             [],
             "read",
             [],
             {},
 
-        ))
+        )
         expect(failure.message).to.be(
             "Managed class prototype accessor changed",
         )
-        expect(reported).to.be(failure)
+        expect(reported).to.be(undefined)
     })
 
     it("rejects synchronous Cascada reentry from a managed-class method", () => {
@@ -373,7 +375,7 @@ describe("managed invocation", () => {
 
         ))
         expect(failure.message).to.be(
-            "Cascada cannot be re-entered from supported user code",
+            "Cascada cannot be re-entered from supported host code",
         )
         expect(reported).to.be(failure)
     })
@@ -658,7 +660,7 @@ describe("managed invocation", () => {
         expect(metaOf(source).readLeaseCount).to.be(undefined)
     })
 
-    it("combines original input Errors once in call order", () => {
+    it("combines every original input Error once", () => {
         class Value {
             read() {
                 throw new Error("must not invoke")
@@ -683,13 +685,14 @@ describe("managed invocation", () => {
         )
 
         expect(result.errors).to.have.length(3)
-        expect(result.errors.map(errorCause)).to.eql([
+        assert.deepEqual(new Set(result.errors.map(errorCause)), new Set([
             ...receiverErrors,
             argumentError,
-        ])
+        ]))
+        assert(result.errors.every(error => error.errorContext === "test run" && error.kind === runtime.ERROR_KIND.OperationInputFailed))
     })
 
-    it("orders pending receiver and argument Errors by input position", async () => {
+    it("collects pending receiver and argument Errors regardless of settlement order", async () => {
         const receiverFailure = new Error("receiver")
         const argumentFailure = new Error("argument")
         const receiverValue = deferred()
@@ -709,10 +712,13 @@ describe("managed invocation", () => {
         argumentValue.resolve(argumentFailure)
         receiverValue.resolve(receiverFailure)
 
-        expect((await result).errors.map(errorCause)).to.eql([
+        const errors = (await result).errors
+        expect(errors).to.have.length(2)
+        assert.deepEqual(new Set(errors.map(errorCause)), new Set([
             receiverFailure,
             argumentFailure,
-        ])
+        ]))
+        assert(errors.every(error => error.errorContext === "test run" && error.kind === runtime.ERROR_KIND.OperationInputFailed))
     })
 
     it("rejects invalid completed state and awaits a direct result Promise", async () => {
@@ -757,7 +763,7 @@ describe("managed invocation", () => {
         expect(validChain._state.value.value).to.be(2)
     })
 
-    it("publishes a valid mutation that deliberately returns an Error", () => {
+    it("poisons a mutation receiver when its method returns an Error", () => {
         const resultError = new Error("method result")
         class Value {
             change() {
@@ -777,7 +783,7 @@ describe("managed invocation", () => {
             [],
             { mutationScopeDepth: 0 },
         ))).to.be(resultError)
-        expect(chain._state.value).to.be(value)
+        expect(chain._state.value.cause).to.be(resultError)
         expect(value.value).to.be(2)
     })
 
@@ -810,7 +816,7 @@ describe("managed invocation", () => {
 
         expect(failure.cause).to.be(cause)
         expect(failure.errorContext).to.be("test run")
-        expect(failure.kind).to.be(runtime.ERROR_KIND.UserCallThrew)
+        expect(failure.kind).to.be(runtime.ERROR_KIND.HostCallFailed)
         expect(chain._state.value).to.be(value)
         expect(Object.hasOwn(value, "result")).to.be(false)
     })
@@ -838,7 +844,7 @@ describe("managed invocation", () => {
         completion.resolve(resultError)
 
         expect(errorCause(await result)).to.be(resultError)
-        expect(chain._state.value).to.be(value)
+        expect(chain._state.value.cause).to.be(resultError)
         expect(value.count).to.be(2)
     })
 
@@ -984,6 +990,92 @@ describe("managed invocation", () => {
         expect(failure).to.be.a(runtime.PoisonError)
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
         expect(chain._state.value).to.be(failure)
+    })
+
+    for (const shape of ["hidden data", "accessor", "Array property", "nested accessor", "new nested accessor", "inherited data", "inherited accessor"]) {
+        for (const pending of [false, true]) {
+            it("rejects " + shape + " then after " + (pending ? "pending" : "ready") + " managed completion", async () => {
+                const execution = useTestExecution()
+                let calls = 0
+                const then = () => { calls++; return 99 }
+                const value = {
+                    child: [],
+                    change() {
+                        const mutate = () => {
+                            if (shape === "new nested accessor") this.child = {}
+                            const target = shape === "Array property" || shape.includes("nested") ? this.child : this
+                            const surface = shape.startsWith("inherited") ? {} : target
+                            Object.defineProperty(surface, "then", {
+                                configurable: true,
+                                ...(shape.includes("accessor") ? { get: then } : { value: then }),
+                            })
+                            if (surface !== target) Object.setPrototypeOf(target, surface)
+                            return !pending && shape === "hidden data" ? this : "done"
+                        }
+                        return pending ? Promise.resolve().then(mutate) : mutate()
+                    },
+                }
+                const chain = new Chain(value)
+                const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+                const failure = pending ? await result : result
+                expect(failure).to.be.a(runtime.PoisonError)
+                expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
+                expect(chain._state.value).to.be(failure)
+                expect(calls).to.be(0)
+                expect(execution.fatalError).to.be(null)
+            })
+        }
+    }
+
+    it("keeps other receiver Errors when an admitted node has unsafe then", () => {
+        const cause = new Error("stored failure")
+        const value = {
+            change() {
+                Object.defineProperty(this, "then", { value() {} })
+                this.bad = cause
+            },
+        }
+        const chain = new Chain(value)
+        const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        expect(failure).to.be.a(runtime.CompoundPoisonError)
+        expect(failure.errors.some(error => error.cause === cause)).to.be(true)
+        expect(failure.errors.some(error => error.kind === runtime.ERROR_KIND.InvalidManagedReceiver)).to.be(true)
+        expect(chain._state.value).to.be(failure)
+    })
+
+    it("allows non-callable hidden then without changing graph export", async () => {
+        const value = {
+            child: [],
+            change() {
+                Object.defineProperty(this.child, "then", { value: 12 })
+                Object.defineProperty(this, "then", { value: 42 })
+                return Promise.resolve("done")
+            },
+        }
+        const chain = new Chain(value)
+        expect(await run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be("done")
+        expect(await lookupPath(chain, ["child"])).to.eql([])
+        const exported = await exportValue(chain, [])
+        expect(Object.hasOwn(exported, "then")).to.be(false)
+        expect(Object.hasOwn(exported.child, "then")).to.be(false)
+        verifyRefCounts(chain._state)
+    })
+
+    it("poisons native then descriptor failure at receiver validation", () => {
+        const execution = useTestExecution()
+        const cause = new Error("then descriptor failed")
+        const child = new Proxy({ fail: false }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (target.fail && key === "then") throw cause
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new Chain({ child, change() { this.child.fail = true } })
+        const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
+        expect(failure.cause).to.be(cause)
+        expect(chain._state.value).to.be(failure)
+        expect(execution.fatalError).to.be(null)
     })
 
     it("poisons receiver validation reflection failures", () => {

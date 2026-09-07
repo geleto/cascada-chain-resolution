@@ -11,6 +11,7 @@ import {
     run,
     verifyRefCounts,
     arrayViews,
+    testOperationContext,
 } from "./support.js"
 import {
     VALUES,
@@ -759,12 +760,12 @@ async function logicalSnapshot(value) {
     const array = arrayViews.projectionOf(value)
     const output = new Array(array.length)
     const keys = arrayViews.isArrayView(array)
-        ? array.keys()
+        ? array.keys(testOperationContext())
         : Object.keys(array)
     for (const key of keys) {
         if (!arrayViews.isArrayIndex(key)) continue
         const element = arrayViews.isArrayView(array)
-            ? array.get(key)
+            ? array.get(key, testOperationContext())
             : array[key]
         output[key] = await logicalSnapshot(element)
     }

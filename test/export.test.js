@@ -43,10 +43,30 @@ function expectExportErrors(outcome, expected) {
     }
 }
 
+describe("exact successful outputs", () => {
+    for (const kind of ["Function", "external identity"]) {
+        it("preserves a supported " + kind + " through ready and pending lookup and export", async () => {
+            const ctx = testOperationContext()
+            const value = kind === "Function" ? function result() {} : new Date(0)
+            Object.defineProperty(value, "then", { value: 42 })
+            const direct = new packageRuntime.Chain({ value }, ctx)
+            const pending = new packageRuntime.Chain(Promise.resolve({ value }), ctx)
+            expect(packageRuntime.lookupPath(direct, ["value"], ctx)).to.be(value)
+            expect(packageRuntime.export(direct, ["value"], ctx)).to.be(value)
+            const lookup = packageRuntime.lookupPath(pending, ["value"], ctx)
+            const exported = packageRuntime.export(pending, ["value"], ctx)
+            const exportedRoot = packageRuntime.export(pending, [], ctx)
+            expect(await lookup).to.be(value)
+            expect(await exported).to.be(value)
+            expect((await exportedRoot).value).to.be(value)
+            expect(ctx.execution.fatalError).to.be(null)
+        })
+    }
+})
+
 describe("export", () => {
     it("exposes the native ESM package API", () => {
         expect(Object.keys(packageRuntime).sort()).to.eql([
-            "CascadaError",
             "Chain",
             "CompoundPoisonError",
             "ContextChain",
@@ -63,6 +83,7 @@ describe("export", () => {
             "hasError",
             "import",
             "isFatalError",
+            "isPoisonError",
             "lookupPath",
             "managedState",
             "managedStateClass",
@@ -444,8 +465,8 @@ describe("export", () => {
         ])
         expectExportErrors(outcome, [known, hidden])
         expect(errors.length).to.be(2)
-        expect(errors.includes(known)).to.be(true)
-        expect(errors.includes(hidden)).to.be(true)
+        expect(errors.some(error => error.cause === known)).to.be(true)
+        expect(errors.some(error => error.cause === hidden)).to.be(true)
     })
 
     it("exports a clean subpath through a cyclic import normally", () => {

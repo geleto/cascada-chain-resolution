@@ -1,3 +1,4 @@
+import { continueOperation } from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { ExternalMutationTree } from "./external-mutation-tree.js"
@@ -5,11 +6,20 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
-import * as resolution from "./resolution.js"
 
-function prepareImportedData(root, operationContext, importPolicy, externalMutationTreeSetup) {
+function prepareImportedData(
+    root,
+    operationContext,
+    importPolicy,
+    externalMutationTreeSetup,
+) {
     if (errorUtils.isFatalError(root)) throw root
-    if (Error.isError(root)) return errorUtils.toPoison(root, operationContext, importPolicy.valueKind)
+    if (Error.isError(root))
+        return errorUtils.createPoisonError(
+            root,
+            operationContext,
+            importPolicy.kind,
+        )
     if (!metadata.isObjectLike(root)) return root
 
     let state = "staging"
@@ -54,10 +64,13 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
     }
 
     function inspect(action) {
-        return errorUtils.catchUserCodeFailure(
-            action, operationContext, errorUtils.ERROR_KIND.ImportThrew,
-            error => { failure = error },
+        const result = errorUtils.catchExternalThrow(
+            action,
+            operationContext,
+            errorUtils.ERROR_KIND.ImportReflectionFailed,
         )
+        if (errorUtils.isPoisonError(result)) failure = result
+        return result
     }
 
     function factsOf(value) {
@@ -74,7 +87,12 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
 
     function walk(value) {
         if (errorUtils.isFatalError(value)) throw value
-        if (Error.isError(value)) value = errorUtils.toPoison(value, operationContext, importPolicy.valueKind)
+        if (Error.isError(value))
+            value = errorUtils.createPoisonError(
+                value,
+                operationContext,
+                importPolicy.kind,
+            )
         if (!metadata.isObjectLike(value)) return value
         if (admissions.has(value) || retentions.has(value)) return value
         const existing = metadata.metaOf(value, operationContext)
@@ -96,14 +114,20 @@ function prepareImportedData(root, operationContext, importPolicy, externalMutat
                 let placements = versions.get(value)
                 if (!placements) versions.set(value, placements = new Map())
                 placements.set(key, version)
-                const publication = languageValues.thenValue(
+                const publication = continueOperation(
                     child,
-                    resolved => errorUtils.runInternalStep(operationContext, () => deliver(resolved)),
-                    reason => errorUtils.runInternalStep(operationContext, () => {
-                        if (state === "abandoned") return undefined
-                        return deliver(errorUtils.toPoison(reason, operationContext, importPolicy.rejectionKind))
-                    }),
                     operationContext,
+                    deliver,
+                    reason => {
+                        if (state === "abandoned") return undefined
+                        return deliver(
+                            errorUtils.createPoisonError(
+                                reason,
+                                operationContext,
+                                importPolicy.kind,
+                            ),
+                        )
+                    },
                 )
                 if (languageValues.isPending(publication, operationContext)) {
                     version.promise = true

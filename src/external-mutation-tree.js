@@ -1,3 +1,4 @@
+import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -108,7 +109,8 @@ class ExternalMutationTree {
 
         function admittedTypeOf(value) {
             if (!metadata.isObjectLike(value)) return undefined
-            if (languageValues.isError(value)) return languageValues.TYPE_ERROR
+            if (errorUtils.isPoisonError(value))
+                return languageValues.TYPE_ERROR
             const facts = factsOf(value)
             if (!facts && languageValues.isPending(value, operationContext)) return undefined
             if (!facts) {

@@ -1,3 +1,4 @@
+import * as operationLifecycle from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
@@ -5,7 +6,6 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
-import * as resolution from "./resolution.js"
 
 class PropertyPlacement {
     constructor(owner, key, operationContext) {
@@ -87,21 +87,37 @@ function isLivePromiseMirror(owner, key, mirror, operationContext) {
     return getPromiseMirror(owner, key, operationContext) === mirror
 }
 
-function continuePromiseVersion(promise, mirror, operationContext, onValue) {
-    return resolution.continueWhenSettled(
+function continuePromiseVersion(
+    promise,
+    mirror,
+    operationContext,
+    onValue,
+    operation,
+) {
+    return operationLifecycle.continueOperation(
         promise,
         operationContext,
         () => onValue(mirror.value),
+        () => onValue(mirror.value),
+        operation,
     )
 }
 
-function continuePropertyValue(owner, key, promise, operationContext, onValue) {
+function continuePropertyValue(
+    owner,
+    key,
+    promise,
+    operationContext,
+    onValue,
+    operation,
+) {
     const mirror = requirePromiseMirror(owner, key, operationContext)
     return continuePromiseVersion(
         promise,
         mirror,
         operationContext,
         value => onValue(value, mirror),
+        operation,
     )
 }
 
@@ -129,23 +145,43 @@ function requirePromiseMirror(owner, key, operationContext) {
     return mirror
 }
 
-function assignProperty(owner, key, value, operationContext, retained = false) {
+function assignProperty(
+    owner,
+    key,
+    value,
+    operationContext,
+    retained = false,
+    kind = errorUtils.ERROR_KIND.AssignmentValueFailed,
+) {
     languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
     const version = { value }
-    const result = preparePropertyVersion(owner, key, version, operationContext, retained)
+    const result = preparePropertyVersion(
+        owner,
+        key,
+        version,
+        operationContext,
+        retained,
+        kind,
+    )
     replaceProperty(owner, key, version.promise ? version : undefined, version.value, operationContext)
     return languageValues.isPending(result, operationContext) ? undefined : result
 }
 
 // A staging version is callback-visible before subscription. Its logical value
 // may change synchronously; only the returned pending chain requires a mirror.
-function preparePropertyVersion(owner, key, version, operationContext, retained = false) {
-    const publication = resolution.continueInitialValue(
+function preparePropertyVersion(
+    owner,
+    key,
+    version,
+    operationContext,
+    retained = false,
+    kind = errorUtils.ERROR_KIND.OperationInputFailed,
+) {
+    const publication = languageValues.consumeValue(
         version.value,
         operationContext,
+        kind,
         resolved => publishPromiseValue(owner, key, version, resolved, operationContext, retained),
-        () => true,
-        errorUtils.ERROR_KIND.AssignmentValueRejected,
     )
     if (languageValues.isPending(publication, operationContext)) {
         version.promise = true
@@ -156,12 +192,31 @@ function preparePropertyVersion(owner, key, version, operationContext, retained 
 
 // This is the first consumption of a raw placement. Subsequent reads use its
 // logical value and never probe or subscribe to the physical host value again.
-function normalizeRawPropertyValue(owner, key, value, operationContext, writable) {
-    if (value === null || typeof value !== "object" || Error.isError(value) ||
-        metadata.metaOf(value, operationContext)) {
-        languageValues.admitReadyValue(value, operationContext)
-        return value
+function normalizeRawPropertyValue(
+    owner,
+    key,
+    value,
+    operationContext,
+    writable,
+) {
+    if (Error.isError(value) && !errorUtils.isPoisonError(value)) {
+        const poison = errorUtils.createPoisonError(
+            value,
+            operationContext,
+            errorUtils.ERROR_KIND.OperationInputFailed,
+        )
+        installFixedPlacementVersion(owner, key, poison, operationContext)
+        languageValues.admitReadyValue(poison, operationContext)
+        return poison
     }
+    if (
+        value === null || typeof value !== "object" ||
+        errorUtils.isPoisonError(value) ||
+        metadata.metaOf(value, operationContext)
+    ) {
+    languageValues.admitReadyValue(value, operationContext)
+    return value
+}
     const version = { value }
     preparePropertyVersion(owner, key, version, operationContext)
     if (version.promise) {
@@ -227,60 +282,48 @@ function publishPromiseValue(
     retained = false,
 ) {
     let validationFailure
-    value = errorUtils.catchUserCodeFailure(
-        () => {
-            if (languageValues.isPending(value, operationContext)) {
-                throw new Error("A Promise requires a fresh property version")
-            }
-            if (languageProperties.isCallableThenPlacement(key, value)) {
-                value = validationFailure = languageProperties.propertyValidationError(
-                    "Language data cannot contain a callable then property",
-                    operationContext,
-                )
-                languageValues.admitReadyValue(value, operationContext)
-            } else {
-                if (Error.isError(value)) value = errorUtils.toPoison(
-                    value,
-                    operationContext,
-                    errorUtils.ERROR_KIND.AssignmentValueError,
-                )
-                languageValues.admitReadyValue(value, operationContext)
-            }
-            if (retained) metadata.markShared(value, operationContext)
-            return value
-        },
-        operationContext,
-        errorUtils.ERROR_KIND.PropertyMutationThrew,
-        failure => {
-            languageValues.admitReadyValue(failure, operationContext)
-            return failure
-        },
-    )
+    if (languageValues.isPending(value, operationContext)) {
+        throw new Error("A Promise requires a fresh property version")
+    }
+    if (languageProperties.isCallableThenPlacement(key, value)) {
+        value = validationFailure = languageProperties.propertyValidationError(
+            "Language data cannot contain a callable then property",
+            operationContext,
+        )
+    }
+    languageValues.admitReadyValue(value, operationContext)
+    if (retained) metadata.markShared(value, operationContext)
     commitPromiseValue(owner, key, mirror, value, operationContext, true)
     return validationFailure
 }
 
-function commitPromiseValue(owner, key, mirror, value, operationContext, writeBack) {
+function commitPromiseValue(
+    owner,
+    key,
+    mirror,
+    value,
+    operationContext,
+    writeBack,
+) {
     function admitFailure(failure) {
         languageValues.admitReadyValue(failure, operationContext)
         return failure
     }
-    const commit = errorUtils.catchUserCodeFailure(
+    const commit = errorUtils.catchExternalThrow(
         () => prepareCommit(value, writeBack),
         operationContext,
-        errorUtils.ERROR_KIND.PropertyMutationThrew,
+        errorUtils.ERROR_KIND.PropertyMutationFailed,
         failure => {
             value = admitFailure(failure)
             return prepareCommit(value, writeBack)
         },
     )
-    errorUtils.catchUserCodeFailure(
+    errorUtils.catchExternalThrow(
         commit,
         operationContext,
-        errorUtils.ERROR_KIND.PropertyMutationThrew,
+        errorUtils.ERROR_KIND.PropertyMutationFailed,
         failure => prepareCommit(admitFailure(failure), false)(),
     )
-
 
     function prepareCommit(nextValue, canWriteBack) {
         // A runtime-owned version can be displaced when its owner is later
@@ -291,14 +334,14 @@ function commitPromiseValue(owner, key, mirror, value, operationContext, writeBa
             }
         }
         if (canWriteBack) {
-            const failure = errorUtils.catchUserCodeFailure(
+            const failure = errorUtils.catchExternalThrow(
                 () => languageProperties.assertCanPublishPromiseProperty(
                     owner,
                     key,
                     operationContext,
                 ),
                 operationContext,
-                errorUtils.ERROR_KIND.PropertyMutationThrew,
+                errorUtils.ERROR_KIND.PropertyMutationFailed,
                 admitFailure,
             )
             if (failure) {
@@ -354,7 +397,7 @@ function commitArrayLength(array, length, operationContext) {
         : undefined
     if (view) {
         if (length >= current) {
-            const resized = view.setLength(length)
+            const resized = view.setLength(length, operationContext)
             if (!resized) {
                 throw new Error("ArrayView growth requires materialization")
             }
@@ -378,20 +421,22 @@ function commitArrayLength(array, length, operationContext) {
                 array,
                 key,
                 operationContext,
-                view ? () => view.setLength(index) : undefined,
+                view
+                    ? () => view.setLength(index, operationContext)
+                    : undefined,
             )
         } else if (view) {
-            view.setLength(index)
+            view.setLength(index, operationContext)
         }
     }
     setLength(length)
     return undefined
 
     function setLength(nextLength) {
-        if (view) view.setLength(nextLength)
+        if (view) view.setLength(nextLength, operationContext)
         else {
             // A logical Array may be a Proxy whose set trap runs here.
-            errorUtils.runUserCode(() => {
+            errorUtils.runHostAction(operationContext, () => {
                 array.length = nextLength
             })
         }

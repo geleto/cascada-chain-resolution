@@ -1,45 +1,31 @@
 import * as errorUtils from "./error.js"
-import * as languageValues from "./language-values.js"
+import { continueOperation } from "./operation-lifecycle.js"
 import { prepareImportedData } from "./import-preparation.js"
 
-const IMPORT_POLICY = {
-    Context: {
-        valueKind: errorUtils.ERROR_KIND.ContextValueError,
-        rejectionKind: errorUtils.ERROR_KIND.ContextValueRejected,
-    },
-    MethodResult: {
-        valueKind: errorUtils.ERROR_KIND.UserCallThrew,
-        rejectionKind: errorUtils.ERROR_KIND.UserCallThrew,
-    },
-    ManagedMutationMethodResult: {
-        valueKind: errorUtils.ERROR_KIND.UserCallThrew,
-        rejectionKind: errorUtils.ERROR_KIND.UserCallThrew,
-        retainAdmittedDescendants: true,
-    },
+const CONTEXT_IMPORT = { kind: errorUtils.ERROR_KIND.ContextValueFailed }
+const METHOD_RESULT = { kind: errorUtils.ERROR_KIND.HostCallFailed }
+const MUTATION_RESULT = {
+    kind: errorUtils.ERROR_KIND.HostCallFailed,
+    retainAdmittedDescendants: true,
 }
 
 function importValue(value, operationContext) {
-    return importData(value, operationContext, IMPORT_POLICY.Context)
-}
-
-// Unlike ordinary import, revisit and retain admitted managed descendants.
-function importManagedMutationMethodResult(value, operationContext) {
-    return importData(
-        value,
-        operationContext,
-        IMPORT_POLICY.ManagedMutationMethodResult,
-    )
+    return importData(value, operationContext, CONTEXT_IMPORT)
 }
 
 function importMethodResult(value, operationContext) {
-    return importData(value, operationContext, IMPORT_POLICY.MethodResult)
+    return importData(value, operationContext, METHOD_RESULT)
+}
+
+function importManagedMutationMethodResult(value, operationContext) {
+    return importData(value, operationContext, MUTATION_RESULT)
 }
 
 function importContext(value, operationContext, externalMutationTreeSetup) {
     return importData(
         value,
         operationContext,
-        IMPORT_POLICY.Context,
+        CONTEXT_IMPORT,
         externalMutationTreeSetup,
     )
 }
@@ -47,38 +33,38 @@ function importContext(value, operationContext, externalMutationTreeSetup) {
 function importData(
     value,
     operationContext,
-    importPolicy,
-    externalMutationTreeSetup = undefined,
+    policy,
+    externalMutationTreeSetup,
 ) {
     return errorUtils.runInternalStep(operationContext, () => {
-        // Discovery belongs only to work completed in the issuing segment.
-        // Later root fulfillment starts ordinary import without tree authority.
         try {
-            return languageValues.thenValue(
+            return continueOperation(
                 value,
-                root => errorUtils.runInternalStep(operationContext, () =>
-                    prepareImportedData(root, operationContext, importPolicy, externalMutationTreeSetup)),
-                reason => {
-                    throw errorUtils.runInternalStep(operationContext, () => {
-                        const failure = errorUtils.toPoison(reason, operationContext, importPolicy.rejectionKind)
-                        if (errorUtils.isFatalError(failure)) throw failure
-                        return failure
-                    })
-                },
                 operationContext,
+                root =>
+                    prepareImportedData(
+                        root,
+                        operationContext,
+                        policy,
+                        externalMutationTreeSetup,
+                    ),
+                reason =>
+                    errorUtils.createPoisonError(
+                        reason,
+                        operationContext,
+                        policy.kind,
+                    ),
             )
-        } catch (failure) {
-            if (failure instanceof errorUtils.PoisonError) return failure
-            throw failure
         } finally {
+            // Tree discovery belongs only to the issuing segment.
             externalMutationTreeSetup = undefined
         }
     })
 }
 
 export {
+    importValue as import,
     importContext,
     importMethodResult,
     importManagedMutationMethodResult,
-    importValue as import,
 }

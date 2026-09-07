@@ -13,7 +13,6 @@ import {
     hasCycleCut,
     hasError,
     importValue,
-    lookupPath,
     readPath,
     metaOf,
     exportValue,
@@ -61,7 +60,7 @@ describe("getErrors", () => {
         }
     })
 
-    it("treats query-only reflection failures as fatal", () => {
+    it("returns query-only reflection failures as poison", () => {
         for (const query of [hasError, getErrors]) {
             const failure = new Error("query reflection failed")
             const value = new Proxy({}, {
@@ -74,13 +73,13 @@ describe("getErrors", () => {
                 reported = error
             })
 
-            const thrown = thrownBy(() => query(new Chain(value), []))
+            const thrown = query(new Chain(value), [])
             expect(errorCause(thrown)).to.be(failure)
-            expect(reported).to.be(thrown)
+            expect(reported).to.be(undefined)
         }
     })
 
-    it("stops settlement after a delayed query-only reflection failure", async () => {
+    it("closes the query after reflection failure while shared settlement continues", async () => {
         for (const query of [hasError, getErrors]) {
             const outer = deferred()
             const inner = deferred()
@@ -109,7 +108,7 @@ describe("getErrors", () => {
                 rejected = error
             }
             expect(errorCause(rejected)).to.be(failure)
-            expect(reported).to.be(rejected)
+            expect(reported).to.be(undefined)
             expect(scans).to.be(2)
 
             inner.resolve({ ready: true })
@@ -117,7 +116,9 @@ describe("getErrors", () => {
 
             expect(scans).to.be(2)
             expect(metaOf(value).placementVersions.inner.value)
-                .to.be(inner.promise)
+                .to.eql({
+                ready: true,
+            })
         }
     })
 
@@ -148,7 +149,7 @@ describe("getErrors", () => {
                 rejected = error
             }
             expect(errorCause(rejected)).to.be(failure)
-            expect(reported).to.be(rejected)
+            expect(reported).to.be(undefined)
         }
     })
 
@@ -182,7 +183,7 @@ describe("getErrors", () => {
                 rejected = error
             }
             expect(errorCause(rejected)).to.be(failure)
-            expect(reported).to.be(rejected)
+            expect(reported).to.be(undefined)
         }
     })
 
@@ -555,8 +556,8 @@ describe("getErrors", () => {
         slow.resolve({ repeated: synchronous })
         const errors = await result
 
-        expect(errors.includes(synchronous)).to.be(true)
-        expect(errors.includes(nested)).to.be(true)
+        expect(errors.some(error => error.cause === synchronous)).to.be(true)
+        expect(errors.some(error => error.cause === nested)).to.be(true)
         expect(errors.filter(error => error.message === "rejected").length).to.be(1)
         expect(errors.length).to.be(3)
         verifyRefCounts(branch)
@@ -815,8 +816,10 @@ describe("getErrors", () => {
         nested.resolve({ bad: nestedError })
 
         const errors = await result
-        expect(errors.includes(overwrittenError)).to.be(true)
-        expect(errors.includes(nestedError)).to.be(true)
+        expect(errors.some(error => error.cause === overwrittenError)).to.be(
+            true,
+        )
+        expect(errors.some(error => error.cause === nestedError)).to.be(true)
         expect(errors.filter(error => error.message === "deleted").length).to.be(1)
         expect(errors.length).to.be(3)
         expect(chain._state.value.branch).to.eql({ overwritten: "replacement" })

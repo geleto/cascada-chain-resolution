@@ -1,3 +1,4 @@
+import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -22,16 +23,12 @@ function hasCycleCut(parent, key, operationContext) {
         ?.cycleCuts?.has(key) === true
 }
 
-function setCycleCut(parent, key, operationContext) {
-    updateCycleCut(metadata.requireMeta(parent, operationContext), key, true)
-}
-
 function getRefCounts(value, operationContext) {
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
     if (languageValues.isPending(value, operationContext)) promiseCount = 1
-    else if (languageValues.isError(value)) errorCount = 1
+    else if (errorUtils.isPoisonError(value)) errorCount = 1
     else if (languageValues.isTraversable(value, operationContext)) {
         const counter = getRequiredRefCounter(value, operationContext)
         promiseCount = counter.promiseCount
@@ -50,7 +47,7 @@ function getValueRefState(child, operationContext, cycleCut = false) {
         promiseCount = 1
     } else if (cycleCut) {
         cycleCutCount = 1
-    } else if (languageValues.isError(child)) {
+    } else if (errorUtils.isPoisonError(child)) {
         errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
         childCounter = getRequiredRefCounter(child, operationContext)
@@ -71,19 +68,88 @@ function buildRefIndex(value, operationContext) {
         return value
     }
 
-    const cutTargetQueue = []
-    indexComponent(value, operationContext, cutTargetQueue)
+    const staged = new Map()
+    const pending = new Set()
+    discover(value)
 
-    // A cut blocks count propagation, not indexing. Defer its target until the
-    // current component is published so a closing back edge cannot re-enter an
-    // active recursive frame.
-    for (let index = 0; index < cutTargetQueue.length; index++) {
-        const target = cutTargetQueue[index]
-        if (!getRefCounter(target, operationContext)) {
-            indexComponent(target, operationContext, cutTargetQueue)
+    // A later custom-thenable subscription in this same synchronous index build
+    // can deliver earlier subscriptions in FIFO order, advancing captured mirrors.
+    // Discover those newly available values before counting, without resubscribing
+    // or rereading physical slots. Repeat only while available work makes progress.
+    while (pending.size > 0) {
+        let advanced = false
+        for (const version of pending) {
+            if (languageValues.isPending(version.value, operationContext)) continue
+            pending.delete(version)
+            discover(version.value)
+            advanced = true
         }
+        if (!advanced) break
+    }
+
+    const active = new Set()
+    count(value)
+
+    // No host reflection or subscription remains. Publish the complete region,
+    // including cut targets, before adding its reverse edges to existing indexes.
+    for (const { meta, counter } of staged.values()) {
+        if (counter) Object.assign(meta, counter)
+    }
+    for (const [node, { children }] of staged) {
+        for (const child of children) addParentCounterEdge(child, node)
     }
     return value
+
+    function discover(node) {
+        if (!languageValues.isTraversable(node, operationContext) ||
+            getRefCounter(node, operationContext) || staged.has(node)) return
+        const meta = metadata.requireMeta(node, operationContext)
+        const placements = new Map()
+        staged.set(node, { meta, placements, children: [] })
+        for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
+            const child = languageProperties.readLanguageProperty(node, key, operationContext)
+            const version = meta.placementVersions?.[key] ?? { value: child }
+            placements.set(key, version)
+            if (languageValues.isPending(version.value, operationContext)) pending.add(version)
+            else discover(version.value)
+        }
+    }
+
+    function count(node) {
+        // A required settlement during discovery may have completed this index
+        // independently. Reuse it instead of overwriting its live bookkeeping.
+        const existing = getRefCounter(node, operationContext)
+        if (existing) return existing
+        const state = staged.get(node)
+        if (state.counter) return state.counter
+        const counter = state.counter = {
+            promiseCount: 0,
+            errorCount: 0,
+            cycleCutCount: 0,
+            parents: new Map(),
+        }
+        active.add(node)
+        for (const [key, version] of state.placements) {
+            const child = version.value
+            if (languageValues.isPending(child, operationContext))
+                counter.promiseCount++
+            else if (errorUtils.isPoisonError(child)) counter.errorCount++
+            else if (languageValues.isTraversable(child, operationContext)) {
+                if (active.has(child)) {
+                    updateCycleCut(counter, key, true)
+                    counter.cycleCutCount++
+                } else {
+                    const childCounter = count(child)
+                    counter.promiseCount += childCounter.promiseCount
+                    counter.errorCount += childCounter.errorCount
+                    counter.cycleCutCount += childCounter.cycleCutCount
+                    state.children.push(childCounter)
+                }
+            }
+        }
+        active.delete(node)
+        return counter
+    }
 }
 
 function indexValueIfSourceIndexed(
@@ -126,73 +192,6 @@ function prepareRefEdge(
     }
 }
 
-// Recursively index one cut-free projected component. Its cuts become roots of
-// later components in the same build.
-function indexComponent(
-    node,
-    operationContext,
-    cutTargetQueue,
-    active = new Set(),
-) {
-    const existing = getRefCounter(node, operationContext)
-    if (existing) return existing
-
-    let promiseCount = 0
-    let errorCount = 0
-    let cycleCutCount = 0
-    const childNodes = []
-    active.add(node)
-
-    for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
-        const child = languageProperties.readLanguageProperty(node, key, operationContext)
-        if (hasCycleCut(node, key, operationContext)) {
-            cycleCutCount++
-            cutTargetQueue.push(child)
-            continue
-        }
-
-        if (languageValues.isPending(child, operationContext)) {
-            promiseCount++
-            continue
-        }
-
-        if (languageValues.isError(child)) {
-            errorCount++
-            continue
-        }
-        if (!languageValues.isTraversable(child, operationContext)) continue
-
-        if (active.has(child)) {
-            setCycleCut(node, key, operationContext)
-            cycleCutCount++
-            cutTargetQueue.push(child)
-            continue
-        }
-
-        const childCounts = indexComponent(
-            child,
-            operationContext,
-            cutTargetQueue,
-            active,
-        )
-        promiseCount += childCounts.promiseCount
-        errorCount += childCounts.errorCount
-        cycleCutCount += childCounts.cycleCutCount
-        childNodes.push(child)
-    }
-    active.delete(node)
-
-    const counter = metadata.requireMeta(node, operationContext)
-    counter.promiseCount = promiseCount
-    counter.errorCount = errorCount
-    counter.cycleCutCount = cycleCutCount
-    // Publish `parents` last. Mirror discovery uses its presence to distinguish
-    // a complete index, where every Promise property must already have a mirror.
-    counter.parents = new Map()
-    for (const child of childNodes) addParentEdge(child, node, operationContext)
-    return counter
-}
-
 // Complete fallible graph preparation before returning a commit that touches
 // only the property and captured bookkeeping state.
 function prepareLiveEdge(
@@ -230,11 +229,6 @@ function prepareLiveEdge(
         addParentCounterEdge(nextState.childCounter, owner)
         applyCountUpdate?.()
     }
-}
-
-function addParentEdge(value, parent, operationContext) {
-    if (!languageValues.isTraversable(value, operationContext)) return
-    addParentCounterEdge(getRequiredRefCounter(value, operationContext), parent)
 }
 
 function addParentCounterEdge(counter, parent) {

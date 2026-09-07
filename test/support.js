@@ -1,3 +1,4 @@
+import * as operationLifecycle from "../src/operation-lifecycle.js"
 import expect from "expect.js"
 
 import * as runtime from "../src/index.js"
@@ -6,7 +7,6 @@ import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
-import * as resolution from "../src/resolution.js"
 import * as sourceLanguageValues from "../src/language-values.js"
 import { readPath as readObservedPath } from "../src/observations.js"
 import { verifyRefCounts as verifyExecutionRefCounts } from "./verify-refcounts.js"
@@ -189,7 +189,7 @@ function runInternalStep(work) {
 }
 
 function submitFatal(reason, errorContext = "test fatal injection") {
-    return errorUtils.failExecution(
+    errorUtils.failExecution(
         testOperationContext(errorContext),
         reason,
     )
@@ -272,25 +272,26 @@ const testMetadata = {
     incrementReadLease,
 }
 
-function continueInitialValue(value, fn, shouldContinue) {
-    return resolution.continueInitialValue(
+function consumeValue(value, fn) {
+    return languageValues.consumeValue(
         value,
         testOperationContext("test initial resolution"),
+        errorUtils.ERROR_KIND.OperationInputFailed,
         fn,
-        shouldContinue,
     )
 }
 
-function continueWhenSettled(promise, fn) {
-    return resolution.continueWhenSettled(
+function advanceSettledValue(promise, fn) {
+    return operationLifecycle.continueOperation(
         promise,
         testOperationContext("test later resolution"),
         fn,
+        fn,
     )
 }
 
-function continueInternalResultOrFatal(internalResult, onFulfilled) {
-    return resolution.continueInternalResultOrFatal(
+function continueOperation(internalResult, onFulfilled) {
+    return operationLifecycle.continueOperation(
         internalResult,
         testOperationContext("test internal continuation"),
         onFulfilled,
@@ -373,7 +374,7 @@ export {
     assignPath,
     advancePromiseVersion,
     buildRefIndex,
-    continueInternalResultOrFatal,
+    continueOperation,
     deletePath,
     decrementReadLease,
     enter,
@@ -389,10 +390,10 @@ export {
     metaOf,
     markShared,
     testMetadata as metadata,
-    continueWhenSettled,
+    advanceSettledValue,
     readPath,
     getPromiseMirror,
-    continueInitialValue,
+    consumeValue,
     resetTestExecution,
     run,
     runInternalStep,

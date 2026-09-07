@@ -307,7 +307,7 @@ describe("operation context", () => {
             operationContext(acquisitionExecution, "later acquisition"),
         )
         expect(acquisitionError.errorContext).to.be("then acquisition")
-        expect(acquisitionError.kind).to.be("ThenAccessThrew")
+        expect(acquisitionError.kind).to.be("ThenAccessFailed")
 
         const invocationExecution = new runtime.Execution()
         const invocationOperationContext = operationContext(
@@ -329,7 +329,7 @@ describe("operation context", () => {
             operationContext(invocationExecution, "later invocation"),
         )
         expect(invocationError.errorContext).to.be("then invocation")
-        expect(invocationError.kind).to.be("ThenInvocationThrew")
+        expect(invocationError.kind).to.be("ThenInvocationFailed")
     })
 
     it("applies current declarations independently at first admission", () => {

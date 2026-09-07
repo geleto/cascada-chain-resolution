@@ -1,12 +1,13 @@
+import { prepareInputs } from "./input-collection.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as invocation from "./invocation.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
     PASS_AS_PAYLOAD,
+    runArrayStep,
 } from "./array-methods.js"
 
 function getArrayMethodDescription(invocationContext) {
@@ -31,13 +32,20 @@ function getArrayMethodDescription(invocationContext) {
         leaseReceiverThroughResult: !mutation &&
             methodDefinition.leaseReceiverThroughResult,
         prepareArguments: () =>
-            prepareArrayMethodArguments(
-                methodDefinition,
-                invocationContext,
+            runArrayStep(invocationContext, () =>
+                prepareArrayMethodArguments(
+                    methodDefinition,
+                    invocationContext,
+                ),
             ),
         invoke(preparedArguments) {
-            return errorUtils.catchUserCodeFailure(
-                () => mutation
+            return runArrayStep(invocationContext, () => {
+                const failure = validateArrayOperation(
+                    preparedArguments,
+                    invocationContext,
+                )
+                if (failure) return failure
+                return mutation
                     ? invokeArrayMutationMethod(
                         methodDefinition,
                         preparedArguments,
@@ -47,19 +55,13 @@ function getArrayMethodDescription(invocationContext) {
                         methodDefinition,
                         preparedArguments,
                         invocationContext,
-                    ),
-                invocationContext.operationContext,
-                errorUtils.ERROR_KIND.InvalidArrayOperation,
-                failure => failure,
-            )
+                    )
+            })
         },
     }
 }
 
-function prepareArrayMethodArguments(
-    methodDefinition,
-    invocationContext,
-) {
+function prepareArrayMethodArguments(methodDefinition, invocationContext) {
     const { args } = invocationContext
     if (methodDefinition.prepare) {
         return methodDefinition.prepare(invocationContext)
@@ -79,23 +81,30 @@ function prepareArrayMethodArguments(
             continue
         }
         const result = input(args[index], invocationContext)
-        readiness.push(operationLifecycle.continuePrepared(
-            invocationContext,
-            result,
-            value => {
-                prepared[index] = value
-            },
-        ))
+        readiness.push(
+            operationLifecycle.continueOperation(
+                result,
+                invocationContext.operationContext,
+                value => {
+                    if (errorUtils.isPoisonError(value)) return value
+
+                    prepared[index] = value
+                },
+                undefined,
+                invocationContext,
+            ),
+        )
     }
     if (methodDefinition.remainingArgsAsPayload) {
         for (let index = inputs.length; index < args.length; index++) {
             prepared[index] = invocationContext.retainArgument(args[index])
         }
     }
-    return operationLifecycle.continuePreparedAll(
-        invocationContext,
+    return prepareInputs(
         readiness,
+        invocationContext.operationContext,
         () => prepared,
+        invocationContext,
     )
 }
 
@@ -120,22 +129,27 @@ function invokeArrayObservationMethod(
     } else {
         const thisValue = invocationContext.receiver
         remap = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
-        const result = invocation.invokeHostFunction(
+        const result = Reflect.apply(
             methodDefinition.intrinsic,
             remap,
             preparedArgs,
-            invocationContext.operationContext,
         )
         // Mutators change the receiver remap; observations return one.
         if (methodDefinition.methodResult === undefined) remap = result
     }
-    return operationLifecycle.continuePrepared(
-        invocationContext,
+    return operationLifecycle.continueOperation(
         remap,
-        remap => arrayRemaps.createArrayFromRemap(
-            remap,
-            invocationContext.operationContext,
-        ),
+        invocationContext.operationContext,
+        remap =>
+            runArrayStep(invocationContext, () => {
+                if (errorUtils.isPoisonError(remap)) return remap
+                return arrayRemaps.createArrayFromRemap(
+                    remap,
+                    invocationContext.operationContext,
+                )
+            }),
+        undefined,
+        invocationContext,
     )
 }
 
@@ -171,17 +185,23 @@ function invokeArrayMutationMethod(
     }
 
     if (methodDefinition.remap) {
-        return operationLifecycle.continuePrepared(
-            invocationContext,
+        return operationLifecycle.continueOperation(
             methodDefinition.remap(preparedArguments, invocationContext),
-            remap => finishMutation(
-                new arrayRemaps.ArrayMutation(
-                    thisValue,
-                    remap,
-                    invocationContext.operationContext,
-                ),
-                remap,
-            ),
+            invocationContext.operationContext,
+            remap =>
+                runArrayStep(invocationContext, () => {
+                    if (errorUtils.isPoisonError(remap)) return remap
+                    return finishMutation(
+                        new arrayRemaps.ArrayMutation(
+                            thisValue,
+                            remap,
+                            invocationContext.operationContext,
+                        ),
+                        remap,
+                    )
+                }),
+            undefined,
+            invocationContext,
         )
     }
 
@@ -189,18 +209,13 @@ function invokeArrayMutationMethod(
         thisValue,
         invocationContext.operationContext,
     )
-    let callFailure
-    const nativeResult = invocation.invokeHostFunction(
+    // The intrinsic and its remap traps are trusted work on prepared inputs.
+    // Exact host reflection escapes to the operation's marker consumer.
+    const nativeResult = Reflect.apply(
         methodDefinition.intrinsic,
         mutation.working,
         preparedArguments,
-        invocationContext.operationContext,
-        errorUtils.ERROR_KIND.UserCallThrew,
-        failure => callFailure = failure,
     )
-    if (callFailure) {
-        return { mutatedValue: callFailure, result: callFailure }
-    }
     return finishMutation(mutation, nativeResult)
 
     function finishMutation(mutation, nativeResult) {
@@ -232,6 +247,43 @@ function invokeArrayMutationMethod(
             mutatedValue,
             result: returnsReceiver ? mutatedValue : result,
         }
+    }
+}
+
+function validateArrayOperation(args, { receiver, method, operationContext }) {
+    const length = arrayViews.logicalArrayLength(receiver, operationContext)
+    if (method === "with") {
+        const index = args[0] ?? 0
+        if (index < -length || index >= length) {
+            return errorUtils.validationError(
+                "Array index is out of range",
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidArrayOperation,
+            )
+        }
+    }
+    let nextLength = length
+    if (method === "push" || method === "unshift") nextLength += args.length
+    else if (method === "splice" || method === "toSpliced") {
+        const relativeStart = args[0] ?? 0
+        const start =
+            relativeStart < 0
+                ? Math.max(length + relativeStart, 0)
+                : Math.min(relativeStart, length)
+        const removed =
+            args.length === 0
+                ? 0
+                : args.length === 1
+                  ? length - start
+                  : Math.min(Math.max(args[1] ?? 0, 0), length - start)
+        nextLength += Math.max(args.length - 2, 0) - removed
+    }
+    if (nextLength > 0xffffffff) {
+        return errorUtils.validationError(
+            "Invalid Array length",
+            operationContext,
+            errorUtils.ERROR_KIND.InvalidArrayLength,
+        )
     }
 }
 

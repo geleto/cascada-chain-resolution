@@ -2048,12 +2048,7 @@ describe("import", () => {
         const imported = importValue(deferredValue.promise)
 
         deferredValue.reject("external boom")
-        let rejection
-        try {
-            await imported
-        } catch (error) {
-            rejection = error
-        }
+        const rejection = await imported
         expect(rejection.cause).to.be("external boom")
     })
 
@@ -2123,12 +2118,7 @@ describe("import", () => {
     })
 
     it("preserves an already-rejected imported Promise", async () => {
-        let rejection
-        try {
-            await importValue(Promise.reject("already external boom"))
-        } catch (error) {
-            rejection = error
-        }
+        const rejection = await importValue(Promise.reject("already external boom"))
         expect(rejection.cause).to.be("already external boom")
     })
 })

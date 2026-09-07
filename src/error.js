@@ -1,97 +1,95 @@
 import { commitFatal } from "./execution.js"
 
-const CONTEXTLESS_ERROR_CONTEXT = Symbol("contextless Error source")
-// Keep the exported FatalError class recognizable without letting callers
-// construct a fatal outcome with an invented cause or source context.
-const FATAL_ERROR_TOKEN = Symbol("FatalError construction")
+const ERROR_TOKEN = Symbol("Kernel Error construction")
+const poisonErrors = new WeakSet()
 const fatalErrors = new WeakSet()
+const hostFailures = new WeakMap()
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
-
-const ERROR_KIND = Object.freeze({
-    AsyncCallback: "AsyncCallback",
-    AssignmentValueError: "AssignmentValueError",
-    AssignmentValueRejected: "AssignmentValueRejected",
-    ChainValueError: "ChainValueError",
-    ChainValueRejected: "ChainValueRejected",
-    ContextValueError: "ContextValueError",
-    ContextValueRejected: "ContextValueRejected",
-    ConversionThrew: "ConversionThrew",
-    DivideByZero: "DivideByZero",
-    ExportThrew: "ExportThrew",
-    ExportValueError: "ExportValueError",
-    ImportBindingMissing: "ImportBindingMissing",
-    ImportThrew: "ImportThrew",
-    IncompatibleOperands: "IncompatibleOperands",
-    InvalidArrayLength: "InvalidArrayLength",
-    InvalidArrayOperation: "InvalidArrayOperation",
-    InvalidCallbackResult: "InvalidCallbackResult",
-    InvalidConcurrentLimit: "InvalidConcurrentLimit",
-    InvalidImportValue: "InvalidImportValue",
-    InvalidManagedReceiver: "InvalidManagedReceiver",
-    InvalidPathSegment: "InvalidPathSegment",
-    InvalidTextValue: "InvalidTextValue",
-    IteratorThrew: "IteratorThrew",
-    LoadFailed: "LoadFailed",
-    LookupThrew: "LookupThrew",
-    MissingFunction: "MissingFunction",
-    Multiple: "Multiple",
-    NaNResult: "NaNResult",
-    NotAFunction: "NotAFunction",
-    NotDestructurable: "NotDestructurable",
-    NotIterable: "NotIterable",
-    NullLookup: "NullLookup",
-    OperationInputError: "OperationInputError",
-    OperationInputRejected: "OperationInputRejected",
-    PropertyMutationThrew: "PropertyMutationThrew",
-    PropertyValidation: "PropertyValidation",
-    ScalarLookup: "ScalarLookup",
-    ThenAccessThrew: "ThenAccessThrew",
-    ThenInvocationThrew: "ThenInvocationThrew",
-    UnknownVariable: "UnknownVariable",
-    UserCallThrew: "UserCallThrew",
-    UnsupportedMutation: "UnsupportedMutation",
+const MISSING_OPERATION_CONTEXT = Object.freeze({
+    operation: "runtime entry",
+    problem: "missing operation context or execution binding",
 })
 
-class CascadaError extends Error {
-    constructor(message, errorContext, options = undefined) {
-        if (errorContext === undefined) {
-            throw new TypeError("Cascada Errors require source context")
-        }
-        super(message, options)
-        this.errorContext = errorContext
-    }
-}
+const ERROR_KIND = Object.freeze({
+    ChainValueFailed: "ChainValueFailed",
+    ContextValueFailed: "ContextValueFailed",
+    AssignmentValueFailed: "AssignmentValueFailed",
+    OperationInputFailed: "OperationInputFailed",
+    PathSegmentFailed: "PathSegmentFailed",
+    InvalidPathSegment: "InvalidPathSegment",
+    ThenAccessFailed: "ThenAccessFailed",
+    ThenInvocationFailed: "ThenInvocationFailed",
+    ImportReflectionFailed: "ImportReflectionFailed",
+    NullLookup: "NullLookup",
+    ScalarLookup: "ScalarLookup",
+    LookupReflectionFailed: "LookupReflectionFailed",
+    QueryReflectionFailed: "QueryReflectionFailed",
+    MissingFunction: "MissingFunction",
+    NotAFunction: "NotAFunction",
+    HostCallFailed: "HostCallFailed",
+    ControlledCallbackFailed: "ControlledCallbackFailed",
+    InvalidCallbackResult: "InvalidCallbackResult",
+    ScalarConversionFailed: "ScalarConversionFailed",
+    UnsupportedMutation: "UnsupportedMutation",
+    ExportReflectionFailed: "ExportReflectionFailed",
+    PropertyMutationFailed: "PropertyMutationFailed",
+    PropertyValidation: "PropertyValidation",
+    InvalidManagedReceiver: "InvalidManagedReceiver",
+    InvalidArrayLength: "InvalidArrayLength",
+    InvalidArrayOperation: "InvalidArrayOperation",
+    ExternalLocationConflict: "ExternalLocationConflict",
+    ExternalPropertyReadFailed: "ExternalPropertyReadFailed",
+    ExternalPropertyWriteFailed: "ExternalPropertyWriteFailed",
+    ExternalPropertyDeleteFailed: "ExternalPropertyDeleteFailed",
+    InvalidExternalContainment: "InvalidExternalContainment",
+    ExternalCapabilityEscape: "ExternalCapabilityEscape",
+    InvalidExternalSnapshot: "InvalidExternalSnapshot",
+    ExternalRepairFailed: "ExternalRepairFailed",
+    DivideByZero: "DivideByZero",
+    ImportBindingMissing: "ImportBindingMissing",
+    IncompatibleOperands: "IncompatibleOperands",
+    InvalidConcurrentLimit: "InvalidConcurrentLimit",
+    InvalidTextValue: "InvalidTextValue",
+    IteratorFailed: "IteratorFailed",
+    LoadFailed: "LoadFailed",
+    NaNResult: "NaNResult",
+    NotDestructurable: "NotDestructurable",
+    NotIterable: "NotIterable",
+    UnknownVariable: "UnknownVariable",
+    Multiple: "Multiple",
+})
 
-class PoisonError extends CascadaError {
-    constructor(message, errorContext, kind, options = undefined) {
-        if (typeof kind !== "string" || !kind) {
-            throw new TypeError("Poison Errors require a failure kind")
-        }
-        super(message, errorContext, options)
+class PoisonError extends Error {
+    constructor(token, message, errorContext, kind, options) {
+        if (token !== ERROR_TOKEN)
+            throw new TypeError("PoisonError cannot be constructed directly")
+        super(message, options)
         this.name = "PoisonError"
+        this.errorContext = errorContext
         this.kind = kind
+        poisonErrors.add(this)
     }
 }
 
 class CompoundPoisonError extends PoisonError {
-    constructor(errors, message) {
-        const kinds = [...new Set(errors.map(error => error.kind))]
-        super(
-            message,
-            errors[0].errorContext,
-            kinds.length === 1 ? kinds[0] : ERROR_KIND.Multiple,
-        )
+    constructor(token, errors, message) {
+        if (token !== ERROR_TOKEN)
+            throw new TypeError(
+                "CompoundPoisonError cannot be constructed directly",
+            )
+        const kind = errors.every(error => error.kind === errors[0].kind)
+            ? errors[0].kind
+            : ERROR_KIND.Multiple
+        super(token, message, errors[0].errorContext, kind)
         this.name = "CompoundPoisonError"
-        this.errors = errors
-        this.kinds = kinds
+        this.errors = Object.freeze([...errors])
     }
 }
 
 class FatalError extends Error {
     constructor(token, cause, errorContext) {
-        if (token !== FATAL_ERROR_TOKEN) {
+        if (token !== ERROR_TOKEN)
             throw new TypeError("FatalError cannot be constructed directly")
-        }
         super(
             errorMessage(cause, "Cascada execution failed with a non-Error value"),
             { cause },
@@ -99,181 +97,209 @@ class FatalError extends Error {
         this.name = "FatalError"
         this.errorContext = errorContext
         fatalErrors.add(this)
-        Object.freeze(this)
     }
 }
 
 Object.defineProperty(FatalError.prototype, "then", { value: undefined })
 Object.freeze(FatalError.prototype)
+// Poison prototypes receive their final then method and freeze in Phase 9D-B.
 
-class UserCodeFailure extends Error {
-    constructor(error) {
-        super("Supported user code failed")
-        this.error = error
-    }
+function isPoisonError(error) {
+    return poisonErrors.has(error)
 }
-
-let userCodeDepth = 0
+function isFatalError(error) {
+    return fatalErrors.has(error)
+}
 
 function createFatalError(reason, errorContext) {
     return isFatalError(reason)
         ? reason
-        : new FatalError(FATAL_ERROR_TOKEN, reason, errorContext)
+        : Object.freeze(new FatalError(ERROR_TOKEN, reason, errorContext))
 }
 
 function failExecution(operationContext, reason) {
-    const candidate = createFatalError(reason, operationContext.errorContext)
-    throw commitFatal(operationContext.execution, candidate)
+    throw commitFatal(
+        operationContext.execution,
+        createFatalError(reason, operationContext.errorContext),
+    )
 }
 
-function runInternalStep(operationContext, work, value = undefined) {
-    if (
-        operationContext?.execution === undefined ||
-        operationContext.errorContext === undefined
-    ) {
-        return runContextlessFatal(() => {
-            throw new TypeError("Operation context requires execution and errorContext")
-        })
-    }
-    const fatalError = operationContext.execution.fatalError
-    if (fatalError !== null) throw fatalError
+let hostCodeDepth = 0
 
+// Conservative probes use this guard with their own exact catch and outcome.
+function enterHostCode() {
+    hostCodeDepth++
+}
+function leaveHostCode() {
+    hostCodeDepth--
+}
+function assertOutsideHostCode() {
+    if (hostCodeDepth > 0)
+        throw new Error("Cascada cannot be re-entered from supported host code")
+}
+
+function runInternalStep(operationContext, work, value) {
+    // One check covers Chain construction and the trusted integration entry.
+    // A source-only context is a plausible integration mistake at this boundary.
+    // Diagnose missing routing, without inspecting source data or inventing an execution.
+    const execution = operationContext?.execution
+    if (execution === undefined || execution === null) {
+        throw createFatalError(
+            new TypeError("Operation context with an execution is required"),
+            MISSING_OPERATION_CONTEXT,
+        )
+    }
+    const fatal = execution.fatalError
+    if (fatal !== null) throw fatal
+    return runWithFatalGuard(operationContext, work, value)
+}
+
+// Entry and continuation callers select live work before this shared envelope.
+// It classifies escaping defects; it does not repeat their routing/lifetime checks.
+function runWithFatalGuard(operationContext, work, value) {
     try {
-        if (userCodeDepth > 0) {
-            throw new Error("Cascada cannot be re-entered from supported user code")
-        }
+        assertOutsideHostCode()
         return work(value)
-    } catch (error) {
-        const userFailure = Error.isError(error) &&
-            error instanceof UserCodeFailure
-        return failExecution(
+    } catch (reason) {
+        failExecution(
             operationContext,
-            userFailure ? error.error : error,
+            hostFailures.has(reason) ? hostFailures.get(reason) : reason,
         )
     }
 }
 
-function runContextlessFatal(fn, value = undefined) {
+// Only this exact-action producer creates the private escape marker. The owning
+// operation supplies classification after shared graph helpers unwind.
+function runHostAction(operationContext, action) {
+    let result
+    let failure
+    let failed = false
+    enterHostCode()
     try {
-        if (userCodeDepth > 0) {
-            throw new Error("Cascada cannot be re-entered from supported user code")
-        }
-        return fn(value)
-    } catch (error) {
-        if (Error.isError(error) && error instanceof UserCodeFailure) {
-            // Declaration probes keep their transitional validation behavior
-            // until Phase 9D-A gives those local catches their final shape.
-            return error.error
-        }
-        throw createFatalError(error, CONTEXTLESS_ERROR_CONTEXT)
-    }
-}
-
-// Reflection hooks, controlled callbacks, and host calls are supported user
-// code. The nearest semantic boundary converts this private raw-failure signal.
-function runUserCode(fn) {
-    userCodeDepth++
-    try {
-        return fn()
-    } catch (error) {
-        if (isFatalError(error) || (
-            Error.isError(error) && error instanceof UserCodeFailure
-        )) {
-            throw error
-        }
-        throw new UserCodeFailure(error)
+        result = action()
+    } catch (reason) {
+        failed = true
+        failure = reason
     } finally {
-        userCodeDepth--
+        leaveHostCode()
     }
+    const fatal = operationContext.execution.fatalError
+    if (fatal !== null) throw fatal
+    if (!failed) return result
+    if (isFatalError(failure)) failExecution(operationContext, failure)
+    const marker = {}
+    hostFailures.set(marker, failure)
+    throw marker
 }
 
-function isFatalError(error) {
-    return Error.isError(error) && fatalErrors.has(error)
-}
-
-function catchUserCodeFailure(fn, operationContext, kind, onFailure = value => value) {
+// Consume only runHostAction's private escape marker. An ordinary internal throw
+// passes through unchanged to the fatal guard, even when it is a PoisonError.
+function catchExternalThrow(
+    work,
+    operationContext,
+    kind,
+    onFailure = value => value,
+) {
+    let failure
     try {
-        const result = fn()
-        const fatalError = operationContext.execution.fatalError
-        if (fatalError !== null) throw fatalError
-        return result
-    } catch (error) {
-        const fatalError = operationContext.execution.fatalError
-        if (fatalError !== null) throw fatalError
-        if (!Error.isError(error) || !(error instanceof UserCodeFailure)) throw error
-        return onFailure(toPoison(error.error, operationContext, kind))
+        return work()
+    } catch (reason) {
+        if (!hostFailures.has(reason)) throw reason
+        failure = hostFailures.get(reason)
     }
+    // Contextualization and the owning transition's failure effect are outside
+    // recovery. A defect in either must escape to the fatal envelope.
+    return onFailure(createPoisonError(failure, operationContext, kind))
 }
 
-function catchRawUserCodeFailure(fn, onFailure, operationContext = undefined) {
-    try {
-        const result = fn()
-        const fatalError = operationContext?.execution.fatalError
-        if (fatalError) throw fatalError
-        return result
-    } catch (error) {
-        const fatalError = operationContext?.execution.fatalError
-        if (fatalError) throw fatalError
-        if (!Error.isError(error) || !(error instanceof UserCodeFailure)) throw error
-        return onFailure(error.error)
-    }
-}
-
-function validationError(message, operationContext, kind) {
-    return new PoisonError(message, operationContext.errorContext, kind)
-}
-
-function hostValidationError(message) {
-    return new Error(message)
-}
-
-function pathAccessError(value, operationContext) {
-    const kind = value === null || value === undefined
-        ? ERROR_KIND.NullLookup
-        : ERROR_KIND.ScalarLookup
-    return validationError(
-        "Cannot access property through missing or primitive value",
+// A complete language-result boundary also contextualizes returned native Errors.
+// Shared reflection helpers instead use the producer/consumer split above.
+function runHostBoundary(operationContext, kind, action) {
+    const value = catchExternalThrow(
+        () => runHostAction(operationContext, action),
         operationContext,
         kind,
     )
+    return Error.isError(value)
+        ? createPoisonError(value, operationContext, kind)
+        : value
+}
+
+function createPoisonError(reason, operationContext, kind) {
+    if (isFatalError(reason)) failExecution(operationContext, reason)
+    if (isPoisonError(reason)) return reason
+    return Object.freeze(
+        new PoisonError(
+            ERROR_TOKEN,
+            errorMessage(reason, "Host action failed with a non-Error value"),
+            operationContext.errorContext,
+            kind,
+            { cause: reason },
+        ),
+    )
+}
+
+function validationError(message, operationContext, kind) {
+    return Object.freeze(
+        new PoisonError(
+            ERROR_TOKEN,
+            message,
+            operationContext.errorContext,
+            kind,
+        ),
+    )
+}
+
+function hostValidationError(message) {
+    return new TypeError(message)
+}
+
+function pathAccessError(value, operationContext) {
+    return validationError(
+        "Cannot access property through missing or primitive value",
+        operationContext,
+        value === null || value === undefined
+            ? ERROR_KIND.NullLookup
+            : ERROR_KIND.ScalarLookup,
+    )
+}
+
+// One operation-local equivalence rule serves every complete Error collector.
+function collectErrors(errors) {
+    const distinct = []
+    const causes = new Map()
+    for (const error of errors) add(error)
+    return distinct
+
+    function add(error) {
+        if (!isPoisonError(error))
+            throw new TypeError("Error collection requires poison")
+        if (error instanceof CompoundPoisonError) {
+            for (const child of error.errors) add(child)
+            return
+        }
+        const cause = Object.hasOwn(error, "cause") ? error.cause : error
+        let sources = causes.get(cause)
+        if (!sources) causes.set(cause, (sources = new Map()))
+        let kinds = sources.get(error.errorContext)
+        if (!kinds) sources.set(error.errorContext, (kinds = new Set()))
+        if (kinds.has(error.kind)) return
+        kinds.add(error.kind)
+        distinct.push(error)
+    }
 }
 
 function combineErrors(errors, message) {
-    const distinct = []
-    const causes = new Set()
-    for (const error of flattenErrors(errors)) {
-        const cause = error.cause ?? error
-        if (causes.has(cause)) continue
-        causes.add(cause)
-        distinct.push(error)
-    }
-    if (distinct.length < 2) return distinct[0]
-    return new CompoundPoisonError(distinct, message)
-}
-
-function* flattenErrors(errors) {
-    for (const error of errors) {
-        if (error instanceof CompoundPoisonError) yield* error.errors
-        else yield error
-    }
-}
-
-function toPoison(reason, operationContext, kind) {
-    const isError = Error.isError(reason)
-    if (isError && (isFatalError(reason) || reason instanceof PoisonError)) {
-        return reason
-    }
-    return new PoisonError(
-        errorMessage(reason, "User code failed with a non-Error value"),
-        operationContext.errorContext,
-        kind,
-        { cause: reason },
-    )
+    const distinct = collectErrors(errors)
+    if (distinct.length === 0)
+        throw new TypeError("Error combination requires at least one poison")
+    return distinct.length === 1
+        ? distinct[0]
+        : Object.freeze(new CompoundPoisonError(ERROR_TOKEN, distinct, message))
 }
 
 function errorMessage(reason, objectFallback) {
     if (Error.isError(reason)) {
-        // Reading through a descriptor cannot invoke a host `message` getter.
         const descriptor = getOwnPropertyDescriptor(reason, "message")
         return descriptor && "value" in descriptor &&
             typeof descriptor.value === "string"
@@ -289,22 +315,25 @@ function errorMessage(reason, objectFallback) {
 }
 
 export {
-    CascadaError,
     CompoundPoisonError,
-    CONTEXTLESS_ERROR_CONTEXT,
     ERROR_KIND,
     FatalError,
     PoisonError,
-    catchRawUserCodeFailure,
-    catchUserCodeFailure,
+    assertOutsideHostCode,
+    catchExternalThrow,
+    collectErrors,
     combineErrors,
+    createPoisonError,
+    enterHostCode,
     failExecution,
     hostValidationError,
     isFatalError,
+    isPoisonError,
+    leaveHostCode,
     pathAccessError,
-    runContextlessFatal,
+    runHostAction,
+    runHostBoundary,
     runInternalStep,
-    runUserCode,
-    toPoison,
+    runWithFatalGuard,
     validationError,
 }

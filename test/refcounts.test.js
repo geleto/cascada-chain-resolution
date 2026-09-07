@@ -1,4 +1,5 @@
 import {
+    errorCause,
     Chain,
     expect,
     buildRefIndex,
@@ -238,10 +239,10 @@ describe("subtree counters", () => {
         expectCounts(publishedRoot, 0, 0, 1)
         expect(hasCycleCut(indexedValue, "back")).to.be(true)
         expectCounts(indexedRoot, 0, 1, 1)
-        expect(getErrors(new Chain(publishedRoot), [])).to.eql([
+        expect(getErrors(new Chain(publishedRoot), []).map(errorCause)).to.eql([
             publishedError,
         ])
-        expect(getErrors(new Chain(indexedRoot), [])).to.eql([
+        expect(getErrors(new Chain(indexedRoot), []).map(errorCause)).to.eql([
             indexedError,
         ])
 
@@ -249,7 +250,7 @@ describe("subtree counters", () => {
 
         expect(hasCycleCut(publishedRoot, "value")).to.be(true)
         expectCounts(publishedRoot, 0, 0, 1)
-        expect(getErrors(new Chain(publishedRoot), [])).to.eql([
+        expect(getErrors(new Chain(publishedRoot), []).map(errorCause)).to.eql([
             publishedError,
         ])
         verifyRefCounts(publishedRoot, indexedRoot)
@@ -379,7 +380,7 @@ describe("subtree counters", () => {
         expectCounts(7, 0, 0)
         expectCounts(null, 0, 0)
         expectCounts(Promise.resolve(1), 1, 0)
-        expectCounts(new Error("bad"), 0, 1)
+        expectCounts(importValue(new Error("bad")), 0, 1)
 
         importValue(frozen, "frozen counter root")
         importValue(frozenDAG, "frozen DAG counter root")
@@ -1277,5 +1278,4 @@ describe("subtree counters", () => {
         expectCounts(next, 0, 0)
         verifyRefCounts(root, next)
     })
-
 })

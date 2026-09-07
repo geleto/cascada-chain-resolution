@@ -8,7 +8,8 @@ The runtime recognizes these value categories:
 
 - **Primitive:** `null`, `undefined`, strings, numbers, booleans, symbols, and
   bigints.
-- **Promise:** any object or function with a callable `then` property.
+- **Promise:** a supported thenable consumed for availability after preserving
+  Error, Function, and admitted-category semantics.
 - **Language Error:** a recoverable `PoisonError` occurrence or a native host
   Error awaiting contextualization. Fatal `FatalError` is excluded.
 - **Managed value:** an Array, record, managed class instance, or internal
@@ -18,17 +19,22 @@ The runtime recognizes these value categories:
 - **Function:** stored as terminal data and executable only in a supported call
   position.
 
-A successful non-Promise language-data result cannot expose a callable `then`
-through native property lookup. Ready assignment returns and publishes
-`PropertyValidation` for an own placement, a Promise-backed placement applies
-the same rule on fulfillment, and managed mutation receiver validation rejects
-one introduced by host code. Managed-class declaration and snapshot adoption
-also reject callable `then` methods on the retained prototype chain, which must
-remain stable. Standard prototypes and exact external identities follow their
-existing stability/read-only contracts. A non-callable `then` remains ordinary
-data. This is required because native Promise result transport would otherwise
-assimilate the object only on an asynchronous path and break sequential
-equivalence.
+A successful non-Promise language-data result must be safe under native Promise
+resolution. Assignment and Promise-backed publication reject an ordinary
+callable own `then` placement as `PropertyValidation`. Completed managed mutation
+checks native lookup on the receiver and every traversable managed descendant,
+including non-enumerable own properties, Array non-index properties, and
+inherited descriptors. Callable data properties and accessors produce
+`InvalidManagedReceiver` without invoking accessors. Managed-class declaration
+and snapshot adoption also reject callable `then` on the retained prototype
+chain, which must remain stable. Standard prototypes remain stable. Exact
+Functions and external identities used as successful non-Promise values must
+have a stable native `then` lookup that safely yields a non-callable value from
+first use onward; read-only-after-admission alone is insufficient. Unsafe exact
+values are outside the host contract, without recurring probes or an extra
+result wrapper. Non-callable data `then` remains ordinary, and hidden properties
+do not become language placements. These source restrictions preserve sequential
+equivalence across ready and pending native Promise transport.
 
 Prototype methods on managed class instances are outside the language-property
 surface.
@@ -374,6 +380,8 @@ no source Promise, parent, key, import context, or import policy.
 
 ## Errors and fatal failures
 
+The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` is the only guarded semantic registration entry. `consumeValue`, property-version advancement, and `collectInputs` are distinct semantic bodies using that entry. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact host escape can reach the fatal envelope. Export uses one visited set and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
+
 A raw failure is contextualized at its first causal boundary. `PoisonError`
 stores that boundary's opaque `errorContext` and stable `kind`; a wrapped host
 failure is retained in `cause`. An existing contextual Error propagates
@@ -610,7 +618,13 @@ when no wait is required and otherwise returns a Promise for that array.
 ## Ref-index contract
 
 Subtree counters are created lazily at the path value reached by `hasError` or
-`getErrors`. A successful build indexes every raw-reachable traversable value.
+`getErrors`. Index presence means every raw-reachable traversable value is
+indexed, including targets of cycle cuts. Construction captures logical property
+versions and stages new counters, cuts, and reverse-edge additions through all
+fallible reflection and normalization. Later synchronous subscriptions may
+advance captured mirrors; discover those values before counting. Commit only a
+complete region in one synchronous hook-free transition. A failed build leaves
+existing indexes valid and publishes no partial descendant index.
 Ordinary properties connect components through reverse child edges; pending
 Promise placements and cycle cuts are propagation frontiers and install no
 such edge. Initial DFS back edges and later cycle-closing publications become

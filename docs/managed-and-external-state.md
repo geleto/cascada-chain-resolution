@@ -1,5 +1,9 @@
 # Managed and External State Architecture
 
+## Error boundaries
+
+All host work retains the immutable operation context that selected it. Exact host throws and direct Error outcomes are classified at that action; preparation, publication, and cleanup defects remain fatal. Complete required input collection preserves every cause/source/kind before deciding whether host work can run. Declaration validation runs outside execution and returns an ordinary native Error atomically; it creates neither poison nor fatal state. Diagnostic causes obey [data limitations](data-limitations.md#errors), so exposing a frozen poison cannot provide a protected receiver or external capability through its native cause.
+
 Developer-facing data and host-code restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document defines the runtime architecture that supports that contract.
 
 ## Model

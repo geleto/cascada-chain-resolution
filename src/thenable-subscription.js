@@ -12,6 +12,8 @@ function runSubscription(operationContext, subscribe) {
             try {
                 observeRejection(result)
             } finally {
+                // The committed fatal supersedes a subscription or observation
+                // exception already unwinding through either finally block.
                 throw fatal
             }
         }

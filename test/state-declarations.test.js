@@ -190,8 +190,7 @@ describe("state declarations", () => {
 
         expect(managedState(root)).to.be(root)
         expect(managedState(opaque).message).to.be(
-            "managedState cannot declare this value managed because its " +
-            "prototype could not be inspected",
+            "managedState cannot inspect this prototype",
         )
 
         new Chain(opaque)

@@ -1,3 +1,4 @@
+import { collectInputs } from "./input-collection.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
@@ -9,7 +10,6 @@ import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import * as refcounts from "./refcounts.js"
-import * as resolution from "./resolution.js"
 
 function setProperty(
     parent,
@@ -172,11 +172,11 @@ function transformValue(
     returnResultPromise,
 ) {
     let originalValue
-    const readiness = operationLifecycle.continueAllInternalResultsOrFatal(
-        operation,
+    const readiness = collectInputs(
         [value, preparedInput],
-        values => recoverMutationFailure(
-            () => {
+        operation.operationContext,
+        values =>
+            recoverMutationFailure(() => {
                 const [resolvedTargetValue, preparedArguments] = values
                 originalValue = resolvedTargetValue
                 operation.mustPreserveValue = mustPreserveValue(
@@ -184,17 +184,19 @@ function transformValue(
                     attachmentRoot,
                     operation.operationContext,
                 )
-                return operationLifecycle.continueInternalResultOrFatal(
-                    operation,
+                return operationLifecycle.continueOperation(
                     transform(
                         resolvedTargetValue,
                         preparedArguments,
                         operation,
                     ),
+                    operation.operationContext,
                     normalizeMutationOutcome,
+                    undefined,
+                    operation,
                 )
-            },
-        ),
+            }),
+        operation,
     )
 
     if (!languageValues.isPending(readiness, operation.operationContext)) {
@@ -217,40 +219,44 @@ function transformValue(
         })
         : undefined
     publishValue(mutatedValueGate)
-    const publication = operationLifecycle.continueInternalResultOrFatal(
-        operation,
+    const publication = operationLifecycle.continueOperation(
         readiness,
+        operation.operationContext,
         outcome => {
             outcome = prepareMutationPublication(outcome)
             // This private publication gate has only a resolve capability.
-            const completion = operationLifecycle.continueInternalResultOrFatal(
-                operation,
+            const completion = operationLifecycle.continueOperation(
                 mutatedValueGate,
+                operation.operationContext,
                 () => {
                     if (returnResultPromise) resolveResult(outcome.result)
                     operationLifecycle.close(operation)
                 },
+                undefined,
+                operation,
             )
             markPromiseHandled(completion, operation.operationContext)
             resolveMutatedValue(outcome.mutatedValue)
         },
+        undefined,
+        operation,
     )
     markPromiseHandled(publication, operation.operationContext)
     return result
 
     function normalizeMutationOutcome(outcome) {
-        return recoverMutationFailure(
-            () => languageValues.isError(outcome)
+        return recoverMutationFailure(() =>
+            errorUtils.isPoisonError(outcome)
                 ? { mutatedValue: outcome, result: outcome }
                 : outcome,
         )
     }
 
     function recoverMutationFailure(fn) {
-        return errorUtils.catchUserCodeFailure(
+        return errorUtils.catchExternalThrow(
             fn,
             operation.operationContext,
-            errorUtils.ERROR_KIND.PropertyMutationThrew,
+            errorUtils.ERROR_KIND.PropertyMutationFailed,
             mutationFailureOutcome,
         )
     }
@@ -262,12 +268,13 @@ function transformValue(
     function prepareMutationPublication(outcome) {
         return recoverMutationFailure(() => {
             if (
-                !languageValues.isError(outcome.result) &&
+                !errorUtils.isPoisonError(outcome.result) &&
                 outcome.result === outcome.mutatedValue
-            ) metadata.markShared(
-                outcome.mutatedValue,
-                operation.operationContext,
             )
+                metadata.markShared(
+                    outcome.mutatedValue,
+                    operation.operationContext,
+                )
             return outcome
         })
     }
@@ -354,49 +361,56 @@ function assignPath(
         return extended
     }
 
-    function transformArrayLength(
-        array,
-        _input,
-        operation,
-    ) {
-        return operationLifecycle.continuePrepared(
-            operation,
+    function transformArrayLength(array, _input, operation) {
+        return operationLifecycle.continueOperation(
             toArrayLength(value, operation),
-            length => errorUtils.catchUserCodeFailure(() => {
-                let mutatedValue = array
-                const representationCopy =
-                    languageProperties.arrayLengthMutationRequiresCopy(
-                        array,
-                        length,
-                        operation.operationContext,
-                    )
-                if (operation.mustPreserveValue || representationCopy) {
-                    mutatedValue = arrayRemaps.createArrayFromRemap(
-                        arrayRemaps.createRemap(array, operation.operationContext),
-                        operation.operationContext,
-                        array,
-                        operation.mustPreserveValue,
-                    )
-                }
-                return {
-                    mutatedValue,
-                    result: propertyVersions.commitArrayLength(
-                        mutatedValue,
-                        length,
-                        operation.operationContext,
-                    ),
-                }
-            }, operationContext, errorUtils.ERROR_KIND.PropertyMutationThrew,
-            failure => ({ mutatedValue: failure, result: failure })),
+            operation.operationContext,
+            length => {
+                if (errorUtils.isPoisonError(length)) return length
+                return errorUtils.catchExternalThrow(
+                    () => {
+                        let mutatedValue = array
+                        const representationCopy =
+                            languageProperties.arrayLengthMutationRequiresCopy(
+                                array,
+                                length,
+                                operation.operationContext,
+                            )
+                        if (operation.mustPreserveValue || representationCopy) {
+                            mutatedValue = arrayRemaps.createArrayFromRemap(
+                                arrayRemaps.createRemap(array, operation.operationContext),
+                                operation.operationContext,
+                                array,
+                                operation.mustPreserveValue,
+                            )
+                        }
+                        return {
+                            mutatedValue,
+                            result: propertyVersions.commitArrayLength(
+                                mutatedValue,
+                                length,
+                                operation.operationContext,
+                            ),
+                        }
+                    },
+                    operationContext,
+                    errorUtils.ERROR_KIND.PropertyMutationFailed,
+                    failure => ({ mutatedValue: failure, result: failure }),
+                )
+            },
+            undefined,
+            operation,
         )
     }
 }
 
 function toArrayLength(value, operation) {
-    return operationLifecycle.continuePrepared(
-        operation,
+    return operationLifecycle.continueOperation(
         conversion.toNumberValue(value, operation),
+        operation.operationContext,
         number => {
+            if (errorUtils.isPoisonError(number)) return number
+
             const length = number >>> 0
             return length === number
                 ? length
@@ -406,6 +420,8 @@ function toArrayLength(value, operation) {
                     errorUtils.ERROR_KIND.InvalidArrayLength,
                 )
         },
+        undefined,
+        operation,
     )
 }
 
@@ -439,36 +455,31 @@ function walkMutationPath(
         pathSelectionComplete = true
         if (!languageValues.isPending(next, operationContext)) languageValues.admitReadyValue(next, operationContext)
         writeBack(next)
-        const outcome = targetResult === undefined &&
-            languageValues.isError(next)
-            ? next
-            : targetResult
+        const outcome =
+            targetResult === undefined && errorUtils.isPoisonError(next)
+                ? next
+                : targetResult
         return onComplete ? onComplete(outcome) : outcome
     }
 
     function walk(value, index, writeBack, placement = undefined) {
-        return errorUtils.catchUserCodeFailure(
+        return errorUtils.catchExternalThrow(
             () => walkReady(value, index, writeBack, placement),
             operationContext,
-            errorUtils.ERROR_KIND.PropertyMutationThrew,
+            errorUtils.ERROR_KIND.PropertyMutationFailed,
             failure => complete(writeBack, failure, failure),
         )
     }
 
-    function walkReady(
-        value,
-        index,
-        writeBack,
-        placement = undefined,
-    ) {
-        if (languageValues.isError(value)) {
+    function walkReady(value, index, writeBack, placement = undefined) {
+        if (errorUtils.isPoisonError(value)) {
             return complete(writeBack, value)
         }
         const key = languageProperties.normalizePathSegment(
             targetPath[index],
             operationContext,
         )
-        if (languageValues.isError(key)) {
+        if (errorUtils.isPoisonError(key)) {
             languageValues.admitReadyValue(key, operationContext)
             return complete(writeBack, key, key)
         }
@@ -527,7 +538,7 @@ function walkMutationPath(
                 attachmentRoot,
             )
             : undefined
-        if (languageValues.isError(mutatedValue)) {
+        if (errorUtils.isPoisonError(mutatedValue)) {
             return complete(writeBack, mutatedValue, mutatedValue)
         }
         if (mutatedValue !== undefined) {

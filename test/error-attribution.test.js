@@ -6,7 +6,6 @@ import {
     exportValue,
     getErrors,
     importValue,
-    languageValues,
     lookupPath,
     metaOf,
     run,
@@ -19,31 +18,34 @@ describe("causal Error attribution", () => {
     it("exports the complete shared Error-kind vocabulary", () => {
         expect(runtime.ERROR_KIND).to.be(errorUtils.ERROR_KIND)
         expect(Object.keys(runtime.ERROR_KIND).sort()).to.eql([
-            "AssignmentValueError",
-            "AssignmentValueRejected",
-            "AsyncCallback",
-            "ChainValueError",
-            "ChainValueRejected",
-            "ContextValueError",
-            "ContextValueRejected",
-            "ConversionThrew",
+            "AssignmentValueFailed",
+            "ChainValueFailed",
+            "ContextValueFailed",
+            "ControlledCallbackFailed",
             "DivideByZero",
-            "ExportThrew",
-            "ExportValueError",
+            "ExportReflectionFailed",
+            "ExternalCapabilityEscape",
+            "ExternalLocationConflict",
+            "ExternalPropertyDeleteFailed",
+            "ExternalPropertyReadFailed",
+            "ExternalPropertyWriteFailed",
+            "ExternalRepairFailed",
+            "HostCallFailed",
             "ImportBindingMissing",
-            "ImportThrew",
+            "ImportReflectionFailed",
             "IncompatibleOperands",
             "InvalidArrayLength",
             "InvalidArrayOperation",
             "InvalidCallbackResult",
             "InvalidConcurrentLimit",
-            "InvalidImportValue",
+            "InvalidExternalContainment",
+            "InvalidExternalSnapshot",
             "InvalidManagedReceiver",
             "InvalidPathSegment",
             "InvalidTextValue",
-            "IteratorThrew",
+            "IteratorFailed",
             "LoadFailed",
-            "LookupThrew",
+            "LookupReflectionFailed",
             "MissingFunction",
             "Multiple",
             "NaNResult",
@@ -51,16 +53,17 @@ describe("causal Error attribution", () => {
             "NotDestructurable",
             "NotIterable",
             "NullLookup",
-            "OperationInputError",
-            "OperationInputRejected",
-            "PropertyMutationThrew",
+            "OperationInputFailed",
+            "PathSegmentFailed",
+            "PropertyMutationFailed",
             "PropertyValidation",
+            "QueryReflectionFailed",
+            "ScalarConversionFailed",
             "ScalarLookup",
-            "ThenAccessThrew",
-            "ThenInvocationThrew",
+            "ThenAccessFailed",
+            "ThenInvocationFailed",
             "UnknownVariable",
             "UnsupportedMutation",
-            "UserCallThrew",
         ])
         for (const [name, value] of Object.entries(runtime.ERROR_KIND)) {
             expect(value).to.be(name)
@@ -80,7 +83,7 @@ describe("causal Error attribution", () => {
         expect(failure).to.be.a(runtime.PoisonError)
         expect(failure.cause).to.be(reason)
         expect(failure.errorContext).to.be("producer import")
-        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ContextValueRejected)
+        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ContextValueFailed)
         expect(lookupPath(chain, [])).to.be(failure)
     })
 
@@ -107,7 +110,7 @@ describe("causal Error attribution", () => {
 
         expect(assigned.cause).to.be(native)
         expect(assigned.errorContext).to.be("assignment source")
-        expect(assigned.kind).to.be(errorUtils.ERROR_KIND.AssignmentValueError)
+        expect(assigned.kind).to.be(errorUtils.ERROR_KIND.AssignmentValueFailed)
         expect(missing.errorContext).to.be("invalid lookup")
         expect(missing.kind).to.be(errorUtils.ERROR_KIND.NullLookup)
     })
@@ -127,7 +130,9 @@ describe("causal Error attribution", () => {
         for (const occurrence of [first, second]) {
             expect(occurrence.cause).to.be(native)
             expect(occurrence.errorContext).to.be("native Error import")
-            expect(occurrence.kind).to.be(errorUtils.ERROR_KIND.ContextValueError)
+            expect(occurrence.kind).to.be(
+                errorUtils.ERROR_KIND.ContextValueFailed,
+            )
         }
         expect(errorUtils.combineErrors(
             [first, second],
@@ -135,7 +140,7 @@ describe("causal Error attribution", () => {
         )).to.be(first)
     })
 
-    it("preserves Error occurrences in queries and groups their shared cause on export", () => {
+    it("deduplicates equivalent Error occurrences in queries and export", () => {
         const native = new Error("shared native failure")
         const chain = new Chain(importValue({
             first: native,
@@ -145,9 +150,8 @@ describe("causal Error attribution", () => {
         const occurrences = getErrors(chain, [])
         const exported = exportValue(chain, [])
 
-        expect(occurrences.length).to.be(2)
-        expect(occurrences[0]).not.to.be(occurrences[1])
-        expect(occurrences.map(error => error.cause)).to.eql([native, native])
+        expect(occurrences.length).to.be(1)
+        expect(occurrences[0].cause).to.be(native)
         expect(exported).to.be(occurrences[0])
     })
 
@@ -216,7 +220,7 @@ describe("causal Error attribution", () => {
         )
         expect(acquired.cause).to.be(acquisition)
         expect(acquired.errorContext).to.be("then acquisition")
-        expect(acquired.kind).to.be(errorUtils.ERROR_KIND.ThenAccessThrew)
+        expect(acquired.kind).to.be(errorUtils.ERROR_KIND.ThenAccessFailed)
 
         const invocation = new Error("then invocation failed")
         const invocationContext = testOperationContext("then invocation")
@@ -232,9 +236,8 @@ describe("causal Error attribution", () => {
         )
         expect(invoked.cause).to.be(invocation)
         expect(invoked.errorContext).to.be("then invocation")
-        expect(invoked.kind).to.be(errorUtils.ERROR_KIND.ThenInvocationThrew)
+        expect(invoked.kind).to.be(errorUtils.ERROR_KIND.ThenInvocationFailed)
     })
-
 
     it("commits no Error overlay when an import segment fails", () => {
         const native = new Error("nested")
@@ -295,14 +298,14 @@ describe("causal Error attribution", () => {
         ).catch(error => error)
 
         expect(errorCause(thrownResult)).to.be(thrown)
-        expect(thrownResult.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(thrownResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
         expect(thrownResult.errorContext).to.be("test run")
         expect(errorCause(returnedResult)).to.be(returned)
-        expect(returnedResult.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(returnedResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
         expect(errorCause(fulfilledResult)).to.be(fulfilled)
-        expect(fulfilledResult.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(fulfilledResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
         expect(errorCause(rejectedResult)).to.be(rejected)
-        expect(rejectedResult.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(rejectedResult.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
     })
 
     it("preserves an imported Promise's source through copy-on-write", async () => {
@@ -325,7 +328,7 @@ describe("causal Error attribution", () => {
 
         expect(errorCause(failure)).to.be(cause)
         expect(failure.errorContext).to.be("copied Promise import")
-        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ContextValueRejected)
+        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ContextValueFailed)
     })
 
     it("attributes Errors nested in a host result to that result boundary", async () => {
@@ -347,41 +350,40 @@ describe("causal Error attribution", () => {
 
         expect(ready.cause).to.be(readyCause)
         expect(ready.errorContext).to.be("test run")
-        expect(ready.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(ready.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
         expect(pending.cause).to.be(rejectionCause)
         expect(pending.errorContext).to.be("test run")
-        expect(pending.kind).to.be(errorUtils.ERROR_KIND.UserCallThrew)
+        expect(pending.kind).to.be(errorUtils.ERROR_KIND.HostCallFailed)
     })
 
-    it("flattens compounds, preserves order, and deduplicates causes", () => {
+    it("flattens compounds and retains different causal kinds", () => {
         const firstCause = new Error("first")
         const secondCause = new Error("second")
         const context = testOperationContext("compound")
-        const first = errorUtils.toPoison(
+        const first = errorUtils.createPoisonError(
             firstCause,
             context,
-            errorUtils.ERROR_KIND.LookupThrew,
+            errorUtils.ERROR_KIND.LookupReflectionFailed,
         )
-        const duplicate = errorUtils.toPoison(
+        const duplicate = errorUtils.createPoisonError(
             firstCause,
             context,
-            errorUtils.ERROR_KIND.UserCallThrew,
+            errorUtils.ERROR_KIND.HostCallFailed,
         )
-        const second = errorUtils.toPoison(
+        const second = errorUtils.createPoisonError(
             secondCause,
             context,
-            errorUtils.ERROR_KIND.UserCallThrew,
+            errorUtils.ERROR_KIND.HostCallFailed,
         )
         const nested = errorUtils.combineErrors([duplicate, second], "nested")
 
         const combined = errorUtils.combineErrors([first, nested], "combined")
 
         expect(combined).to.be.a(runtime.CompoundPoisonError)
-        expect(combined.errors).to.eql([first, second])
-        expect(combined.kinds).to.eql([
-            errorUtils.ERROR_KIND.LookupThrew,
-            errorUtils.ERROR_KIND.UserCallThrew,
-        ])
+        expect(new Set(combined.errors)).to.eql(
+            new Set([first, duplicate, second]),
+        )
+        expect(combined.kinds).to.be(undefined)
         expect(combined.kind).to.be(errorUtils.ERROR_KIND.Multiple)
         expect(combined.errorContext).to.be("compound")
     })
@@ -396,14 +398,16 @@ describe("causal Error attribution", () => {
             },
         })
 
-        const failure = errorUtils.toPoison(
+        const failure = errorUtils.createPoisonError(
             native,
             testOperationContext("host failure"),
-            errorUtils.ERROR_KIND.UserCallThrew,
+            errorUtils.ERROR_KIND.HostCallFailed,
         )
 
         expect(reads).to.be(0)
-        expect(failure.message).to.be("User code failed with a non-Error value")
+        expect(failure.message).to.be(
+            "Host action failed with a non-Error value",
+        )
         expect(failure.cause).to.be(native)
     })
 
@@ -425,12 +429,14 @@ describe("causal Error attribution", () => {
         expect(failure.errorContext).to.be("fatal operation")
         expect(failure.kind).to.be(undefined)
         expect(errorUtils.isFatalError(failure)).to.be(true)
-        expect(languageValues.isError(failure)).to.be(false)
-        expect(errorUtils.toPoison(
-            failure,
-            context,
-            errorUtils.ERROR_KIND.OperationInputError,
-        )).to.be(failure)
+        expect(errorUtils.isPoisonError(failure)).to.be(false)
+        expect(() =>
+            errorUtils.createPoisonError(
+                failure,
+                context,
+                errorUtils.ERROR_KIND.OperationInputFailed,
+            ),
+        ).to.throwException(error => expect(error).to.be(failure))
         try {
             errorUtils.runInternalStep(context, () => {
                 throw failure

@@ -108,7 +108,7 @@ If the owning property is superseded while mutating entry setup waits, the mutat
 
 ### Promise-valued mutating target
 
-When the mutation walk reaches a Promise-valued target, it captures the source version and prepares the private Chain's state. Before subscribing to the transfer, it installs the public gate, detaches the source mirror, installs the private transfer state, and completes any enclosing writeback that the continuation depends on. Private initialization uses this captured version rather than independently consuming the source before transfer setup is complete. It then registers the transfer through `continueWhenSettled` at mutating `enter`'s FIFO position. That registration may deliver synchronously. After graph reconstruction and transfer registration, `onEntered` runs immediately.
+When the mutation walk reaches a Promise-valued target, it captures the source version and prepares the private Chain's state. Before subscribing to the transfer, it installs the public gate, detaches the source mirror, installs the private transfer state, and completes any enclosing writeback that the continuation depends on. Private initialization uses this captured version rather than independently consuming the source before transfer setup is complete. It then registers the transfer through `continuePromiseVersion` at mutating `enter`'s FIFO position. That registration may deliver synchronously. After graph reconstruction and transfer registration, `onEntered` runs immediately.
 
 FIFO delivery, including across settlement, makes the source version's earlier resolver advance `sourceMirror.value` before the transfer callback reads it. This proof holds even when registration synchronously delivers the callbacks. The transfer retains neither source parent nor key, never consumes the raw settlement, marks the value shared when `attachmentRoot` shows that an old COW world retained it, and publishes through the private version's prepared staging state. A direct transfer commits its final logical value; only a returned pending transfer requires a changing mirror. Target-dependent commands issued through the Chain subscribe to the same source Promise or supported thenable after this transfer; target-independent callback work proceeds immediately and may complete before the target. A derived proxy Promise would fragment the source's FIFO registration order and is forbidden. This single transfer protocol restores concurrency without an Entry object, readiness Promise, or command queue.
 
@@ -198,18 +198,22 @@ A mutating entry captures a final Error like any other value and invokes `onEnte
 The value or Promise returned by `onEntered` describes control-flow completion; it is not imported as graph data. This result channel explicitly admits an existing language Error: returning poison directly or rejecting the direct Promise with that poison performs the same ordinary entry-completion transition and exposes the same poison outcome. An unexpected synchronous throw, an uncontextualized raw rejection, or a fatal rejection escapes a contract that admits no such outcome and is therefore fatal. Compiler lowering must contextualize an expected application failure at its causal boundary, but need not turn an already-contextualized poison rejection into fulfillment. For example:
 
 ```js
-return enter(chain, path, operationContext, true, entered =>
-    resolution.continueInitialValue(calculate(item), value => {
-        if (languageValues.isPoisonError(value)) {
+return enter(chain, path, operationContext, true, entered => {
+    const finish = value => {
+        if (isPoisonError(value)) {
             assignPath(entered, [], value, operationContext)
             return value
         }
         return operation(entered, value)
+    }
+    return continueOperation(calculate(item), operationContext, finish, reason => {
+        if (!isPoisonError(reason)) throw reason
+        return finish(reason)
     })
-)
+})
 ```
 
-Returning or rejecting with the Error without assigning it instead preserves the private root. An unexpected callback or host failure remains fatal.
+`calculate` in this example is trusted language work that already classifies application failures, using the integration primitives described in [the integration protocol](integration.md). Returning or rejecting with the Error without assigning it preserves the private root. A supported host failure is contextualized inside that work; an unexpected escape from the trusted callback remains fatal.
 
 If `onEntered` throws or its returned Promise rejects outside the admitted poison channel, `enter` submits and propagates the authoritative fatal failure, unwinding that call or Promise reaction. It performs no fatal-only closing, release, private-state discard, or gate settlement: the execution is unusable, later consumers stop through their execution checks, and fatal commit rejects every currently pending operation result through its registered outward rejection action. The underlying callback Promise is neither cancelled nor awaited. Ordinary success, language-Error completion, and local early completion retain their normal entry cleanup.
 
@@ -262,8 +266,9 @@ function walk(value, index, writeBack) {
         // Capture the exact child version before publication can detach it.
         const sourceMirror = captureChildVersion()
         writeBack(parent)
-        const result = continueWhenSettled(child, () =>
-            walk(sourceMirror.value, index + 1, writeMirrorValue)
+        const result = continuePromiseVersion(
+            child, sourceMirror, operationContext,
+            resolved => walk(resolved, index + 1, writeMirrorValue),
         )
         // Observe an owned pending result if no immediate consumer receives it.
         return onComplete ? result : undefined
@@ -299,7 +304,7 @@ Core lifecycle and access:
 - isolated internal-module initialization, exact result shapes, validation, exactly-once callback invocation, Error bypass, admitted poison rejection completing normally, and synchronous callback throws or raw/fatal callback-Promise rejection submitting fatal without an entry-specific close or cleanup path;
 - callbacks running only after reconstruction, directly or within the existing ancestor helper continuation, with no readiness Promise or second same-source reaction;
 - `entryMutable: true`, `entryMutable: false`, closed-Chain issuance, continuations issued before closure, and use after completion;
-- synchronous and Promise callback lifetimes, successful closure and read release or publication, abnormal closure with read release but no mutating publication, and direct or `runEnteredCallback` result forwarding;
+- synchronous and Promise callback lifetimes, successful closure and read release or publication, fatal callback failure without entry-specific closure, release, or publication, and direct or `runEnteredCallback` result forwarding;
 - operation results never stored on the Chain and lexical gate-resolver retention adding no gate lifecycle fields; and
 - unchanged `Chain` package identity after moving its definition.
 

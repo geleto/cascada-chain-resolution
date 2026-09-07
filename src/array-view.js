@@ -11,7 +11,9 @@ class ArrayView {
         const sourceView = isArrayView(source, operationContext) ? source : undefined
         const sourceStart = sourceView?._start ?? 0
         if (end === undefined) {
-            end = sourceView ? sourceView.length : physicalArrayLength(source)
+            end = sourceView
+                ? sourceView.length
+                : physicalArrayLength(source, operationContext)
         }
         Object.defineProperties(this, {
             _backing: { value: sourceView?._backing ?? source },
@@ -47,17 +49,19 @@ class ArrayView {
         if (count === 0) return true
         const projection = projectionOf(source, operationContext)
         const backing = backingOf(projection, operationContext)
-        const backingLength = physicalArrayLength(backing)
+        const backingLength = physicalArrayLength(backing, operationContext)
         if (
             isArrayView(projection, operationContext) &&
             projection._end !== backingLength
         ) return false
         if (backingLength + count > 0xffffffff) return false
-        if (!errorUtils.runUserCode(
-            () => Object.isExtensible(backing),
-        )) return false
-        const descriptor = errorUtils.runUserCode(
-            () => Object.getOwnPropertyDescriptor(backing, "length"),
+        if (
+            !errorUtils.runHostAction(operationContext, () =>
+                Object.isExtensible(backing),
+            )
+        )
+            return false
+        const descriptor = errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(backing, "length"),
         )
         return descriptor?.writable === true
     }
@@ -68,7 +72,8 @@ class ArrayView {
         if (!view) return
         const next = new ArrayView(view, operationContext, 0, view.length + count)
         beforeWrite(next)
-        if (count > 0) extendPhysicalArray(view._backing, count)
+        if (count > 0)
+            extendPhysicalArray(view._backing, count, operationContext)
         return next
     }
 
@@ -83,15 +88,15 @@ class ArrayView {
         return String(this._start + index)
     }
 
-    get(key) {
+    get(key, operationContext) {
         if (key === "length") return this.length
-        const descriptor = this.descriptor(key)
+        const descriptor = this.descriptor(key, operationContext)
         return isDataPlacement(descriptor)
             ? descriptor.value
             : undefined
     }
 
-    descriptor(key) {
+    descriptor(key, operationContext) {
         if (key === "length") {
             return {
                 value: this.length,
@@ -103,17 +108,16 @@ class ArrayView {
         const physical = this.#physicalKey(key)
         return physical === undefined
             ? undefined
-            : errorUtils.runUserCode(
-                () => Object.getOwnPropertyDescriptor(
-                    this._backing,
-                    physical,
-                ),
-            )
+            : errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(
+                this._backing,
+                physical,
+            ),
+              )
     }
 
-    set(key, value) {
+    set(key, value, operationContext) {
         if (key === "length") {
-            if (!this.setLength(value)) {
+            if (!this.setLength(value, operationContext)) {
                 throw new Error("ArrayView growth requires materialization")
             }
             return
@@ -123,7 +127,7 @@ class ArrayView {
             throw new Error("Cannot write outside an ArrayView range")
         }
         const backing = this._backing
-        errorUtils.runUserCode(() => {
+        errorUtils.runHostAction(operationContext, () => {
             if (Object.hasOwn(backing, physical)) {
                 backing[physical] = value
             } else {
@@ -137,46 +141,55 @@ class ArrayView {
         })
     }
 
-    delete(key) {
+    delete(key, operationContext) {
         if (key === "length") return false
         const physical = this.#physicalKey(key)
-        return physical === undefined || errorUtils.runUserCode(
-            () => delete this._backing[physical],
+        return (
+            physical === undefined ||
+            errorUtils.runHostAction(
+                operationContext,
+                () => delete this._backing[physical],
+            )
         )
     }
 
-    keys() {
-        return enumerableProjectedArrayKeys(this)
+    keys(operationContext) {
+        return enumerableArrayKeys(this, operationContext)
     }
 
-    setLength(length) {
+    setLength(length, operationContext) {
         const growth = length - this.length
         if (growth > 0) {
             // The view itself is already the resolved internal projection.
-            if (!this.#canGrowEnd(growth)) return false
-            extendPhysicalArray(this._backing, growth)
+            if (!this.#canGrowEnd(growth, operationContext)) return false
+            extendPhysicalArray(this._backing, growth, operationContext)
         }
         this._end = this._start + length
         return true
     }
 
-    #canGrowEnd(count) {
+    #canGrowEnd(count, operationContext) {
         if (count === 0) return true
-        const backingLength = physicalArrayLength(this._backing)
+        const backingLength = physicalArrayLength(
+            this._backing,
+            operationContext,
+        )
         if (this._end !== backingLength) return false
         if (backingLength + count > 0xffffffff) return false
-        if (!errorUtils.runUserCode(() => Object.isExtensible(this._backing))) {
+        if (
+            !errorUtils.runHostAction(operationContext, () => Object.isExtensible(this._backing),
+            )
+        ) {
             return false
         }
-        const descriptor = errorUtils.runUserCode(
-            () => Object.getOwnPropertyDescriptor(this._backing, "length"),
+        const descriptor = errorUtils.runHostAction(operationContext, () => Object.getOwnPropertyDescriptor(this._backing, "length"),
         )
         return descriptor?.writable === true
     }
 
-    *[Symbol.iterator]() {
+    *values(operationContext) {
         for (let index = 0; index < this.length; index++) {
-            yield this.get(String(index))
+            yield this.get(String(index), operationContext)
         }
     }
 }
@@ -215,12 +228,12 @@ function backingOf(value, operationContext) {
         : projection
 }
 
-function physicalArrayLength(array) {
-    return errorUtils.runUserCode(() => array.length)
+function physicalArrayLength(array, operationContext) {
+    return errorUtils.runHostAction(operationContext, () => array.length)
 }
 
-function extendPhysicalArray(array, count) {
-    errorUtils.runUserCode(() => {
+function extendPhysicalArray(array, count, operationContext) {
+    errorUtils.runHostAction(operationContext, () => {
         array.length += count
     })
 }
@@ -229,7 +242,7 @@ function logicalArrayLength(value, operationContext) {
     const projection = projectionOf(value, operationContext)
     return isArrayView(projection, operationContext)
         ? projection.length
-        : physicalArrayLength(projection)
+        : physicalArrayLength(projection, operationContext)
 }
 
 function requiresArrayMaterialization(value, operationContext) {
@@ -254,48 +267,53 @@ function enumerableArrayKeys(
     start = 0,
     end = undefined,
 ) {
-    return enumerableProjectedArrayKeys(
-        projectionOf(arrayOrView, operationContext),
-        start,
-        end,
-    )
+    const projection = projectionOf(arrayOrView, operationContext)
+    const keys = Object.create(null)
+    for (const key of arrayKeyCandidates(projection, operationContext, start, end)) {
+        const descriptor = projection instanceof ArrayView
+            ? projection.descriptor(key, operationContext)
+            : errorUtils.runHostAction(operationContext, () =>
+                Object.getOwnPropertyDescriptor(projection, key),
+            )
+        if (isDataPlacement(descriptor)) keys[key] = true
+    }
+    return Object.keys(keys)
 }
 
-function enumerableProjectedArrayKeys(projection, start = 0, end = undefined) {
+// Candidate discovery performs no descriptor reads. A complete collector can
+// reject one unreadable placement while still visiting the other candidates.
+// Yield bounded-range holes lazily so sparse views need no dense key allocation.
+function* arrayKeyCandidates(
+    arrayOrView,
+    operationContext,
+    start = 0,
+    end = undefined,
+) {
+    const projection = projectionOf(arrayOrView, operationContext)
     const view = projection instanceof ArrayView ? projection : undefined
     const backing = view ? view._backing : projection
-    const backingLength = physicalArrayLength(backing)
+    const backingLength = physicalArrayLength(backing, operationContext)
     const offset = view ? view._start : 0
     const extent = view ? view.length : backingLength
     start = offset + Math.max(0, start)
     end = offset + Math.min(extent, end ?? extent)
 
-    // Avoid inherited numeric setters while preserving numeric key order.
-    const keys = Object.create(null)
     if (start === 0 && end === backingLength) {
-        const ownKeys = errorUtils.runUserCode(
-            () => Reflect.ownKeys(backing),
+        const ownKeys = errorUtils.runHostAction(operationContext, () =>
+            Reflect.ownKeys(backing),
         )
+        // Proxies may list indexes out of order; logical Arrays use index order.
+        const keys = Object.create(null)
         for (const key of ownKeys) {
             if (!isArrayIndex(key) || Number(key) >= end) continue
-            const descriptor = errorUtils.runUserCode(
-                () => Object.getOwnPropertyDescriptor(backing, key),
-            )
-            if (isDataPlacement(descriptor)) {
-                keys[key] = true
-            }
+            keys[key] = true
         }
+        yield* Object.keys(keys)
     } else {
         for (let index = start; index < end; index++) {
-            const descriptor = errorUtils.runUserCode(
-                () => Object.getOwnPropertyDescriptor(backing, String(index)),
-            )
-            if (isDataPlacement(descriptor)) {
-                keys[index - offset] = true
-            }
+            yield String(index - offset)
         }
     }
-    return Object.keys(keys)
 }
 
 function isDataPlacement(descriptor) {
@@ -304,6 +322,7 @@ function isDataPlacement(descriptor) {
 
 export {
     ArrayView,
+    arrayKeyCandidates,
     backingOf,
     enumerableArrayKeys,
     hasArrayAncestor,

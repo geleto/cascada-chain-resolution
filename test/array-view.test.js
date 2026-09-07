@@ -14,6 +14,7 @@ import {
     run,
     verifyRefCounts,
     arrayViews,
+    testOperationContext,
     propertyVersions,
     hasCycleCut,
 } from "./support.js"
@@ -47,13 +48,15 @@ describe("ArrayView", () => {
 
         expect(arrayViews.isArrayView(view)).to.be(true)
         expect(Object.keys(view)).to.eql([])
-        expect(view.keys()).to.eql([
+        expect(view.keys(testOperationContext())).to.eql([
             "0",
             "1",
             "2",
         ])
-        expect(view.descriptor("hidden")).to.be(undefined)
-        expect([...view]).to.eql([1, 2, 3])
+        expect(view.descriptor("hidden", testOperationContext())).to.be(
+            undefined,
+        )
+        expect([...view.values(testOperationContext())]).to.eql([1, 2, 3])
     })
 
     it("recognizes views by identity without reflecting on wrappers", () => {
@@ -76,9 +79,14 @@ describe("ArrayView", () => {
             arrayViews.projectionOf(source),
         )).to.be(true)
         expect([
-            ...arrayViews.projectionOf(source),
+            ...arrayViews.projectionOf(source).values(testOperationContext()),
         ]).to.eql([1, undefined, 3])
-        expect([...view]).to.eql([1, undefined, 3, 4])
+        expect([...view.values(testOperationContext())]).to.eql([
+            1,
+            undefined,
+            3,
+            4,
+        ])
         expect(exportValue(new Chain(source), [])).to.eql([1, , 3])
     })
 
@@ -90,13 +98,19 @@ describe("ArrayView", () => {
         const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
         const extended = run(new Chain(original), [], "unshift", [0], {})
 
-        expect([...tail]).to.eql([2, 3])
-        expect([...last]).to.eql([3])
-        expect([...throughAttachment]).to.eql([2, 3])
-        expect([...extended]).to.eql([0, 1, 2, 3])
-        expect([...original]).to.eql([1, 2, 3])
-        expect([...tail]).to.eql([2, 3])
-        expect([...throughAttachment]).to.eql([2, 3])
+        expect([...tail.values(testOperationContext())]).to.eql([2, 3])
+        expect([...last.values(testOperationContext())]).to.eql([3])
+        expect([...throughAttachment.values(testOperationContext())]).to.eql([
+            2, 3,
+        ])
+        expect([...extended.values(testOperationContext())]).to.eql([
+            0, 1, 2, 3,
+        ])
+        expect([...original.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...tail.values(testOperationContext())]).to.eql([2, 3])
+        expect([...throughAttachment.values(testOperationContext())]).to.eql([
+            2, 3,
+        ])
     })
 
     it("forks retained Promise mirrors for each derived value", async () => {
@@ -152,7 +166,7 @@ describe("ArrayView", () => {
         await flushMicrotasks()
 
         expect(hasCycleCut(view, "0")).to.be(true)
-        expect(view.get("0")).to.be(view)
+        expect(view.get("0", testOperationContext())).to.be(view)
         verifyRefCounts(view)
     })
 
@@ -186,8 +200,8 @@ describe("ArrayView", () => {
         const changed = new Chain(retained)
         assignPath(changed, ["value"], 3)
         expect(changed._state.value).not.to.be(retained)
-        expect(extended.get("1")).to.be(retained)
-        expect(second.get("1")).to.be(retained)
+        expect(extended.get("1", testOperationContext())).to.be(retained)
+        expect(second.get("1", testOperationContext())).to.be(retained)
         expect(retained.value).to.be(1)
     })
 
@@ -203,7 +217,7 @@ describe("ArrayView", () => {
         const exported = exportValue(chain, [])
 
         pending.resolve({ ready: true })
-        expect(await errors).to.eql([error])
+        expect((await errors).map(errorCause)).to.eql([error])
         const outcome = await exported
         expect(outcome instanceof Error).to.be(true)
         expect(errorCause(outcome)).to.be(error)
@@ -274,7 +288,7 @@ describe("ArrayView", () => {
         )
 
         expect(arrayViews.isArrayView(extended)).to.be(true)
-        expect([...contracted]).to.eql([1])
+        expect([...contracted.values(testOperationContext())]).to.eql([1])
         pending.resolve(2)
         expect(await exportValue(new Chain(extended), [])).to.eql([1, 2])
         expect(exportValue(new Chain(contracted), [])).to.eql([1])
@@ -365,7 +379,7 @@ describe("ArrayView", () => {
         const result = run(new Chain(view), [], "push", [], {})
 
         expect(arrayViews.isArrayView(result)).to.be(true)
-        expect([...result]).to.eql([1, 2])
+        expect([...result.values(testOperationContext())]).to.eql([1, 2])
     })
 
     it("returns an Error when observational endpoint growth fails", () => {
@@ -402,7 +416,7 @@ describe("ArrayView", () => {
 
         expect(errorCause(result)).to.be(failure)
         expect(chain._state.value).to.be(result)
-        expect([...view]).to.eql([1, 2])
+        expect([...view.values(testOperationContext())]).to.eql([1, 2])
         expect(exportValue(source, [])).to.eql([1])
     })
 
@@ -422,9 +436,16 @@ describe("ArrayView", () => {
 
         expect(arrayViews.isArrayView(grown)).to.be(true)
         expect(grown.length).to.be(6)
-        expect([...grown]).to.eql([1, 2, 3, undefined, undefined, 6])
-        expect(grown.keys()).to.eql(["0", "1", "2", "5"])
-        expect([...view]).to.eql([1, 2, 3])
+        expect([...grown.values(testOperationContext())]).to.eql([
+            1,
+            2,
+            3,
+            undefined,
+            undefined,
+            6,
+        ])
+        expect(grown.keys(testOperationContext())).to.eql(["0", "1", "2", "5"])
+        expect([...view.values(testOperationContext())]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })
 
@@ -438,7 +459,7 @@ describe("ArrayView", () => {
 
         expect(Array.isArray(changed._state.value)).to.be(true)
         expect(changed._state.value).to.eql([1, 2, 9])
-        expect([...extended]).to.eql([1, 2, 3])
+        expect([...extended.values(testOperationContext())]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })
 
@@ -452,7 +473,7 @@ describe("ArrayView", () => {
 
         pending.resolve(3)
         expect(await exportValue(chain, [])).to.eql([1, 2, 3])
-        expect([...view]).to.eql([1, 2])
+        expect([...view.values(testOperationContext())]).to.eql([1, 2])
         verifyRefCounts(chain._state.value)
     })
 
@@ -467,7 +488,7 @@ describe("ArrayView", () => {
         await flushMicrotasks()
 
         expect(exportValue(chain, ["list"])).to.eql([9, 2, 3])
-        expect([...view]).to.eql([1, 2])
+        expect([...view.values(testOperationContext())]).to.eql([1, 2])
         verifyRefCounts(chain._state.value)
     })
 })

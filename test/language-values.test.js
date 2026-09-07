@@ -1,3 +1,4 @@
+import * as runtime from "../src/index.js"
 import {
     ArrayView,
     Chain,
@@ -9,7 +10,7 @@ import {
     languageValues,
     managedStateClass,
     metadata,
-    continueInitialValue,
+    consumeValue,
     useTestExecution,
     testOperationContext,
     thrownBy,
@@ -38,7 +39,14 @@ describe("value admission", () => {
         managedStateClass(Managed)
 
         const cases = [
-            [new Error("error"), languageValues.TYPE_ERROR],
+            [
+                errorUtils.validationError(
+                    "error",
+                    testOperationContext(),
+                    errorUtils.ERROR_KIND.OperationInputFailed,
+                ),
+                languageValues.TYPE_ERROR,
+            ],
             [[], languageValues.TYPE_ARRAY],
             [new ArrayView([1]), languageValues.TYPE_ARRAY],
             [() => {}, languageValues.TYPE_FUNCTION],
@@ -76,7 +84,7 @@ describe("value admission", () => {
     it("leaves Promise identities pending instead of admitting them", () => {
         const promise = Promise.resolve(1)
 
-        continueInitialValue(promise)
+        consumeValue(promise)
         expect(metadata.metaOf(promise)?.type).to.be(undefined)
         expect(languageValues.isPending(promise)).to.be(true)
     })
@@ -92,11 +100,9 @@ describe("value admission", () => {
         })
 
         expect(languageValues.isPending(error)).to.be(false)
-        languageValues.admitReadyValue(error)
+        const poison = consumeValue(error)
 
-        expect(languageValues.typeOf(error)).to.be(
-            languageValues.TYPE_ERROR,
-        )
+        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE_ERROR)
         expect(reads).to.be(0)
     })
 
@@ -109,14 +115,12 @@ describe("value admission", () => {
             },
         })
 
-        expect(continueInitialValue(value)).to.be(value)
+        expect(consumeValue(value)).to.be(value)
         expect(reads).to.be(1)
         expect(languageValues.typeOf(value)).to.be(
             languageValues.TYPE_RECORD,
         )
     })
-
-
 
     it("turns an incompatible intrinsic then receiver into ready poison", async () => {
         const value = new Proxy(Promise.resolve("settled"), {
@@ -166,7 +170,7 @@ describe("value admission", () => {
         const error = new Error("fixed")
         const early = new Early()
         const managed = new Managed()
-        languageValues.admitReadyValue(error)
+        const poison = consumeValue(error)
         new Chain(early)
         new Chain(managed)
 
@@ -177,9 +181,9 @@ describe("value admission", () => {
         error.then = () => {}
         early.then = () => {}
 
-        expect(languageValues.isError(error)).to.be(true)
+        expect(errorUtils.isPoisonError(poison)).to.be(true)
         expect(languageValues.isPending(error)).to.be(false)
-        expect(languageValues.typeOf(error)).to.be(languageValues.TYPE_ERROR)
+        expect(languageValues.typeOf(poison)).to.be(languageValues.TYPE_ERROR)
         expect(languageValues.typeOf(early)).to.be(languageValues.TYPE_EXTERNAL)
         expect(languageValues.isPending(early)).to.be(false)
         expect(languageValues.typeOf(managed)).to.be(
@@ -268,14 +272,22 @@ describe("value admission", () => {
 
     it("reports a FatalError fulfilled by initial resolution", async () => {
         const pending = deferred()
-        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
-            throw new Error("fatal fulfillment")
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new runtime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw new Error("fatal fulfillment")
+                },
+            ),
+        )
         let reported
         useTestExecution(error => {
             reported = error
         })
-        const result = continueInitialValue(pending.promise)
+        const result = consumeValue(pending.promise)
         pending.resolve(failure)
         const caught = await result.catch(error => error)
 
@@ -284,20 +296,27 @@ describe("value admission", () => {
     })
 
     it("rejects a FatalError fulfilled through a causal boundary", async () => {
-        const failure = thrownBy(() => errorUtils.runContextlessFatal(() => {
-            throw new Error("fatal boundary fulfillment")
-        }))
+        const failure = thrownBy(() =>
+            errorUtils.runInternalStep(
+                {
+                    execution: new runtime.Execution(),
+                    errorContext: "fatal fixture",
+                },
+                () => {
+                    throw new Error("fatal boundary fulfillment")
+                },
+            ),
+        )
         let reported
         useTestExecution(error => {
             reported = error
         })
         const operationContext = testOperationContext("causal boundary")
 
-        const result = languageValues.valueWithOrigin(
+        const result = languageValues.consumeValue(
             Promise.resolve(failure),
             operationContext,
-            errorUtils.ERROR_KIND.ChainValueError,
-            errorUtils.ERROR_KIND.ChainValueRejected,
+            errorUtils.ERROR_KIND.ChainValueFailed,
         )
 
         expect(await result.catch(error => error)).to.be(failure)

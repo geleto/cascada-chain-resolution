@@ -37,7 +37,8 @@ Cascada graph state consists only of own enumerable string-keyed data properties
 - An accessor or non-enumerable property is treated as absent. Cascada does not invoke it as managed graph data.
 - Paths use String or Number segments. Other resolved segment values are invalid and are never coerced through user hooks.
 - Aliases, cycles, sparse Arrays, Functions, Errors, external identities, and nested Promises are supported unless a narrower rule below excludes them.
-- A successful non-Promise language-data result must not expose a callable `then` through native property lookup. Cascada rejects a callable own `then` placement during assignment, Promise-backed publication, or managed receiver validation. Managed-class declaration and snapshot adoption reject a callable `then` anywhere on the retained prototype chain; that chain must remain unchanged afterward. Records and Arrays rely on stable standard prototypes, while exact Functions and external identities must remain read-only after admission. A non-callable `then` remains ordinary data. Without these source restrictions, native Promise resolution would invoke the object only when an operation happened to complete asynchronously, so ready and pending forms could not be equivalent.
+- A successful non-Promise language-data result must be safe under native Promise resolution. Cascada rejects an ordinary callable own `then` placement during assignment and Promise-backed publication. Completed managed mutation validates the native lookup surface on the receiver and every traversable managed descendant, including non-enumerable own properties, Array non-index properties, and inherited descriptors: callable data properties and accessors yield `InvalidManagedReceiver`, without invoking accessors. This does not add those properties to the language graph. Managed-class declaration and snapshot adoption also reject callable `then` anywhere on the retained prototype chain; that chain must remain unchanged afterward. Records and Arrays rely on stable standard prototypes.
+- An exact Function or external identity used as a successful non-Promise language value must have a stable native `then` lookup that safely yields a non-callable value throughout its use, including before admission. Remaining read-only after admission does not establish that initial condition. Function and Error classification still precede availability recognition: classifying a Function without sampling its `then` does not promise supported output for an unsafe Function. Errors retain their separate Error semantics. Unsafe exact values are outside the host contract; Cascada adds no recurring reflection probe, thenability cache, or facade wrapper to support them. A non-callable data `then` remains ordinary. Without these source restrictions, native Promise resolution could invoke the same object only when an operation completed asynchronously, breaking ready/pending equivalence.
 
 Do not place semantic managed state outside graph-visible properties. Cascada may copy or materialize managed data without copying hidden state or preserving traversable identity between operations.
 
@@ -127,9 +128,11 @@ remain host-contract violations.
 
 ## Errors
 
+Failure payloads are diagnostic data. An exact native cause may retain its native stack, code, diagnostic fields, and nested native cause. It must not retain a protected managed receiver or argument, or a mutation-capable external identity, through any field, prototype, or nested cause. For example, `throw this` from a managed method and `throw Object.assign(new Error("failed"), { receiver: this })` violate this contract. Cascada retains compliant causes exactly and does not traverse, copy, or deep-freeze their graphs; freezing the poison wrapper cannot isolate a mutable cause. Kernel-created validation reasons contain only diagnostic facts.
+
 `PoisonError` is recoverable language data. It records an opaque source context, a stable failure kind, and the exact raw cause. Once contextualized, it propagates by reference without changing its source. Separate introductions may construct distinct immutable wrappers. Collection treats wrappers as equivalent when their raw cause, source-context identity, and kind match; physical wrapper identity is not a cross-construction guarantee.
 
-`CompoundPoisonError` contains flattened leaves in `.errors` and preserves each retained leaf's attribution. It and `getErrors` use the same semantic deduplication rule above, with unspecified order and no persistent Error cache. Different source contexts or kinds remain distinct even when the cause is the same.
+`CompoundPoisonError` contains flattened leaves in `.errors` and preserves each retained leaf's attribution. It and `getErrors` use the same semantic deduplication rule above, with unspecified order and no persistent Error cache. Different source contexts or kinds remain distinct even when the cause is the same. A present cause is compared even when it is `undefined`, `null`, `false`, zero, or `NaN`; causeless validation leaves use their own identity and remain distinct.
 
 `FatalError` represents an execution-ending internal defect, broken invariant, or unsafe
 host failure. It is reported and rethrown, never treated as language data.
@@ -173,6 +176,8 @@ Custom or replaced methods and accessors on `String.prototype` or `Object.protot
 A boxed String's own character indexes and `length` are not method candidates. `Object.prototype.__proto__` is an accessor, so it is unsupported and never invoked.
 
 ## Logical Arrays
+
+Sort comparators must return a Number synchronously. A returned Promise/thenable is an invalid callback result; the selected callback boundary owns its rejection. This does not subscribe to forbidden thenables merely found during declarations or managed-receiver validation.
 
 Logical Arrays support only the controlled methods documented in [`run.md`](run.md). Custom Array methods are unsupported.
 

@@ -11,17 +11,18 @@ class Chain {
         externalMutationTree = undefined,
     ) {
         errorUtils.runInternalStep(operationContext, () => {
-            initialValue = languageValues.valueWithOrigin(
-                initialValue,
-                operationContext,
-                errorUtils.ERROR_KIND.ChainValueError,
-                errorUtils.ERROR_KIND.ChainValueRejected,
-            )
             const rootState = {}
             languageValues.admitReadyValue(
                 rootState, operationContext, languageValues.TYPE_RECORD, Object.prototype,
             )
-            propertyVersions.assignProperty(rootState, "value", initialValue, operationContext)
+            propertyVersions.assignProperty(
+                rootState,
+                "value",
+                initialValue,
+                operationContext,
+                false,
+                errorUtils.ERROR_KIND.ChainValueFailed,
+            )
             this._state = rootState
             this._execution = operationContext.execution
             // Entry-only tri-state: absent on ordinary Chains, false for a

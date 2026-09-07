@@ -5,17 +5,15 @@ import * as imports from "./import.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
-import * as resolution from "./resolution.js"
 
-class InvocationContext {
-    open = true
+class InvocationContext extends operationLifecycle.OperationOwner {
     receiverReached = false
     #argumentsAwaitingReceiverLeases
     #argumentLeases
     #receiverLeases
 
     constructor(operationContext, method, mutation, args) {
-        this.operationContext = operationContext
+        super(operationContext)
         this.method = method
         this.mutation = mutation
         this.args = args
@@ -41,17 +39,16 @@ class InvocationContext {
 
     retainArgumentsUntilReceiverReached() {
         for (const value of this.args) {
-            const protection = languageValues.thenValue(
+            const protection = operationLifecycle.continueOperation(
                 value,
-                resolved => errorUtils.runInternalStep(this.operationContext, () => {
-                    if (!this.open) return undefined
+                this.operationContext,
+                resolved => {
+                    if (Error.isError(resolved)) return undefined
                     languageValues.admitReadyValue(resolved, this.operationContext)
                     this.#argumentsAwaitingReceiverLeases.retain(resolved)
-                }),
-                // Rejection reveals no identity. Selected input preparation
-                // owns its interpretation if the receiver is later reached.
+                },
                 () => undefined,
-                this.operationContext,
+                this,
             )
             markPromiseHandled(protection, this.operationContext)
         }
@@ -61,9 +58,7 @@ class InvocationContext {
         this.#argumentsAwaitingReceiverLeases.release()
     }
 
-    close() {
-        if (!this.open) return
-        this.open = false
+    release() {
         this.#argumentsAwaitingReceiverLeases.release()
         this.releaseArguments()
         this.releaseReceivers()
@@ -72,29 +67,14 @@ class InvocationContext {
     }
 }
 
-// Internal continuations may adopt a returned Promise. Boxing keeps receiver
-// traversal and input readiness separate from the produced method result.
-class WrappedMethodResult {
-    constructor(value) {
-        this.value = value
-    }
-}
-
 function invokeHostFunction(
     callable,
     thisValue,
     args,
     operationContext,
-    kind = errorUtils.ERROR_KIND.UserCallThrew,
-    onFailure = value => value,
+    kind = errorUtils.ERROR_KIND.HostCallFailed,
 ) {
-    return errorUtils.catchUserCodeFailure(
-        () => errorUtils.runUserCode(
-            () => Reflect.apply(callable, thisValue, args),
-        ),
-        operationContext,
-        kind,
-        onFailure,
+    return errorUtils.runHostBoundary(operationContext, kind, () => Reflect.apply(callable, thisValue, args),
     )
 }
 
@@ -148,12 +128,26 @@ function invokeMethod(
     ) {
         invocationContext.retainArgumentsUntilReceiverReached()
     }
-    return operationLifecycle.closeWhenDone(invocationContext, result)
+    return operationLifecycle.continueOperation(
+        result,
+        operationContext,
+        finish,
+        reason => {
+            if (!errorUtils.isPoisonError(reason)) throw reason
+            return finish(reason)
+        },
+    )
+
+    function finish(value) {
+        // Call completion releases the same resources on success and language failure.
+        operationLifecycle.close(invocationContext)
+        return value
+    }
 
     function invokeWithReceiver(receiver, present, preserveReceiver = false) {
         invocationContext.setReceiver(receiver, present, preserveReceiver)
         const methodDescription = getMethodDescription(invocationContext)
-        if (languageValues.isError(methodDescription)) {
+        if (errorUtils.isPoisonError(methodDescription)) {
             invocationContext.releaseArgumentsAwaitingReceiver()
             return methodDescription
         }
@@ -161,47 +155,29 @@ function invokeMethod(
         invocationContext.retainReceiver(methodDescription.receiverToLease)
         invocationContext.releaseArgumentsAwaitingReceiver()
 
-        const preparedResult = operationLifecycle.continueInternalResultOrFatal(
-            invocationContext,
+        return operationLifecycle.continueOperation(
             preparedArguments,
-            readyArguments => new WrappedMethodResult(
-                invokePrepared(readyArguments),
-            ),
+            invocationContext.operationContext,
+            invokePrepared,
+            undefined,
+            invocationContext,
         )
-        return unwrapMethodResult(preparedResult)
 
         function invokePrepared(readyArguments) {
             let receiverLeaseContinues = false
             let result = readyArguments
-            if (!languageValues.isError(readyArguments)) {
-                // Application reflection belongs after clean input preparation
-                // and before category-specific isolation inside invoke.
-                const callable = methodDescription.getMethod
-                    ? errorUtils.catchUserCodeFailure(
-                        () => methodDescription.getMethod(readyArguments),
-                        operationContext,
-                        errorUtils.ERROR_KIND.LookupThrew,
-                        failure => failure,
-                    )
-                    : undefined
-                if (languageValues.isError(callable)) {
-                    result = callable
-                } else {
-                    result = methodDescription.invoke(
-                        readyArguments,
-                        callable,
-                    )
-                    if (
-                        methodDescription.leaseReceiverThroughResult &&
-                        languageValues.isPending(result, operationContext)
-                    ) {
+            if (!errorUtils.isPoisonError(readyArguments)) {
+                result = methodDescription.invoke(readyArguments)
+                if (
+                    methodDescription.leaseReceiverThroughResult &&
+                    languageValues.isPending(result, operationContext)
+                ) {
+                    receiverLeaseContinues = true
+                }
+                if (methodDescription.admitMethodResult) {
+                    result = methodDescription.admitMethodResult(result)
+                    if (languageValues.isPending(result, operationContext)) {
                         receiverLeaseContinues = true
-                    }
-                    if (methodDescription.admitMethodResult) {
-                        result = methodDescription.admitMethodResult(result)
-                        if (languageValues.isPending(result, operationContext)) {
-                            receiverLeaseContinues = true
-                        }
                     }
                 }
             }
@@ -209,16 +185,6 @@ function invokeMethod(
             if (!receiverLeaseContinues) invocationContext.releaseReceivers()
             return result
         }
-    }
-
-    function unwrapMethodResult(result) {
-        return resolution.continueInternalResultOrFatal(
-            result,
-            operationContext,
-            resolved => resolved instanceof WrappedMethodResult
-                ? resolved.value
-                : resolved,
-        )
     }
 }
 
@@ -229,10 +195,15 @@ function createLeaseLedger(operationContext) {
 
     function retain(value) {
         if (closed || values.has(value)) return value
-        const retained = resolution.continueInitialValue(value, operationContext, ready => {
-            if (!closed && !values.has(ready) && metadata.incrementReadLease(ready, operationContext)) values.add(ready)
-            return ready
-        })
+        const retained = languageValues.consumeValue(
+            value,
+            operationContext,
+            errorUtils.ERROR_KIND.OperationInputFailed,
+            ready => {
+                if (!closed && !values.has(ready) && metadata.incrementReadLease(ready, operationContext)) values.add(ready)
+                return ready
+            },
+        )
         if (!languageValues.isPending(retained, operationContext)) return retained
         markPromiseHandled(retained, operationContext)
         return value

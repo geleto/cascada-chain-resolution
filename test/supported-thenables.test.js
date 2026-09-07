@@ -1,9 +1,9 @@
+import { collectInputs } from "../src/input-collection.js"
 import { markPromiseHandled } from "../src/thenable-subscription.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 import * as errors from "../src/error.js"
 import * as values from "../src/language-values.js"
-import * as resolution from "../src/resolution.js"
 import * as lifecycle from "../src/operation-lifecycle.js"
 import * as properties from "../src/property-versions.js"
 import * as metadata from "../src/meta.js"
@@ -25,13 +25,31 @@ function existingFatal() {
 describe("supported thenables", () => {
     it("uses direct transitions for ready inputs and nested continuation work", () => {
         const ctx = context()
-        assert.equal(resolution.continueInitialValue(ready(2), ctx, value =>
-            resolution.continueInitialValue(ready(3), ctx, next => value + next)), 5)
+        assert.equal(
+            values.consumeValue(
+                ready(2),
+                ctx,
+                errors.ERROR_KIND.OperationInputFailed,
+                value =>
+                    values.consumeValue(
+                        ready(3),
+                        ctx,
+                        errors.ERROR_KIND.OperationInputFailed,
+                        next => value + next,
+                    ),
+            ),
+            5,
+        )
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = lifecycle.continueAllInternalResultsOrFatal(owner, [ready(1), 2, ready(3)], items => items)
+        const result = collectInputs(
+            [ready(1), 2, ready(3)],
+            ctx,
+            items => items,
+            owner,
+        )
         assert.deepEqual(result, [1, 2, 3])
         assert.equal(owner.releases, undefined)
-        assert.equal(lifecycle.closeWhenDone(owner, ready("done")), "done")
+        owner.close()
         assert.equal(owner.open, false)
     })
 
@@ -51,14 +69,32 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const order = []
-        const first = resolution.continueInitialValue(source, ctx, () => order.push(1))
+        const first = values.consumeValue(
+            source,
+            ctx,
+            errors.ERROR_KIND.OperationInputFailed,
+            () => order.push(1),
+        )
         source.resolve("ready")
-        const second = resolution.continueInitialValue(source, ctx, () => order.push(2))
+        const second = values.consumeValue(
+            source,
+            ctx,
+            errors.ERROR_KIND.OperationInputFailed,
+            () => order.push(2),
+        )
         assert.equal(values.isPending(second, ctx), true)
         assert.deepEqual(order, [])
         await Promise.all([first, second])
         assert.deepEqual(order, [1, 2])
-        assert.equal(resolution.continueInitialValue(source, ctx, () => 3), 3)
+        assert.equal(
+            values.consumeValue(
+                source,
+                ctx,
+                errors.ERROR_KIND.OperationInputFailed,
+                () => 3,
+            ),
+            3,
+        )
         assert.equal(source.subscriptions, 3)
     })
 
@@ -119,35 +155,40 @@ describe("supported thenables", () => {
     }
 
     for (const boundary of ["property ownership", "outward bridge"]) {
-        it("owns fatal rejection during custom derived " + boundary, async () => {
-            const reports = []
-            const ctx = context(error => reports.push(error))
-            const source = new ChainedThenable()
-            const chain = new runtime.Chain({}, ctx)
-            const cause = new Error("older transition failed")
-            const earlier = resolution.continueInternalResultOrFatal(source, ctx, () => { throw cause })
-            markPromiseHandled(earlier, ctx)
-            const waiting = runtime.import(new Promise(() => {}), ctx).catch(error => error)
-            source.resolve(1)
+        it(
+            "owns fatal rejection during custom derived " + boundary,
+            async () => {
+                const reports = []
+                const ctx = context(error => reports.push(error))
+                const source = new ChainedThenable()
+                const chain = new runtime.Chain({}, ctx)
+                const cause = new Error("older transition failed")
+                const earlier = lifecycle.continueOperation(source, ctx, () => {
+                    throw cause
+                })
+                markPromiseHandled(earlier, ctx)
+                const waiting = runtime.import(new Promise(() => {}), ctx).catch(error => error)
+                source.resolve(1)
 
-            if (boundary === "outward bridge") {
-                // Core import returns pending. Its bridge then delivers the
-                // older failure; the native executor owns the exposed rejection.
-                const result = runtime.import(source, ctx)
-                assert.equal(result instanceof Promise, true)
-                await assert.rejects(result, error => error === ctx.execution.fatalError)
-            } else {
-                assert.throws(() => runtime.assignPath(chain, ["value"], source, ctx),
-                    error => error === ctx.execution.fatalError)
-                assert.equal(Object.hasOwn(chain._state.value, "value"), false)
-            }
-            const fatal = ctx.execution.fatalError
-            assert.equal(fatal.cause, cause)
-            assert.equal(fatal.errorContext, ctx.errorContext)
-            assert.deepEqual(reports, [fatal])
-            assert.equal(await waiting, fatal)
-            await flush()
-        })
+                if (boundary === "outward bridge") {
+                    // Core import returns pending. Its bridge then delivers the
+                    // older failure; the native executor owns the exposed rejection.
+                    const result = runtime.import(source, ctx)
+                    assert.equal(result instanceof Promise, true)
+                    await assert.rejects(result, error => error === ctx.execution.fatalError)
+                } else {
+                    assert.throws(() => runtime.assignPath(chain, ["value"], source, ctx),
+                        error => error === ctx.execution.fatalError)
+                    assert.equal(Object.hasOwn(chain._state.value, "value"), false)
+                }
+                const fatal = ctx.execution.fatalError
+                assert.equal(fatal.cause, cause)
+                assert.equal(fatal.errorContext, ctx.errorContext)
+                assert.deepEqual(reports, [fatal])
+                assert.equal(await waiting, fatal)
+                await flush()
+            },
+        )
     }
 
     it("keeps another execution live when shared scheduling delivers a fatal", async () => {
@@ -155,7 +196,9 @@ describe("supported thenables", () => {
         const live = context()
         const source = new OrderedThenable()
         const cause = new Error("first execution failed")
-        const earlier = resolution.continueInternalResultOrFatal(source, failed, () => { throw cause })
+        const earlier = lifecycle.continueOperation(source, failed, () => {
+            throw cause
+        })
         const observed = earlier.catch(error => error)
         source.flushOnSubscribe = true
         source.resolve(42)
@@ -165,22 +208,28 @@ describe("supported thenables", () => {
     })
 
     for (const pending of [false, true]) {
-        it("reports a callback failure from " + (pending ? "pending" : "ready") + " delivery", async () => {
-            const reports = []
-            const ctx = context(error => reports.push(error))
-            const source = pending ? new OrderedThenable() : ready(1)
-            const cause = new Error("transition failed")
-            const run = () => resolution.continueInternalResultOrFatal(source, ctx, () => { throw cause })
-            if (pending) {
-                const result = run()
-                source.resolve(1)
-                await assert.rejects(result, error => error === ctx.execution.fatalError)
-            } else {
-                assert.throws(run, error => error === ctx.execution.fatalError)
-            }
-            assert.equal(ctx.execution.fatalError.cause, cause)
-            assert.deepEqual(reports, [ctx.execution.fatalError])
-        })
+        it(
+            "reports a callback failure from " + (pending ? "pending" : "ready") + " delivery",
+            async () => {
+                const reports = []
+                const ctx = context(error => reports.push(error))
+                const source = pending ? new OrderedThenable() : ready(1)
+                const cause = new Error("transition failed")
+                const run = () =>
+                    lifecycle.continueOperation(source, ctx, () => {
+                        throw cause
+                    })
+                if (pending) {
+                    const result = run()
+                    source.resolve(1)
+                    await assert.rejects(result, error => error === ctx.execution.fatalError)
+                } else {
+                    assert.throws(run, error => error === ctx.execution.fatalError)
+                }
+                assert.equal(ctx.execution.fatalError.cause, cause)
+                assert.deepEqual(reports, [ctx.execution.fatalError])
+            },
+        )
     }
 
     it("does not redeliver a ready rejection when its continuation throws", () => {
@@ -244,7 +293,12 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const owner = new lifecycle.OperationOwner(ctx)
-        const result = lifecycle.continueAllInternalResultsOrFatal(owner, [ready(1), source], items => items)
+        const result = collectInputs(
+            [ready(1), source],
+            ctx,
+            items => items,
+            owner,
+        )
         assert.equal(values.isPending(result, ctx), true)
         assert.equal(owner.releases.size, 1)
         source.resolve(2)
@@ -266,24 +320,36 @@ describe("supported thenables", () => {
     })
 
     for (const pending of [false, true]) {
-        it("reports fatal data through a fire-and-register " + (pending ? "pending" : "ready") + " assignment", async () => {
-            const reports = []
-            const ctx = context(error => reports.push(error))
-            let fatal
-            try { errors.runContextlessFatal(() => { throw new Error("fatal payload") }) }
-            catch (error) { fatal = error }
-            const chain = new runtime.Chain({}, ctx)
-            if (pending) {
-                const source = new OrderedThenable()
-                assert.equal(runtime.assignPath(chain, ["value"], source, ctx), undefined)
-                source.resolve(fatal)
-                await flush()
-            } else {
-                assert.throws(() => runtime.assignPath(chain, ["value"], ready(fatal), ctx), error => error === fatal)
-            }
-            assert.equal(ctx.execution.fatalError, fatal)
-            assert.deepEqual(reports, [fatal])
-        })
+        it(
+            "reports fatal data through a fire-and-register " + (pending ? "pending" : "ready") + " assignment",
+            async () => {
+                const reports = []
+                const ctx = context(error => reports.push(error))
+                let fatal
+                try {
+                    errors.runInternalStep(
+                        {
+                            execution: new runtime.Execution(),
+                            errorContext: "fatal fixture",
+                        },
+                        () => { throw new Error("fatal payload") },
+                    )
+                } catch (error) {
+                    fatal = error
+                }
+                const chain = new runtime.Chain({}, ctx)
+                if (pending) {
+                    const source = new OrderedThenable()
+                    assert.equal(runtime.assignPath(chain, ["value"], source, ctx), undefined)
+                    source.resolve(fatal)
+                    await flush()
+                } else {
+                    assert.throws(() => runtime.assignPath(chain, ["value"], ready(fatal), ctx), error => error === fatal)
+                }
+                assert.equal(ctx.execution.fatalError, fatal)
+                assert.deepEqual(reports, [fatal])
+            },
+        )
     }
 
     it("keeps ready Array, query, export, and host-call routes direct", () => {
@@ -442,17 +508,18 @@ describe("supported thenables", () => {
         assert.equal(metadata.metaOf(late, ctx), undefined)
     })
 
-    it("rejects forbidden thenables without invoking their protocol", () => {
+    it("observes rejected callback results but leaves forbidden declaration and receiver thenables unused", () => {
         const ctx = context()
         let calls = 0
         const source = { then(onReady) { calls++; return onReady(0) } }
         assert.ok(runtime.managedState({ source }) instanceof Error)
+        assert.equal(calls, 0)
         const sorted = runtime.run(new runtime.Chain([2, 1], ctx), [], "sort", [() => source], ctx, {})
-        assert.equal(sorted.kind, errors.ERROR_KIND.AsyncCallback)
+        assert.equal(sorted.kind, errors.ERROR_KIND.InvalidCallbackResult)
         const receiver = { update() { this.child = source } }
         const changed = runtime.run(new runtime.Chain(receiver, ctx), [], "update", [], ctx, { mutationScopeDepth: 0 })
         assert.equal(changed.kind, errors.ERROR_KIND.InvalidManagedReceiver)
-        assert.equal(calls, 0)
+        assert.equal(calls, 1)
     })
 
     it("preserves Error, Function, and admitted category before then access", () => {
@@ -465,7 +532,12 @@ describe("supported thenables", () => {
         new runtime.Chain(external, ctx)
         Object.defineProperty(external, "then", { get: fail })
         for (const value of [error, fn, external]) {
-            assert.equal(resolution.continueInitialValue(value, ctx), value)
+            const result = values.consumeValue(
+                value,
+                ctx,
+                errors.ERROR_KIND.OperationInputFailed,
+            )
+            assert.equal(Error.isError(value) ? result.cause : result, value)
         }
     })
 

@@ -1,4 +1,5 @@
 import {
+    testOperationContext,
     Chain,
     expect,
     assignPath,
@@ -760,7 +761,7 @@ describe("path assignment", () => {
         expect(chain._state.value).not.to.be(view)
         expect(exportValue(chain, [])).to.eql([])
         expect(view.length).to.be(4)
-        expect([...view]).to.eql([0, 1, 2, 3])
+        expect([...view.values(testOperationContext())]).to.eql([0, 1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([0, 1, 2])
         verifyRefCounts(view, source)
     })
@@ -1109,7 +1110,6 @@ describe("path assignment", () => {
         expect(root.branch instanceof Error).to.be(true)
         expect(root.branch.message).to.be("branch")
     })
-
 })
 
 describe("lookupPath", () => {

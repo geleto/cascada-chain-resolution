@@ -1,83 +1,80 @@
+import { collectInputs } from "../src/input-collection.js"
+import assert from "node:assert/strict"
 import {
-    expect,
-    flushMicrotasks,
-    runtime,
-    testOperationContext,
-} from "./support.js"
-import * as operationLifecycle from "../src/operation-lifecycle.js"
+    OperationOwner,
+    close,
+    releaseOnClose,
+    continueOperation,
+} from "../src/operation-lifecycle.js"
+import { createPoisonError, ERROR_KIND } from "../src/error.js"
+import { testOperationContext, deferred, flushMicrotasks } from "./support.js"
 
 describe("operation lifecycle", () => {
-    it("releases only resources still registered when the owner closes", () => {
-        const owner = new operationLifecycle.OperationOwner(
-            testOperationContext(),
-        )
+    it("closes operation resources and registered releases through either entry once", () => {
         const released = []
-        const unregister = operationLifecycle.releaseOnClose(
-            owner,
-            () => released.push("unregistered"),
-        )
-        operationLifecycle.releaseOnClose(
-            owner,
-            () => released.push("first"),
-        )
-        operationLifecycle.releaseOnClose(
-            owner,
-            () => released.push("second"),
-        )
-
-        unregister()
-        operationLifecycle.close(owner)
-        operationLifecycle.close(owner)
-        operationLifecycle.releaseOnClose(
-            owner,
-            () => released.push("late"),
-        )
-
-        expect(released).to.eql(["first", "second", "late"])
-        expect(owner.open).to.be(false)
-        expect(owner.releases).to.be(undefined)
-    })
-
-    it("closes and releases every live result form", async () => {
-        const poison = new runtime.PoisonError(
-            "expected",
-            "lifecycle test",
-            runtime.ERROR_KIND.OperationInputRejected,
-        )
-
-        for (const value of ["ready", poison]) {
-            const { owner, released } = trackedOwner()
-            expect(operationLifecycle.closeWhenDone(owner, value)).to.be(value)
-            expectClosedAndReleased(owner, released)
+        class Owner extends OperationOwner {
+            release() {
+                released.push("resources")
+            }
         }
-
-        const fulfilled = trackedOwner()
-        const fulfillment = Promise.resolve("fulfilled")
-        const completed = operationLifecycle.closeWhenDone(fulfilled.owner, fulfillment)
-        expect(await completed).to.be("fulfilled")
-        await flushMicrotasks()
-        expectClosedAndReleased(fulfilled.owner, fulfilled.released)
-
-        const rejected = trackedOwner()
-        const rejection = Promise.reject(poison)
-        const failed = operationLifecycle.closeWhenDone(rejected.owner, rejection)
-        expect(await failed.catch(error => error)).to.be(poison)
-        await flushMicrotasks()
-        expectClosedAndReleased(rejected.owner, rejected.released)
+        const owner = new Owner(testOperationContext())
+        const unregister = releaseOnClose(owner, () => released.push("removed"))
+        releaseOnClose(owner, () => released.push("registered"))
+        unregister()
+        owner.close()
+        close(owner)
+        releaseOnClose(owner, () => released.push("late"))
+        assert.deepEqual(released, ["resources", "registered", "late"])
+        assert.equal(owner.open, false)
+        assert.equal(owner.releases, undefined)
     })
 
-    function trackedOwner() {
-        const owner = new operationLifecycle.OperationOwner(
-            testOperationContext(),
+    it("stops closed operation work before its continuation reads state", async () => {
+        const owner = new OperationOwner(testOperationContext())
+        const source = deferred()
+        let calls = 0
+        const work = continueOperation(
+            source.promise,
+            owner.operationContext,
+            () => calls++,
+            undefined,
+            owner,
         )
-        const released = []
-        operationLifecycle.releaseOnClose(owner, () => released.push(true))
-        return { owner, released }
-    }
+        owner.close()
+        source.resolve(1)
+        await work
+        assert.equal(calls, 0)
+    })
 
-    function expectClosedAndReleased(owner, released) {
-        expect(owner.open).to.be(false)
-        expect(owner.releases).to.be(undefined)
-        expect(released).to.eql([true])
-    }
+    it("collects all required poison outcomes before completing and releases captures", async () => {
+        const ctx = testOperationContext()
+        const owner = new OperationOwner(ctx)
+        const source = deferred()
+        const first = createPoisonError(
+            new Error("first"),
+            ctx,
+            ERROR_KIND.OperationInputFailed,
+        )
+        const second = createPoisonError(
+            new Error("second"),
+            ctx,
+            ERROR_KIND.OperationInputFailed,
+        )
+        let done = false
+        const result = collectInputs(
+            [first, source.promise],
+            ctx,
+            values => {
+                done = true
+                owner.close()
+                return values
+            },
+            owner,
+        )
+        await flushMicrotasks()
+        assert.equal(done, false)
+        source.reject(second)
+        assert.deepEqual(await result, [first, second])
+        assert.equal(owner.releases, undefined)
+    })
 })

@@ -1,32 +1,25 @@
 import * as errorUtils from "./error.js"
-import * as languageValues from "./language-values.js"
-import * as resolution from "./resolution.js"
+import { thenValue } from "./language-values.js"
 
 class OperationOwner {
     open = true
-
     constructor(operationContext) {
         this.operationContext = operationContext
     }
-
     close() {
-        this.open = false
+        close(this)
     }
 }
 
-// An owner supplies `open` and idempotent `close()`. Existing operation-work
-// owners implement this directly. In a live execution, shared Promise and
-// property settlement remains outside it. Callers close owners only through
-// close() below so registered resources are released in the same transition.
 function close(operation) {
+    if (!operation.open) return
+    operation.open = false
     try {
-        if (operation.open) operation.close()
+        operation.release?.()
     } finally {
         const releases = operation.releases
+        operation.releases = undefined
         if (releases) {
-            operation.releases = undefined
-            // Releases are trusted, non-throwing runtime cleanup. A violation
-            // propagates as Fatal; clearing still severs unregister closures.
             try {
                 for (const release of releases) release()
             } finally {
@@ -41,11 +34,7 @@ function releaseOnClose(operation, release) {
         release()
         return undefined
     }
-    let releases = operation.releases
-    if (!releases) {
-        releases = new Set()
-        operation.releases = releases
-    }
+    const releases = (operation.releases ??= new Set())
     releases.add(release)
     return () => {
         if (!releases.delete(release)) return
@@ -53,140 +42,38 @@ function releaseOnClose(operation, release) {
     }
 }
 
-function continueResult(operation, result, onReady, continueValue) {
-    if (
-        operation.operationContext.execution.fatalError !== null ||
-        !operation.open
-    ) return undefined
-    return continueValue(
-        result,
-        value => operation.open ? onReady(value) : undefined,
-    )
+const unexpectedRejection = reason => {
+    throw reason
 }
 
-function resolveInitial(operation, value, onReady) {
-    // This primitive admits and passes Errors; continueInitial consumes them.
-    return continueResult(
-        operation,
-        value,
-        onReady,
-        (input, next) => resolution.continueInitialValue(
-            input,
-            operation.operationContext,
-            next,
-            () => operation.open,
-        ),
-    )
-}
-
-function continueInitial(operation, value, onReady) {
-    return resolveInitial(
-        operation,
-        value,
-        resolved => languageValues.isError(resolved)
-            ? errorUtils.toPoison(
-                resolved,
-                operation.operationContext,
-                errorUtils.ERROR_KIND.OperationInputError,
-            )
-            : onReady(resolved),
-    )
-}
-
-function continueInternalResultOrFatal(operation, internalResult, onReady) {
-    return continueResult(
-        operation,
-        internalResult,
-        onReady,
-        (input, next) => resolution.continueInternalResultOrFatal(
-            input,
-            operation.operationContext,
-            next,
-        ),
-    )
-}
-
-function continuePrepared(operation, result, onReady) {
-    return continueInternalResultOrFatal(
-        operation,
-        result,
-        value => languageValues.isError(value) ? value : onReady(value),
-    )
-}
-
-function continueAllInternalResultsOrFatal(operation, internalResults, onReady) {
-    const values = new Array(internalResults.length)
-    const waits = []
-    for (let index = 0; index < internalResults.length; index++) {
-        const wait = continueInternalResultOrFatal(operation, internalResults[index], value => {
-            values[index] = value
-        })
-        if (languageValues.isPending(wait, operation.operationContext)) waits.push(wait)
-    }
-    if (waits.length === 0) {
-        return continueInternalResultOrFatal(operation, values, onReady)
-    }
-
-    const unregisterRelease = releaseOnClose(
-        operation,
-        () => values.fill(undefined),
-    )
-    const result = continueInternalResultOrFatal(
-        operation,
-        Promise.all(waits),
-        () => {
-            unregisterRelease?.()
-            return onReady(values)
-        },
-    )
-    return result
-}
-
-function continuePreparedAll(operation, results, onReady) {
-    return continueAllInternalResultsOrFatal(operation, results, values => {
-        const errors = values.filter(languageValues.isError)
-        return errors.length === 0
-            ? onReady(values)
-            : errorUtils.combineErrors(
-                errors,
-                "Operation received multiple Errors",
-            )
-    })
-}
-
-function closeWhenDone(operation, result) {
-    const operationContext = operation.operationContext
-    try {
-        return languageValues.thenValue(
-            result,
-            value => errorUtils.runInternalStep(operationContext, () => {
-                close(operation)
-                return value
-            }),
-            reason => {
-                throw errorUtils.runInternalStep(operationContext, () => {
-                    if (!(reason instanceof errorUtils.PoisonError)) throw reason
-                    close(operation)
-                    return reason
-                })
-            },
-            operationContext,
+// A trusted continuation defines its own Error semantics. Shared settlement
+// omits an owner; operation-local work stops after that owner's closure.
+function continueOperation(
+    value,
+    operationContext,
+    onFulfilled,
+    onRejected = unexpectedRejection,
+    owner,
+) {
+    const fatal = operationContext.execution.fatalError
+    if (fatal !== null) throw fatal
+    if (errorUtils.isFatalError(value))
+        errorUtils.failExecution(operationContext, value)
+    if (owner && !owner.open) return undefined
+    const guard = callback => result => {
+        if (
+            operationContext.execution.fatalError !== null ||
+            (owner && !owner.open)
         )
-    } catch (failure) {
-        if (failure instanceof errorUtils.PoisonError) return failure
-        throw failure
+            return undefined
+        return errorUtils.runWithFatalGuard(operationContext, callback, result)
     }
+    return thenValue(
+        value,
+        guard(onFulfilled),
+        guard(onRejected),
+        operationContext,
+    )
 }
 
-export {
-    close,
-    closeWhenDone,
-    continueInitial,
-    continueInternalResultOrFatal,
-    continueAllInternalResultsOrFatal,
-    continuePrepared,
-    continuePreparedAll,
-    OperationOwner,
-    releaseOnClose,
-    resolveInitial,
-}
+export { OperationOwner, close, releaseOnClose, continueOperation }

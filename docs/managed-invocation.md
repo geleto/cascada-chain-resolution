@@ -1,5 +1,9 @@
 # Managed Invocation Architecture
 
+## Causal completion
+
+Receiver preparation and argument export complete their entire required Error frontier before invocation. A direct method Error poisons the receiver with `HostCallFailed` whether returned, thrown, fulfilled, or rejected. Importing an independent successful result graph is a separate boundary: its `ImportReflectionFailed` outcome does not discard valid receiver mutation. The direct host-result continuation makes this decision before result import. A prototype accessor safely detected before invocation returns `InvalidManagedReceiver`. Operation resources close through the common idempotent owner transition after final call completion; a component finishing preparation does not close sibling collection.
+
 Developer-facing restrictions are centralized in [`data-limitations.md`](data-limitations.md). This document describes the common invocation boundary for managed records and managed class instances.
 
 ## Principle
@@ -36,7 +40,7 @@ If receiver selection is pending, the common coordinator consumes each possible 
 
 ## Receiver preparation
 
-Preparation consumes the complete receiver graph because method code may read any state through `this`. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached contextual Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise or native Error while the working receiver exposes its logical value.
+Preparation consumes the complete receiver graph because method code may read any state through `this`. Capture candidate keys and validate their placement descriptors before consuming their values. A failed descriptor contributes its causal Error without hiding other known keys; failed key-list reflection ends only that inaccessible interior. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached contextual Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise or native Error while the working receiver exposes its logical value.
 
 Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
@@ -58,7 +62,9 @@ Refcount indexing is downward-closed. An indexed identity cannot be mutated in p
 
 The isolation walk inspects each reached identity once before any required complete-subgraph copy. A qualifying identity is replaced with a complete graph copy that preserves aliases, cycles, admitted prototypes, sparse Array structure, Functions, and exact external leaves. The walk continues through nonqualifying identities to find qualifying descendants. If a copied subgraph reaches an ancestor, that ancestor is copied too. Copies reconnect through ordinary placement replacement, materializing a retained parent when its representation cannot accept the replacement. No receiver copy is allocated when nothing qualifies.
 
-After invocation, one complete walk admits newly created identities and rejects any Promise or Error left in the receiver. This validation rejects a stored supported thenable without invoking it, even if it could deliver synchronously; direct method-result consumption does not weaken the completed-receiver contract. A clean receiver is published through the ordinary mutation transition. No pre-call identity history, changed-property set, active-lease scan, result-provenance map, or managed-specific refcount state is kept.
+After invocation, one complete walk admits newly created identities and rejects any Promise or Error left in the receiver. Exact reflection failures join the same validation accumulator; they discard neither earlier Errors nor accessible later siblings. Before admitting a new object or accepting a managed identity already admitted before the call, inspect its native `then` lookup through own descriptors and the actual prototype chain. A callable data property or accessor produces `InvalidManagedReceiver`; never invoke the accessor or subscribe to a stored thenable during validation. This check includes non-enumerable own properties and Array non-index properties, while Error collection and admission still traverse only language placements. A known managed identity with unsafe `then` still contributes Errors from its other placements. Exact Functions and external leaves follow the successful-value host contract in [`data-limitations.md`](data-limitations.md).
+
+A clean receiver is published through the ordinary mutation transition. A receiver-validation failure poisons the receiver. If independent result import also failed, combine its already discovered Error with the receiver failures for the operation result, preserving every leaf's cause, source, and kind. Result-import failure alone leaves valid receiver mutation intact. Direct method-result consumption does not weaken this completed-receiver contract. No pre-call identity history, changed-property set, active-lease scan, result-provenance map, or managed-specific refcount state is kept.
 
 ## Results and direct Promises
 
