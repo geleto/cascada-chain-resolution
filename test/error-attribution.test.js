@@ -38,6 +38,7 @@ describe("causal Error attribution", () => {
             "InvalidArrayOperation",
             "InvalidCallbackResult",
             "InvalidConcurrentLimit",
+            "InvalidExpressionValue",
             "InvalidExternalContainment",
             "InvalidExternalSnapshot",
             "InvalidManagedReceiver",
@@ -151,9 +152,9 @@ describe("causal Error attribution", () => {
         const occurrences = getErrors(chain, [])
         const exported = exportValue(chain, [])
 
-        expect(occurrences.length).to.be(1)
-        expect(occurrences[0].cause).to.be(native)
-        expect(exported).to.be(occurrences[0])
+        expect(occurrences.errors).to.be(undefined)
+        expect(occurrences.cause).to.be(native)
+        expect(exported).to.be(occurrences)
     })
 
     it("attributes reuse of one native Error to each consuming boundary", () => {

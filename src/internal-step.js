@@ -87,10 +87,7 @@ function collectInputs(inputs, operationContext, onReady, owner) {
             inputs[index],
             operationContext,
             record,
-            reason => {
-                if (!errorUtils.isPoisonError(reason)) throw reason
-                record(reason)
-            },
+            undefined,
             owner,
         )
         if (languageValues.isPending(wait, operationContext)) waits.push(wait)

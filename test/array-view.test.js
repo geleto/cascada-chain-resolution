@@ -217,7 +217,7 @@ describe("ArrayView", () => {
         const exported = exportValue(chain, [])
 
         pending.resolve({ ready: true })
-        expect((await errors).map(errorCause)).to.eql([error])
+        expect(errorCause(await errors)).to.be(error)
         const outcome = await exported
         expect(outcome instanceof Error).to.be(true)
         expect(errorCause(outcome)).to.be(error)

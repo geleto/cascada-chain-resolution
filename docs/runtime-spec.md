@@ -543,7 +543,7 @@ shared. The result is synchronous unless path resolution crosses a Promise.
 
 ### `lookupPathForExpression(chain, path, operationContext)`
 
-Define `ExpressionValue` as `string | number | boolean | bigint`. Reuse ordinary path observation and return `ExpressionValue | PoisonedValue | Promise<ExpressionValue>`. Accept String, Number, Boolean, and BigInt primitives. Preserve an existing Error and convert it at the outward expression boundary; otherwise null, undefined, a Symbol, or a non-primitive produces `InvalidExpressionValue` at this operation without coercion, deep export, descendant inspection, or source mutation. An absent final placement therefore produces InvalidExpressionValue; ordinary lookupPath still returns undefined. Pending failure rejects directly with an ordinary Error without creating a PoisonedValue, and ready failure returns its non-Error PoisonedValue container. Required processing precedes final settlement. The compiler selects this API for all graph results entering primitive expressions. BigInt stays exact. Cascada owns expression implementation and operator semantics. This is the only Chain operation returning a ready PoisonedValue. Implementation belongs to Phase 9D-B.
+Define `ExpressionValue` as `string | number | boolean | bigint`. Reuse ordinary path observation and return `ExpressionValue | PoisonedValue | Promise<ExpressionValue>`. Accept String, Number, Boolean, and BigInt primitives. Preserve an existing Error and convert it at the outward expression boundary; otherwise null, undefined, a Symbol, or a non-primitive produces `InvalidExpressionValue` at this operation without coercion, deep export, descendant inspection, or source mutation. An absent final placement therefore produces InvalidExpressionValue; ordinary lookupPath still returns undefined. Pending failure rejects directly with an ordinary Error without creating a PoisonedValue, and ready failure returns its non-Error PoisonedValue container. Required processing precedes final settlement. The compiler selects this API for all graph results entering primitive expressions. BigInt stays exact. Cascada owns expression implementation and operator semantics. This is the only Chain operation returning a ready PoisonedValue.
 
 ### `readPath(chain, path, operationContext)`
 
@@ -631,7 +631,7 @@ After complete collection, returns null when no Error is found, the original lea
 - Promise waits recursively extend the captured issue-time frontier.
 - Finalize once after all required collection: an empty collector returns null; nonempty collection uses the existing combineErrors factory without duplicate normalization or singleton compounds.
 
-The operation never marks or pins the branch. Phase 9D-B implements this result contract.
+The operation never marks or pins the branch.
 
 `getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, instead of a completed collection: a ready query returns that poison directly and a pending query fulfills with that ordinary Error. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
 

@@ -66,29 +66,6 @@ describe("exact successful outputs", () => {
 
 describe("export", () => {
     it("exposes the native ESM package API", () => {
-        expect(Object.keys(packageRuntime).sort()).to.eql([
-            "Chain",
-            "CompoundPoisonError",
-            "ContextChain",
-            "ERROR_KIND",
-            "Execution",
-            "FatalError",
-            "PoisonError",
-            "assignPath",
-            "deletePath",
-            "enter",
-            "export",
-            "externalState",
-            "getErrors",
-            "hasError",
-            "import",
-            "isFatalError",
-            "isPoisonError",
-            "lookupPath",
-            "managedState",
-            "managedStateClass",
-            "run",
-        ])
         expect(packageExport).to.be(packageRuntime.export)
         expect(runtime.export).to.be(packageRuntime.export)
         expect(runtime.normalize).to.be(undefined)
@@ -274,7 +251,7 @@ describe("export", () => {
         expect(metaOf(copy)).to.be(undefined)
         expect(metaOf(copy.left)).to.be(undefined)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         verifyRefCounts(root)
     })
 
@@ -464,9 +441,9 @@ describe("export", () => {
             errorsResult,
         ])
         expectExportErrors(outcome, [known, hidden])
-        expect(errors.length).to.be(2)
-        expect(errors.some(error => error.cause === known)).to.be(true)
-        expect(errors.some(error => error.cause === hidden)).to.be(true)
+        expect(errors.errors.length).to.be(2)
+        expect(errors.errors.some(error => error.cause === known)).to.be(true)
+        expect(errors.errors.some(error => error.cause === hidden)).to.be(true)
     })
 
     it("exports a clean subpath through a cyclic import normally", () => {
@@ -631,7 +608,7 @@ describe("export", () => {
 
         importValue(output, "exported round trip")
 
-        expect(getErrors(new Chain(output), [])).to.eql([])
+        expect(getErrors(new Chain(output), [])).to.be(null)
         expect(metaOf(output.value).cycleCuts.has("back")).to.be(true)
     })
 

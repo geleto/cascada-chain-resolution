@@ -239,20 +239,14 @@ describe("subtree counters", () => {
         expectCounts(publishedRoot, 0, 0, 1)
         expect(hasCycleCut(indexedValue, "back")).to.be(true)
         expectCounts(indexedRoot, 0, 1, 1)
-        expect(getErrors(new Chain(publishedRoot), []).map(errorCause)).to.eql([
-            publishedError,
-        ])
-        expect(getErrors(new Chain(indexedRoot), []).map(errorCause)).to.eql([
-            indexedError,
-        ])
+        expect(errorCause(getErrors(new Chain(publishedRoot), []))).to.be(publishedError)
+        expect(errorCause(getErrors(new Chain(indexedRoot), []))).to.be(indexedError)
 
         deletePath(new Chain(publishedRoot), ["value", "back"])
 
         expect(hasCycleCut(publishedRoot, "value")).to.be(true)
         expectCounts(publishedRoot, 0, 0, 1)
-        expect(getErrors(new Chain(publishedRoot), []).map(errorCause)).to.eql([
-            publishedError,
-        ])
+        expect(errorCause(getErrors(new Chain(publishedRoot), []))).to.be(publishedError)
         verifyRefCounts(publishedRoot, indexedRoot)
     })
 
@@ -555,7 +549,7 @@ describe("subtree counters", () => {
         expect(hasCycleCut(destination, "slot")).to.be(true)
         expectCounts(destination, 0, 0, 1)
         expectCounts(target, 0, 0, 1)
-        expect(getErrors(new Chain(destination), [])).to.eql([])
+        expect(getErrors(new Chain(destination), [])).to.be(null)
         verifyRefCounts(destination, target)
     })
 

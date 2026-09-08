@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import * as kernel from "cascada-chain-resolution/integration"
 import * as errors from "../src/error.js"
 import * as values from "../src/language-values.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
@@ -27,58 +26,42 @@ const capture = action => {
 
 // The higher runtime owns one causal body and one outward result boundary.
 function externalStep(ctx, kind, action) {
-    return kernel.runInternalStep(ctx, () => {
-        const result = kernel.runExternalBoundary(ctx, kind, action)
-        return kernel.continueOperation(
+    return runtime.runInternalStep(ctx, () => {
+        const result = runtime.runExternalBoundary(ctx, kind, action)
+        return runtime.continueOperation(
             result,
             ctx,
             value =>
                 Error.isError(value)
-                    ? kernel.createPoisonError(value, ctx, kind)
+                    ? runtime.createPoisonError(value, ctx, kind)
                     : value,
-            reason => kernel.createPoisonError(reason, ctx, kind),
+            reason => runtime.createPoisonError(reason, ctx, kind),
         )
     })
 }
 
-describe("causal failure architecture", () => {
-    it("re-exports core operations and the single outward completion implementation", async () => {
-        for (const [file, names] of [
-            ["import", ["import", "importMethodResult"]],
-            ["mutations", ["assignPath", "deletePath"]],
-            ["observations", ["lookupPath", "hasError", "getErrors"]],
-            ["run", ["run"]],
-            ["enter", ["enter"]],
-            ["operation-result", ["returnOperationResult"]],
-        ]) {
-            const core = await import("../src/" + file + ".js")
-            for (const name of names) assert.equal(kernel[name], core[name])
-        }
-        assert.notEqual(runtime.import, kernel.import)
-        assert.equal(kernel.createPoisonError, errors.createPoisonError)
+function callExternal(operationContext, callable, args) {
+    const result = runtime.runInternalStep(operationContext, () => {
+        const inputs = runtime.export(
+            new runtime.Chain(args, operationContext),
+            [],
+            operationContext,
+        )
+        return runtime.continueOperation(inputs, operationContext, prepared => {
+            if (runtime.isPoisonError(prepared)) return prepared
+            const result = runtime.runExternalBoundary(
+                operationContext,
+                runtime.ERROR_KIND.InvocationFailed,
+                () => Reflect.apply(callable, undefined, prepared),
+            )
+            return runtime.importMethodResult(result, operationContext)
+        })
     })
+    return runtime.returnOperationResult(operationContext, result)
+}
 
+describe("causal failure architecture", () => {
     it("exports standalone-call arguments and attributes nested host results", async () => {
-        function callExternal(operationContext, callable, args) {
-            const result = kernel.runInternalStep(operationContext, () => {
-                const inputs = kernel.export(
-                    new kernel.Chain(args, operationContext),
-                    [],
-                    operationContext,
-                )
-                return kernel.continueOperation(inputs, operationContext, prepared => {
-                    if (kernel.isPoisonError(prepared)) return prepared
-                    const result = kernel.runExternalBoundary(
-                        operationContext,
-                        kernel.ERROR_KIND.InvocationFailed,
-                        () => Reflect.apply(callable, undefined, prepared),
-                    )
-                    return kernel.importMethodResult(result, operationContext)
-                })
-            })
-            return kernel.returnOperationResult(operationContext, result)
-        }
-
         const ctx = context()
         const argument = runtime.import({ value: 1 }, ctx)
         const cause = new Error("nested host failure")
@@ -99,24 +82,51 @@ describe("causal failure architecture", () => {
             ctx,
         )
         assert.equal(failure.cause, cause)
-        assert.equal(failure.kind, kernel.ERROR_KIND.InvocationFailed)
+        assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
         assert.equal(failure.errorContext, ctx.errorContext)
     })
+    for (const reverse of [false, true]) {
+        it(`collects every standalone-call argument failure without invocation, reverse=${reverse}`, async () => {
+            const ctx = context()
+            const first = runtime.createPoisonError(
+                new Error("ready argument"), ctx, runtime.ERROR_KIND.OperationInputFailed,
+            )
+            const second = runtime.createPoisonError(
+                new Error("pending argument"), ctx, runtime.ERROR_KIND.OperationInputFailed,
+            )
+            const pending = Promise.withResolvers()
+            const args = [runtime.createPoisonedValue(first), pending.promise]
+            if (reverse) args.reverse()
+            let completed = false
+            const result = callExternal(ctx, () => assert.fail("failed arguments must suppress invocation"), args)
+            const completion = result.then(value => {
+                completed = true
+                return value
+            })
+
+            await flush()
+            assert.equal(completed, false)
+            pending.reject(second)
+            assert.deepEqual(new Set(leaves(await completion)), new Set([first, second]))
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
     it("uses native inheritance and immutable complete wrappers", () => {
         const ctx = context()
         const native = new Error("native")
-        const first = kernel.createPoisonError(
+        const first = runtime.createPoisonError(
             native,
             ctx,
-            kernel.ERROR_KIND.InvocationFailed,
+            runtime.ERROR_KIND.InvocationFailed,
         )
         const second = errors.validationError(
             "invalid",
             ctx,
-            kernel.ERROR_KIND.PropertyValidation,
+            runtime.ERROR_KIND.PropertyValidation,
         )
         const input = [first, second]
-        const compound = kernel.combineErrors(input, "combined")
+        const compound = runtime.combineErrors(input, "combined")
         input.length = 0
         assert.equal(
             Object.getPrototypeOf(runtime.PoisonError.prototype),
@@ -138,7 +148,7 @@ describe("causal failure architecture", () => {
         }
         assert(Object.isFrozen(compound.errors))
         assert.deepEqual(new Set(compound.errors), new Set([first, second]))
-        const nested = kernel.combineErrors(
+        const nested = runtime.combineErrors(
             [compound, first],
             "nested",
         )
@@ -148,10 +158,10 @@ describe("causal failure architecture", () => {
         ))
         assert.equal(compound.kinds, undefined)
         assert.equal(
-            kernel.createPoisonError(
+            runtime.createPoisonError(
                 first,
                 context(),
-                kernel.ERROR_KIND.PropertyValidation,
+                runtime.ERROR_KIND.PropertyValidation,
             ),
             first,
         )
@@ -170,38 +180,38 @@ describe("causal failure architecture", () => {
         it("deduplicates present causes, including " + String(cause), () => {
             const source = {}
             const ctx = context(source)
-            const first = kernel.createPoisonError(
+            const first = runtime.createPoisonError(
                 cause,
                 ctx,
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
             )
-            const same = kernel.createPoisonError(
+            const same = runtime.createPoisonError(
                 cause,
                 context(source),
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
             )
-            const otherSource = kernel.createPoisonError(
+            const otherSource = runtime.createPoisonError(
                 cause,
                 context(),
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
             )
-            const otherKind = kernel.createPoisonError(
+            const otherKind = runtime.createPoisonError(
                 cause,
                 ctx,
-                kernel.ERROR_KIND.IteratorFailed,
+                runtime.ERROR_KIND.IteratorFailed,
             )
             const missingA = errors.validationError(
                 "missing",
                 ctx,
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
             )
             const missingB = errors.validationError(
                 "missing",
                 ctx,
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
             )
             assert(Object.hasOwn(first, "cause"))
-            assert.equal(kernel.combineErrors([first, same], "same"), first)
+            assert.equal(runtime.combineErrors([first, same], "same"), first)
             const expected = new Set([
                 first,
                 otherSource,
@@ -209,14 +219,14 @@ describe("causal failure architecture", () => {
                 missingA,
                 missingB,
             ])
-            const compound = kernel.combineErrors(
+            const compound = runtime.combineErrors(
                 [first, same, otherSource, otherKind, missingA, missingB],
                 "distinct",
             )
             assert.deepEqual(new Set(compound.errors), expected)
             const chain = new runtime.Chain({ first, same, compound }, ctx)
             assert.deepEqual(
-                new Set(runtime.getErrors(chain, [], ctx)),
+                new Set(leaves(runtime.getErrors(chain, [], ctx))),
                 expected,
             )
             assert.deepEqual(
@@ -246,9 +256,9 @@ describe("causal failure architecture", () => {
         )
         const chain = new runtime.Chain({ first, second, repeated: first }, consumer)
         const collected = runtime.getErrors(chain, [], consumer)
-        assert.equal(collected.length, 2)
-        assert(collected.includes(first))
-        assert(collected.includes(second))
+        assert.equal(collected.errors.length, 2)
+        assert(collected.errors.includes(first))
+        assert(collected.errors.includes(second))
         assert.equal(first.cause, cause)
         assert.equal(second.cause, cause)
         assert.equal(first.errorContext, source)
@@ -282,7 +292,7 @@ describe("causal failure architecture", () => {
         ]) {
             const failure = await externalStep(
                 ctx,
-                kernel.ERROR_KIND.InvocationFailed,
+                runtime.ERROR_KIND.InvocationFailed,
                 () => result,
             )
             assert.equal(failure.cause, cause)
@@ -295,7 +305,7 @@ describe("causal failure architecture", () => {
     it("treats raw Error admission as a missed causal boundary", () => {
         const ctx = context()
         const failure = capture(() =>
-            kernel.runInternalStep(ctx, () =>
+            runtime.runInternalStep(ctx, () =>
                 values.admitReadyValue(new Error("raw"), ctx),
             ),
         )
@@ -318,7 +328,7 @@ describe("causal failure architecture", () => {
             ctx,
         )._state.value
         assert.equal(failed.cause, cause)
-        assert.equal(failed.kind, kernel.ERROR_KIND.ThenAccessFailed)
+        assert.equal(failed.kind, runtime.ERROR_KIND.ThenAccessFailed)
         assert.equal(ctx.execution.fatalError, null)
     })
 
@@ -356,7 +366,7 @@ describe("causal failure architecture", () => {
                     { mutationScopeDepth: 0 },
                 )
                 assert.equal(failure.cause, cause)
-                assert.equal(failure.kind, kernel.ERROR_KIND.InvocationFailed)
+                assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
                 assert.equal(runtime.lookupPath(chain, [], ctx), failure)
                 assert.equal(ctx.execution.fatalError, null)
             },
@@ -376,11 +386,11 @@ describe("causal failure architecture", () => {
                 const ctx = context()
                 const call = externalStep(
                     ctx,
-                    kernel.ERROR_KIND.InvocationFailed,
+                    runtime.ERROR_KIND.InvocationFailed,
                     () => deliver(3),
                 )
-                assert.equal(kernel.isPending(call, ctx), mode === "pending")
-                assert.equal(await kernel.returnOperationResult(ctx, call), 3)
+                assert.equal(runtime.isPending(call, ctx), mode === "pending")
+                assert.equal(await runtime.returnOperationResult(ctx, call), 3)
                 const cause = new Error("iterator")
                 const iterator = {
                     next() {
@@ -389,12 +399,12 @@ describe("causal failure architecture", () => {
                 }
                 const advance = externalStep(
                     ctx,
-                    kernel.ERROR_KIND.IteratorFailed,
+                    runtime.ERROR_KIND.IteratorFailed,
                     () => iterator.next(),
                 )
-                const failure = await kernel.returnOperationResult(ctx, advance)
+                const failure = await runtime.returnOperationResult(ctx, advance)
                 assert.equal(failure.cause, cause)
-                assert.equal(failure.kind, kernel.ERROR_KIND.IteratorFailed)
+                assert.equal(failure.kind, runtime.ERROR_KIND.IteratorFailed)
                 assert.equal(failure.errorContext, ctx.errorContext)
             },
         )
@@ -406,7 +416,7 @@ describe("causal failure architecture", () => {
         const waiting = runtime.import(new Promise(() => {}), ctx)
         let nested
         const failure = capture(() =>
-            externalStep(ctx, kernel.ERROR_KIND.InvocationFailed, () => {
+            externalStep(ctx, runtime.ERROR_KIND.InvocationFailed, () => {
                 nested = capture(() =>
                     runtime.lookupPath(chain, ["value"], ctx),
                 )
@@ -425,7 +435,7 @@ describe("causal failure architecture", () => {
 
         const result = externalStep(
             outer,
-            kernel.ERROR_KIND.InvocationFailed,
+            runtime.ERROR_KIND.InvocationFailed,
             () => runtime.lookupPath(chain, ["value"], inner),
         )
 
@@ -440,7 +450,7 @@ describe("causal failure architecture", () => {
 
         const result = externalStep(
             ctx,
-            kernel.ERROR_KIND.InvocationFailed,
+            runtime.ERROR_KIND.InvocationFailed,
             () => runtime.managedStateClass(Value),
         )
 
@@ -525,7 +535,7 @@ describe("causal failure architecture", () => {
         assert.equal(poison.cause, cause)
         assert.equal(ctx.execution.fatalError, null)
         const fatal = capture(() =>
-            kernel.failExecution(context(), new Error("fatal")),
+            runtime.failExecution(context(), new Error("fatal")),
         )
         const proxy = new Proxy(
             {},

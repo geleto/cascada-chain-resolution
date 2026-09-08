@@ -9,9 +9,20 @@ import {
     continueOperation,
 } from "../src/internal-step.js"
 import { createPoisonError, ERROR_KIND } from "../src/error.js"
+import { returnOperationResult, isFatalError } from "cascada-chain-resolution"
 import { testOperationContext, deferred, flushMicrotasks } from "./support.js"
 
 describe("operation lifecycle", () => {
+    it("treats rejection of a normalized input as an internal failure", async () => {
+        const ctx = testOperationContext()
+        const source = deferred()
+        const error = createPoisonError(new Error("unexpected rejection"), ctx, ERROR_KIND.OperationInputFailed)
+        const result = returnOperationResult(ctx, collectInputs(
+            [source.promise], ctx, () => assert.fail("rejection is not a collected value"),
+        ))
+        source.reject(error)
+        await assert.rejects(result, failure => isFatalError(failure) && failure.cause === error)
+    })
     it("closes operation resources and registered releases through either entry once", () => {
         const released = []
         class Owner extends OperationOwner {
@@ -75,7 +86,7 @@ describe("operation lifecycle", () => {
         )
         await flushMicrotasks()
         assert.equal(done, false)
-        source.reject(second)
+        source.resolve(second)
         assert.deepEqual(await result, [first, second])
         assert.equal(owner.releases, undefined)
     })

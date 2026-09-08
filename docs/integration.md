@@ -1,6 +1,6 @@
 # Public higher-runtime integration
 
-This document specifies the public surface completed by Phase 9D-B. The implementation is currently at the 9D-A baseline; the phase removes the existing integration-only subpath and adds the facilities below. See [the implementation plan](first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) for the complete cutover and tests.
+This document specifies the implemented public root API. See [the implementation plan](first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) for the complete cutover and tests.
 
 Cascada imports only the documented root package API. Public Chain operations retain their result boundaries; unwrapped core operations, graph metadata, and private external-escape machinery remain package internals. Every semantic operation carries its immutable { execution, errorContext }, and related Chains share their execution. Source handles remain opaque to graph code.
 

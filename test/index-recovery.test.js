@@ -51,7 +51,7 @@ for (const route of ["assignment", "deferred assignment", "imported fulfillment"
             fail = false
             for (const chain of retained) {
                 assert.equal(runtime.hasError(chain, [], ctx), false)
-                assert.deepEqual(runtime.getErrors(chain, [], ctx), [])
+                assert.equal(runtime.getErrors(chain, [], ctx), null)
                 runtime.assignPath(chain, ["repaired"], true, ctx)
                 assert.equal(runtime.lookupPath(chain, ["repaired"], ctx), true)
                 verifyRefCounts(ctx, chain._state)
@@ -113,7 +113,7 @@ describe("index preparation", () => {
                     const chain = new runtime.Chain(pending ? Promise.resolve(a) : a, ctx)
                     const result = query(chain, [], ctx)
                     const failure = pending
-                        ? await result.catch(error => error)
+                        ? await result
                         : result
                     assert.equal(failure.cause, cause)
                     assert.equal(

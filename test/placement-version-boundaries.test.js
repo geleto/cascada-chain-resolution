@@ -67,7 +67,7 @@ describe("placement versions across representation boundaries", () => {
                 runtime.assignPath(bounded, ["1"], 7, later)
                 assert.equal(runtime.lookupPath(bounded, ["0"], later), original)
                 const errors = runtime.getErrors(new runtime.Chain({ original, output, bounded: bounded._state.value }, later), [], later)
-                assert.deepEqual(errors, [original])
+                assert.equal(errors, original)
                 assert.equal(original.cause, cause)
                 assert.equal(original.errorContext, introduced.errorContext)
                 assert.equal(introduced.execution.fatalError, null)

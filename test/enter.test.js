@@ -741,7 +741,7 @@ describe("enter", () => {
             sibling: "ready",
         })
         expect(await containsError).to.be(false)
-        expect(await errors).to.eql([])
+        expect(await errors).to.be(null)
     })
 
     it("keeps indexed counters exact across gate publication", async () => {

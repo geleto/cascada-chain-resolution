@@ -177,6 +177,8 @@ describe("fatal execution", () => {
 
         const pendingResults = [
             runtime.import(never, context),
+            runtime.importMethodResult(never, context),
+            runtime.lookupPathForExpression(new runtime.Chain(never, context), [], context),
             runtime.lookupPath(
                 new runtime.Chain({ pending: never }, context),
                 ["pending"],

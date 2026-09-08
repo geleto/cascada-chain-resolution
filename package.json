@@ -4,8 +4,7 @@
   "description": "The cascada chain resolution/lookup/mutation algorithm",
   "main": "./src/index.js",
   "exports": {
-    ".": "./src/index.js",
-    "./integration": "./src/integration.js"
+    ".": "./src/index.js"
   },
   "directories": {
     "doc": "docs"

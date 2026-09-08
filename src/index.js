@@ -1,4 +1,4 @@
-import { returnOperationResult } from "./operation-result.js"
+import { returnOperationResult, returnExpressionResult } from "./operation-result.js"
 import { Chain, ContextChain } from "./chain.js"
 import {
     CompoundPoisonError,
@@ -15,8 +15,9 @@ import {
     getErrors as getErrorsCore,
     hasError as hasErrorCore,
     lookupPath as lookupPathCore,
+    lookupPathForExpression as lookupPathForExpressionCore,
 } from "./observations.js"
-import { import as importCore } from "./import.js"
+import { import as importCore, importMethodResult as importMethodResultCore } from "./import.js"
 import {
     assignPath as assignPathCore,
     deletePath as deletePathCore,
@@ -35,6 +36,16 @@ function importValue(value, operationContext) {
 
 function lookupPath(chain, path, operationContext) {
     const result = lookupPathCore(chain, path, operationContext)
+    return returnOperationResult(operationContext, result)
+}
+
+function lookupPathForExpression(chain, path, operationContext) {
+    const result = lookupPathForExpressionCore(chain, path, operationContext)
+    return returnExpressionResult(operationContext, result)
+}
+
+function importMethodResult(value, operationContext) {
+    const result = importMethodResultCore(value, operationContext)
     return returnOperationResult(operationContext, result)
 }
 
@@ -116,11 +127,19 @@ export {
     getErrors,
     hasError,
     importValue as import,
+    importMethodResult,
     isFatalError,
     isPoisonError,
     lookupPath,
+    lookupPathForExpression,
     managedState,
     managedStateClass,
     PoisonError,
     run,
+    returnOperationResult,
 }
+
+export { createPoisonedValue, isPoisonedValue } from "./poisoned-value.js"
+export { createPoisonError, validationError, combineErrors, failExecution, runExternalBoundary } from "./error.js"
+export { runInternalStep, continueOperation } from "./internal-step.js"
+export { isPending } from "./language-values.js"

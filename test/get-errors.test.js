@@ -14,6 +14,8 @@ import {
     hasError,
     importValue,
     readPath,
+    runtime,
+    testOperationContext,
     metaOf,
     exportValue,
     useTestExecution,
@@ -22,14 +24,47 @@ import {
 } from "./support.js"
 
 function expectErrors(actual, expected) {
-    expect(actual.length).to.be(expected.length)
+    if (expected.length === 0) {
+        expect(actual).to.be(null)
+        return
+    }
+    expect(actual instanceof Error).to.be(true)
+    const leaves = actual.errors ?? [actual]
+    expect(leaves.length).to.be(expected.length)
     for (const error of expected) {
-        expect(actual.some(value => value === error || value.cause === error))
+        expect(leaves.some(value => value === error || value.cause === error))
             .to.be(true)
     }
 }
 
 describe("getErrors", () => {
+    for (const pending of [false, true]) {
+        it(`returns null, an unchanged leaf, or a frozen flat compound, pending=${pending}`, async () => {
+            const ctx = testOperationContext()
+            const first = runtime.createPoisonError(new Error("first"), ctx, runtime.ERROR_KIND.InvocationFailed)
+            const second = runtime.createPoisonError(new Error("second"), ctx, runtime.ERROR_KIND.QueryReflectionFailed)
+            const nested = runtime.combineErrors([first, second], "nested")
+            for (const errors of [[], [first], [first, second]]) {
+                const branch = errors.length === 2 ? { first, nested } : { errors }
+                branch.self = branch
+                const chain = new Chain(pending ? Promise.resolve(branch) : branch)
+                const result = getErrors(chain, [])
+                expect(result instanceof Promise).to.be(pending)
+                const value = await result
+                if (errors.length === 0) expect(value).to.be(null)
+                else if (errors.length === 1) expect(value).to.be(first)
+                else {
+                    expect(value).to.be.a(runtime.CompoundPoisonError)
+                    expect(Object.isFrozen(value)).to.be(true)
+                    expect(Object.isFrozen(value.errors)).to.be(true)
+                    expectErrors(value, [first, second])
+                    expect(value.errors.every(error => error.errors === undefined)).to.be(true)
+                }
+                verifyRefCounts(chain._state.value)
+            }
+        })
+    }
+
     it("treats shared publication failures as graph Errors", async () => {
         for (const query of [hasError, getErrors]) {
             const pending = deferred()
@@ -101,13 +136,8 @@ describe("getErrors", () => {
             const result = query(new Chain({ outer: outer.promise }), [])
             outer.resolve(value)
 
-            let rejected
-            try {
-                await result
-            } catch (error) {
-                rejected = error
-            }
-            expect(errorCause(rejected)).to.be(failure)
+            const failureResult = await result
+            expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
             expect(scans).to.be(2)
 
@@ -142,13 +172,8 @@ describe("getErrors", () => {
             )
             pending.resolve(value)
 
-            let rejected
-            try {
-                await result
-            } catch (error) {
-                rejected = error
-            }
-            expect(errorCause(rejected)).to.be(failure)
+            const failureResult = await result
+            expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })
@@ -176,13 +201,8 @@ describe("getErrors", () => {
             await flushMicrotasks()
             second.resolve(value)
 
-            let rejected
-            try {
-                await result
-            } catch (error) {
-                rejected = error
-            }
-            expect(errorCause(rejected)).to.be(failure)
+            const failureResult = await result
+            expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })
@@ -271,7 +291,7 @@ describe("getErrors", () => {
         buildRefIndex(root)
         cleanReads = 0
 
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         expect(hasError(new Chain(root), [])).to.be(false)
 
         expect(cleanReads).to.be(0)
@@ -295,9 +315,9 @@ describe("getErrors", () => {
         buildRefIndex(first)
         cleanReads = 0
 
-        expect(getErrors(new Chain(second), [])).to.eql([])
+        expect(getErrors(new Chain(second), [])).to.be(null)
         expect(hasError(new Chain(second), [])).to.be(false)
-        expect(getErrors(new Chain(second), ["back"])).to.eql([])
+        expect(getErrors(new Chain(second), ["back"])).to.be(null)
         expect(hasError(new Chain(second), ["back"])).to.be(false)
 
         expect(cleanReads).to.be(0)
@@ -463,7 +483,7 @@ describe("getErrors", () => {
             ["hidden"],
             ["__proto__"],
         ]) {
-            expect(getErrors(new Chain(root), path)).to.eql([])
+            expect(getErrors(new Chain(root), path)).to.be(null)
         }
         for (const path of [
             ["missing", "x"],
@@ -472,13 +492,13 @@ describe("getErrors", () => {
             ["__proto__", "x"],
         ]) {
             const errors = getErrors(new Chain(root), path)
-            expect(errors.length).to.be(1)
-            expect(errors[0].message).to.be(
+            expect(errors.errors).to.be(undefined)
+            expect(errors.message).to.be(
                 "Cannot access property through missing or primitive value",
             )
         }
         expectErrors(getErrors(new Chain(rootError), []), [rootError])
-        expect(getErrors(new Chain(7), [])).to.eql([])
+        expect(getErrors(new Chain(7), [])).to.be(null)
     })
 
     it("deduplicates Error identities through arrays and DAGs", () => {
@@ -522,9 +542,9 @@ describe("getErrors", () => {
         const cyclicErrors = getErrors(new Chain(cyclic), [])
         const frozenErrors = getErrors(new Chain(frozen), [])
 
-        expect(cyclicErrors).to.eql([])
-        expect(frozenErrors.length).to.be(1)
-        expect(errorCause(frozenErrors[0])).to.be(frozenError)
+        expect(cyclicErrors).to.be(null)
+        expect(frozenErrors.errors).to.be(undefined)
+        expect(errorCause(frozenErrors)).to.be(frozenError)
     })
 
     it("collects errors through every promise barrier before returning", async () => {
@@ -556,10 +576,10 @@ describe("getErrors", () => {
         slow.resolve({ repeated: synchronous })
         const errors = await result
 
-        expect(errors.some(error => error.cause === synchronous)).to.be(true)
-        expect(errors.some(error => error.cause === nested)).to.be(true)
-        expect(errors.filter(error => error.message === "rejected").length).to.be(1)
-        expect(errors.length).to.be(3)
+        expect(errors.errors.some(error => error.cause === synchronous)).to.be(true)
+        expect(errors.errors.some(error => error.cause === nested)).to.be(true)
+        expect(errors.errors.filter(error => error.message === "rejected").length).to.be(1)
+        expect(errors.errors.length).to.be(3)
         verifyRefCounts(branch)
     })
 
@@ -585,8 +605,8 @@ describe("getErrors", () => {
 
         pending.reject("bad")
         const errors = await result
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be("bad")
+        expect(errors.errors).to.be(undefined)
+        expect(errors.message).to.be("bad")
         verifyRefCounts(root)
     })
 
@@ -607,8 +627,8 @@ describe("getErrors", () => {
 
         pending.reject("diamond failure")
         const errors = await result
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be("diamond failure")
+        expect(errors.errors).to.be(undefined)
+        expect(errors.message).to.be("diamond failure")
         verifyRefCounts(root)
     })
 
@@ -640,7 +660,7 @@ describe("getErrors", () => {
         expect(meta.shared).to.be(undefined)
 
         pending.resolve("clean")
-        expect(await result).to.eql([])
+        expect(await result).to.be(null)
         expect(meta.shared).to.be(undefined)
     })
 
@@ -655,7 +675,7 @@ describe("getErrors", () => {
         const foundAfter = hasError(chain, ["branch"])
 
         initial.resolve("clean")
-        expect(await collectedBefore).to.eql([])
+        expect(await collectedBefore).to.be(null)
 
         later.reject(laterError)
         expect(await foundAfter).to.be(true)
@@ -750,7 +770,7 @@ describe("getErrors", () => {
         assignPath(laterChain, ["pending", "bad"], laterError)
         later.resolve({})
 
-        expect(await laterResult).to.eql([])
+        expect(await laterResult).to.be(null)
         expect(hasError(laterChain, [])).to.be(true)
     })
 
@@ -763,7 +783,7 @@ describe("getErrors", () => {
         const afterEarlierReplacement = getErrors(beforeChain, [])
         fixedBefore.resolve({ bad: transient })
 
-        expect(await afterEarlierReplacement).to.eql([])
+        expect(await afterEarlierReplacement).to.be(null)
         expect(beforeChain._state.value.pending).to.eql({ bad: "fixed" })
 
         const fixedAfter = deferred()
@@ -787,7 +807,7 @@ describe("getErrors", () => {
         assignPath(chain, ["branch", "stable", "bad"], future)
         pending.resolve("clean")
 
-        expect(await result).to.eql([])
+        expect(await result).to.be(null)
         expect(hasError(chain, ["branch"])).to.be(true)
     })
 
@@ -816,12 +836,12 @@ describe("getErrors", () => {
         nested.resolve({ bad: nestedError })
 
         const errors = await result
-        expect(errors.some(error => error.cause === overwrittenError)).to.be(
+        expect(errors.errors.some(error => error.cause === overwrittenError)).to.be(
             true,
         )
-        expect(errors.some(error => error.cause === nestedError)).to.be(true)
-        expect(errors.filter(error => error.message === "deleted").length).to.be(1)
-        expect(errors.length).to.be(3)
+        expect(errors.errors.some(error => error.cause === nestedError)).to.be(true)
+        expect(errors.errors.filter(error => error.message === "deleted").length).to.be(1)
+        expect(errors.errors.length).to.be(3)
         expect(chain._state.value.branch).to.eql({ overwritten: "replacement" })
         verifyRefCounts(chain._state.value, privateBranch)
     })
@@ -837,7 +857,7 @@ describe("getErrors", () => {
         pending.resolve(branch)
 
         const errors = await result
-        expect(errors).to.eql([])
+        expect(errors).to.be(null)
         expect(chain._state.value.pending).to.be("replacement")
         expect(branch.pending).to.be(pending.promise)
         expect(readPath(new Chain(branch), ["pending"])).to.be(branch)
@@ -854,7 +874,7 @@ describe("getErrors", () => {
         pending.resolve(branch)
 
         const errors = await result
-        expect(errors).to.eql([])
+        expect(errors).to.be(null)
         expect(chain._state.value.pending).to.be("replacement")
     })
 
@@ -899,8 +919,8 @@ describe("getErrors", () => {
         pending.resolve({})
         const errors = await result
 
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be(
+        expect(errors.errors).to.be(undefined)
+        expect(errors.message).to.be(
             "Cannot access property through missing or primitive value",
         )
     })
@@ -927,11 +947,11 @@ describe("getErrors", () => {
         pending.reject("sealed terminal")
 
         const errors = await result
-        expect(errors.length).to.be(1)
-        expect(errors[0].message).to.be("sealed terminal")
+        expect(errors.errors).to.be(undefined)
+        expect(errors.message).to.be("sealed terminal")
         expect(sealed.pending).to.be(pending.promise)
         expect(readPath(new Chain(sealed), ["pending"])).to.be(
-            errors[0],
+            errors,
         )
         expect(metaOf(sealed).placementVersions.pending).not.to.be(undefined)
         expect(getRefCounter(sealed)).to.be(undefined)
@@ -941,13 +961,13 @@ describe("getErrors", () => {
         const error = new Error("bad")
         const chain = new Chain({ bad: error, clean: {} })
 
-        expect(hasError(chain, ["bad"])).to.be(getErrors(chain, ["bad"]).length > 0)
-        expect(hasError(chain, ["clean"])).to.be(getErrors(chain, ["clean"]).length > 0)
+        expect(hasError(chain, ["bad"])).to.be(getErrors(chain, ["bad"]) !== null)
+        expect(hasError(chain, ["clean"])).to.be(getErrors(chain, ["clean"]) !== null)
         expect(hasError(chain, ["bad", "x"])).to.be(
-            getErrors(chain, ["bad", "x"]).length > 0,
+            getErrors(chain, ["bad", "x"]) !== null,
         )
         expect(hasError(chain, ["missing", "x"])).to.be(
-            getErrors(chain, ["missing", "x"]).length > 0,
+            getErrors(chain, ["missing", "x"]) !== null,
         )
     })
 
@@ -963,6 +983,6 @@ describe("getErrors", () => {
         inner.reject("bad")
 
         const [found, errors] = await Promise.all([foundError, collectedErrors])
-        expect(found).to.be(errors.length > 0)
+        expect(found).to.be(errors !== null)
     })
 })

@@ -469,7 +469,7 @@ describe("import", () => {
         expect(hasError(new Chain(root), [])).to.be(false)
         expect(hasCycleCut(shared, "pending")).to.be(true)
         expect(metaOf(bridge).cycleCuts).to.be(undefined)
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         verifyRefCounts(root, shared, bridge)
     })
 
@@ -488,7 +488,7 @@ describe("import", () => {
 
         expect(hasCycleCut(ancestor, "pending")).to.be(true)
         expect(metaOf(tail).cycleCuts).to.be(undefined)
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         verifyRefCounts(root, ancestor, bridge, tail)
     })
 
@@ -510,7 +510,7 @@ describe("import", () => {
         expect(metaOf(internal).cycleCuts.has("self")).to.be(true)
         expect(hasCycleCut(resolved, "back")).to.be(true)
         expect(metaOf(unique).shared).to.be(true)
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         verifyRefCounts(root)
     })
 
@@ -576,7 +576,7 @@ describe("import", () => {
         expect(metaOf(left).cycleCuts).to.be(undefined)
         expect(metaOf(right).cycleCuts.has("left")).to.be(true)
         expect(metaOf(right).cycleCuts.has("self")).to.be(true)
-        expect(getErrors(new Chain(right), [])).to.eql([])
+        expect(getErrors(new Chain(right), [])).to.be(null)
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
         expect(metaOf(right).cycleCuts.has("left")).to.be(true)
@@ -609,7 +609,7 @@ describe("import", () => {
         expect(metaOf(d).cycleCuts).to.be(undefined)
         expectCounts(b, 0, 0, 2)
         expect(hasError(new Chain(b), [])).to.be(false)
-        expect(getErrors(new Chain(b), [])).to.eql([])
+        expect(getErrors(new Chain(b), [])).to.be(null)
         verifyRefCounts(b, x)
     })
 
@@ -647,9 +647,9 @@ describe("import", () => {
             rightResolvedError,
         ]
         for (const errors of [await leftResult, await rightResult]) {
-            expect(errors.length).to.be(expectedErrors.length)
+            expect(errors.errors.length).to.be(expectedErrors.length)
             for (const error of expectedErrors) {
-                expect(errors.some(value => errorCause(value) === error))
+                expect(errors.errors.some(value => errorCause(value) === error))
                     .to.be(true)
             }
         }
@@ -674,7 +674,7 @@ describe("import", () => {
             ["next", "next", "name"],
             false,
         )).to.be("second")
-        expect(getErrors(new Chain(extracted), [])).to.eql([])
+        expect(getErrors(new Chain(extracted), [])).to.be(null)
         expect(metaOf(second).cycleCuts.has("next")).to.be(true)
     })
 
@@ -757,7 +757,7 @@ describe("import", () => {
         buildRefIndex(destination)
         expectCounts(destination, 0, 0, 1)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
 
         const exported = exportValue(chain, [])
         expect(exported.slot.imported.pending).to.be(exported)
@@ -791,7 +791,7 @@ describe("import", () => {
         await flushMicrotasks()
         expectCounts(destination, 0, 0, 1)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
 
         const exported = exportValue(chain, [])
         expect(exported.slot.imported).to.be(exported)
@@ -819,7 +819,7 @@ describe("import", () => {
         pending.resolve(destination)
 
         expect(await hasErrorResult).to.be(false)
-        expect(await getErrorsResult).to.eql([])
+        expect(await getErrorsResult).to.be(null)
         expect(hasCycleCut(incoming, "pending")).to.be(true)
         expect(metaOf(destination).cycleCuts).to.be(undefined)
         expect(hasError(chain, [])).to.be(false)
@@ -846,7 +846,7 @@ describe("import", () => {
         expect(hasCycleCut(incoming, "pending")).to.be(true)
         expect(metaOf(destination).cycleCuts).to.be(undefined)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         verifyRefCounts(destination, incoming)
 
         assignPath(chain, ["value"], null)
@@ -927,7 +927,7 @@ describe("import", () => {
 
         buildRefIndex(cyclic)
         expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
-        expect(getErrors(new Chain(incoming), [])).to.eql([])
+        expect(getErrors(new Chain(incoming), [])).to.be(null)
     })
 
     it("stores cycle cuts for frozen imports", () => {
@@ -953,7 +953,7 @@ describe("import", () => {
         const chain = new Chain(importValue(root, "nested frozen cycle"))
 
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         const copy = exportValue(chain, [])
         expect(copy).not.to.be(root)
         expect(copy.child.self).to.be(copy.child)
@@ -1034,7 +1034,7 @@ describe("import", () => {
         expect(await second).to.be(cyclic)
 
         buildRefIndex(cyclic)
-        expect(getErrors(new Chain(cyclic), [])).to.eql([])
+        expect(getErrors(new Chain(cyclic), [])).to.be(null)
         expect(metaOf(cyclic).imported).to.be(true)
         expect(metaOf(cyclic).cycleCuts.has("self")).to.be(true)
     })
@@ -1086,7 +1086,7 @@ describe("import", () => {
         expect(frozen.pending).to.be(frozenPending)
         expect(readPath(new Chain(sealed), ["pending"])).to.be(1)
         expect(readPath(new Chain(frozen), ["pending"])).to.be(2)
-        expect(errorCause(getErrors(new Chain(nonExtensibleError), [])[0]))
+        expect(errorCause(getErrors(new Chain(nonExtensibleError), [])))
             .to.be(error)
         expectCounts(sealed, 0, 0)
         expectCounts(frozen, 0, 0)
@@ -1131,7 +1131,7 @@ describe("import", () => {
         expect(readPath(new Chain(array), ["0"])).to.eql({ x: 1 })
         expect(readPath(new Chain(nested), ["pending"])).to.be(2)
         expect(hasError(new Chain(array), [])).to.be(false)
-        expect(getErrors(new Chain(array), [])).to.eql([])
+        expect(getErrors(new Chain(array), [])).to.be(null)
         expectCounts(array, 0, 0)
         verifyRefCounts(array)
     })
@@ -1156,9 +1156,9 @@ describe("import", () => {
         pending.resolve({ error: resolvedError })
 
         const errors = await result
-        expect(errors.length).to.be(2)
-        expect(errors.map(errorCause)).to.contain(directError)
-        expect(errors.map(errorCause)).to.contain(resolvedError)
+        expect(errors.errors.length).to.be(2)
+        expect(errors.errors.map(errorCause)).to.contain(directError)
+        expect(errors.errors.map(errorCause)).to.contain(resolvedError)
         expectCounts(array, 0, 2, 1)
         verifyRefCounts(array)
     })
@@ -1175,8 +1175,8 @@ describe("import", () => {
         pending.reject(error)
         const result = await errors
 
-        expect(result.length).to.be(1)
-        expect(errorCause(result[0])).to.be(error)
+        expect(result.errors).to.be(undefined)
+        expect(errorCause(result)).to.be(error)
         expect(root.pending).to.be(pending.promise)
         expect(errorCause(readPath(new Chain(root), ["pending"]))).to.be(error)
         expectCounts(root, 0, 1)
@@ -1225,8 +1225,8 @@ describe("import", () => {
 
         const errors = await getErrors(chain, [])
 
-        expect(errors.length).to.be(1)
-        expect(errorCause(errors[0])).to.be(secondError)
+        expect(errors.errors).to.be(undefined)
+        expect(errorCause(errors)).to.be(secondError)
         expect(wrapper.keep).to.be(true)
         expect(wrapper.first).to.be(first)
         expect(wrapper.second).to.be(second)
@@ -1239,7 +1239,7 @@ describe("import", () => {
         assignPath(chain, ["first", "clean"], 2)
         expect(chain._state.value.first.clean).to.be(2)
         expect(first.clean).to.be(1)
-        expect((await getErrors(chain, [])).length).to.be(1)
+        expect((await getErrors(chain, [])).cause).to.be(secondError)
         verifyRefCounts(chain._state.value)
     })
 
@@ -1277,7 +1277,7 @@ describe("import", () => {
         buildRefIndex(root)
         expect(metaOf(root).cycleCuts.has("__proto__")).to.be(true)
         expect(hasError(new Chain(root), [])).to.be(false)
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         const exported = exportValue(new Chain(root), [])
         expect(exported).not.to.be(root)
         expect(Object.getOwnPropertyDescriptor(exported, "__proto__").value).to.be(
@@ -1310,7 +1310,7 @@ describe("import", () => {
         pending.resolve(resolved)
 
         expect(await found).to.be(false)
-        expect(await collected).to.eql([])
+        expect(await collected).to.be(null)
         const exportedValue = await exported
         expect(exportedValue).not.to.be(resolved)
         expect(exportedValue.clean).to.be(true)
@@ -1351,7 +1351,7 @@ describe("import", () => {
         expect(readPath(new Chain(copy), ["__proto__"])).to.be("hidden")
         expect(Object.getPrototypeOf(copy)).to.be(Object.prototype)
         expect(await hasError(chain, [])).to.be(false)
-        expect(errors).to.eql([])
+        expect(errors).to.be(null)
         expect(Object.getOwnPropertyDescriptor(exported, "__proto__").value).to.be("hidden")
         expect(Object.getPrototypeOf(exported)).to.be(Object.prototype)
         expect(external.branch.value).to.be(1)
@@ -1656,7 +1656,7 @@ describe("import", () => {
 
         expect(root.nested.value).to.be(deferredValue.promise)
         expect(resolved.pending).to.be(nestedPending)
-        expect(await getErrors(new Chain(root), [])).to.eql([])
+        expect(await getErrors(new Chain(root), [])).to.be(null)
         expect(readPath(new Chain(root), ["nested", "value", "pending"])).to.be(1)
         expectCounts(root, 0, 0)
         verifyRefCounts(root)
@@ -1675,7 +1675,7 @@ describe("import", () => {
 
         pending.resolve(errorValue)
 
-        expect(errorCause((await errors)[0])).to.be(errorValue.bad)
+        expect(errorCause(await errors)).to.be(errorValue.bad)
         expect(root.value).to.be("fixed")
         expectCounts(root, 0, 0)
         verifyRefCounts(root, errorValue)
@@ -1726,7 +1726,7 @@ describe("import", () => {
         expect(readPath(new Chain(root), ["nested", "value"])).to.be(
             resolved,
         )
-        expect(getErrors(new Chain(root), [])).to.eql([])
+        expect(getErrors(new Chain(root), [])).to.be(null)
         expect(metaOf(resolved).cycleCuts).to.be(undefined)
         expect(hasCycleCut(root.nested, "value")).to.be(true)
         expect(metaOf(resolved).shared).to.be(true)
@@ -1796,7 +1796,7 @@ describe("import", () => {
 
         expect(next.nested.value).to.be(escaped)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         verifyRefCounts(next, escaped)
     })
 
@@ -1820,7 +1820,7 @@ describe("import", () => {
         expect(next.self).to.be(next)
         expect(readPath(chain, ["self"])).to.be(next)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         verifyRefCounts(next)
     })
 
@@ -1849,7 +1849,7 @@ describe("import", () => {
         expect(readPath(new Chain(root), ["pending"])).to.be(copy)
         expect(readPath(new Chain(copy), ["pending"])).to.be(copy)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
         verifyRefCounts(root, copy)
     })
 

@@ -24,6 +24,7 @@ function expectFatal(work) {
 describe("operation context", () => {
     for (const [name, operation] of [
         ["lookupPath", (chain, ctx) => runtime.lookupPath(chain, ["count"], ctx)],
+        ["lookupPathForExpression", (chain, ctx) => runtime.lookupPathForExpression(chain, ["count"], ctx)],
         ["readPath", (chain, ctx) => readPath(chain, ["count"], ctx)],
         ["export", (chain, ctx) => runtime.export(chain, [], ctx)],
         ["hasError", (chain, ctx) => runtime.hasError(chain, [], ctx)],

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import * as kernel from "cascada-chain-resolution/integration"
 import * as refcounts from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
@@ -70,7 +69,7 @@ describe("query and export failure boundaries", () => {
                     )
                     const result = query(chain, [], ctx)
                     const failure = deferred
-                        ? await result.catch(error => error)
+                        ? await result
                         : result
                     assert(runtime.isPoisonError(failure))
                     assert.equal(failure.cause, cause)
@@ -82,7 +81,7 @@ describe("query and export failure boundaries", () => {
                     assert.equal(ctx.execution.fatalError, null)
                     fail = false
                     assert.equal(runtime.hasError(chain, [], ctx), false)
-                    assert.deepEqual(runtime.getErrors(chain, [], ctx), [])
+                    assert.equal(runtime.getErrors(chain, [], ctx), null)
                     runtime.assignPath(chain, ["clean"], 2, ctx)
                     verifyRefCounts(ctx, root, chain._state.value)
                 },
@@ -90,12 +89,12 @@ describe("query and export failure boundaries", () => {
         }
     }
 
-    it("rejects partial getErrors promptly without waiting for unrelated pending siblings", async () => {
+    it("finishes failed getErrors promptly without waiting for unrelated pending siblings", async () => {
         const ctx = context()
-        const known = kernel.createPoisonError(
+        const known = runtime.createPoisonError(
             new Error("known"),
             ctx,
-            kernel.ERROR_KIND.InvocationFailed,
+            runtime.ERROR_KIND.InvocationFailed,
         )
         const reveal = Promise.withResolvers()
         const cause = new Error("query scan")
@@ -149,14 +148,12 @@ describe("query and export failure boundaries", () => {
                     ctx,
                 )
                 const result = runtime.hasError(chain, [], ctx)
-                // Install rejection ownership before choosing either outcome.
-                const outcome = result.catch(error => error)
                 if (proofFirst) proof.reject(new Error("proof"))
                 else reveal.resolve(branch)
                 await flush()
                 if (proofFirst) reveal.resolve(branch)
                 else proof.reject(new Error("proof"))
-                const answer = await outcome
+                const answer = await result
                 await flush()
                 if (proofFirst) {
                     assert.equal(answer, true)

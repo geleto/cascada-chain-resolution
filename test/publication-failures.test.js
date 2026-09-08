@@ -201,7 +201,7 @@ describe("complete publication failures", () => {
                     assert.equal(original.errorContext, introduced.errorContext)
                     assert.equal(physical.value, later.promise)
                     assert.equal(runtime.lookupPath(chain, ["value"], ctx), result)
-                    assert.equal(runtime.getErrors(chain, [], ctx).length, repeated ? 1 : 2)
+                    assert.deepEqual(new Set(leaves(runtime.getErrors(chain, [], ctx))), new Set(leaves(result)))
                     assert.equal(ctx.execution.fatalError, null)
                     verifyRefCounts(ctx, source)
                 })

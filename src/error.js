@@ -14,6 +14,7 @@ const ERROR_KIND = Object.freeze({
     NullLookup: "NullLookup",
     ScalarLookup: "ScalarLookup",
     LookupReflectionFailed: "LookupReflectionFailed",
+    InvalidExpressionValue: "InvalidExpressionValue",
     QueryReflectionFailed: "QueryReflectionFailed",
     MissingFunction: "MissingFunction",
     NotAFunction: "NotAFunction",
@@ -80,8 +81,6 @@ class FatalError extends Error {
         this.errorContext = errorContext
     }
 }
-
-// PoisonError receives its sync-first then method in Phase 9D-B.
 
 function isPoisonError(error) {
     return Error.isError(error) && error instanceof PoisonError

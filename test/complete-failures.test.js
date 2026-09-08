@@ -1,6 +1,5 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import * as kernel from "cascada-chain-resolution/integration"
 import * as metadata from "../src/meta.js"
 import { ready } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
@@ -243,7 +242,7 @@ describe("complete failure outcomes", () => {
     it("deduplicates an existing poison shared by result import and receiver validation", () => {
         const ctx = context()
         const original = context(ctx.execution)
-        const poison = kernel.createPoisonError(new Error("shared failure"), original, runtime.ERROR_KIND.InvocationFailed)
+        const poison = runtime.createPoisonError(new Error("shared failure"), original, runtime.ERROR_KIND.InvocationFailed)
         const output = new Proxy({}, { ownKeys() { throw poison } })
         const chain = new runtime.Chain({ change() { this.bad = poison; return output } }, ctx)
         assert.equal(runtime.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 }), poison)

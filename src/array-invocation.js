@@ -246,13 +246,13 @@ function invokeArrayMutationMethod(
         if (returnsReceiver) result = mutatedValue
         else if (errorUtils.isPoisonError(mutatedValue)) {
             // Publish receiver failure now; only the independent result waits.
-            result = internalSteps.collectInputs(
-                [mutatedValue, result],
+            result = internalSteps.continueOperation(
+                result,
                 invocationContext.operationContext,
-                values => errorUtils.combineErrors(
-                    values.filter(errorUtils.isPoisonError),
-                    "Array mutation failed",
-                ),
+                value => errorUtils.isPoisonError(value)
+                    ? errorUtils.combineErrors([mutatedValue, value], "Array mutation failed")
+                    : mutatedValue,
+                undefined,
                 invocationContext,
             )
         }

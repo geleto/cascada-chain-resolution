@@ -94,7 +94,7 @@ describe("Chain root state", () => {
             expect(lookupPath(new Chain(primitive), [])).to.be(primitive)
             expect(exportValue(new Chain(primitive), [])).to.be(primitive)
             expect(hasError(new Chain(primitive), [])).to.be(false)
-            expect(getErrors(new Chain(primitive), [])).to.eql([])
+            expect(getErrors(new Chain(primitive), [])).to.be(null)
 
             const lookupError = lookupPath(new Chain(primitive), ["child"])
             const exportError = exportValue(new Chain(primitive), ["child"])
@@ -102,14 +102,14 @@ describe("Chain root state", () => {
             for (const error of [
                 lookupError,
                 exportError,
-                ...errors,
+                errors,
             ]) {
                 expect(error instanceof Error).to.be(true)
                 expect(error.message).to.be(
                     "Cannot access property through missing or primitive value",
                 )
             }
-            expect(errors.length).to.be(1)
+            expect(errors.errors).to.be(undefined)
             expect(hasError(new Chain(primitive), ["child"])).to.be(true)
 
             const assignedRoot = new Chain(primitive)
@@ -139,7 +139,7 @@ describe("Chain root state", () => {
         expect(readPath(chain, [])).to.be(root)
         expect(readPath(chain, [0, "value"])).to.be(1)
         expect(hasError(chain, [])).to.be(false)
-        expect(getErrors(chain, [])).to.eql([])
+        expect(getErrors(chain, [])).to.be(null)
 
         const exported = exportValue(chain, [])
         expect(Array.isArray(exported)).to.be(true)

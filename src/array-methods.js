@@ -186,7 +186,7 @@ function publishValue(value) {
 function publishElement(element, sourceSurvives, invocationContext) {
     return sourceSurvives
         ? retainElement(element, invocationContext)
-        : transferElement(element, invocationContext)
+        : transferElement(element)
 }
 
 function publishArray(remap, sourceSurvives, invocationContext) {
@@ -198,23 +198,14 @@ function publishArray(remap, sourceSurvives, invocationContext) {
     )
 }
 
-function transferElement(element, invocationContext) {
-    const result = propertyVersions.isPropertyPlacement(element)
+function transferElement(element) {
+    return propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return internalSteps.continueOperation(
-        result,
-        invocationContext.operationContext,
-        value => value,
-        undefined,
-        invocationContext,
-    )
 }
 
 function retainElement(element, invocationContext) {
-    const result = propertyVersions.isPropertyPlacement(element)
-        ? element.resolveValue()
-        : element
+    const result = transferElement(element)
     return internalSteps.continueOperation(
         result,
         invocationContext.operationContext,

@@ -175,10 +175,10 @@ function transformValue(
     returnResultPromise,
 ) {
     let originalValue
-    const readiness = internalSteps.collectInputs(
-        [value],
+    const readiness = internalSteps.continueOperation(
+        value,
         operation.operationContext,
-        ([resolvedTargetValue]) =>
+        resolvedTargetValue =>
             recoverMutationFailure(() => {
                 originalValue = resolvedTargetValue
                 operation.mustPreserveValue = mustPreserveValue(
@@ -194,6 +194,7 @@ function transformValue(
                     operation,
                 )
             }),
+        undefined,
         operation,
     )
 
@@ -268,11 +269,9 @@ function transformValue(
     return result
 
     function normalizeMutationOutcome(outcome) {
-        return recoverMutationFailure(() =>
-            errorUtils.isPoisonError(outcome)
-                ? { mutatedValue: outcome, result: outcome }
-                : outcome,
-        )
+        return errorUtils.isPoisonError(outcome)
+            ? { mutatedValue: outcome, result: outcome }
+            : outcome
     }
 
     function recoverMutationFailure(fn) {
@@ -289,17 +288,9 @@ function transformValue(
     }
 
     function prepareMutationPublication(outcome) {
-        return recoverMutationFailure(() => {
-            if (
-                !errorUtils.isPoisonError(outcome.result) &&
-                outcome.result === outcome.mutatedValue
-            )
-                metadata.markShared(
-                    outcome.mutatedValue,
-                    operation.operationContext,
-                )
-            return outcome
-        })
+        if (outcome.result === outcome.mutatedValue)
+            metadata.markShared(outcome.mutatedValue, operation.operationContext)
+        return outcome
     }
 }
 
@@ -307,14 +298,12 @@ function transformValue(
 // does not extend the completed publication's owner or receiver protection.
 function includePublicationFailure(result, publishedValue, operationContext) {
     if (!errorUtils.isPoisonError(publishedValue) || result === publishedValue) return result
-    return internalSteps.collectInputs(
-        [result, publishedValue],
+    return internalSteps.continueOperation(
+        result,
         operationContext,
-        values => values[0] === publishedValue ? publishedValue
-            : errorUtils.combineErrors(
-                values.filter(errorUtils.isPoisonError),
-                "Mutation publication failed",
-            ),
+        value => errorUtils.isPoisonError(value)
+            ? errorUtils.combineErrors([value, publishedValue], "Mutation publication failed")
+            : publishedValue,
     )
 }
 

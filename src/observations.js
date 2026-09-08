@@ -22,7 +22,7 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
     run(chain, path, onResolved) {
         return internalSteps.runInternalStep(this.operationContext, () => {
             chain._assertOperationContext(this.operationContext)
-            const result = walkObservationPath(
+            return walkObservationPath(
                 chain,
                 path,
                 this.operationContext,
@@ -30,24 +30,6 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
                 error => this.finish(error),
                 errorUtils.ERROR_KIND.QueryReflectionFailed,
             )
-            if (!languageValues.isPending(result, this.operationContext))
-                return result
-            // Phase 9D-A: reject this query's failure while poison is non-thenable.
-            // Phase 9D-B removes this local transport when poison assimilates itself.
-            return new Promise((resolve, reject) => {
-                const completion = internalSteps.continueOperation(
-                    result,
-                    this.operationContext,
-                    value =>
-                        errorUtils.isPoisonError(value)
-                            ? reject(value)
-                            : resolve(value),
-                    reason => {
-                        reject(reason)
-                    },
-                )
-                markPromiseHandled(completion, this.operationContext)
-            })
         })
     }
     found(error) {
@@ -90,6 +72,28 @@ function lookupPath(chain, path, operationContext) {
         return walkObservationPath(chain, path, operationContext, value => {
             metadata.markShared(value, operationContext)
             return value
+        })
+    })
+}
+
+function lookupPathForExpression(chain, path, operationContext) {
+    return internalSteps.runInternalStep(operationContext, () => {
+        chain._assertOperationContext(operationContext)
+        return walkObservationPath(chain, path, operationContext, value => {
+            if (errorUtils.isPoisonError(value)) return value
+            switch (typeof value) {
+                case "string":
+                case "number":
+                case "boolean":
+                case "bigint":
+                    return value
+                default:
+                    return errorUtils.validationError(
+                        "Expression lookup requires a string, number, boolean, or bigint",
+                        operationContext,
+                        errorUtils.ERROR_KIND.InvalidExpressionValue,
+                    )
+            }
         })
     })
 }
@@ -150,7 +154,9 @@ function getErrorsAtPathValue(value, queryContext) {
     else if (languageValues.isTraversable(value, queryContext.operationContext))
         readiness = collectFencedErrorWaits(value, queryContext)
     return queryContext.complete(readiness, () =>
-        errorUtils.flattenAndDeduplicateErrors(queryContext.errors),
+        queryContext.errors.size === 0
+            ? null
+            : errorUtils.combineErrors(queryContext.errors, "Errors in queried value"),
     )
 }
 
@@ -342,6 +348,7 @@ export {
     getErrors,
     hasError,
     lookupPath,
+    lookupPathForExpression,
     readPath,
     walkObservationPath,
 }

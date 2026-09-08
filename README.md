@@ -103,17 +103,17 @@ identifies the source operation and may differ for every call.
 
 ### Errors
 
-`PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Trusted runtime code uses the factories from `cascada-chain-resolution/integration`; direct construction is outside the supported API. Complete wrappers and compound child arrays are frozen.
+`PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Trusted runtime code uses the factories from `cascada-chain-resolution`; direct construction is outside the supported API. Complete wrappers and compound child arrays are frozen.
 
 A poison retains its exact native `.cause`, opaque `.errorContext`, and stable `.kind`. Later propagation preserves them. Compounds and `getErrors` flatten and deduplicate by cause, source-context identity, and kind, with unspecified order. Exact causes follow the [diagnostic payload contract](docs/data-limitations.md#errors).
 
 A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Ready Error results can be inspected directly, and pending normalized graph operations fulfill with the same logical Error after required processing. Raw native Errors receive causal attribution before thenability recognition. FatalError stays non-thenable and is never graph data.
 
-The final graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) adds `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects with its ordinary `.error`.
+The graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) implements `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects directly with the ordinary Error.
 
 ### Higher-runtime integration
 
-The source currently implements Phase 9D-A, including its `./integration` surface and pending-query failure rejection. Phase 9D-B completes the [public higher-runtime API](docs/integration.md), removes that subpath and the query rejection wrapper, and adds expression extraction. Cascada then uses only the documented root API; graph values stay in operation Chains and expression failures use the separate container.
+The source implements Phase 9D-B and the [public higher-runtime API](docs/integration.md). Cascada uses the documented root API for Chain operations, guarded composition, Error factories, and expression extraction. Graph values stay in operation Chains. Only synchronous expression failure uses the separate container; pending failure uses ordinary Promise rejection.
 
 ### `new Chain(initialValue, operationContext)`
 
@@ -177,6 +177,18 @@ owner and is marked shared, ensuring later mutation through either owner is
 isolated by copy-on-write. The result is direct unless path traversal crosses a
 Promise.
 
+### `lookupPathForExpression(chain, path, operationContext)`
+
+Selects through the same path semantics as lookupPath, accepting only strings,
+numbers, booleans, and BigInts. Null, undefined, Symbols, and non-primitives
+produce InvalidExpressionValue without coercion, descendant traversal, or
+source mutation. A missing final property also fails this validation.
+
+Success returns the selected value directly or a Promise fulfilling with it.
+A synchronous failure returns a PoisonedValue containing the ordinary Error;
+a pending failure rejects directly with that Error. Existing failures retain
+their exact source and cause. Expression evaluation belongs to Cascada.
+
 ### `enter(chain, path, operationContext, entryMutable, onEntered)`
 
 Enters the value captured at `path` and passes a temporary Chain to
@@ -227,7 +239,7 @@ Boolean.
 
 ### `getErrors(chain, path, operationContext)`
 
-The Phase 9D-B contract returns null when no Error is found, the original Error
+Returns null when no Error is found, the original Error
 for one distinct leaf, or a CompoundPoisonError for several. It completes all
 required collection and deduplicates by cause, source-context identity, and kind.
 A broken required path contributes its path-access Error; a missing or healthy
