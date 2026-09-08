@@ -109,11 +109,11 @@ A poison retains its exact native `.cause`, opaque `.errorContext`, and stable `
 
 A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Ready Error results can be inspected directly, and pending normalized graph operations fulfill with the same logical Error after required processing. Raw native Errors receive causal attribution before thenability recognition. FatalError stays non-thenable and is never graph data.
 
-The final graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) adds `lookupPrimitiveValue` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects with its ordinary `.error`.
+The final graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) adds `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects with its ordinary `.error`.
 
 ### Higher-runtime integration
 
-The source currently implements Phase 9D-A, including its `./integration` surface and pending-query failure rejection. Phase 9D-B completes the [public higher-runtime API](docs/integration.md), removes that subpath and the query rejection wrapper, and adds primitive expression extraction. Cascada then uses only the documented root API; graph values stay in operation Chains and expression failures use the separate container.
+The source currently implements Phase 9D-A, including its `./integration` surface and pending-query failure rejection. Phase 9D-B completes the [public higher-runtime API](docs/integration.md), removes that subpath and the query rejection wrapper, and adds expression extraction. Cascada then uses only the documented root API; graph values stay in operation Chains and expression failures use the separate container.
 
 ### `new Chain(initialValue, operationContext)`
 
@@ -227,13 +227,14 @@ Boolean.
 
 ### `getErrors(chain, path, operationContext)`
 
-Returns each distinct reachable `Error` identity once. A broken required path
-contributes its path-access Error; a missing or primitive final value contributes
-nothing. The result is an Array when complete synchronously and otherwise a
-Promise for the Array.
-
-Separately contextualized occurrences of one native Error remain distinct here.
-Export groups those occurrences by their shared native cause.
+The Phase 9D-B contract returns null when no Error is found, the original Error
+for one distinct leaf, or a CompoundPoisonError for several. It completes all
+required collection and deduplicates by cause, source-context identity, and kind.
+A broken required path contributes its path-access Error; a missing or healthy
+primitive final value contributes nothing. The result is direct when ready;
+a pending result fulfills with the same null or ordinary Error. Query-reflection
+failure returns its own QueryReflectionFailed Error instead of a completed
+collection. No PoisonedValue is created by this operation.
 
 ### Data declarations
 
