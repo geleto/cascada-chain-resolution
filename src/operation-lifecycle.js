@@ -1,3 +1,7 @@
+// Keep this module minimal: a direct `open` fact, an idempotent `close()`, and lazy local
+// release registration. Publication stays at its natural semantic boundary, and release
+// registration never tracks or cancels work. See AGENTS.md "Operation Work Lifetimes".
+
 class OperationOwner {
     open = true
     constructor(operationContext) {

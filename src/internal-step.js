@@ -1,3 +1,8 @@
+// This module owns the one guarded operation-work family: immediate entry, continuation
+// after one result, initial value consumption, complete input collection, and clean-input
+// preparation. These share the execution and owner checks; do not grow them into
+// configurable lifecycle or Error-policy variants. See AGENTS.md "Operation Work Lifetimes".
+
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
