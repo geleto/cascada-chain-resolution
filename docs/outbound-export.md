@@ -15,7 +15,7 @@ The copier:
 - preserves Array length, holes, indexed keys, own-key order, enumerable `__proto__`, and admitted prototypes;
 - creates class copies without invoking constructors;
 - keeps Functions and external identities exact; and
-- emits no ArrayView, Promise mirror, metadata, counter, or other runtime representation.
+- emits no ArrayView, Promise version, metadata, counter, or other runtime representation.
 
 Every successful output follows the native `then` contract in [`data-limitations.md`](data-limitations.md). Exact Functions and external leaves must have a stable native lookup that safely yields a non-callable value from their first use onward; ready and pending export both preserve those exact identities. Managed producers validate their native lookup surface before publication. Export copies only language placements and preserves admitted prototypes; it does not copy hidden properties or add an exact-value probe or result wrapper.
 
@@ -34,7 +34,7 @@ An Error discards partial output but does not stop the scan: pending captured br
 
 ## Promise ordering
 
-Export traverses every available placement synchronously. A pending placement is captured through its exact Promise mirror. Its FIFO continuation traverses each newly revealed branch synchronously once before returning.
+Export traverses every available placement synchronously. A pending placement is captured through its exact Promise version. Its FIFO continuation traverses each newly revealed branch synchronously once before returning.
 
 The operation retains output copies, its identity tables, and captured property versions. It does not lease or reread managed source identities. Later managed mutation may therefore proceed normally without changing the captured output.
 
@@ -44,7 +44,7 @@ Export captures only the selected path and the Promise frontier recursively expo
 
 Export operation work uses its containing operation's owner, or its own owner when export is standalone. A nested export receives only that owner, whose operation context is therefore authoritative. Export output has a separate resource lifetime: handing completed copies to the caller or discarding them releases output-only copies and identity maps without closing a containing operation. Export runs each possible-Promise branch first and derives pending lifetime from the normalized aggregate result, not from an input pre-scan or output backwrite. A pending nested export registers its release with the owner and unregisters on completion, so owner closure releases partial output even when an input never settles. A language Error discards output while the required Error scan continues. After required shared settlement, local owner closure in a live execution stops later export traversal. If the execution is fatal, a resumed export returns at the common execution check before settlement or traversal.
 
-In a live execution, an already-registered property continuation still completes its mirror and version settlement, then performs no export allocation, source reflection, or publication after local operation closure. In a fatal execution it performs neither settlement nor export work.
+In a live execution, an already-registered property continuation still completes its Promise version and version settlement, then performs no export allocation, source reflection, or publication after local operation closure. In a fatal execution it performs neither settlement nor export work.
 
 The result is synchronous when every consumed frontier transition returns directly, including sync-first custom thenables. Otherwise one operation Promise fulfills with the completed copy or the final ordinary language Error. Export reflection failures use the export operation's source and kind; unexpected internal readiness failure becomes a fatal `FatalError` at that operation.
 

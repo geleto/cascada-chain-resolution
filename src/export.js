@@ -133,7 +133,7 @@ function exportValues(values, owner, onResult) {
                 // Fix output key order at capture, before any settlement.
                 if (copies)
                     writeOutputProperty(copies.get(value), key, undefined)
-                readiness = propertyVersions.continuePropertyValue(
+                readiness = propertyVersions.continuePromiseVersion(
                     value,
                     key,
                     child,

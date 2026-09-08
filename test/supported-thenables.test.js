@@ -252,17 +252,17 @@ describe("supported thenables", () => {
         assert.equal(ctx.execution.fatalError, null)
     })
 
-    it("normalizes ready root and property values without changing mirrors", () => {
+    it("normalizes ready root and property values without changing versions", () => {
         const ctx = context()
         const root = { count: ready(1) }
         const chain = new runtime.Chain(ready(root), ctx)
         assert.equal(chain._state.value, root)
         assert.equal(runtime.lookupPath(chain, ["count"], ctx), 1)
         assert.equal(root.count, 1)
-        assert.equal(properties.getPromiseMirror(root, "count", ctx), undefined)
+        assert.equal(properties.getPromiseVersion(root, "count", ctx), undefined)
         runtime.assignPath(chain, ["count"], ready(2), ctx)
         assert.equal(chain._state.value.count, 2)
-        assert.equal(properties.getPromiseMirror(chain._state.value, "count", ctx), undefined)
+        assert.equal(properties.getPromiseVersion(chain._state.value, "count", ctx), undefined)
         assert.equal(ctx.execution._thenables, undefined)
     })
 
@@ -274,7 +274,7 @@ describe("supported thenables", () => {
         assert.equal(root.child, source)
         const version = metadata.metaOf(root, ctx).placementVersions.child
         assert.deepEqual(version.value, { count: 1 })
-        assert.equal(version.promise, undefined)
+        assert.equal(version.promiseBacked, undefined)
         assert.equal(runtime.lookupPath(new runtime.Chain(root, ctx), ["child", "count"], ctx), 1)
     })
 

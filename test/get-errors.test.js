@@ -233,7 +233,7 @@ describe("getErrors", () => {
         expectErrors(await collected, [firstError, secondError])
     })
 
-    it("reports a missing indexed promise mirror as fatal", () => {
+    it("reports a missing indexed Promise version as fatal", () => {
         for (const query of [hasError, getErrors]) {
             useTestExecution()
             const pending = deferred()
@@ -245,7 +245,7 @@ describe("getErrors", () => {
 
             expect(failure instanceof Error).to.be(true)
             expect(failure.message).to.be(
-                "Indexed promise property has no mirror",
+                "Indexed promise property has no Promise version",
             )
         }
     })
@@ -811,7 +811,7 @@ describe("getErrors", () => {
         expect(hasError(chain, ["branch"])).to.be(true)
     })
 
-    it("collects private results from overwritten and deleted mirrors", async () => {
+    it("collects private results from overwritten and deleted versions", async () => {
         const overwritten = deferred()
         const deleted = deferred()
         const nested = deferred()
@@ -938,7 +938,7 @@ describe("getErrors", () => {
         expect(chain._state.value).to.eql({ clean: true })
     })
 
-    it("reads terminal promises on sealed parents through mirrors", async () => {
+    it("reads terminal promises on sealed parents through versions", async () => {
         const pending = deferred()
         const sealed = Object.seal({ pending: pending.promise })
         importValue(sealed, "sealed terminal")

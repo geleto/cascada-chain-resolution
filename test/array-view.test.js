@@ -113,12 +113,12 @@ describe("ArrayView", () => {
         ])
     })
 
-    it("forks retained Promise mirrors for each derived value", async () => {
+    it("forks retained Promise versions for each derived value", async () => {
         const pending = deferred()
         const source = [pending.promise, 2]
         new Chain(source)
         propertyVersions.getPropertyPlacement(source, "0").captureVersion()
-        const sourceMirror = propertyVersions.getPromiseMirror(source, "0")
+        const sourceVersion = propertyVersions.getPromiseVersion(source, "0")
         const pushed = run(new Chain(source), [], "push", [3], {})
         const grownChain = new Chain(pushed)
         assignPath(grownChain, ["4"], 5)
@@ -128,16 +128,16 @@ describe("ArrayView", () => {
         const popped = run(new Chain(shifted), [], "pop", [], {})
 
         expect(arrayViews.isArrayView(pushed)).to.be(true)
-        const mirrors = [
-            sourceMirror,
-            propertyVersions.getPromiseMirror(pushed, "0"),
-            propertyVersions.getPromiseMirror(grown, "0"),
-            propertyVersions.getPromiseMirror(prepended, "1"),
-            propertyVersions.getPromiseMirror(shifted, "0"),
-            propertyVersions.getPromiseMirror(popped, "0"),
+        const versions = [
+            sourceVersion,
+            propertyVersions.getPromiseVersion(pushed, "0"),
+            propertyVersions.getPromiseVersion(grown, "0"),
+            propertyVersions.getPromiseVersion(prepended, "1"),
+            propertyVersions.getPromiseVersion(shifted, "0"),
+            propertyVersions.getPromiseVersion(popped, "0"),
         ]
-        expect(mirrors.every(Boolean)).to.be(true)
-        expect(new Set(mirrors).size).to.be(mirrors.length)
+        expect(versions.every(Boolean)).to.be(true)
+        expect(new Set(versions).size).to.be(versions.length)
 
         const arrays = [source, pushed, grown, prepended, shifted, popped]
         for (const array of arrays) buildRefIndex(array)
@@ -170,14 +170,14 @@ describe("ArrayView", () => {
         verifyRefCounts(view)
     })
 
-    it("forks mirrors when endpoint extension adds no values", async () => {
+    it("forks versions when endpoint extension adds no values", async () => {
         const pending = deferred()
         const chain = new Chain([pending.promise])
         const derived = run(chain, [], "push", [], {})
 
         expect(
-            propertyVersions.getPromiseMirror(chain._state.value, "0") ===
-                propertyVersions.getPromiseMirror(derived, "0"),
+            propertyVersions.getPromiseVersion(chain._state.value, "0") ===
+                propertyVersions.getPromiseVersion(derived, "0"),
         ).to.be(false)
         assignPath(chain, ["0"], 9)
         pending.resolve(1)
@@ -254,12 +254,12 @@ describe("ArrayView", () => {
 
         run(new Chain(source), [], "shift", [], {})
         const retained = run(new Chain(source), [], "push", [2], {})
-        const sourceMirror = propertyVersions.getPromiseMirror(source, "0")
-        const retainedMirror = propertyVersions.getPromiseMirror(retained, "0")
+        const sourceVersion = propertyVersions.getPromiseVersion(source, "0")
+        const retainedVersion = propertyVersions.getPromiseVersion(retained, "0")
 
-        expect(sourceMirror).to.be.ok()
-        expect(retainedMirror).to.be.ok()
-        expect(retainedMirror).not.to.be(sourceMirror)
+        expect(sourceVersion).to.be.ok()
+        expect(retainedVersion).to.be.ok()
+        expect(retainedVersion).not.to.be(sourceVersion)
         buildRefIndex(source)
         buildRefIndex(retained)
 
@@ -463,7 +463,7 @@ describe("ArrayView", () => {
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })
 
-    it("installs a Promise mirror when indexed growth adds a Promise", async () => {
+    it("installs a Promise version when indexed growth adds a Promise", async () => {
         const pending = deferred()
         const view = run(new Chain([1]), [], "push", [2], {})
         const chain = new Chain(view)

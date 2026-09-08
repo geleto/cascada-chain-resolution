@@ -133,8 +133,8 @@ function enterMutating(
                 true,
                 externalMutationTree,
             )
-            const sourceMirror = languageValues.isPending(value, operationContext)
-                ? propertyVersions.requirePromiseMirror(
+            const sourceVersion = languageValues.isPending(value, operationContext)
+                ? propertyVersions.requirePromiseVersion(
                     parent,
                     key,
                     operationContext,
@@ -156,9 +156,9 @@ function enterMutating(
                 attachmentRoot,
             )
 
-            if (sourceMirror) {
-                propertyVersions.placePromiseVersion(
-                    sourceMirror,
+            if (sourceVersion) {
+                propertyVersions.forkPromiseVersion(
+                    sourceVersion,
                     value,
                     enteredChain._state,
                     "value",
@@ -202,16 +202,12 @@ function publishEnteredValue(rootState, resolveGate, operationContext) {
     }
 
     // Registration happens only after callback issuance has stopped. The root
-    // mirror and all earlier private commands therefore update rootState.value
+    // Promise version and all earlier private commands therefore update rootState.value
     // first in the same FIFO delivery.
-    const mirror = propertyVersions.requirePromiseMirror(
+    const publication = propertyVersions.continuePromiseVersion(
         rootState,
         "value",
-        operationContext,
-    )
-    const publication = propertyVersions.continuePromiseVersion(
         value,
-        mirror,
         operationContext,
         publishedValue => {
             if (languageValues.isPending(publishedValue, operationContext)) {

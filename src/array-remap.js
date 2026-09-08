@@ -300,8 +300,8 @@ function placePlacement(
 
     const value = placement.value
     if (languageValues.isPending(value, operationContext)) {
-        propertyVersions.placePromiseVersion(
-            placement.mirror,
+        propertyVersions.forkPromiseVersion(
+            placement.promiseVersion,
             value,
             destination,
             stringKey,

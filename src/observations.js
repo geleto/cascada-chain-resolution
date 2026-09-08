@@ -230,7 +230,7 @@ function collectFencedErrorWaits(value, queryContext) {
     }
 
     function collectPromiseErrors(parent, key, promise) {
-        const result = propertyVersions.continuePropertyValue(
+        const result = propertyVersions.continuePromiseVersion(
             parent,
             key,
             promise,
@@ -292,7 +292,7 @@ function walkObservationPath(
             operationContext,
         )
         if (languageValues.isPending(value, operationContext)) {
-            return propertyVersions.continuePropertyValue(
+            return propertyVersions.continuePromiseVersion(
                 parent,
                 key,
                 value,

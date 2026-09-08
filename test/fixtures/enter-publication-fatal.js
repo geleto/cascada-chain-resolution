@@ -32,7 +32,7 @@ try {
 assert.equal(runtime.isFatalError(escaped), true)
 assert.equal(escaped, operationContext.execution.fatalError)
 assert.equal(escaped.errorContext, operationContext.errorContext)
-assert.equal(escaped.cause.message, "Pending property has no mirror")
+assert.equal(escaped.cause.message, "Pending property has no Promise version")
 assert.deepEqual(reported, [escaped])
 assert.equal(await pending, escaped)
 const gate = root.target

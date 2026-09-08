@@ -130,7 +130,7 @@ function prepareImportedData(
                     },
                 )
                 if (languageValues.isPending(publication, operationContext)) {
-                    version.promise = true
+                    version.promiseBacked = true
                     markPromiseHandled(publication, operationContext)
                 } else if (version.value === child) placements.delete(key)
                 if (failure) break
@@ -141,7 +141,7 @@ function prepareImportedData(
                         version.value = walk(resolved)
                     } else {
                         const imported = prepareImportedData(resolved, operationContext, importPolicy)
-                        propertyVersions.commitPromiseValue(value, key, version, imported, operationContext, false)
+                        propertyVersions.commitPromiseVersion(value, key, version, imported, operationContext, false)
                     }
                 }
             }

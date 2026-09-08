@@ -843,7 +843,7 @@ describe("run", () => {
         expect(result.get("1", testOperationContext())).to.be(value)
     })
 
-    it("gives concatenated Promise properties independent mirrors", async () => {
+    it("gives concatenated Promise properties independent versions", async () => {
         const pending = deferred()
         const leftChain = new Chain([pending.promise])
         const right = [pending.promise]
@@ -854,14 +854,14 @@ describe("run", () => {
             [right],
             {},
         )
-        const mirrors = [
-            propertyVersions.getPromiseMirror(leftChain._state.value, "0"),
-            propertyVersions.getPromiseMirror(right, "0"),
-            propertyVersions.getPromiseMirror(concatenated, "0"),
-            propertyVersions.getPromiseMirror(concatenated, "1"),
+        const versions = [
+            propertyVersions.getPromiseVersion(leftChain._state.value, "0"),
+            propertyVersions.getPromiseVersion(right, "0"),
+            propertyVersions.getPromiseVersion(concatenated, "0"),
+            propertyVersions.getPromiseVersion(concatenated, "1"),
         ]
 
-        expect(new Set(mirrors).size).to.be(4)
+        expect(new Set(versions).size).to.be(4)
         assignPath(leftChain, ["0"], 9)
         pending.resolve(1)
 
@@ -946,16 +946,16 @@ describe("run", () => {
         const chain = new Chain([pending.promise, pending.promise])
         const source = chain._state.value
         propertyVersions.getPropertyPlacement(source, "0").captureVersion()
-        const source0 = propertyVersions.getPromiseMirror(source, "0")
+        const source0 = propertyVersions.getPromiseVersion(source, "0")
         propertyVersions.getPropertyPlacement(source, "1").captureVersion()
-        const source1 = propertyVersions.getPromiseMirror(source, "1")
+        const source1 = propertyVersions.getPromiseVersion(source, "1")
 
         expect(source0 === source1).to.be(false)
         run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
 
         const reversed = chain._state.value
-        const reversed0 = propertyVersions.getPromiseMirror(reversed, "0")
-        const reversed1 = propertyVersions.getPromiseMirror(reversed, "1")
+        const reversed0 = propertyVersions.getPromiseVersion(reversed, "0")
+        const reversed1 = propertyVersions.getPromiseVersion(reversed, "1")
         expect(reversed0 === reversed1).to.be(false)
         expect(reversed0 === source1).to.be(false)
         expect(reversed1 === source0).to.be(false)
@@ -963,8 +963,8 @@ describe("run", () => {
         const copied = new Chain([pending.promise, 0])
         run(copied, [], "copyWithin", [1, 0, 1], { mutationScopeDepth: 0 })
         expect(
-            propertyVersions.getPromiseMirror(copied._state.value, "0") ===
-                propertyVersions.getPromiseMirror(copied._state.value, "1"),
+            propertyVersions.getPromiseVersion(copied._state.value, "0") ===
+                propertyVersions.getPromiseVersion(copied._state.value, "1"),
         ).to.be(false)
 
         pending.resolve(1)

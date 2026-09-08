@@ -8,7 +8,7 @@ Developer-facing restrictions are centralized in [`data-limitations.md`](data-li
 
 ## Principle
 
-Managed records and classes use one invocation lifecycle. Category-specific code selects a method; common code owns preparation, argument export, invocation, mutation publication, result admission, and cleanup. Managed behavior remains concentrated at this boundary and adds no special path, lookup, assignment, refcount, or Promise-mirror behavior.
+Managed records and classes use one invocation lifecycle. Category-specific code selects a method; common code owns preparation, argument export, invocation, mutation publication, result admission, and cleanup. Managed behavior remains concentrated at this boundary and adds no special path, lookup, assignment, refcount, or Promise-version behavior.
 
 The caller selects observation or mutation mode. An observation method must not mutate its receiver; any method that may do so must run as a mutation.
 
@@ -44,7 +44,7 @@ Preparation consumes the complete receiver graph because method code may read an
 
 Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
-Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise mirrors can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
+Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise versions can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
 
 Arguments cross the host boundary through one `exportManyValues` operation. Managed argument graphs are independent copies with aliases, cycles, Array structure, and admitted prototypes preserved across argument positions. Functions and external identities remain exact. Receiver and argument identities are not cross-remapped, and managed invocation adds no argument-source leases after export capture.
 

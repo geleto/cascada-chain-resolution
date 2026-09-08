@@ -47,7 +47,7 @@ Classify every persisted or derived fact by its natural scope:
 
 - identity;
 - occurrence or placement;
-- property version or mirror;
+- placement version;
 - path and path prefix;
 - Chain;
 - operation;
@@ -111,7 +111,7 @@ Verify that ordering uses the correct mechanism:
 - phases order operations;
 - leases preserve managed values without blocking mutation;
 - gates publish unfinished managed transitions;
-- mirrors preserve captured Promise-backed property versions;
+- Promise versions preserve captured logical values;
 - COW preserves other managed owners;
 - external guards and borrows order exact host state;
 - import and export enforce the host boundary.
@@ -146,7 +146,7 @@ For every graph change, examine logical placements rather than only textual path
 - Preserve aliases and cycles where required.
 - Distinguish identity inspection from occurrence/path reporting.
 - Verify COW reconnects the correct occurrences and does not silently relocate authoritative state.
-- Verify mirrors, refcount indexes, ownership, sharing, admission, origin, path indexes, and other bookkeeping are updated through the ordinary transition or by one atomic equivalent.
+- Verify placement versions, refcount indexes, ownership, sharing, admission, origin, path indexes, and other bookkeeping are updated through the ordinary transition or by one atomic equivalent.
 - Compute multi-identity or multi-placement changes before committing them. A traversal-order failure must not leave partial authority or partial bookkeeping.
 - Check transitions caused indirectly by parent replacement, alias severing, child insertion, Promise settlement, repair, and child-buffer publication, not only direct writes to the target.
 - When an optimization skips a walk, copy, index update, or allocation, name the invariant that makes the skipped work unnecessary and verify where that invariant is established and maintained.

@@ -97,13 +97,13 @@ function shallowCopyPathContainer(source, pathKey, attachmentRoot, operationCont
             operationContext,
         )
         if (languageValues.isPending(value, operationContext)) {
-            const sourceMirror = propertyVersions.requirePromiseMirror(
+            const sourceVersion = propertyVersions.requirePromiseVersion(
                 source,
                 key,
                 operationContext,
             )
-            propertyVersions.placePromiseVersion(
-                sourceMirror,
+            propertyVersions.forkPromiseVersion(
+                sourceVersion,
                 value,
                 destination,
                 key,
@@ -149,7 +149,7 @@ function transformProperty(
         value => errorUtils.catchExternalThrow(
             () => {
                 setProperty(parent, key, value, operationContext, attachmentRoot)
-                return propertyVersions.getPromiseMirror(parent, key, operationContext)
+                return propertyVersions.getPromiseVersion(parent, key, operationContext)
             },
             operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed,
@@ -218,9 +218,9 @@ function transformValue(
             resolveResult = resolve
         })
         : undefined
-    const mirror = publishValue(mutatedValueGate)
+    const promiseVersion = publishValue(mutatedValueGate)
     let operationResult
-    if (!errorUtils.isPoisonError(mirror)) {
+    if (!errorUtils.isPoisonError(promiseVersion)) {
         // Subscribe at issuance, after the shared publication resolver and before
         // later operations can advance this captured version. Registering only
         // when readiness settles would let their Errors enter this result.
@@ -232,7 +232,7 @@ function transformValue(
                 if (returnResultPromise) resolveResult(
                     includePublicationFailure(
                         operationResult,
-                        mirror.value,
+                        promiseVersion.value,
                         operation.operationContext,
                     ),
                 )
@@ -247,13 +247,13 @@ function transformValue(
         operation.operationContext,
         outcome => {
             outcome = prepareMutationPublication(outcome)
-            if (errorUtils.isPoisonError(mirror)) {
+            if (errorUtils.isPoisonError(promiseVersion)) {
                 // Failed gate installation already replaced the enclosing
                 // receiver. Retain the in-flight result without publishing again.
                 operationLifecycle.close(operation)
                 resolveResult(includePublicationFailure(
                     outcome.result,
-                    mirror,
+                    promiseVersion,
                     operation.operationContext,
                 ))
                 return
@@ -552,7 +552,7 @@ function walkMutationPath(
         if (propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             if (atTarget) {
                 // Publish intrinsic replacement through the captured edge;
-                // its original Promise mirror may since have detached.
+                // its original Promise version may since have detached.
                 return completeTarget({
                     ...placement,
                     attachmentRoot,
@@ -634,12 +634,12 @@ function walkMutationPath(
             ? languageProperties.readLanguageProperty(parent, key, operationContext)
             : undefined
         if (languageValues.isPending(child, operationContext)) {
-            const pending = propertyVersions.continuePropertyValue(
+            const pending = propertyVersions.continuePromiseVersion(
                 parent,
                 key,
                 child,
                 operationContext,
-                (propertyValue, mirror) => walk(
+                (propertyValue, promiseVersion) => walk(
                     propertyValue,
                     index + 1,
                     next => {
@@ -647,16 +647,16 @@ function walkMutationPath(
                             publicationValue = next
                             // An imported parent was copied before descent, so
                             // this property version is runtime-owned.
-                            propertyVersions.advancePromiseVersion(
+                            propertyVersions.publishPromiseVersion(
                                 parent,
                                 key,
-                                mirror,
+                                promiseVersion,
                                 next,
                                 operationContext,
                             )
                             operationResult = includePublicationFailure(
                                 operationResult,
-                                mirror.value,
+                                promiseVersion.value,
                                 operationContext,
                             )
                         }

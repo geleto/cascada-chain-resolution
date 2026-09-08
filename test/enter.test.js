@@ -1290,7 +1290,7 @@ describe("enter", () => {
             expect(JSON.parse(child.stdout)).to.eql({
                 closed: true,
                 gateRemainsPending: true,
-                message: "Pending property has no mirror",
+                message: "Pending property has no Promise version",
                 reportCount: 1,
                 unhandledCount: 0,
             })

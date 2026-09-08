@@ -87,7 +87,7 @@ Cascada supports native Promises with standard behavior and custom ordered,
 chainable thenables. Error and Function classification takes precedence over
 thenability. In this contract and the architecture that depends on it,
 unqualified **Promise** in a semantic role such as an input, direct result,
-placement, mirror, or frontier includes any supported thenable; **native
+placement, Promise version, or frontier includes any supported thenable; **native
 Promise** means the built-in JavaScript mechanism specifically. A supported
 custom thenable:
 
@@ -132,7 +132,7 @@ After consuming a possible thenable, Cascada derives readiness only from the
 returned transition result. A transition that finishes synchronously returns
 its direct result; one whose required work remains unfinished returns its
 pending chain. Cascada does not infer readiness from whether a callback ran or
-whether that callback wrote into a mirror, aggregate slot, receiver, or other
+whether that callback wrote into a Promise version, aggregate slot, receiver, or other
 state. Such writes may carry the transition's data, but they are not readiness
 signals. A transition that starts another possible thenable consumes it through
 the same rule before returning, so any thenable left in this trusted result

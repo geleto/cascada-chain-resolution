@@ -150,7 +150,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
                 continue
             }
             const continued = catchFailure(() => {
-                const result = propertyVersions.continuePropertyValue(
+                const result = propertyVersions.continuePromiseVersion(
                     value,
                     key,
                     child,

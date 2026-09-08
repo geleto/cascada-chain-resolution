@@ -115,8 +115,8 @@ function verifyCycleCuts(node, operationContext) {
     }
 
     for (const key of Object.keys(meta?.placementVersions ?? {})) {
-        const mirror = propertyVersions.getPromiseMirror(node, key, operationContext)
-        if (!mirror) continue
+        const promiseVersion = propertyVersions.getPromiseVersion(node, key, operationContext)
+        if (!promiseVersion) continue
         const descriptor = languageProperties.getLanguagePropertyDescriptor(
             node,
             key,
@@ -126,20 +126,20 @@ function verifyCycleCuts(node, operationContext) {
             node,
             operationContext,
         )
-        const validShape = mirror &&
-            Object.hasOwn(mirror, "value") &&
+        const validShape = promiseVersion &&
+            Object.hasOwn(promiseVersion, "value") &&
             descriptor?.enumerable &&
             "value" in descriptor
         // A settled version may overlay any previous physical value when
         // writeback fails, including after an earlier successful settlement.
         const validValue = !languageValues.isPending(
-            mirror?.value,
+            promiseVersion?.value,
             operationContext,
-        ) || Object.is(descriptor?.value, mirror?.value)
+        ) || Object.is(descriptor?.value, promiseVersion?.value)
         const validStorage = (imported || descriptor?.writable) &&
             validValue
         if (!validShape || !validStorage) {
-            fatal("Live Promise mirror has no valid language property", operationContext)
+            fatal("Live Promise version has no valid language property", operationContext)
         }
     }
 }
@@ -186,14 +186,14 @@ function verifyParentGraph(node, states, operationContext) {
 
 // Recount each property here instead of using the count helpers being checked.
 function recountProperty(node, key, operationContext) {
-    const mirror = propertyVersions.getPromiseMirror(node, key, operationContext)
+    const promiseVersion = propertyVersions.getPromiseVersion(node, key, operationContext)
     let child = readPropertyForRecount(node, key, operationContext)
     let promiseCount = 0
     let errorCount = 0
     let cycleCutCount = 0
     if (languageValues.isPending(child, operationContext)) {
-        if (!mirror) {
-            fatal("Indexed promise property has no mirror", operationContext)
+        if (!promiseVersion) {
+            fatal("Indexed promise property has no Promise version", operationContext)
         }
         if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
             fatal("Pending Promise property also has a cycle cut", operationContext)

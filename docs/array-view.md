@@ -25,7 +25,7 @@ Imported managed Arrays are never backing. Operations materialize them into runt
 
 A view exposes the translated enumerable indexes inside its range and a virtual non-enumerable `length`. Canonical string indexes such as `"0"` are indexes exactly as in JavaScript; other string properties are not Array data. Holes remain holes. Runtime fields, backing indexes outside the range, symbols, non-enumerable properties, and metadata are outside the language surface.
 
-The language-property boundary resolves an attached projection and delegates descriptor, read, write, delete, presence, and key operations to the view. Traversal, ownership, import, export, refcounting, Error search, Promise mirrors, iteration, and copy-on-write therefore operate on logical owners and keys rather than physical backing positions.
+The language-property boundary resolves an attached projection and delegates descriptor, read, write, delete, presence, and key operations to the view. Traversal, ownership, import, export, refcounting, Error search, Promise versions, iteration, and copy-on-write therefore operate on logical owners and keys rather than physical backing positions.
 
 Ordinary indexed mutation or deletion materializes the changing identity first. Endpoint transitions and bounds-only length changes may continue on shared storage because they do not change any preserved view's logical surface.
 
@@ -47,7 +47,7 @@ Its iterator reads the current logical length and yields every logical position,
 
 A derivation is allowed only when the receiver is not imported.
 
-The first derivation attaches the source projection. Every derivation prepares its retained properties because an earlier contraction or extension may have changed which properties the source identity owns. Tracked retained values become shared. Each retained Promise property receives a result-view mirror forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own mirrors. The mirrors remain logically independent even though their properties use the same backing slot.
+The first derivation attaches the source projection. Every derivation prepares its retained properties because an earlier contraction or extension may have changed which properties the source identity owns. Tracked retained values become shared. Each retained Promise property receives a result-view Promise version forked at the derivation's FIFO position. Inserted properties use ordinary remap placement and receive their own versions. The versions remain logically independent even though their properties use the same backing slot.
 
 `pop` and `shift` derive the retained subrange; an empty result is an empty native Array. Non-empty `push` requires the logical end to equal the physical end. `unshift` uses the ordinary remap path whenever its receiver must be preserved; physically moving shared backing would require mutable coordinates shared by every existing view.
 
@@ -59,7 +59,7 @@ End growth is shared by `push`, `concat`, and past-length assignment. It require
 
 ## Materialization and length
 
-Materialization creates an owned native Array containing the logical length and indexed elements. It rebuilds ownership, refcounts, cycle cuts, and Promise mirrors from those logical placements; import status remains on the retained child identities, while storage and view state are not copied.
+Materialization creates an owned native Array containing the logical length and indexed elements. It rebuilds ownership, refcounts, cycle cuts, and Promise versions from those logical placements; import status remains on the retained child identities, while storage and view state are not copied.
 
 Length shrink moves `_end` while deleting the changing identity's logical edge state in descending order. A non-configurable logical element stops the shrink at that index after higher elements have been removed, matching `ArraySetLength`. Growth with holes can extend shared storage only when the view ends at the physical end and the backing length is writable; otherwise the view materializes first. Growing after a bounds-only shrink therefore cannot reveal retained physical values.
 

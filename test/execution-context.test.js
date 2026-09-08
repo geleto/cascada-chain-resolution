@@ -123,7 +123,7 @@ describe("operation context", () => {
         expect(source).to.eql({ branch: { value: 1 } })
     })
 
-    it("isolates graph metadata and Promise mirrors by execution", async () => {
+    it("isolates graph metadata and Promise versions by execution", async () => {
         const first = new runtime.Execution()
         const second = new runtime.Execution()
         const pending = Promise.resolve({ ready: true })
@@ -141,11 +141,11 @@ describe("operation context", () => {
         expect(secondMeta.imported).to.be(true)
         expect(Object.hasOwn(firstMeta, "importPolicy")).to.be(false)
         expect(Object.hasOwn(secondMeta, "importPolicy")).to.be(false)
-        expect(propertyVersions.getPromiseMirror(
+        expect(propertyVersions.getPromiseVersion(
             value,
             "pending",
             firstOperationContext,
-        )).not.to.be(propertyVersions.getPromiseMirror(
+        )).not.to.be(propertyVersions.getPromiseVersion(
             value,
             "pending",
             secondOperationContext,

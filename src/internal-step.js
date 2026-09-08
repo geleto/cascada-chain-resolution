@@ -48,7 +48,7 @@ function continueOperation(
 }
 
 // Initial value consumption is a causal boundary. Later property continuations
-// consume the source mirror's published value and never contextualize it again.
+// consume the source Promise version's published value and never contextualize it again.
 function consumeValue(
     value,
     operationContext,

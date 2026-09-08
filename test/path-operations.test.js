@@ -13,7 +13,7 @@ import {
     submitFatal,
     deferred,
     flushMicrotasks,
-    getPromiseMirror,
+    getPromiseVersion,
     hasError,
     run,
     useTestExecution,
@@ -633,7 +633,7 @@ describe("path assignment", () => {
 
         expect(reported?.message).to.be("conversion failed")
         expect(reflected).to.be(false)
-        expect(getPromiseMirror(input, "1").value).to.be(late.promise)
+        expect(getPromiseVersion(input, "1").value).to.be(late.promise)
     })
 
     it("keeps deferred Array length on its captured receiver version", async () => {

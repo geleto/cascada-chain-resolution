@@ -151,9 +151,9 @@ describe("import", () => {
         expect(external.pending).to.be(externalPending.promise)
         expect(runtimeOwned.pending).to.be("runtime")
         expect(readPath(new Chain(external), ["pending"])).to.be("external")
-        const mirror = metaOf(external).placementVersions.pending
+        const promiseVersion = metaOf(external).placementVersions.pending
         expect(metaOf(external).imported).to.be(true)
-        expect(Object.hasOwn(mirror, "importPolicy")).to.be(false)
+        expect(Object.hasOwn(promiseVersion, "importPolicy")).to.be(false)
     })
 
     it("publishes a nested then rejection without changing imported data", async () => {
@@ -249,7 +249,7 @@ describe("import", () => {
         }
     })
 
-    it("reuses one runtime mirror across imported wrappers", async () => {
+    it("reuses one runtime Promise version across imported wrappers", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const child = { pending: pending.promise }
@@ -406,7 +406,7 @@ describe("import", () => {
         expect(metaOf(shared)).to.be(meta)
     })
 
-    it("reuses one nested Promise mirror across asynchronous aliases", async () => {
+    it("reuses one nested Promise version across asynchronous aliases", async () => {
         const first = deferred()
         const second = deferred()
         const nested = deferred()
@@ -1519,7 +1519,7 @@ describe("import", () => {
         expect(copy.pending).to.be(owned)
     })
 
-    it("retains imported status when COW drops a resolved mirror", async () => {
+    it("retains imported status when COW drops a resolved Promise version", async () => {
         const pending = deferred()
         const resolved = { value: true }
         const root = {
@@ -1569,7 +1569,7 @@ describe("import", () => {
         expect(owned.second).to.be(2)
     })
 
-    it("consumes a resolved Promise mirror on the COW path", async () => {
+    it("consumes a resolved Promise version on the COW path", async () => {
         const pending = deferred()
         const retained = {}
         const root = { pending: pending.promise, sibling: 0 }
@@ -1662,7 +1662,7 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("collects private non-extensible values from detached mirrors", async () => {
+    it("collects private non-extensible values from detached versions", async () => {
         const pending = deferred()
         const errorValue = Object.freeze({ bad: new Error("bad") })
         const root = { value: pending.promise }
@@ -1735,7 +1735,7 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("reuses an existing runtime mirror reached through import", async () => {
+    it("reuses an existing runtime Promise version reached through import", async () => {
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const child = { pending: pending.promise }
@@ -1747,7 +1747,7 @@ describe("import", () => {
         expect(registrations()).to.be(2)
         const root = { child }
 
-        importValue(root, "runtime mirror back-edge")
+        importValue(root, "runtime Promise version back-edge")
         expect(registrations()).to.be(2)
         pending.resolve(root)
         expect(await earlierRead).to.be(root)
@@ -1760,14 +1760,14 @@ describe("import", () => {
         verifyRefCounts(root)
     })
 
-    it("settles an indexed runtime mirror reached through import", async () => {
+    it("settles an indexed runtime Promise version reached through import", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         const hiddenError = new Error("indexed sibling")
         buildRefIndex(child)
         const root = { child, hiddenError }
 
-        importValue(root, "indexed runtime mirror back-edge")
+        importValue(root, "indexed runtime Promise version back-edge")
         pending.resolve(root)
         await flushMicrotasks()
 

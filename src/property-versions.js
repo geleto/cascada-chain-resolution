@@ -24,7 +24,7 @@ class PropertyPlacement {
         )
         this.value = value
         if (languageValues.isPending(value, operationContext)) {
-            this.mirror = requirePromiseMirror(
+            this.promiseVersion = requirePromiseVersion(
                 owner,
                 key,
                 operationContext,
@@ -37,13 +37,13 @@ class PropertyPlacement {
         if (!languageValues.isPending(this.value, this.operationContext)) {
             return this.value
         }
-        return continuePromiseVersion(
+        return continueCapturedPromiseVersion(
             this.value,
-            this.mirror,
+            this.promiseVersion,
             this.operationContext,
             value => {
                 this.value = value
-                delete this.mirror
+                delete this.promiseVersion
                 return value
             },
         )
@@ -54,9 +54,9 @@ function getPlacementVersion(owner, key, operationContext) {
     return metadata.metaOf(owner, operationContext)?.placementVersions?.[key]
 }
 
-function getPromiseMirror(owner, key, operationContext) {
+function getPromiseVersion(owner, key, operationContext) {
     const version = getPlacementVersion(owner, key, operationContext)
-    return version?.promise === true ? version : undefined
+    return version?.promiseBacked === true ? version : undefined
 }
 
 function hasPlacementVersions(owner, operationContext) {
@@ -83,13 +83,13 @@ function detachPlacementVersion(owner, key, operationContext) {
     if (versions) delete versions[key]
 }
 
-function isLivePromiseMirror(owner, key, mirror, operationContext) {
-    return getPromiseMirror(owner, key, operationContext) === mirror
+function isLivePromiseVersion(owner, key, promiseVersion, operationContext) {
+    return getPromiseVersion(owner, key, operationContext) === promiseVersion
 }
 
-function continuePromiseVersion(
+function continueCapturedPromiseVersion(
     promise,
-    mirror,
+    promiseVersion,
     operationContext,
     onValue,
     operation,
@@ -97,13 +97,13 @@ function continuePromiseVersion(
     return internalSteps.continueOperation(
         promise,
         operationContext,
-        () => onValue(mirror.value),
-        () => onValue(mirror.value),
+        () => onValue(promiseVersion.value),
+        () => onValue(promiseVersion.value),
         operation,
     )
 }
 
-function continuePropertyValue(
+function continuePromiseVersion(
     owner,
     key,
     promise,
@@ -111,12 +111,12 @@ function continuePropertyValue(
     onValue,
     operation,
 ) {
-    const mirror = requirePromiseMirror(owner, key, operationContext)
-    return continuePromiseVersion(
+    const promiseVersion = requirePromiseVersion(owner, key, operationContext)
+    return continueCapturedPromiseVersion(
         promise,
-        mirror,
+        promiseVersion,
         operationContext,
-        value => onValue(value, mirror),
+        value => onValue(value, promiseVersion),
         operation,
     )
 }
@@ -139,10 +139,10 @@ function resolvePropertyValueAtKey(owner, key, operationContext) {
     return getPropertyPlacement(owner, key, operationContext)?.resolveValue()
 }
 
-function requirePromiseMirror(owner, key, operationContext) {
-    const mirror = getPromiseMirror(owner, key, operationContext)
-    if (!mirror) throw new Error("Pending property has no mirror")
-    return mirror
+function requirePromiseVersion(owner, key, operationContext) {
+    const promiseVersion = getPromiseVersion(owner, key, operationContext)
+    if (!promiseVersion) throw new Error("Pending property has no Promise version")
+    return promiseVersion
 }
 
 function assignProperty(
@@ -163,12 +163,12 @@ function assignProperty(
         retained,
         kind,
     )
-    replaceProperty(owner, key, version.promise ? version : undefined, version.value, operationContext)
+    replaceProperty(owner, key, version.promiseBacked ? version : undefined, version.value, operationContext)
     return languageValues.isPending(result, operationContext) ? undefined : result
 }
 
 // A staging version is callback-visible before subscription. Its logical value
-// may change synchronously; only the returned pending chain requires a mirror.
+// may change synchronously; only the returned pending chain requires a Promise version.
 function preparePropertyVersion(
     owner,
     key,
@@ -181,10 +181,10 @@ function preparePropertyVersion(
         version.value,
         operationContext,
         kind,
-        resolved => publishPromiseValue(owner, key, version, resolved, operationContext, retained),
+        resolved => publishPromiseVersion(owner, key, version, resolved, operationContext, retained),
     )
     if (languageValues.isPending(publication, operationContext)) {
-        version.promise = true
+        version.promiseBacked = true
         markPromiseHandled(publication, operationContext)
     }
     return publication
@@ -214,15 +214,15 @@ function normalizeRawPropertyValue(
         errorUtils.isPoisonError(value) ||
         metadata.metaOf(value, operationContext)
     ) {
-    languageValues.admitReadyValue(value, operationContext)
-    return value
-}
+        languageValues.admitReadyValue(value, operationContext)
+        return value
+    }
     const version = { value }
     preparePropertyVersion(owner, key, version, operationContext)
-    if (version.promise) {
+    if (version.promiseBacked) {
         const meta = metadata.metaOf(owner, operationContext)
-        if (meta?.parents) throw new Error("Indexed promise property has no mirror")
-        if (meta?.imported) throw new Error("Imported promise property has no mirror")
+        if (meta?.parents) throw new Error("Indexed promise property has no Promise version")
+        if (meta?.imported) throw new Error("Imported promise property has no Promise version")
         installPlacementVersion(owner, key, version, operationContext)
     } else if (version.value !== value) {
         if (writable && !metadata.metaOf(owner, operationContext)?.imported) {
@@ -235,8 +235,8 @@ function normalizeRawPropertyValue(
     return version.value
 }
 
-function placePromiseVersion(
-    sourceMirror,
+function forkPromiseVersion(
+    sourceVersion,
     promise,
     owner,
     key,
@@ -245,16 +245,16 @@ function placePromiseVersion(
 ) {
     languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
     // A derived placement is runtime-owned and may publish into its owner.
-    const mirror = { value: promise }
-    const publication = continuePromiseVersion(
+    const promiseVersion = { value: promise }
+    const publication = continueCapturedPromiseVersion(
         promise,
-        sourceMirror,
+        sourceVersion,
         operationContext,
         value => {
-            publishPromiseValue(
+            publishPromiseVersion(
                 owner,
                 key,
-                mirror,
+                promiseVersion,
                 value,
                 operationContext,
                 retained,
@@ -262,21 +262,17 @@ function placePromiseVersion(
         },
     )
     if (languageValues.isPending(publication, operationContext)) {
-        mirror.promise = true
+        promiseVersion.promiseBacked = true
         markPromiseHandled(publication, operationContext)
     }
-    replaceProperty(owner, key, mirror.promise ? mirror : undefined, mirror.value, operationContext)
-    return mirror
+    replaceProperty(owner, key, promiseVersion.promiseBacked ? promiseVersion : undefined, promiseVersion.value, operationContext)
+    return promiseVersion
 }
 
-function advancePromiseVersion(owner, key, mirror, value, operationContext) {
-    publishPromiseValue(owner, key, mirror, value, operationContext)
-}
-
-function publishPromiseValue(
+function publishPromiseVersion(
     owner,
     key,
-    mirror,
+    promiseVersion,
     value,
     operationContext,
     retained = false,
@@ -293,14 +289,14 @@ function publishPromiseValue(
     }
     languageValues.admitReadyValue(value, operationContext)
     if (retained) metadata.markShared(value, operationContext)
-    commitPromiseValue(owner, key, mirror, value, operationContext, true)
+    commitPromiseVersion(owner, key, promiseVersion, value, operationContext, true)
     return validationFailure
 }
 
-function commitPromiseValue(
+function commitPromiseVersion(
     owner,
     key,
-    mirror,
+    promiseVersion,
     value,
     operationContext,
     writeBack,
@@ -329,10 +325,10 @@ function commitPromiseValue(
 
     function prepareCommit(nextValue, canWriteBack) {
         // A runtime-owned version can be displaced when its owner is later
-        // imported. A detached version survives only in its mirror.
-        if (!isLivePromiseMirror(owner, key, mirror, operationContext)) {
+        // imported. Detachment leaves only the captured version to update.
+        if (!isLivePromiseVersion(owner, key, promiseVersion, operationContext)) {
             return () => {
-                mirror.value = nextValue
+                promiseVersion.value = nextValue
             }
         }
         if (canWriteBack) {
@@ -364,17 +360,17 @@ function commitPromiseValue(
                 nextValue,
                 operationContext,
             )
-            mirror.value = nextValue
+            promiseVersion.value = nextValue
         })
     }
 }
 
-function replaceProperty(owner, key, mirror, value, operationContext) {
+function replaceProperty(owner, key, promiseVersion, value, operationContext) {
     commitProperty(owner, key, value, operationContext, () => {
         languageProperties.writeLanguageProperty(owner, key, value, operationContext)
         // Failed storage work must leave the old logical version available.
         detachPlacementVersion(owner, key, operationContext)
-        if (mirror) installPlacementVersion(owner, key, mirror, operationContext)
+        if (promiseVersion) installPlacementVersion(owner, key, promiseVersion, operationContext)
     })
 }
 
@@ -478,8 +474,8 @@ function prepareRetainedArrayProperties(
                 installFixedPlacementVersion(destination, destinationKey, value, operationContext)
             continue
         }
-        placePromiseVersion(
-            requirePromiseMirror(source, sourceKey, operationContext),
+        forkPromiseVersion(
+            requirePromiseVersion(source, sourceKey, operationContext),
             value,
             destination,
             destinationKey,
@@ -490,20 +486,19 @@ function prepareRetainedArrayProperties(
 }
 
 export {
-    advancePromiseVersion,
+    publishPromiseVersion,
     assignProperty,
     commitArrayLength,
-    continuePropertyValue,
     continuePromiseVersion,
     deleteProperty,
-    requirePromiseMirror,
+    requirePromiseVersion,
     getPropertyPlacement,
-    getPromiseMirror,
+    getPromiseVersion,
     getPlacementVersion,
     hasPlacementVersions,
     isPropertyPlacement,
-    placePromiseVersion,
-    commitPromiseValue,
+    forkPromiseVersion,
+    commitPromiseVersion,
     installPlacementVersion,
     normalizeRawPropertyValue,
     prepareRetainedArrayProperties,

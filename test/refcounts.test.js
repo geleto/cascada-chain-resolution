@@ -677,19 +677,19 @@ describe("subtree counters", () => {
         useTestExecution()
 
         const pending = deferred()
-        const mirrored = { pending: pending.promise }
-        buildRefIndex(mirrored)
-        metaOf(mirrored).cycleCuts = new Set(["pending"])
-        expect(thrownBy(() => verifyRefCounts(mirrored)).message).to.be(
+        const versioned = { pending: pending.promise }
+        buildRefIndex(versioned)
+        metaOf(versioned).cycleCuts = new Set(["pending"])
+        expect(thrownBy(() => verifyRefCounts(versioned)).message).to.be(
             "Pending Promise property also has a cycle cut",
         )
 
         useTestExecution()
-        const detachedMirror = { pending: deferred().promise }
-        buildRefIndex(detachedMirror)
-        delete detachedMirror.pending
-        expect(thrownBy(() => verifyRefCounts(detachedMirror)).message).to.be(
-            "Live Promise mirror has no valid language property",
+        const detachedVersion = { pending: deferred().promise }
+        buildRefIndex(detachedVersion)
+        delete detachedVersion.pending
+        expect(thrownBy(() => verifyRefCounts(detachedVersion)).message).to.be(
+            "Live Promise version has no valid language property",
         )
         useTestExecution()
 
@@ -702,7 +702,7 @@ describe("subtree counters", () => {
             configurable: true,
         })
         expect(thrownBy(() => verifyRefCounts(nonWritable)).message).to.be(
-            "Live Promise mirror has no valid language property",
+            "Live Promise version has no valid language property",
         )
         useTestExecution()
 
@@ -907,14 +907,14 @@ describe("subtree counters", () => {
         const chain = new Chain(root)
 
         buildRefIndex(root)
-        const mirror = metaOf(root).placementVersions.value
+        const promiseVersion = metaOf(root).placementVersions.value
         assignPath(chain, ["value"], "fixed")
 
         outer.resolve(resolved)
         await flushMicrotasks()
 
         expect(root.value).to.be("fixed")
-        expect(mirror.value).to.be(resolved)
+        expect(promiseVersion.value).to.be(resolved)
         expect(reflections).to.be(0)
         verifyRefCounts(root)
     })
@@ -1044,14 +1044,14 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps mirror advances aligned with cycle detection", async () => {
+    it("keeps Promise version advances aligned with cycle detection", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
         const cyclic = {}
         cyclic.self = cyclic
 
-        importValue(cyclic, "mirror cycle replacement")
+        importValue(cyclic, "Promise version cycle replacement")
         buildRefIndex(root)
         const observed = lookupPath(chain, ["pending"])
 

@@ -87,7 +87,7 @@ reconstructs the actual graph.
 ## Verification
 
 `test/verify-refcounts.js` independently checks all three counts, cut shape,
-raw-reachable index closure, reverse-edge multiplicity, Promise mirror shape,
+raw-reachable index closure, reverse-edge multiplicity, Promise version shape,
 and acyclicity of the projected parent graph.
 
 ## Module boundary

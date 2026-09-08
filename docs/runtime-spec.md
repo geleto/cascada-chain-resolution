@@ -73,8 +73,8 @@ language data; other `Chain` fields are never walked, copied, indexed, marked,
 or validated by the kernel.
 
 An empty path targets `_state.value`. This stable parent/key location lets a
-root Promise use the same Promise-mirror machinery as any nested property. A
-pending initial root establishes that mirror and registers its resolver with the
+root Promise use the same Promise-version machinery as any nested property. A
+pending initial root establishes that Promise version and registers its resolver with the
 initialization operation context in the continuation closure; later operations
 reuse the captured version rather than becoming its source.
 
@@ -121,7 +121,7 @@ semantics before it reads `then`.
 
 The first ordinary property read normalizes a newly reached placement. A ready
 outcome uses direct storage where writable, or the existing fixed overlay where
-physical storage must be preserved. Only pending work creates a changing mirror.
+physical storage must be preserved. Only pending work creates a changing Promise version.
 Indexing and remapping read these logical versions without a separate resolver
 installation path. Validation that forbids retained thenables inspects the
 logical data without consuming it.
@@ -129,7 +129,7 @@ logical data without consuming it.
 The returned transition result is the readiness test. A transition consumes any
 further possible thenable before returning. Therefore, after Error, Function,
 and fixed admitted-category precedence, a thenable remaining in this trusted
-result position is actually pending. Callback execution and writes into mirrors, aggregate slots, receivers, or query state
+result position is actually pending. Callback execution and writes into versions, aggregate slots, receivers, or query state
 are semantic effects, not readiness flags. The runtime adds no separate
 callback-ran or backwrite-observed state.
 
@@ -142,13 +142,13 @@ retained selected target with exactly that meaning. It identifies the owner of
 pending work rather than callback execution or result readiness. Before a
 subscription can invoke its callback synchronously, initialize callback-visible
 staging, captured versions, and publication required regardless of readiness.
-Install pending-only gates, changing mirrors, leases, and registrations after
+Install pending-only gates, Promise versions, leases, and registrations after
 the subscription returns pending and before the issuing stack returns.
 Run-to-completion excludes asynchronous delivery in that interval. Semantic
 entry protection still precedes `onEntered` regardless of its result readiness.
 
 Every consumer of a Promise-backed property registers through that property's
-captured mirror, so its synchronous continuation observes all earlier
+captured Promise version, so its synchronous continuation observes all earlier
 consumers and none issued later.
 
 An operation describes the state at its own issue position. A later overwrite,
@@ -179,7 +179,7 @@ rather than its physical shape, causes copy-on-write.
 
 Mutation through a shared branch shallow-copies each node on the target path.
 Off-path properties are reused. Reused traversable children are marked shared, and
-Promise-backed properties receive independent mirrors at the copy's program
+Promise-backed properties receive independent versions at the copy's program
 position.
 
 The copy contains only language-visible keys:
@@ -253,10 +253,10 @@ category and origin. Import traverses only new managed identities and stops at
 external identities, Functions, and Errors. A nested native Error remains
 physical host data while a fixed placement overlay stores its logical wrapper.
 Import commits no metadata or placement version from a synchronous segment
-whose enumeration or descriptor lookup fails. A nested pending Promise property is not replaced: its mirror keeps the logical value
+whose enumeration or descriptor lookup fails. A nested pending Promise property is not replaced: its Promise version keeps the logical value
 while imported storage retains the Promise. A synchronously consumed custom
 thenable likewise remains physical host data, but its final value uses a fixed
-overlay rather than a Promise mirror. Frozen imported managed data
+overlay rather than a Promise version. Frozen imported managed data
 therefore follows the same path as writable imported managed data.
 
 Synchronous custom deliveries reuse the segment's staging walk and identity
@@ -304,7 +304,7 @@ When a required intermediate is:
 - a language Error, the same contextualized occurrence is propagated;
 - missing, `null`, `undefined`, or primitive, a path-access Error is produced;
 - a Promise, the operation registers at that property's program position and
-    continues from the state captured by its Promise mirror; or
+    continues from the state captured by its Promise version; or
 - traversable, traversal continues.
 
 A mutation installs a produced path-access Error at the broken intermediate
@@ -352,42 +352,54 @@ Proxies remain runtime control representations.
 
 ## Placement versions
 
-A placement overlay holds the logical value when physical storage must remain
-unchanged. A Promise mirror is a changing overlay for one actually pending
-Promise-backed property version. A final logical value over different imported
-physical storage—such as a contextualized native Error or synchronously consumed
-custom thenable—uses a fixed overlay. Both use the same parent-key map and detach
-when that placement is replaced or deleted.
+A placement version retains a logical value separately from physical storage.
+A Promise version is created when consumption of a thenable remains pending.
+Its `promiseBacked` discriminator stays true after settlement; its `value` may
+already be ready. A fixed placement version retains a ready logical value over
+unchanged physical storage, such as a contextualized native Error or the result
+of synchronous thenable consumption. Both use the same parent-key map.
 
-One mirror represents one actually pending Promise-backed property version.
+A version may update a placement only while it is the exact version installed
+there. Publication before installation or after detachment updates only the
+captured version's logical value. Validation, admission, and required retention
+still run; the restriction concerns placement writeback and its refcount edge.
+Initial publication commits the current staged value through the ordinary
+property transition, retaining a Promise version or fixed placement version
+only where required. The staged value may still be pending.
+
+This installation-identity rule covers synchronous preparation, live settlement,
+and settlement after replacement without another lifecycle flag. Import also
+retains its transaction staging: admission and initial placement installation
+must commit together after validation of the imported graph.
+
+One Promise version represents one placement at one program position.
 Assigning the same pending Promise again, copying the property, or retaining it
-in a distinct ArrayView creates a new mirror at that operation's FIFO position.
+in a distinct ArrayView creates a new Promise version at that operation's FIFO position.
 ArrayViews may still share the property's physical backing slot. A custom
 thenable consumed synchronously publishes its final value directly in
 runtime-owned storage. Imported storage remains physically unchanged and uses a
-fixed logical overlay for that final value; neither case installs a Promise
-mirror.
+fixed placement version for that final value; neither case installs a Promise version.
 
-The mirror's `value` field is the property version's authoritative logical
+The Promise version's `value` field is the property version's authoritative logical
 value. Its first resolver's continuation closure captures the import operation
-context and policy. The source Promise, identity metadata, Chain, version, and
-mirror store no attribution. On settlement the mirror receives the logical
+context and policy. The source Promise, identity metadata, Chain, and placement versions
+store no attribution. On settlement the Promise version receives the logical
 value; a resulting Error carries its own context and kind. Later continuations
 use FIFO readiness and read that published value instead of reinterpreting the
 raw settlement payload. A live runtime-owned version normally
 writes through to its physical property. If writeback reflection fails, its
-Error remains logical in the mirror and the previous physical value is preserved,
+Error remains logical in the Promise version and the previous physical value is preserved,
 whether it is still a Promise or was published by an earlier transition. An
 imported pending version always preserves the external Promise.
 
-A fork subscribes to the source mirror through the common FIFO continuation path
-and reads that mirror at the fork position. Retained ArrayView properties have
-distinct mirrors even when they share a physical backing slot, so their logical
+A fork subscribes to the source Promise version through the common FIFO continuation path
+and reads that Promise version at the fork position. Retained ArrayView properties have
+distinct versions even when they share a physical backing slot, so their logical
 edges and later operations remain independent.
 
-A later overwrite or deletion detaches the live overlay. A detached mirror keeps
+A later overwrite or deletion detaches the live overlay. A detached Promise version keeps
 its current value; resolvers already registered for that property version
-continue against it and cannot affect a replacement property. The mirror stores
+continue against it and cannot affect a replacement property. The Promise version stores
 no source Promise, parent, key, import context, or import policy.
 
 ## Errors and fatal failures
@@ -449,10 +461,10 @@ may start immediately. Compiler-controlled script calls and recursion are
 internal work rather than external actions.
 
 A raw data-Promise rejection is contextualized once in the first import,
-mirror, validation, or publication continuation already required by its causal
+Promise version, validation, or publication continuation already required by its causal
 boundary. That continuation closure captures the context and kind until it runs.
 Later native Promise propagation preserves that exact Error, while graph
-consumers use FIFO readiness and read the earlier mirror publication. No
+consumers use FIFO readiness and read the earlier Promise version publication. No
 attribution is persisted on the source Promise or metadata, and no forwarding
 Promise exists only to attach it.
 
@@ -523,7 +535,7 @@ The runtime consequences are deliberately small:
 ### `assignPath(chain, path, value, operationContext, mutationScopeDepth = path.length)`
 
 Assigns or replaces the target. It consumes a possible Promise first and creates
-a fresh mirror only when the returned resolver transition remains pending. A
+a fresh Promise version only when the returned resolver transition remains pending. A
 ready custom outcome is assigned directly. It then performs copy-on-write or representation materialization where
 required, and updates existing refcounts. Success returns `undefined`; a ready
 failed transition publishes and returns its Error. A suspended call still
@@ -613,7 +625,7 @@ On success, returns whether an Error is reachable in the issue-time branch.
 
 The operation never marks or pins the branch.
 
-`hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared mirror, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
+`hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared Promise version, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
 
 If supported user-controlled reflection fails while traversing the query, the
 operation instead produces `QueryReflectionFailed`. A ready query returns that
@@ -633,7 +645,7 @@ After complete collection, returns null when no Error is found, the original lea
 
 The operation never marks or pins the branch.
 
-`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the mirror, property-version, and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, instead of a completed collection: a ready query returns that poison directly and a pending query fulfills with that ordinary Error. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
+`getErrors` remains open until every Promise in its recursively captured frontier has been exhausted. Each query has independent operation-local state; the placement-version and refcount state it observes remains shared. Supported reflection failure on a user-controlled identity is the query's `QueryReflectionFailed` outcome, instead of a completed collection: a ready query returns that poison directly and a pending query fulfills with that ordinary Error. Failure of internal traversal, refcounting, or indexing is fatal; it closes the execution, and query continuations simply return at their fatal checks.
 
 ## Ref-index contract
 
@@ -642,7 +654,7 @@ Subtree counters are created lazily at the path value reached by `hasError` or
 indexed, including targets of cycle cuts. Construction captures logical property
 versions and stages new counters, cuts, and reverse-edge additions through all
 fallible reflection and normalization. Later synchronous subscriptions may
-advance captured mirrors; discover those values before counting. Commit only a
+advance captured versions; discover those values before counting. Commit only a
 complete region in one synchronous hook-free transition. A failed build leaves
 existing indexes valid and publishes no partial descendant index.
 Ordinary properties connect components through reverse child edges; pending
@@ -678,14 +690,14 @@ or cycles.
 Controlled Array methods consume only their declared logical inputs. Captured
 intrinsics receive property-placement remaps, prepared scalars, or exact retained
 payload in positions that store without inspection. The wrapper owns
-classification, ownership, Promise mirrors, and bookkeeping. It never exposes
+classification, ownership, Promise versions, and bookkeeping. It never exposes
 ArrayView backing or dispatches through custom Array properties or prototypes.
 Controlled Array table lookup and trusted native String data-method lookup occur
 during internal dispatch and invoke no application hook. Unsupported names and
 modes therefore fail without preparing arguments. Record and managed-class
 member reflection instead occurs once after their required inputs are clean.
 Ordinary native calls instead export explicit arguments as one batch. Export
-captures available state synchronously through exact Promise mirrors and uses
+captures available state synchronously through exact Promise versions and uses
 no source lease. Other pending preparation leases only identities it must read
 again. One common invocation lifetime stops unused Array work after a local final
 result without cancelling settlement needed by the still-live execution. An

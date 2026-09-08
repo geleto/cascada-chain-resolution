@@ -120,19 +120,19 @@ describe("hasError", () => {
         expect(counter.promiseCount).to.be(1)
         expect(counter.cycleCutCount).to.be(1)
 
-        const mirror = metaOf(branch).placementVersions.pending
-        let mirrorValue = mirror.value
+        const promiseVersion = metaOf(branch).placementVersions.pending
+        let versionValue = promiseVersion.value
         // Fault after shared publication but before the query continuation.
         pending.promise.then(() => {
-            mirrorValue = mirror.value
-            Object.defineProperty(mirror, "value", {
+            versionValue = promiseVersion.value
+            Object.defineProperty(promiseVersion, "value", {
                 enumerable: true,
                 configurable: true,
                 get() {
                     throw failure
                 },
                 set(value) {
-                    mirrorValue = value
+                    versionValue = value
                 },
             })
         })
@@ -141,8 +141,8 @@ describe("hasError", () => {
         await flushMicrotasks()
 
         expect(reported).to.be(undefined)
-        Object.defineProperty(mirror, "value", {
-            value: mirrorValue,
+        Object.defineProperty(promiseVersion, "value", {
+            value: versionValue,
             enumerable: true,
             writable: true,
             configurable: true,
@@ -176,7 +176,7 @@ describe("hasError", () => {
         verifyRefCounts(clean, pending, bad)
     })
 
-    it("probes terminal promises on sealed parents through mirrors", async () => {
+    it("probes terminal promises on sealed parents through versions", async () => {
         const cleanPending = deferred()
         const badPending = deferred()
         const cleanRoot = Object.seal({ pending: cleanPending.promise })
@@ -787,7 +787,7 @@ describe("hasError", () => {
         verifyRefCounts(root, chain._state.value)
     })
 
-    it("follows promises exposed by a mirror detached before resolution", async () => {
+    it("follows promises exposed by a Promise version detached before resolution", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: { outer: outer.promise } })

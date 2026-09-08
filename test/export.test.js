@@ -149,7 +149,7 @@ describe("export", () => {
         expect(chain._state.value.alias).not.to.be(shared)
     })
 
-    it("reports a missing indexed Promise mirror as fatal", () => {
+    it("reports a missing indexed Promise version as fatal", () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         let reported
@@ -163,7 +163,7 @@ describe("export", () => {
 
         expect(failure).to.be(reported)
         expect(failure.message).to.be(
-            "Indexed promise property has no mirror",
+            "Indexed promise property has no Promise version",
         )
     })
 
@@ -199,7 +199,7 @@ describe("export", () => {
         expect(reads).to.be(0)
     })
 
-    it("indexes a mirror discovered by export if its owner is indexed later", async () => {
+    it("indexes a Promise version discovered by export if its owner is indexed later", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const result = exportValue(new Chain(branch), [])
@@ -214,20 +214,20 @@ describe("export", () => {
         verifyRefCounts(branch)
     })
 
-    it("keeps a live mirror when cyclic export re-enters it", async () => {
+    it("keeps a live Promise version when cyclic export re-enters it", async () => {
         const pending = deferred()
         const root = { value: pending.promise }
         importValue(root, "re-entrant cycle")
         const chain = new Chain(root)
         const exported = exportValue(chain, ["value"])
-        const mirror = metaOf(root).placementVersions.value
+        const promiseVersion = metaOf(root).placementVersions.value
         const resolved = { back: root }
 
         pending.resolve(resolved)
         const copy = await exported
 
         expect(copy.back.value).to.be(copy)
-        expect(metaOf(root).placementVersions.value).to.be(mirror)
+        expect(metaOf(root).placementVersions.value).to.be(promiseVersion)
         expect(root.value).to.be(pending.promise)
         expect(readPath(new Chain(root), ["value"])).to.be(resolved)
         buildRefIndex(root)
@@ -504,7 +504,7 @@ describe("export", () => {
         expect(value.x).to.be(1)
     })
 
-    it("reads a resolved live mirror synchronously without registering again", async () => {
+    it("reads a resolved live Promise version synchronously without registering again", async () => {
         const pending = deferred()
         const root = { pending: pending.promise }
         const chain = new Chain(root)
@@ -513,14 +513,14 @@ describe("export", () => {
         pending.resolve({ value: 1 })
         await observed
 
-        const mirror = metaOf(root).placementVersions.pending
-        expect(metaOf(root).placementVersions.pending).to.be(mirror)
+        const promiseVersion = metaOf(root).placementVersions.pending
+        expect(metaOf(root).placementVersions.pending).to.be(promiseVersion)
 
         const exported = exportValue(chain, [])
 
         expect(exported.then).to.be(undefined)
         expect(exported).to.eql({ pending: { value: 1 } })
-        expect(metaOf(root).placementVersions.pending).to.be(mirror)
+        expect(metaOf(root).placementVersions.pending).to.be(promiseVersion)
     })
 
     it("does not expose imported metadata", () => {
@@ -877,7 +877,7 @@ describe("export", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("settles promises exposed by a path mirror detached before resolution", async () => {
+    it("settles promises exposed by a path Promise version detached before resolution", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
@@ -899,7 +899,7 @@ describe("export", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("keeps a raw property mirror captured before deletion", async () => {
+    it("keeps a raw property Promise version captured before deletion", async () => {
         const pending = deferred()
         const branch = { pending: pending.promise }
         const chain = new Chain({ branch })
@@ -1163,7 +1163,7 @@ describe("export", () => {
         expect(branchMeta.imported).to.be(true)
     })
 
-    it("exports promises inside sealed branches through mirrors", async () => {
+    it("exports promises inside sealed branches through versions", async () => {
         const valid = Object.freeze({ x: 1 })
         const promise = Promise.resolve(1)
         const pending = Object.seal({ pending: promise })

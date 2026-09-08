@@ -37,9 +37,9 @@ independent counters.
 operation-local map, reusing already-complete indexes:
 
 1. Discover unindexed traversable identities and capture each logical property
-   version. Reads normalize newly reached placements and install mirrors only
+   version. Reads normalize newly reached placements and install versions only
    for actually pending outcomes.
-2. Finish discovery of captured mirrors advanced by later synchronous
+2. Finish discovery of captured versions advanced by later synchronous
    subscriptions. Reuse their current logical values without another
    subscription or physical-slot read; repeat only while newly available work
    advances the frontier. Still-pending versions remain pending edges.
@@ -71,27 +71,27 @@ cut; every other edge receives the normal reverse-parent entry.
 
 `prepareLiveEdge` completes fallible child indexing, captures the old and new
 property contributions, and prepares the reverse-parent count delta. Its returned
-commit publishes the logical value, mirror, and cut state, replaces reverse-parent
+commit publishes the logical value, Promise version, and cut state, replaces reverse-parent
 multiplicities, and applies that delta once over the reachable parent DAG.
 
 Assignment, deletion, Promise settlement, Array remapping, and COW
-reconstruction all use this accounting. Detached mirror values are private;
+reconstruction all use this accounting. Detached Promise version values are private;
 they are indexed when their former owner is indexed, but contribute no edge to
 that owner.
 
 An indexed COW copy is indexed from its own logical properties. Source totals,
-parents, mirrors, and cuts are never copied as metadata.
+parents, versions, and cuts are never copied as metadata.
 
-## Promise mirrors
+## Promise versions
 
-One `PromiseMirror` represents one actually pending property version. A logically pending
+One `PromiseVersion` represents one actually pending property version. A logically pending
 property contributes one pending Promise. Its first FIFO resolver publishes the
 result through the same property transition as an ordinary assignment.
 
-Each mirror's `value` is the authoritative logical edge. Imported physical
+Each Promise version's `value` is the authoritative logical edge. Imported physical
 properties keep their Promise, runtime-owned live properties also write through
-when publication succeeds, and detached versions retain their private mirror
-value. Failed writeback can leave a settled mirror over any previous physical
+when publication succeeds, and detached versions retain their private Promise version
+value. Failed writeback can leave a settled Promise version over any previous physical
 value, including a ready value published by an earlier transition. Counters
 follow the logical value. The [managed-storage contract](data-limitations.md#proxies-in-managed-storage)
 requires failed primitive writes, definitions, and deletions to leave the graph
@@ -102,8 +102,8 @@ consumed custom thenable contributes its final logical value directly, or
 through a fixed overlay over imported storage, and has no pending count. These
 storage choices do not change the counter rules.
 
-Distinct logical ArrayView properties have distinct mirrors even when they
-share a physical slot. Refcounting reads each mirror's logical edge, independent
+Distinct logical ArrayView properties have distinct versions even when they
+share a physical slot. Refcounting reads each Promise version's logical edge, independent
 of changes another view made to the backing slot.
 
 ## Delta propagation
@@ -127,6 +127,6 @@ raw graph and never builds or reads counters.
 Each Error query implements the common operation-lifecycle owner while keeping only query-local visited and Error-collection state. After `hasError` succeeds early, a captured Promise version in the still-live execution maintains shared counters when it publishes, but the closed query performs no further indexing or traversal. If the execution is fatal, a resumed continuation stops before counter publication because that execution's graph is no longer observable. `getErrors` otherwise exhausts its complete captured frontier.
 
 The test verifier independently recounts property contributions, raw-reachable
-index closure, reverse-edge multiplicity, cut and mirror shape, and parent-DAG
+index closure, reverse-edge multiplicity, cut and Promise version shape, and parent-DAG
 acyclicity. It uses direct import status when deciding whether a physical
 Promise may be preserved; physical shape is not an ownership proxy.

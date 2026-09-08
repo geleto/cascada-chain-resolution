@@ -1363,7 +1363,7 @@ describe("managed invocation", () => {
         verifyRefCounts(source, chain._state.value)
     })
 
-    it("copies a live-mirror owner before direct mutation", async () => {
+    it("copies a live-Promise version owner before direct mutation", async () => {
         class Value {
             change() {
                 this.changed = true

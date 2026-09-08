@@ -9,7 +9,7 @@ observable result is the same as if all values had been available and every
 operation had run sequentially.
 
 A `Chain` holds a logical root value. Path operations read and update its graph,
-Promise mirrors preserve the exact property versions captured by pending work,
+Promise versions preserve the exact property versions captured by pending work,
 and copy-on-write keeps mutations isolated between owners. Imported host data is
 never modified. Recoverable JavaScript `Error` objects are language values, so
 a rejected data Promise poisons the affected value without stopping unrelated

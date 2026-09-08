@@ -26,7 +26,7 @@ Array work is bounded by three shared mechanisms:
 2. Retained-property preparation represents contiguous movement as one source range and destination offset.
 3. Range remapping handles both complete remaps and selected `slice` results. `slice` converts each consumed bound once and remaps only the normalized range when view reuse is unavailable.
 
-All three use the common Promise-origin and placement transitions, preserving holes, ownership, mirrors, and inherited-setter safety without operation-specific paths.
+All three use the common Promise-origin and placement transitions, preserving holes, ownership, versions, and inherited-setter safety without operation-specific paths.
 
 ## Controlled Array work
 
@@ -38,7 +38,7 @@ Array-length assignment makes the existing mutation context its explicit guarded
 
 ## Detached results
 
-Settlement of a detached or displaced property version stores its logical mirror value without building a ref index or inspecting nested data. Imported settlement still performs its independent admission and Promise-placement work before liveness is considered.
+Settlement of a detached or displaced property version stores its logical Promise version value without building a ref index or inspecting nested data. Imported settlement still performs its independent admission and Promise-placement work before liveness is considered.
 
 Consumers discover detached data through their ordinary logical path. The fenced Error walk is the only consumer that requires maintained counters, so it indexes the reached value at its own FIFO position before consulting them. Mutation, observation, export, and remapping need no eager index.
 

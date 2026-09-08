@@ -143,19 +143,19 @@ function decrementReadLease(value) {
     return metadata.decrementReadLease(value, testOperationContext())
 }
 
-function getPromiseMirror(owner, key) {
-    return propertyVersions.getPromiseMirror(
+function getPromiseVersion(owner, key) {
+    return propertyVersions.getPromiseVersion(
         owner,
         key,
-        testOperationContext("test Promise mirror"),
+        testOperationContext("test Promise version"),
     )
 }
 
-function advancePromiseVersion(owner, key, mirror, value) {
-    return propertyVersions.advancePromiseVersion(
+function publishPromiseVersion(owner, key, promiseVersion, value) {
+    return propertyVersions.publishPromiseVersion(
         owner,
         key,
-        mirror,
+        promiseVersion,
         value,
         testOperationContext("test Promise advancement"),
     )
@@ -232,10 +232,10 @@ const arrayViews = {
 
 const testPropertyVersions = {
     ...propertyVersions,
-    getPromiseMirror: (owner, key) => propertyVersions.getPromiseMirror(
+    getPromiseVersion: (owner, key) => propertyVersions.getPromiseVersion(
         owner,
         key,
-        testOperationContext("test Promise mirror"),
+        testOperationContext("test Promise version"),
     ),
     getPropertyPlacement: (owner, key) => propertyVersions.getPropertyPlacement(
         owner, key, testOperationContext("test placement capture"),
@@ -372,7 +372,7 @@ export {
     ArrayView,
     arrayViews,
     assignPath,
-    advancePromiseVersion,
+    publishPromiseVersion,
     buildRefIndex,
     continueOperation,
     deletePath,
@@ -392,7 +392,7 @@ export {
     testMetadata as metadata,
     advanceSettledValue,
     readPath,
-    getPromiseMirror,
+    getPromiseVersion,
     consumeValue,
     resetTestExecution,
     run,

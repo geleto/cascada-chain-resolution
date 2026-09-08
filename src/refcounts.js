@@ -73,7 +73,7 @@ function buildRefIndex(value, operationContext) {
     discover(value)
 
     // A later custom-thenable subscription in this same synchronous index build
-    // can deliver earlier subscriptions in FIFO order, advancing captured mirrors.
+    // can deliver earlier subscriptions in FIFO order, advancing captured versions.
     // Discover those newly available values before counting, without resubscribing
     // or rereading physical slots. Repeat only while available work makes progress.
     while (pending.size > 0) {

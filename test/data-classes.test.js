@@ -142,7 +142,7 @@ describe("managed class copy-on-write", () => {
         expect(second.x).to.be(3)
     })
 
-    it("forks Promise fields through the unchanged mirror pipeline", async () => {
+    it("forks Promise fields through the unchanged Promise version pipeline", async () => {
         class PendingPoint {
             constructor(pending) {
                 this.pending = pending

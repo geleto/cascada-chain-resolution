@@ -32,7 +32,7 @@ Managed records, Arrays, and classes are traversable. External identities, Funct
 
 ## Copy-on-write
 
-A record or managed-class copy is created from its admitted prototype and populated through the ordinary property pipeline. The copy preserves aliases, cycles, ownership, Promise mirrors, and refcounts without invoking a constructor or copying descriptors or metadata.
+A record or managed-class copy is created from its admitted prototype and populated through the ordinary property pipeline. The copy preserves aliases, cycles, ownership, Promise versions, and refcounts without invoking a constructor or copying descriptors or metadata.
 
 Arrays, including cross-realm Arrays and subclasses, use the Array path and normalize to local ordinary Arrays. Records retain their admitted prototype, including cross-realm and null prototypes.
 

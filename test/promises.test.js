@@ -12,7 +12,7 @@ function failsClassification(failure) {
 }
 
 import {
-    advancePromiseVersion,
+    publishPromiseVersion,
     Chain,
     expect,
     submitFatal,
@@ -23,7 +23,7 @@ import {
     runInternalStep,
     buildRefIndex,
     getRefCounts,
-    getPromiseMirror,
+    getPromiseVersion,
     hasCycleCut,
     metaOf,
     markShared,
@@ -239,7 +239,7 @@ describe("promise helpers", () => {
     })
 })
 
-describe("promise mirrors and lookupPath", () => {
+describe("Promise versions and lookupPath", () => {
     it("rejects a Promise at the synchronous sharing boundary", () => {
         const error = thrownBy(() => markShared(Promise.resolve("value")))
         expect(error.message).to.be(
@@ -251,13 +251,13 @@ describe("promise mirrors and lookupPath", () => {
         const pending = deferred()
         const root = {}
         assignPath(new Chain(root), ["value"], pending.promise)
-        const mirror = getPromiseMirror(root, "value")
+        const promiseVersion = getPromiseVersion(root, "value")
 
         const error = thrownBy(() => {
-            advancePromiseVersion(
+            publishPromiseVersion(
                 root,
                 "value",
-                mirror,
+                promiseVersion,
                 Promise.resolve("replacement"),
             )
         })
@@ -266,7 +266,7 @@ describe("promise mirrors and lookupPath", () => {
             "A Promise requires a fresh property version",
         )
         expect(root.value).to.be(pending.promise)
-        expect(mirror.value).to.be(pending.promise)
+        expect(promiseVersion.value).to.be(pending.promise)
 
         pending.resolve("settled")
         await flushMicrotasks()
@@ -277,36 +277,36 @@ describe("promise mirrors and lookupPath", () => {
         const livePending = deferred()
         const liveRoot = {}
         assignPath(new Chain(liveRoot), ["value"], livePending.promise)
-        const liveMirror = metaOf(liveRoot).placementVersions.value
+        const liveVersion = metaOf(liveRoot).placementVersions.value
 
-        expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
-        expect(liveMirror.value).to.be(livePending.promise)
-        expect(Object.keys(liveMirror).sort()).to.eql(["promise", "value"])
+        expect(getPromiseVersion(liveRoot, "value")).to.be(liveVersion)
+        expect(liveVersion.value).to.be(livePending.promise)
+        expect(Object.keys(liveVersion).sort()).to.eql(["promiseBacked", "value"])
 
         livePending.resolve("live")
         await flushMicrotasks()
 
-        expect(getPromiseMirror(liveRoot, "value")).to.be(liveMirror)
+        expect(getPromiseVersion(liveRoot, "value")).to.be(liveVersion)
         expect(liveRoot.value).to.be("live")
-        expect(liveMirror.value).to.be("live")
-        expect(Object.keys(liveMirror).sort()).to.eql(["promise", "value"])
+        expect(liveVersion.value).to.be("live")
+        expect(Object.keys(liveVersion).sort()).to.eql(["promiseBacked", "value"])
 
         const detachedPending = deferred()
         const detachedRoot = {}
         const detachedChain = new Chain(detachedRoot)
         assignPath(detachedChain, ["value"], detachedPending.promise)
-        const detachedMirror = metaOf(detachedRoot).placementVersions.value
+        const detachedVersion = metaOf(detachedRoot).placementVersions.value
         assignPath(detachedChain, ["value"], "replacement")
 
-        expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
-        expect(detachedMirror.value).to.be(detachedPending.promise)
+        expect(getPromiseVersion(detachedRoot, "value")).to.be(undefined)
+        expect(detachedVersion.value).to.be(detachedPending.promise)
 
         detachedPending.resolve("detached")
         await flushMicrotasks()
 
-        expect(getPromiseMirror(detachedRoot, "value")).to.be(undefined)
-        expect(detachedMirror.value).to.be("detached")
-        expect(Object.keys(detachedMirror).sort()).to.eql(["promise", "value"])
+        expect(getPromiseVersion(detachedRoot, "value")).to.be(undefined)
+        expect(detachedVersion.value).to.be("detached")
+        expect(Object.keys(detachedVersion).sort()).to.eql(["promiseBacked", "value"])
         expect(detachedRoot.value).to.be("replacement")
     })
 
@@ -345,7 +345,7 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps publication reflection failures in the mirror", async () => {
+    it("keeps publication reflection failures in the Promise version", async () => {
         const pending = deferred()
         const failure = new Error("publication reflection failed")
         let failReflection = false
@@ -370,7 +370,7 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps Promise writeback failures in the mirror", async () => {
+    it("keeps Promise writeback failures in the Promise version", async () => {
         const pending = deferred()
         const failure = new Error("Promise writeback failed")
         const physical = { value: pending.promise }
@@ -483,10 +483,10 @@ describe("promise mirrors and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("does not copy a committed cycle cut into a replacement mirror", () => {
+    it("does not copy a committed cycle cut into a replacement Promise version", () => {
         const owner = {}
         owner.value = owner
-        importValue(owner, "marked mirror replacement")
+        importValue(owner, "marked Promise version replacement")
         const pending = deferred()
         const chain = new Chain(owner)
 
@@ -495,10 +495,10 @@ describe("promise mirrors and lookupPath", () => {
 
         assignPath(chain, ["value"], pending.promise)
         const copy = chain._state.value
-        const mirror = metaOf(copy).placementVersions.value
+        const promiseVersion = metaOf(copy).placementVersions.value
 
         expect(copy).not.to.be(owner)
-        expect(metaOf(copy).placementVersions.value).to.be(mirror)
+        expect(metaOf(copy).placementVersions.value).to.be(promiseVersion)
         expect(copy.value).to.be(pending.promise)
         expect(metaOf(copy).cycleCuts).to.be(undefined)
         expect(metaOf(owner).cycleCuts.has("value")).to.be(true)
@@ -722,7 +722,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("continues through promises exposed after its first mirror is detached", async () => {
+    it("continues through promises exposed after its first Promise version is detached", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
@@ -795,7 +795,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(Object.prototype.propertyIsEnumerable.call(root.branch, "x")).to.be(true)
     })
 
-    it("forks promise mirrors when a pending key is shallow-copied", async () => {
+    it("forks Promise versions when a pending key is shallow-copied", async () => {
         const deferredBranch = deferred()
         const root = { branch: deferredBranch.promise }
 
@@ -985,7 +985,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.left).not.to.be(root.right)
     })
 
-    it("treats re-placing the same promise as a fresh mirror", async () => {
+    it("treats re-placing the same promise as a fresh Promise version", async () => {
         const deferredBranch = deferred()
         const root = {}
 
@@ -1004,7 +1004,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(root.branch).not.to.be(firstValue)
     })
 
-    it("treats replacing one pending promise with another as a fresh mirror", async () => {
+    it("treats replacing one pending promise with another as a fresh Promise version", async () => {
         const first = deferred()
         const second = deferred()
         const root = {}
@@ -1084,7 +1084,7 @@ describe("promise mirrors and lookupPath", () => {
         expect(chain._state.value.branch).to.eql({ replacement: true })
     })
 
-    it("continues a suspended write through a mirror detached before settlement", async () => {
+    it("continues a suspended write through a Promise version detached before settlement", async () => {
         const outer = deferred()
         const inner = deferred()
         const chain = new Chain({ branch: outer.promise })
