@@ -7,7 +7,6 @@ import {
     deferred,
     errorCause,
     expect,
-    expectCounts,
     flushMicrotasks,
     importValue,
     lookupPath,
@@ -220,7 +219,7 @@ describe("managed class copy-on-write", () => {
         verifyRefCounts(source, reassigned, fork, chain._state.value)
     })
 
-    it("preserves Error counts and verification on a class copy", () => {
+    it("preserves Errors and index consistency on a class copy", () => {
         class Result {
             constructor() {
                 this.error = new Error("bad")
@@ -237,8 +236,6 @@ describe("managed class copy-on-write", () => {
 
         expect(copy instanceof Result).to.be(true)
         expect(errorCause(copy.error)).to.be(source.error)
-        expectCounts(source, 0, 1)
-        expectCounts(copy, 0, 1)
         verifyRefCounts(source, copy)
     })
 
@@ -429,8 +426,6 @@ describe("managed class copy-on-write", () => {
         )
         expect(copy.sibling).to.be(true)
         expect(source.value).to.be(1)
-        expectCounts(root, 0, 0)
-        expectCounts(copy, 0, 1)
         verifyRefCounts(root, copy)
     })
 

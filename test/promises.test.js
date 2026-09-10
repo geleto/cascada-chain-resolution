@@ -22,7 +22,7 @@ import {
     continueOperation,
     runInternalStep,
     buildRefIndex,
-    getRefCounts,
+    getRefCounter,
     getPromiseVersion,
     hasCycleCut,
     metaOf,
@@ -341,7 +341,6 @@ describe("Promise versions and lookupPath", () => {
 
         expect(errorCause(root.value)).to.be(failure)
         expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
-        expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -388,7 +387,6 @@ describe("Promise versions and lookupPath", () => {
         expect(errorCause(await observed)).to.be(failure)
         expect(physical.value).to.be(pending.promise)
         expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
-        expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -426,7 +424,6 @@ describe("Promise versions and lookupPath", () => {
         await flushMicrotasks()
 
         expect(root.value).to.be(value)
-        expectCounts(root, 0, 1)
         expect(hasError(new Chain(root), [])).to.be(true)
         expect(errorCause(exportValue(new Chain(root), []))).to.be(error)
         verifyRefCounts(root)
@@ -464,7 +461,8 @@ describe("Promise versions and lookupPath", () => {
 
         advanceSettledValue(pending.promise, () => {
             publishedCycleCut = hasCycleCut(root, "value")
-            countsAfterPublication = getRefCounts(root)
+            const { promiseCount, errorCount, cycleCutCount } = getRefCounter(root)
+            countsAfterPublication = { promiseCount, errorCount, cycleCutCount }
         })
 
         pending.resolve(root)
@@ -479,7 +477,6 @@ describe("Promise versions and lookupPath", () => {
             cycleCutCount: 1,
         })
         expect(hasCycleCut(root, "value")).to.be(true)
-        expectCounts(root, 0, 0, 1)
         verifyRefCounts(root)
     })
 

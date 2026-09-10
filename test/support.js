@@ -167,10 +167,6 @@ function getRefCounter(value) {
     return refcounts.getRefCounter(value, testOperationContext("test ref count"))
 }
 
-function getRefCounts(value) {
-    return refcounts.getRefCounts(value, testOperationContext("test ref counts"))
-}
-
 function hasCycleCut(value, key) {
     return refcounts.hasCycleCut(
         value,
@@ -323,11 +319,10 @@ function countPromiseRegistrations(promise) {
 }
 
 function expectCounts(value, promiseCount, errorCount, cycleCutCount = 0) {
-    expect(getRefCounts(value)).to.eql({
-        promiseCount,
-        errorCount,
-        cycleCutCount,
-    })
+    const counter = getRefCounter(value)
+    expect(counter.promiseCount).to.be(promiseCount)
+    expect(counter.errorCount).to.be(errorCount)
+    expect(counter.cycleCutCount).to.be(cycleCutCount)
 }
 
 function thrownBy(fn) {
@@ -348,7 +343,6 @@ export {
 
 export {
     getRefCounter,
-    getRefCounts,
 }
 
 function errorCause(value) {

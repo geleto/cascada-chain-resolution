@@ -208,9 +208,9 @@ function recountProperty(node, key, operationContext) {
     } else if (languageValues.isTraversable(child, operationContext)) {
         const counter = getRefCounter(child, operationContext)
         if (counter) {
-            promiseCount = counter.promiseCount
-            errorCount = counter.errorCount
-            cycleCutCount = counter.cycleCutCount
+            promiseCount = counter.promiseCount === 0 ? 0 : 1
+            errorCount = counter.errorCount === 0 ? 0 : 1
+            cycleCutCount = counter.cycleCutCount === 0 ? 0 : 1
         }
     }
     return { child, promiseCount, errorCount, cycleCutCount }

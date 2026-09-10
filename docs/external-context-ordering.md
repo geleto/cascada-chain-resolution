@@ -4,7 +4,7 @@ Developer-facing restrictions are centralized in [`data-limitations.md`](data-li
 
 The authority policy below incorporates the agreed context/regular-Chain distinction: invalid off-path access fails locally, while competing independent context registrations invalidate shared authority. No earlier placement or completed output is rewritten. Distinct candidate paths to the same external identity within one root context are forbidden and fail import before registration commits.
 
-Phase 9E and its [completion addendum](first-principles-conformance-plan.md#completion-addendum-implementation-and-verification) implement atomic registration, compiler-guided discovery, canonical boundary records, and single-owner coordination with direct poison completion. Phase 9E-A updates Error unions and graph summaries next. Phase 9F connects public external calls, property access, repair, scope metadata queries, binding-entry gates, and the fixed mutable namespace to that kernel and implements snapshots. Phase 13 emits the compiler input and consumes the public routing handoff.
+Phase 9E and its [completion addendum](first-principles-conformance-plan.md#completion-addendum-implementation-and-verification) implement atomic registration, compiler-guided discovery, canonical boundary records, and single-owner coordination with direct poison completion. Phase 9E-A implements idempotent Error unions and bounded graph presence summaries. Phase 9F connects public external calls, property access, repair, scope metadata queries, binding-entry gates, and the fixed mutable namespace to that kernel and implements snapshots. Phase 13 emits the compiler input and consumes the public routing handoff.
 
 ## Model
 

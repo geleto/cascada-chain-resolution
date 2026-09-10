@@ -149,9 +149,9 @@ function getErrors(chain, path, operationContext) {
 }
 
 function getErrorsAtPathValue(value, queryContext) {
+    if (errorUtils.isPoisonError(value)) return queryContext.finish(value)
     let readiness
-    if (errorUtils.isPoisonError(value)) queryContext.found(value)
-    else if (languageValues.isTraversable(value, queryContext.operationContext))
+    if (languageValues.isTraversable(value, queryContext.operationContext))
         readiness = collectFencedErrorWaits(value, queryContext)
     return queryContext.complete(readiness, () =>
         queryContext.errors.size === 0

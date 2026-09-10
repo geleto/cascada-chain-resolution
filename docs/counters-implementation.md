@@ -2,7 +2,7 @@
 
 Presence summaries are a lazy index over an acyclic projection of the logical
 graph. They identify reachable pending Promises, Errors, and cycle cuts without
-counting paths through aliases. Phase 9E-A implements this representation.
+counting paths through aliases.
 
 ## Metadata
 
@@ -48,7 +48,9 @@ operation-local map, reusing already-complete indexes:
 2. Finish discovery of captured versions advanced by later synchronous
    subscriptions. Reuse their current logical values without another
    subscription or physical-slot read; repeat only while newly available work
-   advances the frontier. Still-pending versions remain pending edges.
+   advances the frontier. Discovering a later version can settle one already
+   skipped in that pass, requiring another pass. Still-pending versions remain
+   pending edges.
 3. Count the captured graph with a DFS. An edge to an active identity becomes a
    staged cut; other traversable edges contribute child presence and staged
    reverse-parent additions. An index completed independently by shared
@@ -75,15 +77,17 @@ edge closes a projected cycle exactly when walking upward from the container
 through the maintained `parents` DAG reaches that value. Such an edge becomes a
 cut; every other edge receives the normal reverse-parent entry.
 
-`prepareLiveEdge` completes fallible child indexing, captures the old and new
-property contributions, and prepares the local count delta. Its returned
-commit publishes the logical value, Promise version, and cut state, replaces reverse-parent
-multiplicities, and propagates resulting presence changes through the parent DAG.
+`prepareLiveEdge` completes fallible child indexing and captures the old and new
+property contributions. Its returned commit completes storage work first, then
+publishes the logical value, Promise version, and cut state, replaces reverse-parent
+multiplicities, and updates live counters through the parent DAG. After storage
+succeeds, this bookkeeping runs without callbacks or suspension.
 
 Assignment, deletion, Promise settlement, Array remapping, and COW
-reconstruction all use this accounting. Detached Promise version values are private;
-they are indexed when their former owner is indexed, but contribute no edge to
-that owner.
+reconstruction all use this accounting. A detached Promise version settles
+privately without indexing its result or contributing an edge to its former
+owner. A consuming Error query or publication into an indexed placement builds
+an index when needed.
 
 An indexed COW copy is indexed from its own logical properties. Source summaries,
 parents, versions, and cuts are never copied as metadata.
@@ -120,12 +124,16 @@ parents. Each parent receives that Boolean change multiplied by its actual
 number of keys referencing the child, never by the number of paths through
 ancestors. Stop propagation for an unchanged presence component.
 
-Use child-before-parent processing of the maintained DAG so reconverging
-changes are combined before a parent's final presence is propagated. Retain
-only operation-local work for affected dependencies; no descendant-path
-multiplier, BigInt, saturation, global rescan, or persistent topology is needed.
-Counter changes and the logical placement commit remain one synchronous
-transition after fallible storage work succeeds.
+Apply one placement transition at a time. Within each category every induced
+delta has the same sign, so an ancestor's presence changes at most once: on
+its first addition or last removal. Recursive propagation through the maintained
+parent DAG therefore delivers only final presence changes, even when paths
+reconverge. Live counters accumulate these contributions directly within the
+synchronous commit after fallible storage work succeeds. Each category crosses a
+reverse edge at most once; unchanged presence does not visit further ancestors.
+No ancestor sort, descendant-path multiplier, BigInt, saturation, graph rescan,
+or persistent topology is needed. This relies on one placement transition;
+opposing deltas from different placements must not be batched into this walk.
 
 The parent graph is a DAG by construction: pending properties and cuts have no
 reverse edge, initial indexing cuts DFS back edges, and later edge publication

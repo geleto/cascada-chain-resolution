@@ -63,6 +63,41 @@ for (const route of ["assignment", "deferred assignment", "imported fulfillment"
 }
 
 describe("index preparation", () => {
+    it("discovers an earlier pending version settled while draining a later one", () => {
+        const ctx = context()
+        const earlier = new OrderedThenable()
+        const later = new OrderedThenable()
+        const error = runtime.validationError("revealed", ctx, runtime.ERROR_KIND.PropertyValidation)
+        const revealed = { error }
+        const root = {
+            earlier,
+            later,
+            releaseLater: {
+                then(deliver) {
+                    later.resolve({
+                        releaseEarlier: {
+                            then(deliverEarlier) {
+                                earlier.resolve(revealed)
+                                earlier.flush()
+                                return deliverEarlier(null)
+                            },
+                        },
+                    })
+                    later.flush()
+                    return deliver(null)
+                },
+            },
+        }
+        // The first drain pass skips earlier, then discovers later's new child.
+        // That child's subscription delivers earlier; another pass must index it.
+        const chain = new runtime.Chain(root, ctx)
+        assert.equal(runtime.getErrors(chain, [], ctx), error)
+        assert.equal(runtime.hasError(chain, [], ctx), true)
+        assert.notEqual(refcounts.getRefCounter(revealed, ctx), undefined)
+        verifyRefCounts(ctx, root)
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
     for (const indexedFirst of [false, true]) {
         it("counts captured versions advanced during later subscription" + (indexedFirst ? " in an existing index" : ""), () => {
             const ctx = context()
@@ -84,7 +119,7 @@ describe("index preparation", () => {
             const root = { first, later: source }
             const chain = new runtime.Chain(root, ctx)
             assert.equal(runtime.hasError(chain, [], ctx), true)
-            assert.equal(refcounts.getRefCounts(root, ctx).promiseCount, 0)
+            assert.equal(refcounts.getRefCounter(root, ctx).promiseCount, 0)
             verifyRefCounts(ctx, root)
             assert.equal(ctx.execution.fatalError, null)
         })
@@ -143,14 +178,4 @@ describe("index preparation", () => {
             )
         }
 
-    it("keeps adjacent corrupt bookkeeping fatal", () => {
-        const ctx = context()
-        const root = { value: 1 }
-        const chain = new runtime.Chain(root, ctx)
-        runtime.hasError(chain, [], ctx)
-        // Simulate a broken internal reverse edge, not a supported host trap.
-        refcounts.getRefCounter(root, ctx).parents.set(root, 1)
-        assert.throws(() => runtime.assignPath(chain, ["value"], new Error("data"), ctx), runtime.isFatalError)
-        assert.equal(ctx.execution.fatalError.cause.message, "Ref-count parent graph contains a cycle")
-    })
 })

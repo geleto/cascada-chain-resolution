@@ -5,7 +5,6 @@ import {
     buildRefIndex,
     getErrors,
     getRefCounter,
-    getRefCounts,
     metaOf,
     managedStateClass,
     verifyRefCounts,
@@ -45,7 +44,7 @@ function assignThroughCopiedRoot(value) {
     return chain
 }
 
-describe("subtree counters", () => {
+describe("graph presence summaries", () => {
     it("keeps non-ref-indexed writes on the normal mutation path", () => {
         const deferredValue = deferred()
         const root = { nested: {} }
@@ -366,15 +365,10 @@ describe("subtree counters", () => {
         verifyRefCounts(root)
     })
 
-    it("counts primitive, promise, Error, and non-extensible graphs", () => {
+    it("indexes non-extensible graphs", () => {
         const frozen = Object.freeze({ nested: { value: 1 } })
         const sharedChild = { value: 2 }
         const frozenDAG = Object.freeze({ left: sharedChild, right: sharedChild })
-
-        expectCounts(7, 0, 0)
-        expectCounts(null, 0, 0)
-        expectCounts(Promise.resolve(1), 1, 0)
-        expectCounts(importValue(new Error("bad")), 0, 1)
 
         importValue(frozen, "frozen counter root")
         importValue(frozenDAG, "frozen DAG counter root")
@@ -386,15 +380,6 @@ describe("subtree counters", () => {
         expectCounts(sharedChild, 0, 0)
         expect(getRefCounter(sharedChild).parents.get(frozenDAG)).to.be(2)
         verifyRefCounts(frozen, frozenDAG)
-    })
-
-    it("rejects count reads from non-ref-indexed traversable values", () => {
-        const value = { value: 1 }
-        new Chain(value)
-        const failure = thrownBy(() => getRefCounts(value))
-
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be("Ref counts require a ref-indexed value")
     })
 
     it("indexes descendants beneath non-extensible ancestors", () => {
@@ -521,7 +506,7 @@ describe("subtree counters", () => {
 
         buildRefIndex(first)
 
-        expectCounts(first, 0, 0, 2)
+        expectCounts(first, 0, 0, 1)
         expectCounts(second, 0, 0, 2)
         expectCounts(third, 0, 0, 1)
         expect(getRefCounter(first).parents.size).to.be(0)
@@ -1145,7 +1130,8 @@ describe("subtree counters", () => {
         buildRefIndex(root)
         assignPath(chain, ["child"], newChild)
 
-        expectCounts(root, 2, 0)
+        expectCounts(root, 1, 0)
+        expectCounts(newChild, 2, 0)
         expect(getRefCounter(oldChild).parents.has(root)).to.be(false)
         expect(getRefCounter(newChild).parents.get(root)).to.be(1)
         verifyRefCounts(root, oldChild)
@@ -1154,7 +1140,7 @@ describe("subtree counters", () => {
         await flushMicrotasks()
 
         expectCounts(oldChild, 0, 1)
-        expectCounts(root, 2, 0)
+        expectCounts(root, 1, 0)
         verifyRefCounts(root, oldChild)
 
         firstNewPending.resolve("done")

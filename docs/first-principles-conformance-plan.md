@@ -6,7 +6,7 @@ This plan records the final design and the work needed to bring `src` into confo
 
 `AGENTS.md` is authoritative for settled contracts. Source and tests are authoritative for completed mechanisms.
 
-Phase 9C, its supported-thenable addendum and completion step, and Phases 9D-0, 9D-A, 9D-B, and 9D-C are implemented. Phase 9E, including its completion addendum, implements atomic registration, compiler mutation access trees, Symbol-backed location records, and single-owner coordination with direct poison completion. Phase 9E-A updates Error unions and graph summaries next; Phase 9F then routes public external operations and implements logical snapshots. Managed ownership remains independent of mutation scopes; external mutation is confined to state owned by its selected external boundary.
+Phase 9C, its supported-thenable addendum and completion step, and Phases 9D-0, 9D-A, 9D-B, and 9D-C are implemented. Phase 9E, including its completion addendum, implements atomic registration, compiler mutation access trees, Symbol-backed location records, and single-owner coordination with direct poison completion. Phase 9E-A implements idempotent Error unions and bounded graph presence summaries. Phase 9F next routes public external operations and implements logical snapshots. Managed ownership remains independent of mutation scopes; external mutation is confined to state owned by its selected external boundary.
 
 ## Current checkpoint and agreed changes
 
@@ -1834,13 +1834,13 @@ Contextualize a native host Error once per causal boundary:
 
 `combineErrors` accepts only contextualized poison and no execution or context:
 
-1. Require at least one input; zero is a fatal invariant failure.
+1. Require at least one input; zero is a fatal invariant failure. Return a sole input unchanged.
 2. Expand direct compounds to their already-flat child arrays. The compound factory establishes this invariant, so do not recurse.
 3. Accept unspecified Error order; do not sort semantic children or allocate ordered branch summaries.
 4. Deduplicate by raw cause, source-context identity, and kind using collection-local state. Share this rule with `getErrors`. Different contexts or kinds remain distinct. A leaf without a cause uses its own identity for that component; explicit `cause: undefined` or `cause: null` is a present cause, so do not use nullish coalescing to choose the fallback. Compare primitive causes by ordinary Map equality without coercion, including its `NaN` and signed-zero behavior. Execution identity is not an additional key: the same cause, source handle, and kind remain equivalent if imported across executions. Ordinary render-local source handles are already distinct.
-5. Return the original leaf when only one remains; otherwise create `CompoundPoisonError`.
+5. Reuse an input that represents the complete union; otherwise return the sole retained leaf or construct `CompoundPoisonError` from several leaves.
 
-The `combineErrors` factory uses the same one-level `flattenAndDeduplicateErrors` normalization as `getErrors`; no compound consumer needs recursive flattening. It returns a sole retained leaf before constructing an Error. For several leaves it passes the finalized array to the trusted constructor. The constructor freezes that array; the factory freezes the complete compound. The resulting leaf-only `.errors` exposes a representative of every semantic Error. A retained leaf supplies representative context without claiming to be the primary or earliest failure. Its `.kind` is the leaves' sole common kind or `ERROR_KIND.Multiple`. Distinct kinds are a diagnostic projection, not stored `.kinds` state. The caller-supplied message names the failed boundary. Presentation may sort a separate view without changing the created Error.
+`getErrors` delegates combination to the `combineErrors` factory and its one-level `flattenAndDeduplicateErrors` normalization; no compound consumer needs recursive flattening. Reusing a complete input preserves its source, message, children, and identity. Only when a new compound is needed does the factory pass the finalized leaf array to the trusted constructor and use the caller-supplied message to name the failed boundary. The constructor freezes that array; the factory freezes the complete compound. The resulting leaf-only `.errors` exposes a representative of every semantic Error. A retained leaf supplies representative context without claiming to be the primary or earliest failure. Its `.kind` is the leaves' sole common kind or `ERROR_KIND.Multiple`. Distinct kinds are a diagnostic projection, not stored `.kinds` state. Presentation may sort a separate view without changing the created Error.
 
 Complete collectors may accumulate arrivals and use identity visited sets; they need no ordered child summaries or extra alias/cycle ordering pass solely for Errors. Keep required collection complete and use one local semantic-deduplication helper in export, `getErrors`, managed preparation, and compound construction. Successful root/input positions, FIFO captures, and effect ordering are unchanged. `hasError` retains its first-proof short circuit. The allowed nondeterminism is exhaustively bounded by `data-limitations.md`: Error array order/representatives, competing fatal detection and outward settlement, short-circuit Error-query outcomes, and detection of invalid competing external bindings. Do not extend these exceptions to successful data or effects.
 
@@ -2212,7 +2212,7 @@ Fixed placement versions share installation, reading, and detachment but do not 
 
 ## Phase 9E: Build the external coordination kernel
 
-Implemented, including the compiler tree input, runtime location records, and direct poison transport specified below. Phase 9E-A follows before the public external-operation cutover in 9F. Observation-only external identities remain unlocked.
+Implemented, including the compiler tree input, runtime location records, and direct poison transport specified below. Public external-operation cutover remains in 9F. Observation-only external identities remain unlocked.
 
 ### 1. Filter the compiler mutation access tree at import
 
@@ -2284,7 +2284,7 @@ An observation releases only after its captured predecessor and required snapsho
 
 ### Completion addendum: implementation and verification
 
-Implemented. The constructor, tree queries, location records, coordinator, and existing callers use the final representation below. Phase 9E-A is the next implementation step; public external routing remains in 9F.
+Implemented. The constructor, tree queries, location records, coordinator, and existing callers use the final representation below. Public external routing remains in 9F.
 
 Verification: `npm.cmd test -- --reporter dot` passes all 1,294 tests. The bounded-discovery regressions pre-admit shared graphs, then verify zero descendant reads for a root endpoint and exactly one read per requested placement, including an explicit route through a cycle. Binding, thenable, import-abandonment, entry, phase-poison, and fatal-delivery regressions pass; source searches find no superseded constructor or discovery path.
 
@@ -2322,7 +2322,7 @@ Verify supported behavior through ContextChain import and existing coordinator i
 
 ## Phase 9E-A: Preserve Error identity and bound query summaries
 
-Implement the common Error union and graph-summary contracts before external query integration. These changes preserve language behavior and require no new restriction on supported graphs.
+Implemented. Error union preserves an input representing the complete result, and graph summaries count immediate contributing placements. These common contracts precede external query integration and require no new restriction on supported graphs.
 
 ### Idempotent Error union
 
@@ -2335,10 +2335,12 @@ Implement the common Error union and graph-summary contracts before external que
 
 - Implement [graph presence summaries](counters-implementation.md). Keep Error, Promise, and cycle-cut summaries as counts of immediate contributing placements. A traversable child contributes one per nonzero summary through each parent key; direct Error, pending, and cut placements contribute their ordinary single category.
 - Update index construction, edge contribution capture, live publication, COW/remap indexing, and query pruning together. Preserve atomic fallible preparation/commit, downward index closure, the acyclic projection, and existing cut traversal.
-- Replace descendant-path multiplier propagation with child-before-parent propagation of zero/nonzero changes. Use exact local edge multiplicity only. Combine reconverging changes before propagating a parent's final presence; stop unchanged components. No BigInt, saturation, cached topology, or rescan of unrelated graph data is needed.
+- Propagate only zero/nonzero changes with exact local edge multiplicity. One placement transition changes each category in only one direction, so each ancestor's presence changes at most once: on its first addition or last removal. Complete fallible child indexing and capture old/new contributions before publication. After storage succeeds, update live counters directly within the synchronous commit, without callbacks or suspension; reconverging contributions accumulate there, and unchanged presence stops propagation. Each category crosses an affected reverse edge at most once. Keep separate placement transitions separate; no future-count map, ancestor sort, BigInt, saturation, cached topology, or rescan of unrelated graph data is needed.
 - Remove obsolete weighted-delta helpers and tests asserting descendant totals. The independent verifier checks local child-presence contributions, edge multiplicity, complete index regions, and cycles. Sharing and leases are independent ownership mechanisms and remain unchanged.
 - Reproduce the small-graph defect with eleven records each containing 32 aliases to the next child, plus a root with that branch and one independent Error. Index, replace the large branch, and require `hasError` and `getErrors` to retain the surviving Error. Repeat for pending-Promise presence, reversed property order, repeated removal/reinsertion, reconverging parents, and cycle cuts. Use few identities; this is not a large-graph stress limitation.
 - Include a cyclic diamond with a cut on one arm, built through different insertion histories. Remove and reinsert contributions through each arm, and verify surviving Error and Promise reachability against the independent verifier. Equivalent raw graphs may have different cuts and local totals; require identical observations, not a canonical projection.
+
+Verified by the full suite: 1,309 tests pass with strict unhandled-rejection handling. `test/error-union.test.js` covers complete-union reuse, overlapping compounds with and without a complete input, and public collection/publication identity across ready and pending delivery; `test/presence-summaries.test.js` covers dense aliases, reconvergence, pending frontiers, and cyclic diamonds. `test/index-recovery.test.js` also covers a later discovered subscription settling an earlier skipped version, requiring another discovery pass. Import, COW, Array remap, publication-failure, and index-recovery tests use the independent local-contribution verifier.
 
 ## Phase 9F: Route and cut over external operations
 

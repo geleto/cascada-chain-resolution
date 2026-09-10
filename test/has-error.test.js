@@ -164,11 +164,7 @@ describe("hasError", () => {
         const pendingResult = hasError(new Chain(pending), [])
         expect(hasError(new Chain(bad), [])).to.be(true)
 
-        expect(getRefCounter(clean).errorCount).to.be(0)
-        expect(getRefCounter(clean.nested).errorCount).to.be(0)
         expect(getRefCounter(pending).promiseCount).to.be(1)
-        expect(getRefCounter(bad).errorCount).to.be(1)
-        expect(getRefCounter(bad.nested).errorCount).to.be(1)
         expect(await pendingResult).to.be(false)
         expect(getRefCounter(pending).promiseCount).to.be(0)
         expect(pending.pending instanceof Promise).to.be(true)
@@ -247,11 +243,6 @@ describe("hasError", () => {
         }
 
         expect(hasError(new Chain(root), [])).to.be(true)
-
-        expect(getRefCounter(root).promiseCount).to.be(0)
-        expect(getRefCounter(root).errorCount).to.be(1)
-        expect(getRefCounter(before).errorCount).to.be(0)
-        expect(getRefCounter(after).errorCount).to.be(0)
         verifyRefCounts(root)
     })
 

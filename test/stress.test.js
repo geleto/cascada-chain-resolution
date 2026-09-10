@@ -80,7 +80,7 @@ describe("bounded stress", () => {
         verifyRefCounts(root)
     })
 
-    it("aggregates path multiplicity through stacked diamonds", async () => {
+    it("propagates local presence through stacked diamonds", async () => {
         const layers = 22
         const pending = deferred()
         let root = { pending: pending.promise }
@@ -92,12 +92,12 @@ describe("bounded stress", () => {
         }
 
         buildRefIndex(root)
-        expectCounts(root, 2 ** layers, 0)
+        expectCounts(root, 2, 0)
 
         pending.reject("bad")
         await flushMicrotasks()
 
-        expectCounts(root, 0, 2 ** layers)
+        expectCounts(root, 0, 2)
         verifyRefCounts(root)
     })
 

@@ -4,6 +4,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 
 const COMMIT_UNINDEXED_EDGE = updateProperty => updateProperty()
+const COUNT_FIELDS = ["promiseCount", "errorCount", "cycleCutCount"]
 
 function getRefCounter(node, operationContext) {
     const meta = metadata.metaOf(node, operationContext)
@@ -23,39 +24,20 @@ function hasCycleCut(parent, key, operationContext) {
         ?.cycleCuts?.has(key) === true
 }
 
-function getRefCounts(value, operationContext) {
-    let promiseCount = 0
-    let errorCount = 0
-    let cycleCutCount = 0
-    if (languageValues.isPending(value, operationContext)) promiseCount = 1
-    else if (errorUtils.isPoisonError(value)) errorCount = 1
-    else if (languageValues.isTraversable(value, operationContext)) {
-        const counter = getRequiredRefCounter(value, operationContext)
-        promiseCount = counter.promiseCount
-        errorCount = counter.errorCount
-        cycleCutCount = counter.cycleCutCount
-    }
-    return { promiseCount, errorCount, cycleCutCount }
-}
-
 function getValueRefState(child, operationContext, cycleCut = false) {
-    let promiseCount = 0
-    let errorCount = 0
-    let cycleCutCount = 0
-    let childCounter
+    const state = { promiseCount: 0, errorCount: 0, cycleCutCount: 0 }
     if (languageValues.isPending(child, operationContext)) {
-        promiseCount = 1
+        state.promiseCount = 1
     } else if (cycleCut) {
-        cycleCutCount = 1
+        state.cycleCutCount = 1
     } else if (errorUtils.isPoisonError(child)) {
-        errorCount = 1
+        state.errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
-        childCounter = getRequiredRefCounter(child, operationContext)
-        promiseCount = childCounter.promiseCount
-        errorCount = childCounter.errorCount
-        cycleCutCount = childCounter.cycleCutCount
+        state.childCounter = getRequiredRefCounter(child, operationContext)
+        for (const field of COUNT_FIELDS)
+            state[field] = Number(state.childCounter[field] > 0)
     }
-    return { childCounter, promiseCount, errorCount, cycleCutCount }
+    return state
 }
 
 function buildRefIndex(value, operationContext) {
@@ -75,7 +57,8 @@ function buildRefIndex(value, operationContext) {
     // A later custom-thenable subscription in this same synchronous index build
     // can deliver earlier subscriptions in FIFO order, advancing captured versions.
     // Discover those newly available values before counting, without resubscribing
-    // or rereading physical slots. Repeat only while available work makes progress.
+    // or rereading physical slots. Discovery can settle a version already skipped
+    // in this pass, so repeat while available work makes progress.
     while (pending.size > 0) {
         let advanced = false
         for (const version of pending) {
@@ -140,9 +123,8 @@ function buildRefIndex(value, operationContext) {
                     counter.cycleCutCount++
                 } else {
                     const childCounter = count(child)
-                    counter.promiseCount += childCounter.promiseCount
-                    counter.errorCount += childCounter.errorCount
-                    counter.cycleCutCount += childCounter.cycleCutCount
+                    for (const field of COUNT_FIELDS)
+                        counter[field] += Number(childCounter[field] > 0)
                     state.children.push(childCounter)
                 }
             }
@@ -192,8 +174,8 @@ function prepareRefEdge(
     }
 }
 
-// Complete fallible graph preparation before returning a commit that touches
-// only the property and captured bookkeeping state.
+// Complete fallible graph preparation and capture edge contributions first.
+// After storage succeeds, publish bookkeeping without callbacks or suspension.
 function prepareLiveEdge(
     owner,
     key,
@@ -215,19 +197,13 @@ function prepareLiveEdge(
         counter.cycleCuts?.has(key) === true,
     )
     const nextState = getValueRefState(value, operationContext, cycleCut)
-    const applyCountUpdate = prepareCountUpdate(
-        owner,
-        counter,
-        previousState,
-        nextState,
-        operationContext,
-    )
     return updateProperty => {
         updateProperty()
         updateCycleCut(counter, key, cycleCut)
         removeParentCounterEdge(previousState.childCounter, owner)
         addParentCounterEdge(nextState.childCounter, owner)
-        applyCountUpdate?.()
+        for (const field of COUNT_FIELDS)
+            updateCount(counter, field, nextState[field] - previousState[field], operationContext)
     }
 }
 
@@ -257,62 +233,24 @@ function updateCycleCut(counter, key, cut) {
     if (counter.cycleCuts.size === 0) delete counter.cycleCuts
 }
 
-function prepareCountUpdate(
-    node,
-    counter,
-    previousState,
-    nextState,
-    operationContext,
-) {
-    const promiseDelta = nextState.promiseCount - previousState.promiseCount
-    const errorDelta = nextState.errorCount - previousState.errorCount
-    const cycleCutDelta = nextState.cycleCutCount -
-        previousState.cycleCutCount
-    if (promiseDelta === 0 && errorDelta === 0 && cycleCutDelta === 0) {
-        return undefined
-    }
-
-    const states = new Map()
-    const ordered = []
-    const source = visit(node, counter)
-    source.multiplier = 1
-    for (let index = ordered.length - 1; index >= 0; index--) {
-        const state = ordered[index]
-        for (const [parent, multiplicity] of state.counter.parents) {
-            states.get(parent).multiplier += state.multiplier * multiplicity
-        }
-    }
-    return () => {
-        for (const { counter, multiplier } of ordered) {
-            counter.promiseCount += promiseDelta * multiplier
-            counter.errorCount += errorDelta * multiplier
-            counter.cycleCutCount += cycleCutDelta * multiplier
-        }
-    }
-
-    // Memoized DFS records parent-first postorder. Reversing it lets every
-    // child contribute before a converging parent is updated.
-    function visit(current, currentCounter) {
-        const existing = states.get(current)
-        if (existing) {
-            if (!existing.complete) {
-                throw new Error("Ref-count parent graph contains a cycle")
-            }
-            return existing
-        }
-
-        const state = {
-            counter: currentCounter,
-            multiplier: 0,
-            complete: false,
-        }
-        states.set(current, state)
-        for (const parent of state.counter.parents.keys()) {
-            visit(parent, getRequiredRefCounter(parent, operationContext))
-        }
-        state.complete = true
-        ordered.push(state)
-        return state
+// One placement changes each category in only one direction. An ancestor's
+// presence changes at most once, even across reconverging paths: on its first
+// addition or last removal. Live counters accumulate these changes within the
+// synchronous commit; unchanged presence stops propagation to further ancestors.
+// Index construction and edge preparation keep this parent graph acyclic.
+function updateCount(counter, field, delta, operationContext) {
+    if (delta === 0) return
+    const previous = counter[field]
+    counter[field] += delta
+    const change = Number(counter[field] > 0) - Number(previous > 0)
+    if (change === 0) return
+    for (const [parent, multiplicity] of counter.parents) {
+        updateCount(
+            getRequiredRefCounter(parent, operationContext),
+            field,
+            change * multiplicity,
+            operationContext,
+        )
     }
 }
 
@@ -320,7 +258,6 @@ export {
     buildRefIndex,
     getRefCounter,
     getRequiredRefCounter,
-    getRefCounts,
     hasCycleCut,
     indexValueIfSourceIndexed,
     prepareLiveEdge,

@@ -580,9 +580,9 @@ describe("import", () => {
         const wrapper = importValue({ branch: left }, "marked reuse")
         buildRefIndex(wrapper)
         expect(metaOf(right).cycleCuts.has("left")).to.be(true)
-        expectCounts(left, 0, 0, 2)
+        expectCounts(left, 0, 0, 1)
         expectCounts(right, 0, 0, 2)
-        expectCounts(wrapper, 0, 0, 2)
+        expectCounts(wrapper, 0, 0, 1)
         verifyRefCounts(wrapper, left, right)
     })
 
@@ -628,8 +628,7 @@ describe("import", () => {
         buildRefIndex(left)
         buildRefIndex(right)
 
-        expectCounts(left, 2, 2, 1)
-        expectCounts(right, 1, 1, 1)
+        verifyRefCounts(left, right)
         expect(hasError(new Chain(left), [])).to.be(true)
         expect(hasError(new Chain(right), [])).to.be(true)
 
@@ -653,8 +652,6 @@ describe("import", () => {
                     .to.be(true)
             }
         }
-        expectCounts(left, 0, 4, 1)
-        expectCounts(right, 0, 2, 1)
         verifyRefCounts(left, right)
     })
 
@@ -1088,8 +1085,6 @@ describe("import", () => {
         expect(readPath(new Chain(frozen), ["pending"])).to.be(2)
         expect(errorCause(getErrors(new Chain(nonExtensibleError), [])))
             .to.be(error)
-        expectCounts(sealed, 0, 0)
-        expectCounts(frozen, 0, 0)
         verifyRefCounts(sealed, frozen, nonExtensibleError)
     })
 
@@ -1132,7 +1127,6 @@ describe("import", () => {
         expect(readPath(new Chain(nested), ["pending"])).to.be(2)
         expect(hasError(new Chain(array), [])).to.be(false)
         expect(getErrors(new Chain(array), [])).to.be(null)
-        expectCounts(array, 0, 0)
         verifyRefCounts(array)
     })
 
@@ -1159,7 +1153,6 @@ describe("import", () => {
         expect(errors.errors.length).to.be(2)
         expect(errors.errors.map(errorCause)).to.contain(directError)
         expect(errors.errors.map(errorCause)).to.contain(resolvedError)
-        expectCounts(array, 0, 2, 1)
         verifyRefCounts(array)
     })
 
@@ -1179,7 +1172,6 @@ describe("import", () => {
         expect(errorCause(result)).to.be(error)
         expect(root.pending).to.be(pending.promise)
         expect(errorCause(readPath(new Chain(root), ["pending"]))).to.be(error)
-        expectCounts(root, 0, 1)
         verifyRefCounts(root)
     })
 
@@ -1637,7 +1629,6 @@ describe("import", () => {
         expect(next.value).not.to.be(oldValue)
         expect(oldValue.x).to.be(1)
         expect(next.value.x).to.be(2)
-        expectCounts(root, 0, 0)
         verifyRefCounts(root, next)
     })
 
@@ -1658,7 +1649,6 @@ describe("import", () => {
         expect(resolved.pending).to.be(nestedPending)
         expect(await getErrors(new Chain(root), [])).to.be(null)
         expect(readPath(new Chain(root), ["nested", "value", "pending"])).to.be(1)
-        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 
@@ -1677,7 +1667,6 @@ describe("import", () => {
 
         expect(errorCause(await errors)).to.be(errorValue.bad)
         expect(root.value).to.be("fixed")
-        expectCounts(root, 0, 0)
         verifyRefCounts(root, errorValue)
     })
 
@@ -1693,7 +1682,8 @@ describe("import", () => {
 
         importValue(root, "resolved back-edge")
         buildRefIndex(root)
-        expectCounts(root, 2, 0)
+        expectCounts(root, 1, 0)
+        expectCounts(root.nested, 2, 0)
 
         deferredValue.resolve(root)
         await flushMicrotasks()
@@ -2025,7 +2015,6 @@ describe("import", () => {
 
         expect(sealed.pending instanceof Promise).to.be(true)
         expect(readPath(new Chain(sealed), ["pending"])).to.be(1)
-        expectCounts(sealed, 0, 0)
         verifyRefCounts(sealed)
     })
 

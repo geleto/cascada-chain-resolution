@@ -206,13 +206,11 @@ describe("enter", () => {
         expect(callbackStarted).to.be(true)
         expect(root.target instanceof Promise).to.be(true)
         expect(root.target).not.to.be(target.promise)
-        expectCounts(root, 1, 0)
         verifyRefCounts(root)
 
         target.resolve({})
         await flushMicrotasks()
         expect(root.target).to.eql({ before: 1, inside: 2 })
-        expectCounts(root, 0, 0)
         verifyRefCounts(root)
     })
 

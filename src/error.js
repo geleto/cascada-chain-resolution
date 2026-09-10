@@ -243,9 +243,18 @@ function flattenAndDeduplicateErrors(errors) {
 }
 
 function combineErrors(errors, message) {
-    const leaves = flattenAndDeduplicateErrors(errors)
+    const inputs = Array.from(errors)
+    // Forward a sole compound without walking or deduplicating its leaves.
+    if (inputs.length === 1 && isPoisonError(inputs[0])) return inputs[0]
+    const leaves = flattenAndDeduplicateErrors(inputs)
     if (leaves.length === 0)
         throw new TypeError("Error combination requires at least one poison")
+    // Input compounds are already deduplicated, and their member sets are
+    // subsets of the union. Equal cardinality proves one already represents it.
+    const complete = inputs.find(error =>
+        error instanceof CompoundPoisonError && error.errors.length === leaves.length,
+    )
+    if (complete) return complete
     return leaves.length === 1
         ? leaves[0]
         : Object.freeze(new CompoundPoisonError(leaves, message))
@@ -277,7 +286,6 @@ export {
     createPoisonError,
     failExecution,
     declarationValidationError,
-    flattenAndDeduplicateErrors,
     isFatalError,
     isPoisonError,
     pathAccessError,
