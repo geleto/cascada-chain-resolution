@@ -2,6 +2,10 @@
 
 This document defines the observable contract of the Cascada chain-resolution kernel. Implementation details live in [`import-preparation.md`](import-preparation.md), [`counters-implementation.md`](counters-implementation.md), and [`work-bounds.md`](work-bounds.md).
 
+`ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local first-external-boundary records, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
+
+External public-operation routing, scope metadata queries, fixed mutable namespaces, and whole mutable-external entry are planned for Phase 9F. Their target contract includes whole-owner serialization of native property writes and recoverable rejection of mutable-native-child entry, as defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
+
 ## Values
 
 The runtime recognizes these value categories:
@@ -208,11 +212,14 @@ validation Error if an unsupported identity cannot be inspected safely. An
 escaping `FatalError` remains fatal. The probe creates no execution state,
 thenability cache, poison, Promise, or synthetic thenable.
 
-All genuine arrays retain their existing path regardless of realm or subclass;
-array subclass prototypes and methods are deliberately normalized away.
-External classes and native internal-slot objects are identity leaves. The graph
-does not traverse, index, or copy their state. A path cannot enter an external
-value, and `run` cannot yet use one as a receiver. Managed-class export creates
+Arrays without an explicit external identity declaration retain their managed
+path regardless of realm or subclass; their subclass prototypes and methods
+are deliberately normalized away.
+External classes, declared external records/Arrays, and native internal-slot
+objects are identity leaves. The graph does not traverse, index, or copy their
+state. The current path and `run` implementation does not yet enter external
+state; Phase 9F supplies the ordered native suffix and property snapshot boundary.
+Managed-class export creates
 an independent metadata-free object with the admitted prototype without
 invoking its constructor.
 
@@ -432,8 +439,9 @@ to a separate higher-runtime diagnostic view.
 
 The `combineErrors` factory expands direct compound inputs to their already-flat
 children and shares collection-local raw-cause/source-context/kind deduplication
-with `getErrors`. It returns a sole distinct leaf unchanged before allocating an
-Error. For several leaves, the constructor trusts and freezes the finalized
+with `getErrors`. An input already representing the complete union returns
+unchanged, including a compound; otherwise a sole distinct leaf returns unchanged
+and several leaves require a new compound. Its constructor trusts and freezes the finalized
 leaf-only `.errors` array; the factory freezes the complete compound. Recursive
 flattening is unnecessary. Child order and the
 retained representative are unspecified; different contexts or kinds remain
@@ -573,17 +581,21 @@ selects mutation and identifies the `!` prefix. Mutation publishes through the
 normal mutation path; observation preserves the receiver. See
 [`run.md`](run.md) for dispatch, argument, ordering, and result contracts.
 `repair` is an exact Boolean. `true` requires a mutation scope and performs
-repair-and-call on a selected external boundary.
+repair-and-call on the selected retained managed scope or external boundary.
 
 ### `repairPath(chain, path, operationContext)`
 
-Performs an exclusive repair-only operation at an existing fixed external
-location. It clears repairable external phase poison, invokes no external code,
-repairs no managed graph Error, and returns `undefined` directly or through a
-Promise when it must wait for path resolution or earlier external work. Repair
-creates no registration and cannot establish or transfer mutation authority. It
-stops at the first external boundary; an opaque suffix, including a pending
-segment, is not consumed.
+Performs an ordered repair-only operation at a retained managed scope guard or
+existing fixed external boundary. It clears only that scope's poison, invokes no
+external code, and returns `undefined` directly or through a Promise when it must
+wait for path resolution or earlier work. A managed guard exposes its retained
+value again; independently poisoned descendants remain poisoned. A deeper repair
+cannot pass an unrepaired ancestor. Ordinary managed Error values still use
+assignment or deletion for recovery.
+
+Repair creates no registration and cannot establish or transfer mutation
+authority. For a target at or inside an external boundary, it stops at that
+boundary; an opaque suffix, including a pending segment, is not consumed.
 
 ### `export(chain, path, operationContext)`
 
@@ -617,7 +629,7 @@ On success, returns whether an Error is reachable in the issue-time branch.
 - A broken required prefix or existing path Error returns `true`.
 - A missing or primitive terminal returns `false`.
 - A positive indexed `errorCount` returns `true` immediately.
-- A cut-free settled zero-error branch returns `false` immediately.
+- A cut-free settled zero-error branch returns `false` once no required contextual external-scope observation remains.
 - Otherwise a counter-fenced walk follows only subtrees with Promise, Error, or
   cycle-cut work.
 - At an actual cycle cut, its independently indexed target resumes the same
@@ -632,13 +644,15 @@ operation instead produces `QueryReflectionFailed`. A ready query returns that
 poison directly and a pending query fulfills with that same ordinary Error. It is not a
 positive answer and is not an Error found in the graph.
 
+At a mutable external scope, contextual queries observe ordered phase metadata without native property reflection or capability extraction: healthy state gives false/null, poison gives true/the original Error, and a binding conflict is a visible Error. Ancestor queries include their required accessible external scopes through the static tree and ordinary query owner. A poisoned managed guard is terminal: its retained children, including Promises and independently poisoned scopes, are recovery state and are not traversed. Inert aliases gain no authority, and later repair cannot change a captured query result.
+
 ### `getErrors(chain, path, operationContext)`
 
-After complete collection, returns null when no Error is found, the original leaf for one distinct Error, or a CompoundPoisonError for several. Deduplicate by raw cause, source-context identity, and kind through the common combination factory. Each retained leaf keeps its attribution; child order is unspecified. The result is direct when ready and otherwise a Promise fulfilling with that same null or ordinary Error. Finding Errors does not reject or create a PoisonedValue.
+After complete collection, returns null when no Error is found, the original Error when it already represents the complete collection, or a new CompoundPoisonError for a union not represented by any input. Deduplicate by raw cause, source-context identity, and kind through the common combination factory. Each retained leaf keeps its attribution; child order is unspecified. The result is direct when ready and otherwise a Promise fulfilling with that same null or ordinary Error. Finding Errors does not reject or create a PoisonedValue.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and healthy primitive terminals return null.
-- A counter-fenced walk prunes subtrees with no Promise, Error, or cycle-cut work.
+- A counter-fenced walk prunes managed subtrees with no Promise, Error, or cycle-cut work; the contextual external-scope frontier remains independent of these summaries.
 - At an actual cycle cut, its independently indexed target resumes the same walk; the cut itself contributes nothing.
 - Promise waits recursively extend the captured issue-time frontier.
 - Finalize once after all required collection: an empty collector returns null; nonempty collection uses the existing combineErrors factory without duplicate normalization or singleton compounds.
@@ -663,9 +677,11 @@ such edge. Initial DFS back edges and later cycle-closing publications become
 cuts, so the reverse-parent projection remains acyclic. Export does not use
 subtree counters.
 
-Each indexed node stores exact `promiseCount`, `errorCount`, and
-`cycleCutCount` totals. All later transitions below an indexed parent maintain
-those totals and exact parent multiplicity. A missing counter anywhere in an
+Each indexed node stores `promiseCount`, `errorCount`, and `cycleCutCount`
+as counts of immediate contributing placements. An indexed child contributes
+one per nonzero summary through each parent key. Later transitions propagate
+zero/nonzero changes with exact local parent multiplicity, never descendant-path
+multipliers. These summaries are bounded by immediate storage. A missing counter anywhere in an
 indexed raw-reachable graph is a fatal invariant failure.
 
 The complete implementation is specified in

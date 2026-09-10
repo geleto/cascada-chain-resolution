@@ -63,24 +63,20 @@ class ContextChain extends Chain {
     constructor(
         initialValue,
         operationContext,
-        scopeMutationPaths = [],
-        propertyMutationPaths = [],
+        mutationAccessTree = undefined,
     ) {
-        const externalMutationTreeSetup = {
-            scopeMutationPaths,
-            propertyMutationPaths,
-        }
-        const importedValue = importContext(
-            initialValue,
-            operationContext,
-            externalMutationTreeSetup,
-        )
-        super(
-            importedValue,
-            operationContext,
-            undefined,
-            externalMutationTreeSetup.externalMutationTree,
-        )
+        // Establish the canonical context before import commits its locations.
+        super(undefined, operationContext)
+        internalSteps.runInternalStep(operationContext, () => {
+            const setup = mutationAccessTree === undefined
+                ? undefined : { context: this, mutationAccessTree }
+            const importedValue = importContext(initialValue, operationContext, setup)
+            if (setup?.tree !== undefined) this._externalMutationTree = setup.tree
+            propertyVersions.assignProperty(
+                this._state, "value", importedValue, operationContext,
+                false, errorUtils.ERROR_KIND.ChainValueFailed,
+            )
+        })
     }
 }
 

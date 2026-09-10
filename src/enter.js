@@ -1,6 +1,6 @@
-import * as operationLifecycle from "./operation-lifecycle.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { Chain } from "./chain.js"
+import { findBranch } from "./external-mutation-tree.js"
 import * as errorUtils from "./error.js"
 import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
@@ -17,7 +17,7 @@ function enter(chain, path, operationContext, entryMutable, onEntered) {
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         path = [...path]
-        const externalMutationTree = chain._externalMutationTree?.findBranch(path)
+        const externalMutationTree = findBranch(chain._externalMutationTree, path)
         const enterOperation = entryMutable ? enterMutating : enterReadOnly
         return enterOperation(
             chain,

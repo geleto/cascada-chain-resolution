@@ -24,7 +24,7 @@ The property's projected contribution is:
 | Pending Promise | One Promise | No |
 | Cycle cut | One cycle cut | No |
 | Error | One Error | No |
-| Indexed traversable value | Child totals | Yes |
+| Indexed traversable value | One for each nonzero child summary | Yes |
 | Other value | None | No |
 
 A property cannot be both logically pending and cut. Replacing or deleting it
@@ -32,11 +32,13 @@ clears its old cut.
 
 ## Creating the projection
 
-`buildRefIndex` accepts any language graph. While recursively indexing one
-component, an edge to an identity on the active DFS path becomes a cut. Its raw
-target is queued and indexed as another component after the current component
-has been published. Structural aliases outside the active path remain ordinary
-edges with their exact multiplicity.
+`buildRefIndex` accepts any language graph. It first captures the complete
+unindexed region, including cut targets, then counts its projected edges. An
+edge to an identity on the active counting DFS path becomes a cut. Structural
+aliases outside the active path remain ordinary edges with their exact
+multiplicity. All fallible preparation finishes before the complete region's
+counters and cuts are published together and its reverse edges are added; no
+partially indexed component is exposed.
 
 Consequently every raw-reachable traversable identity is indexed, while reverse
 parent edges form a DAG.

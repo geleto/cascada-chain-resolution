@@ -8,6 +8,8 @@ The exact host function/method uses `InvocationFailed`; a controlled comparator 
 
 **Implemented.** This is the common invocation layer for standard String and Array operations and managed-record and managed-class methods.
 
+The external receiver route and repair-and-call are Phase 9F work specified in [external ordering](external-context-ordering.md). That route uses native receiver semantics and result ownership; it does not reinterpret external Arrays as controlled managed Arrays. The implementation contract below describes the existing managed/String routes. Phase 9F also makes live external-location preservation a prerequisite of managed receiver isolation and publication.
+
 ## Contract
 
 ```js
@@ -186,9 +188,9 @@ Holes have no contribution. Placement-specific state, including cycle cuts and P
 
 Array `length` is a visible, non-enumerable, non-configurable intrinsic property of every logical Array. The mutation walk classifies a terminal property before treating it as a graph edge: ordinary properties target that edge, while intrinsic `length` targets the receiver's enclosing placement. `transformProperty` gates that placement when conversion waits. The payload is converted only after the receiver is known to be a logical Array; another object's `length` remains an ordinary property and may hold a Promise. Setting Array length follows `ArraySetLength`. Each successfully truncated property detaches its Promise version and removes its edge contribution and placement-specific state. Shared, imported, or read-protected Arrays copy before the change. ArrayView rules are in [`array-view.md`](array-view.md).
 
-String `length` is a visible, non-enumerable, non-configurable, read-only intrinsic property. Its read resolves only the receiver path. Assignment or deletion poisons the receiver placement and returns the same language Error; deleting Array `length` does the same.
+String `length` is a visible, non-enumerable, non-configurable, read-only intrinsic property. Its read resolves only the receiver path. Without an explicit ancestor scope, assignment or deletion poisons the receiver placement and returns the same language Error; deleting Array `length` does the same.
 
-A `run` receiver path ending at either intrinsic `length` selects a number, never an Array. Mutation mode poisons the containing receiver placement or root and returns the same Error, because intrinsic length is not itself a graph placement.
+A `run` receiver path ending at either intrinsic `length` selects a number, never an Array. Without an explicit ancestor scope, mutation mode poisons the containing receiver placement or root and returns the same Error, because intrinsic length is not itself a graph placement.
 
 ## Errors
 
@@ -196,9 +198,9 @@ A `run` receiver path ending at either intrinsic `length` selects a number, neve
 
 A mutation may capture an independent removed-value Error before replaying its receiver. If replay also fails, publish the replay failure at the receiver and combine both failures for the operation result. A pending independent result waits only in that result; receiver publication remains immediate. Nested removed-result payload remains unconsumed.
 
-A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. A mutation rejected after receiver classification installs its validation Error at that path and returns the same Error.
+A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. A mutation rejected after receiver classification publishes its validation Error through the selected scope transition and returns that Error. A blocking scope instead returns its original poison without descendant or action-only argument work.
 
-A synchronous supported-method, callback, accessor, or reflection throw becomes a `PoisonError` with that boundary's source and failure kind. A direct Error means the call failed whether returned, fulfilled, thrown, or rejected. A failed mutating call poisons its receiver placement; an observation leaves its receiver unchanged. An existing contextualized failure propagates unchanged. A raw direct method-Promise rejection is attributed to the call. Unlimited `flat` of a logical Array cycle has no finite result and returns an `InvalidArrayOperation` poison rather than relying on native stack overflow. An observational mutator discards its private working copy.
+A synchronous supported-method, callback, accessor, or reflection throw becomes a `PoisonError` with that boundary's source and failure kind. A direct Error means the call failed whether returned, fulfilled, thrown, or rejected. A failed mutating call publishes poison at its selected mutation scope; an observation leaves its receiver unchanged. An existing contextualized failure propagates unchanged. A raw direct method-Promise rejection is attributed to the call. Unlimited `flat` of a logical Array cycle has no finite result and returns an `InvalidArrayOperation` poison rather than relying on native stack overflow. An observational mutator discards its private working copy.
 
 A kernel invariant, bookkeeping failure, or unsafe host behavior that compromises runtime state or ordering becomes a fatal `FatalError` at the owning operation and is reported once by that execution. Safely rejectable host output validation instead produces poison. Descriptor restrictions are handled by representation preflight; any corresponding failure during commit is therefore fatal. Supported external code must not synchronously re-enter the same execution; attempted same-execution re-entry is fatal, while another execution remains independent.
 

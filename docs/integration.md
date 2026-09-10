@@ -1,6 +1,6 @@
 # Public higher-runtime integration
 
-This document specifies the implemented public root API. See [the implementation plan](first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) for the complete cutover and tests.
+This document specifies the implemented public root API and compiler handoff. ContextChain consumes the compiler mutation access tree below; Phase 13 implements its emission in Cascada.
 
 Cascada imports only the documented root package API. Public Chain operations retain their result boundaries; unwrapped core operations, graph metadata, and private external-escape machinery remain package internals. Every semantic operation carries its immutable { execution, errorContext }, and related Chains share their execution. Source handles remain opaque to graph code.
 
@@ -36,3 +36,44 @@ For pending completion, use the outward Promise's rejection settlement directly;
 Where an input permits availability, ordinary supported-thenable consumption accepts a PoisonedValue and stores its Error. Where thenables are forbidden, use that boundary's existing validation behavior instead; declarations do not start consuming expression failures or create operation-context poison. The container has inherited then behavior. Validation of a callable placement named then is not a substitute for input consumption.
 
 A standalone external call exports all required arguments before invoking the Function with undefined as its receiver, then admits its result through public importMethodResult. Failed preparation collects all required Errors and suppresses invocation. Iterator advancement and finalization retain their protocol-specific rules in Phase 13. No private imports, duplicate guards, Error constructors, compatibility aliases, or second continuation mechanism are needed.
+
+## Compiler construction of the mutation access tree
+
+`ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts one compiler-owned tree of potential mutation access routes. Every node is an ordinary own enumerable String-keyed property map, including endpoints represented by `{}`. The compiler emits no boundary markers, identity entries, receiver values, or poison-scope metadata. Host classification belongs to initial import.
+
+```js
+{ apis: { db: {}, config: { setting: {}, flags: {} } } }
+```
+
+Construct this tree from every potentially executed mutation in the context, including conditional work, without evaluating application expressions:
+
+Express each route relative to its originating root ContextChain before merging it. For work inside an entered Chain, prepend the entry's contextual prefix and preserve any earlier computed segment; rebasing a relative path cannot turn that segment static. For example, a mutation of `db` inside a static entry at `apis` contributes `apis.db`, not a new root-level `db` location. Use the same canonical path composition as actual operations.
+
+1. For a mutating call, take its complete receiver path. The method name is separate. The position of `!` selects the operation's poison scope and does not shorten this access path.
+2. For assignment or deletion, take the containing path, excluding the final property key. Whole-root replacement or deletion contributes no request because it has no containing object.
+3. For repair-only, take the selected scope path. Repair-and-call contributes its call receiver path; the operation still carries its selected repair scope independently.
+4. Truncate each selected path immediately before its first source-computed segment. A ready result or a synchronous thenable does not make that segment static. Every retained prefix, including an empty prefix, can select an external owner if import finds one there; no prefix requests a search of its managed descendants.
+5. Merge the resulting paths into one property map. Normalize literal Number keys to the same String keys used by language property access. Shared prefixes occur once. When one path ends at a node with requested children, keep the children without a separate endpoint flag: import examines every visited prefix for an external owner.
+
+| Source operation | Compiler contribution |
+| --- | --- |
+| `apis.db!.write()` or `apis!.db.write()` | `{ apis: { db: {} } }` |
+| `apis.db.status = value` or `delete apis.db.status` | `{ apis: { db: {} } }` |
+| `apis.db[key]!.write()` | `{ apis: { db: {} } }` |
+| `apis[key]!.write()` | `{ apis: {} }` |
+| Mutating call on the context root, or assignment to one of its properties | `{}` |
+| Whole-root replacement/deletion, with no other mutation requests | `undefined` |
+
+Observations alone contribute no mutation request. Merely calling a method does not make its receiver externally mutable, and a managed receiver needs no tree marker. The compiler includes potential mutations regardless of which conditional branches eventually execute; initial import supplies their actual host categories.
+
+Omitting the tree or supplying `undefined` means no requests. Supplying `{}` requests only the context root as a potential external owner. It does not select every external object below a managed root. Merging a root request with descendant requests needs no extra root marker.
+
+Serialize all keys as own data properties, including empty String keys, `constructor`, and `__proto__`. For the latter, a generated object literal can use `["__proto__"]: {}` to avoid JavaScript's prototype-setter syntax. This is literal-key code generation and does not evaluate a source-computed path expression. The tree is finite trusted compiler data; the kernel adds no malformed-tree validation or compatibility representation.
+
+The compiler owns the input. It may emit a fresh literal or reuse a constant across contexts and executions. The kernel leaves it unchanged and builds only the required context-local runtime branches and boundary records; it performs no preliminary deep copy and retains no compiler tree after construction. Cascada chooses allocation and code-size optimizations independently of this API.
+
+Sharing a compiler tree does not share a runtime location. Two independent root ContextChains in one execution still make competing claims if that same compiler input selects the same exact external identity in both contexts. Different selected identities have independent entries; different executions have independent state under the existing single-execution host ownership restriction.
+
+Initial import follows only the tree's named properties in the original context, using already staged/admitted categories. A first external identity becomes a runtime boundary record and ends traversal, even if that compiler node has children. Managed endpoints, absent or primitive values, Errors, Functions, and every Promise or thenable contribute no boundary; newly empty branches disappear. Ordinary data import still consumes thenables normally. Runtime filtering, atomic registration, and internal records are specified in [external context ordering](external-context-ordering.md#static-external-mutation-tree).
+
+Actual operations retain their `firstDynamicSegment` source fact independently of this constructor input. Resolving a computed key to an already recorded location never grants static authority. The compiler tree contains only static prefixes and needs no such field, receiver-used flag, or `!` marker. Entry lowering uses the completed runtime tree through the public Phase 9F handoff; generated code does not inspect internal Symbols or identity entries.

@@ -39,7 +39,6 @@ describe("causal Error attribution", () => {
             "InvalidCallbackResult",
             "InvalidConcurrentLimit",
             "InvalidExpressionValue",
-            "InvalidExternalContainment",
             "InvalidExternalSnapshot",
             "InvalidManagedReceiver",
             "InvalidPathSegment",

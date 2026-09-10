@@ -33,7 +33,6 @@ const ERROR_KIND = Object.freeze({
     ExternalPropertyReadFailed: "ExternalPropertyReadFailed",
     ExternalPropertyWriteFailed: "ExternalPropertyWriteFailed",
     ExternalPropertyDeleteFailed: "ExternalPropertyDeleteFailed",
-    InvalidExternalContainment: "InvalidExternalContainment",
     ExternalCapabilityEscape: "ExternalCapabilityEscape",
     InvalidExternalSnapshot: "InvalidExternalSnapshot",
     ExternalRepairFailed: "ExternalRepairFailed",

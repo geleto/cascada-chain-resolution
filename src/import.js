@@ -47,23 +47,18 @@ function importData(
             return internalSteps.continueOperation(
                 value,
                 operationContext,
-                root =>
-                    prepareImportedData(
-                        root,
-                        operationContext,
-                        policy,
-                        externalMutationTreeSetup,
-                    ),
-                reason =>
-                    errorUtils.createPoisonError(
-                        reason,
-                        operationContext,
-                        policy.kind,
-                    ),
+                root => prepareImportedData(
+                    root,
+                    operationContext,
+                    policy,
+                    // Thenable delivery supplies a different root, even when ready.
+                    root === value ? externalMutationTreeSetup : undefined,
+                ),
+                reason => errorUtils.createPoisonError(reason, operationContext, policy.kind),
             )
         } finally {
-            // Tree discovery belongs only to the issuing segment.
-            externalMutationTreeSetup = undefined
+            // Deferred import needs neither the original root nor discovery inputs.
+            value = externalMutationTreeSetup = undefined
         }
     })
 }

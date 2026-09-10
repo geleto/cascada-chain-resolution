@@ -45,14 +45,12 @@ function ContextChain(
     initialValue,
     errorContext = "test context initialization",
     execution = undefined,
-    scopeMutationPaths = [],
-    propertyMutationPaths = [],
+    mutationAccessTree = undefined,
 ) {
     return new runtime.ContextChain(
         initialValue,
         testOperationContext(errorContext, execution),
-        scopeMutationPaths,
-        propertyMutationPaths,
+        mutationAccessTree,
     )
 }
 ContextChain.prototype = runtime.ContextChain.prototype

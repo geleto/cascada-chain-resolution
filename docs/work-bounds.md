@@ -2,6 +2,12 @@
 
 This document records the implemented mechanisms that keep graph work within the values, paths, results, Promise frontier, and maintained dependencies selected by an operation.
 
+## Context authority discovery
+
+Initial context import filters the finite [compiler mutation access tree](integration.md#compiler-construction-of-the-mutation-access-tree), reading only its named original placement occurrences. Every recursive step consumes a compiler edge. Stop at the first external owner and prune non-external endpoints and empty branches. Context aliases and cycles require no subtree enumeration, relative-path cache, or discovery cycle tracking. Allocation is bounded by the requested routes and resulting runtime records; no preliminary copy of the compiler tree is needed.
+
+Ordinary import separately inspects each newly admitted managed identity once. Discovery reuses those category facts and may encounter the same identity along distinct requested routes because location uniqueness is occurrence-sensitive. An unrequested route creates neither reflection work nor a registration. Runtime trees remain fixed after commit; current authority comes from shared identity entries.
+
 ## Cycle cuts
 
 Refcount cycle cuts may require a counter-selected walk when maintained counters cannot answer across a cut. All such walks in one operation share one visited set and inspect each identity at most once. Building a missing index may use a separate pass.

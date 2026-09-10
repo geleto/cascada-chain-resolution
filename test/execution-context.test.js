@@ -45,7 +45,7 @@ describe("operation context", () => {
             class Service {}
             const service = new Service()
             const value = { count: 1, service, read: effect }
-            const chain = new runtime.ContextChain(value, firstContext, [["service"]])
+            const chain = new runtime.ContextChain(value, firstContext, { service: {} })
             const externalMutationTree = chain._externalMutationTree
             let externalTreeRead = false
             Object.defineProperty(chain, "_externalMutationTree", {

@@ -2,7 +2,9 @@
 
 ## Status
 
-This document specifies the internal `enter` runtime primitive. Mutating `enter` claims one known effect path before asynchronous work waits; read-only `enter` protects a captured root without gating the path.
+This document specifies the internal enter runtime primitive. Managed mutating entry gates one known effect path before asynchronous work waits; managed read-only entry protects a captured root without gating that path. Entry into mutable external state instead gates the whole resource binding in either mode, as described below.
+
+A lease preserves an earlier managed value by making later mutations copy; it does not make those mutations wait. A gate preserves an unfinished mutation's place in execution order by making later dependent work wait. These mechanisms protect different facts: managed read-only entry needs a lease, managed mutating entry needs a gate, and mutable-external entry needs a binding gate because copying cannot isolate its exact native identity. A lease on a managed parent does not protect native state owned by a mutable external descendant; commands accessing that descendant still obey its contextual gates and phases.
 
 ```cascada
 var player = {
@@ -45,11 +47,17 @@ Mutating `enter` uses `walkMutationPath` to perform COW and install a public gat
 
 The callback's Chain is rooted at the property version captured at `enter`'s exact program position, which may still hold a Promise. Before publication, a mutating entry owns that data; afterward, already-issued continuations and the public world operate on the same graph through their established Promise version positions. Completion closes the entry, preventing new issuance.
 
-Entry uses an ordinary `Chain` with an `entryMutable` restriction and one-shot closed state. When entry reaches an external-mutation-tree node, that Chain also carries the reached node as `_externalMutationTree`. Root and entered contexts therefore use the same `ExternalMutationTree` branch and boundary queries. Nested entry continues from that root, and entry below an external leaf remains clamped to the leaf. A Chain constructed normally has no entry restriction or active close lifecycle. `enter` closes its Chain automatically after the callback completes without cancelling issued work. The entered Chain inherits the source execution without retaining the source Chain or copying the tree. The stable `_state` holder still contains only the language root.
+Entry uses an ordinary Chain with an entryMutable restriction and one-shot closed state. Contextual entry retains its originating root context, canonical route, reached runtime-tree node, static-path provenance, and ownership of its own binding gate as needed for live access. Root and entered operations select the same external location records and phase state. Mutable-external entry selects only the whole first boundary through a static path; compiler lowering enters that resource for a delayed conditional write to any native descendant. A request beneath that boundary returns PropertyValidation poison rather than entering the native child or becoming fatal. Target validation precedes child reflection, gate installation, and callback invocation. Read-only failure is local; mutating failure follows the owning external scope's exclusive poison transition, preserving its exact binding and any existing poison. This is a named recoverable entry restriction even when caused by compiler lowering. A normally constructed Chain has no entry restriction or close lifecycle. Entry inherits the source execution and copies no tree; its stable state holder still contains only the language root. Closing the callback Chain prevents new issuance without cancelling already-issued work.
+
+Phase 9F reserves outside external phases only after the entry's contextual binding gate opens. Entry at a mutable external boundary installs that exclusive gate even for a read-only callback, while retaining the exact resource in its private Chain. The gate protects issuance order; entry holds no external phase across the callback. Inner commands use ordinary phases and an explicit repair can consume phase poison. Closing issuance republishes the same binding; later operations remain ordered behind already-issued inner phases. Observation-only external identities need no mutable-resource gate or phase.
+
+Consequently, two read-only entry callbacks cannot overlap their open issuance scopes on one mutable resource. Their pending observations can still overlap after the first callback closes, through the ordinary read phase. A callback that awaits its observations keeps its entry open for that wait.
+
+An entered Chain's managed snapshot does not bypass live ancestor scope guards when it accesses an external identity. Retain its canonical scope context and consult current ancestor ordering/poison in shared external-access preparation. The entry owning a private gate may run its contained work; an older or outside entry cannot treat a later gate as its own. After a managed ancestor fails, later external access through an earlier entered Chain returns that guard's original poison until repair. Ordinary captured managed values remain immutable, and no child phase needs a duplicate poison.
 
 ## Mutating entries
 
-Entry protection is required independently of pending delivery: a mutating entry installs its exclusion gate before `onEntered`, and a read-only entry protects its captured value before `onEntered`. This does not require eager pending-only machinery. Transfer subscription uses initialized staging and captured versions; a changing transfer Promise version is installed only if its returned transition remains pending.
+Entry protection is required independently of pending delivery: managed mutating entry and either mode of mutable-external entry install their gate before onEntered; managed read-only entry protects its captured value before onEntered. This does not require eager pending-only machinery. Transfer subscription uses initialized staging and captured versions; a transfer Promise version is installed only if its returned transition remains pending.
 
 For example:
 
@@ -84,9 +92,9 @@ The gate is the ordering channel. Every later traversal of the entered path regi
 
 ## Read-only entries
 
-No gate is installed. The callback receives a read-only Chain rooted at the captured value. The value retains its own import status without boundary state on the Chain.
+For managed data and observation-only external identities, no gate is installed. Mutable-external entry instead follows the whole-binding gate contract above and acquires no managed lease on the exact resource. The callback receives a read-only Chain rooted at the captured value. The value retains its own admission and import status.
 
-Every identity root increments its metadata `readLeaseCount`, including one already protected by sharing or import. Primitives need neither a count nor metadata. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary Promise version semantics.
+Every managed identity root increments its metadata `readLeaseCount`, including one already protected by sharing or import. Primitives and observation-only external identities need no read count. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary Promise version semantics.
 
 The callback may wait before issuing commands because its returned Promise keeps the Chain active and its read count acquired. After it fulfills, read-only `enter` prevents new issuance and releases the exact value captured at acquisition exactly once. Already-issued commands remain valid through their captured versions. Completing one read entry cannot weaken another or any permanent protection; if no mutation or ownership escape occurred, completing the last read entry restores singly-owned write behavior.
 

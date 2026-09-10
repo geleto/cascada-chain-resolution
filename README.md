@@ -111,6 +111,8 @@ A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Read
 
 The graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) implements `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects directly with the ordinary Error.
 
+[Phase 9E](docs/first-principles-conformance-plan.md#phase-9e-build-the-external-coordination-kernel), including its completion addendum, is implemented: compiler mutation access trees drive atomic external identity registration, and a single-boundary readers-writer coordinator carries mutation poison directly. Phase 9E-A updates Error unions and query summaries next; Phase 9F adds public external-operation routing, logical property snapshots, and repair. Managed values retain ordinary sharing and COW under mutation prefixes; native mutation is confined to its [external owner](docs/external-context-ordering.md#managed-and-external-ownership).
+
 ### Higher-runtime integration
 
 The source implements Phase 9D-B and the [public higher-runtime API](docs/integration.md). Cascada uses the documented root API for Chain operations, guarded composition, Error factories, and expression extraction. Graph values stay in operation Chains. Only synchronous expression failure uses the separate container; pending failure uses ordinary Promise rejection.
@@ -122,13 +124,27 @@ the value but does not import host data; pass host-provided roots through
 `import` first. Read-only and automatically closed Chains exist only inside
 `enter`.
 
-### `new ContextChain(initialValue, operationContext, scopeMutationPaths = [], propertyMutationPaths = [])`
+### `new ContextChain(initialValue, operationContext, mutationAccessTree = undefined)`
 
-Imports a raw host context root and builds its initial external-mutation index
-from compiler-provided paths. Scope paths contain each prefix selected by `!`;
-property paths contain complete assignment and deletion targets. When both
-path Arrays are empty, the context is imported without external authority. An
-empty property path replaces the root and likewise creates no authority.
+Imports a raw host context and filters a
+compiler-provided tree of static mutation access prefixes into its external
+mutation index. Every compiler node is a property map; endpoints use `{}`:
+
+```js
+new ContextChain(context, operationContext, { apis: { db: {}, cache: {} } })
+```
+
+Calls contribute receiver paths and property mutations contribute containing
+paths, independently of their `!` poison scopes. Import follows only named
+properties, records the first external owner, and prunes routes that yield no
+boundary. Every Promise or thenable stops discovery, including synchronous
+delivery; ordinary import still consumes those values normally.
+
+Omitting the tree means no requests. `{}` requests the context root itself and
+does not search a managed subtree. The compiler retains ownership of its input;
+the runtime builds a separate context-local tree without changing it. See
+[compiler construction rules](docs/integration.md#compiler-construction-of-the-mutation-access-tree)
+for path selection, static prefixes, merging, and root cases.
 
 ### `import(value, operationContext)`
 

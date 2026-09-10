@@ -1,232 +1,113 @@
-import * as errorUtils from "./error.js"
+import * as errors from "./error.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 
-class ExternalMutationTree {
-    constructor(path = []) {
-        this._children = Object.create(null)
-        // Queries are relative to this node; paths remain absolute from the
-        // root ContextChain so entered branches retain canonical locations.
-        this._path = path
-    }
+const EXTERNAL_BOUNDARY = Symbol("external boundary")
 
-    static prepare(
-        root,
-        operationContext,
-        factsOf,
-        readPlacement,
-        scopeMutationPaths,
-        propertyMutationPaths,
-    ) {
-        const requests = new ExternalMutationTree()
-        let requested = false
-        for (const path of scopeMutationPaths) {
-            requests._add(path)._scope = true
-            requested = true
-        }
-        for (const path of propertyMutationPaths) {
-            if (path.length === 0) continue
-            requests._add(path.slice(0, -1))
-            requested = true
-        }
-        if (!requested) return undefined
+function prepareExternalMutationTree(root, requests, context, operationContext, factsOf, registrations) {
+    const path = []
+    return visit(root, requests)
 
-        const tree = new ExternalMutationTree()
-        let leafCount = 0
-        const completedScopes = new Map()
-        walkRequests(root, requests, [])
-        return leafCount === 0 ? undefined : tree
-
-        function walkRequests(value, request, path) {
-            const type = admittedTypeOf(value)
-            if (type === languageValues.TYPE.External) {
-                addLeaf(value, path)
-                return
-            }
-            if (!languageValues.isTraversableType(type)) return
-
-            if (request._scope) {
-                for (const relative of scanScope(
-                    value,
-                    new Set(),
-                    completedScopes,
-                ).paths) {
-                    addLeaf(relative.identity, [...path, ...relative.path])
-                }
-                return
-            }
-
-            for (const [key, childRequest] of Object.entries(
-                request._children,
-            )) {
-                const child = readPlacement(value, key)
-                if (child) {
-                    walkRequests(child.value, childRequest, [...path, key])
-                }
-            }
-        }
-
-        function scanScope(value, ancestors, completed) {
-            const type = admittedTypeOf(value)
-            if (type === languageValues.TYPE.External) {
-                return {
-                    paths: [{ identity: value, path: [] }],
-                    cyclic: false,
-                }
-            }
-            if (!languageValues.isTraversableType(type)) {
-                return { paths: [], cyclic: false }
-            }
-            if (ancestors.has(value)) return { paths: [], cyclic: true }
-            const cached = completed.get(value)
-            if (cached) return cached
-
-            ancestors.add(value)
-            const paths = []
-            let cyclic = false
-            for (const key of languageProperties.enumerableLanguageKeys(
-                value,
-                operationContext,
-            )) {
-                const child = readPlacement(value, key)
-                if (!child) continue
-                const result = scanScope(child.value, ancestors, completed)
-                cyclic ||= result.cyclic
-                for (const found of result.paths) {
-                    paths.push({
-                        identity: found.identity,
-                        path: [key, ...found.path],
-                    })
-                }
-            }
-            ancestors.delete(value)
-
-            const result = { paths, cyclic }
-            if (!cyclic) completed.set(value, result)
-            return result
-        }
-
-        function admittedTypeOf(value) {
-            if (!metadata.isObjectLike(value)) return undefined
-            if (errorUtils.isPoisonError(value))
-                return languageValues.TYPE.Error
-            const facts = factsOf(value)
-            if (!facts && languageValues.isPending(value, operationContext)) return undefined
-            if (!facts) {
-                throw new Error(
-                    "Context tree reached an identity outside the " +
-                    "downward-closed admission set",
+    function visit(value, request) {
+        if (!metadata.isObjectLike(value) || Error.isError(value)) return undefined
+        // Import admits available identities, never their thenable sources.
+        // Read original placements so even a settled overlay grants no authority.
+        const type = factsOf(value)?.type
+        if (type === languageValues.TYPE.External) {
+            if (registrations.has(value)) {
+                return errors.validationError(
+                    "External identity has multiple context locations",
+                    operationContext,
+                    errors.ERROR_KIND.ExternalLocationConflict,
                 )
             }
-            return facts.type
+            const location = { path: Object.freeze([...path]), context }
+            registrations.set(value, location)
+            return location
         }
+        if (!languageValues.isTraversableType(type)) return undefined
 
-        function addLeaf(identity, path) {
-            const node = tree._add(path)
-            if (!node._identity) leafCount++
-            // Discovery stops at the first external boundary, so a live leaf
-            // never has discovered descendants.
-            node._identity = identity
+        let branch
+        for (const key of Object.keys(request)) {
+            const placement = languageProperties.getLanguagePlacementDescriptor(value, key, operationContext)
+            if (!placement) continue
+            path.push(key)
+            const child = visit(placement.value, request[key])
+            path.pop()
+            if (errors.isPoisonError(child)) return child
+            if (child) (branch ??= Object.create(null))[key] = child
         }
-    }
-
-    commit(operationContext) {
-        const externalIdentities = operationContext.execution._externalIdentities
-        visit(this)
-        return this
-
-        function visit(node) {
-            if (node._identity) {
-                let entry = externalIdentities.get(node._identity)
-                if (!entry) {
-                    entry = {}
-                    externalIdentities.set(node._identity, entry)
-                }
-                node._boundaryRecord = Object.freeze({
-                    entry,
-                    identity: node._identity,
-                    location: node,
-                    path: Object.freeze([...node._path]),
-                })
-            }
-            for (const child of Object.values(node._children)) visit(child)
-        }
-    }
-
-    findBranch(path) {
-        return this._reach(path)?.node
-    }
-
-    findBoundary(path) {
-        return this._reach(path)?.boundary
-    }
-
-    findExactBoundary(path) {
-        const reached = this._reach(path)
-        return reached?.complete && reached.node._identity
-            ? reached.node._boundary()
-            : undefined
-    }
-
-    findDescendantBoundaries(path) {
-        const reached = this._reach(path)
-        if (!reached) return []
-        if (reached.boundary && !reached.complete) {
-            return [reached.boundary]
-        }
-        const boundaries = []
-        collect(reached.node)
-        return boundaries
-
-        function collect(node) {
-            if (node._identity) boundaries.push(node._boundary())
-            for (const child of Object.values(node._children)) collect(child)
-        }
-    }
-
-    _add(path) {
-        let node = this
-        for (const key of path) {
-            // Object-key storage intentionally canonicalizes equivalent Number
-            // and String property segments without a parallel normalization.
-            let child = node._children[key]
-            if (!child) {
-                child = new ExternalMutationTree([...node._path, key])
-                node._children[key] = child
-            }
-            node = child
-        }
-        return node
-    }
-
-    _reach(path) {
-        let node = this
-        let boundary = node._identity ? node._boundary() : undefined
-        let depth = 0
-        while (!boundary && depth < path.length) {
-            const key = path[depth]
-            if (typeof key !== "string" && typeof key !== "number") {
-                return undefined
-            }
-            node = node._children[key]
-            if (!node) return undefined
-            depth++
-            if (node._identity) boundary = node._boundary()
-        }
-        return {
-            boundary,
-            complete: depth === path.length,
-            node,
-        }
-    }
-
-    _boundary() {
-        if (!this._boundaryRecord) {
-            throw new Error("External boundary queried before tree commit")
-        }
-        return this._boundaryRecord
+        return branch
     }
 }
 
-export { ExternalMutationTree }
+function commitExternalLocations(registrations, operationContext) {
+    const identities = operationContext.execution._externalIdentities
+    for (const [identity, location] of registrations) {
+        let entry = identities.get(identity)
+        if (!entry) {
+            entry = { binding: location, phase: undefined }
+            identities.set(identity, entry)
+        } else if (!errors.isPoisonError(entry.binding)) {
+            entry.binding = errors.validationError(
+                "External identity is registered in competing contexts",
+                operationContext,
+                errors.ERROR_KIND.ExternalLocationConflict,
+            )
+        }
+        location[EXTERNAL_BOUNDARY] = entry
+        Object.freeze(location)
+    }
+}
+
+// Paths are relative to the selected node. Location paths remain canonical
+// from their originating ContextChain, including through nested entry.
+function reach(node, path) {
+    let depth = 0
+    while (node && !node[EXTERNAL_BOUNDARY] && depth < path.length) {
+        const key = path[depth++]
+        // Entry passes raw operation inputs. Leave invalid keys to language
+        // validation without coercing them during tree selection.
+        if (typeof key !== "string" && typeof key !== "number") return undefined
+        node = node[key]
+    }
+    return node ? { node, complete: depth === path.length } : undefined
+}
+
+function findBranch(node, path) {
+    const reached = reach(node, path)
+    return reached?.complete ? reached.node : undefined
+}
+
+function findBoundary(node, path) {
+    const boundary = reach(node, path)?.node
+    return boundary?.[EXTERNAL_BOUNDARY] ? boundary : undefined
+}
+
+function findExactBoundary(node, path) {
+    const boundary = findBranch(node, path)
+    return boundary?.[EXTERNAL_BOUNDARY] ? boundary : undefined
+}
+
+function findDescendantBoundaries(node, path) {
+    const boundaries = []
+    collect(reach(node, path)?.node)
+    return boundaries
+
+    function collect(branch) {
+        if (!branch) return
+        if (branch[EXTERNAL_BOUNDARY]) boundaries.push(branch)
+        else for (const child of Object.values(branch)) collect(child)
+    }
+}
+
+export {
+    EXTERNAL_BOUNDARY,
+    commitExternalLocations,
+    findBoundary,
+    findBranch,
+    findDescendantBoundaries,
+    findExactBoundary,
+    prepareExternalMutationTree,
+}

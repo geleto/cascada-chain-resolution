@@ -1,3 +1,5 @@
+import * as externalTree from "../src/external-mutation-tree.js"
+import { EXTERNAL_BOUNDARY } from "../src/external-mutation-tree.js"
 import * as internalSteps from "../src/internal-step.js"
 import { markPromiseHandled } from "../src/thenable-subscription.js"
 import assert from "node:assert/strict"
@@ -435,28 +437,28 @@ describe("supported thenables", () => {
         assert.equal(metadata.hasReadLease(value, ctx), false)
     })
 
-    it("uses staged ready outcomes for every finite external-tree occurrence", () => {
+    it("excludes staged thenable outcomes from external location discovery", () => {
         const ctx = context()
         class External {}
         const shared = { resource: new External() }
         let subscriptions = 0
         const source = { then(onReady) { subscriptions++; return onReady(shared) } }
         const root = { a: source, b: shared }
-        // Phase 9E will reject distinct candidate paths. The addendum preserves
-        // inert discovery and must not hide either occurrence.
-        const chain = new runtime.ContextChain(root, ctx, [[]], [])
+        const chain = new runtime.ContextChain(root, ctx, { a: { resource: {} }, b: { resource: {} } })
         assert.equal(subscriptions, 1)
         assert.equal(root.a, source)
-        const paths = chain._externalMutationTree.findDescendantBoundaries([]).map(leaf => leaf.path)
-        assert.deepEqual(paths, [["a", "resource"], ["b", "resource"]])
-        assert.equal(ctx.execution._externalIdentities.get(shared.resource).binding, undefined)
+        assert.equal(runtime.lookupPath(chain, ["a"], ctx), shared)
+        const boundaries = externalTree.findDescendantBoundaries(chain._externalMutationTree, [])
+        assert.deepEqual(boundaries.map(boundary => boundary.path), [["b", "resource"]])
+        assert.equal(boundaries[0].context, chain)
+        assert.equal(ctx.execution._externalIdentities.get(shared.resource), boundaries[0][EXTERNAL_BOUNDARY])
     })
 
     it("adds no external authority after pending delivery", async () => {
         const ctx = context()
         class External {}
         const source = new OrderedThenable()
-        const chain = new runtime.ContextChain({ child: source }, ctx, [[]], [])
+        const chain = new runtime.ContextChain({ child: source }, ctx, { child: {} })
         source.resolve(new External())
         await flush()
         assert.equal(chain._externalMutationTree, undefined)
@@ -498,7 +500,7 @@ describe("supported thenables", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        const chain = new runtime.ContextChain(root, ctx, [[]], [])
+        const chain = new runtime.ContextChain(root, ctx, { resource: {} })
         assert.equal(chain._state.value.cause, failure)
         assert.equal(metadata.metaOf(root, ctx), undefined)
         assert.equal(ctx.execution._externalIdentities.has(external), false)

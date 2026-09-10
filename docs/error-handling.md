@@ -92,7 +92,7 @@ One frozen public `ERROR_KIND` object owns the complete vocabulary below. Every 
 | Import and lookup | `ImportReflectionFailed`, `NullLookup`, `ScalarLookup`, `LookupReflectionFailed`, `QueryReflectionFailed` |
 | Invocation and conversion | `MissingFunction`, `NotAFunction`, `InvocationFailed`, `ControlledCallbackFailed`, `InvalidCallbackResult`, `ScalarConversionFailed`, `UnsupportedMutation` |
 | Export and mutation | `ExportReflectionFailed`, `PropertyMutationFailed`, `PropertyValidation`, `InvalidManagedReceiver`, `InvalidArrayLength`, `InvalidArrayOperation` |
-| External state | `ExternalLocationConflict`, `ExternalPropertyReadFailed`, `ExternalPropertyWriteFailed`, `ExternalPropertyDeleteFailed`, `InvalidExternalContainment`, `ExternalCapabilityEscape`, `InvalidExternalSnapshot`, `ExternalRepairFailed` |
+| External state | `ExternalLocationConflict`, `ExternalPropertyReadFailed`, `ExternalPropertyWriteFailed`, `ExternalPropertyDeleteFailed`, `ExternalCapabilityEscape`, `InvalidExternalSnapshot`, `ExternalRepairFailed` |
 | Higher Cascada runtime | `DivideByZero`, `ImportBindingMissing`, `IncompatibleOperands`, `InvalidConcurrentLimit`, `InvalidTextValue`, `IteratorFailed`, `LoadFailed`, `NaNResult`, `NotDestructurable`, `NotIterable`, `UnknownVariable` |
 | Compound meta-kind | `Multiple` |
 
@@ -325,7 +325,7 @@ Normalized language-result continuations receive ordinary Errors through the sam
 
 Graph publication stores the Error and completes required bookkeeping before returning or fulfilling with it. Complete independent-input collection records every required result and combines failures only after its captured frontier completes. Keep readiness-only waits where they express scheduling; do not box an Error solely to defeat assimilation or add a recoverable rejection branch to every internal callback.
 
-Local completion and structural Array work use those same logical payloads. Searching, flattening, and retaining an element do not consume its Error merely because they move or compare it. Only required conversion, receiver preparation, or export consumes a failure. Preserve mutation receiver/result records and external phase records because they encode distinct effects and ordering, independently of Error transport.
+Local completion and structural Array work use those same logical payloads. Searching, flattening, and retaining an element do not consume its Error merely because they move or compare it. Only required conversion, receiver preparation, or export consumes a failure. Mutation receiver/result records keep distinct effect and result lifetimes. External phase ordering keeps its completion Promises, which fulfill directly with null or exact poison; no payload wrapper is needed.
 
 ### Compound Errors
 
@@ -335,11 +335,12 @@ combine(errors):
     expand direct CompoundPoisonError values to their invariant leaf arrays
     deduplicate by raw cause, source-context identity, and kind
     retain one representative per semantic Error; order is unspecified
-    return the exact leaf if one remains
+    reuse an input Error representing the complete union, if one exists
+    otherwise return the exact leaf if one remains
     otherwise return CompoundPoisonError(leaves)
 ~~~
 
-Use one collection-local `flattenAndDeduplicateErrors` rule in both `getErrors` and the `combineErrors` factory. The key is the tuple `(raw cause, opaque source-context identity, kind)`. Compare object and Function causes by identity, and primitive reasons by ordinary Map key equality; compare the retained context handle directly without inspecting its diagnostic fields. A leaf without a cause uses its own identity as the first key component. Distinct contexts or kinds remain distinct even with one cause. Expand each direct compound to its already-flat child array, deduplicate, and retain an existing immutable leaf as the representative. Recursive flattening is unnecessary because the factory establishes the leaf-only invariant. Normalize before allocating an Error: `combineErrors` returns a sole leaf unchanged and constructs a compound only for several leaves. The constructor trusts the finalized array and freezes it. No temporary compound, persistent Error registry, or canonicalization across executions is needed. Propagation of an already-contextualized Error preserves its exact reference; equivalent separately constructed wrappers need not be `===`.
+Use one collection-local `flattenAndDeduplicateErrors` rule in both `getErrors` and the `combineErrors` factory. The key is the tuple `(raw cause, opaque source-context identity, kind)`. Compare object and Function causes by identity, and primitive reasons by ordinary Map key equality; compare the retained context handle directly without inspecting its diagnostic fields. A leaf without a cause uses its own identity as the first key component. Distinct contexts or kinds remain distinct even with one cause. Expand each direct compound to its already-flat child array, deduplicate, and retain an existing immutable leaf as the representative. Recursive flattening is unnecessary because the factory establishes the leaf-only invariant. Normalize before allocating an Error: `combineErrors` returns an existing input that already represents the complete union, including a compound. Otherwise it returns a sole leaf unchanged or constructs a new compound for several leaves. An input compound with as many distinct members as the completed union already covers that union; no interning or persistent cache is required. The constructor trusts the finalized array and freezes it. No temporary compound, persistent Error registry, or canonicalization across executions is needed. Propagation of an already-contextualized Error preserves its exact reference; equivalent separately constructed wrappers need not be `===`.
 
 The compound:
 
@@ -349,17 +350,41 @@ The compound:
 - uses a retained leaf as representative context without promising a primary or earliest failure, and without changing any child; and
 - requires no shared source ancestor.
 
-Combination deduplicates equivalent wrappers without merging distinct source contexts or kinds. The caller's message names the failed boundary without enumerating children. Presentation may sort, group, cap, or summarize a separate diagnostic view; it never reorders or changes an already-created compound.
+Combination deduplicates equivalent wrappers without merging distinct source contexts or kinds. A new compound's message names the failed boundary without enumerating children; reuse preserves the existing message, source, and identity. Presentation may sort, group, cap, or summarize a separate diagnostic view; it never reorders or changes an already-created compound.
 
 ### Graph and operation effects
+
+A script reports recoverable failure only through poisoned returned data. There is no execution-wide recoverable-error history and no required sweep of ignored mutation results. Repair and replacement with fresh data may remove poison before output is consumed. Complete collection applies to the current required data frontier, including every Error that still contributes to that frontier; it does not resurrect discarded or repaired failures. A mutation's graph or external-phase effect must carry its failure without depending on a separate script-level check of the kernel operation result.
+
+#### Scope transitions
+
+The selected mutation scope owns the mutation effect. A receiver determines where method code operates; a temporary gate determines what must wait. Neither independently chooses the poison location. Resolve the scope through the common path machinery, execute receiver work inside its transition, and publish its outcome once. Category-specific invocation code reports the mutation effect and independent result to this transition instead of publishing another poison.
+
+| Current logical scope | Operation | Result and state |
+| --- | --- | --- |
+| Healthy | Observation fails | Return its Error; scope stays healthy |
+| Healthy | Mutation succeeds | Publish its successful state and return the declared result |
+| Healthy | Mutation fails with `E` | Publish `E` at the selected scope and return the required Error result |
+| Poisoned with `E` | Operation consuming that scope | Return the exact `E`; perform no descendant work or new poisoning |
+| Poisoned with `E` | `hasError` / `getErrors` | Return `true` / exact `E`, without visiting retained children |
+| Retained scope poisoned with `E` | Repair-only | Clear that scope through its ordered transition and expose retained state |
+| Retained scope poisoned with `E` | Repair-and-call | Privately bypass `E`; publish clear state on success or the new failure on failure |
+
+Blocking poison can be a leaf or compound and always propagates by reference. Do not wait for unused suffixes or invocation-only arguments after a blocker is known. While scope readiness is pending, capture inputs at issuance without prematurely consuming the rejected action's deep inputs. Already-owned rejections and shared settlement retain their normal lifetimes. Complete collection still covers every input required by an executable selected operation and all accessible branches required by a query.
+
+Before the selected scope is reached, an existing prefix Error propagates unchanged and a newly broken prefix follows the ordinary path-failure rule. After reaching the scope, failure within its receiver suffix belongs to that scope. Pending path protection must not change this choice. An independent result Error, such as an Error-valued element successfully removed from an Array, does not turn a successful mutation into failure.
+
+A managed scope uses ordinary Error-value publication unless its fixed mutable-external namespace must survive for repair. Such a scope retains its underlying namespace under a logical guard. An external scope stores its poison in ordered execution-local metadata; the native object stays intact. A managed guard publishes before its child's ordering phase is released, and that child receives no duplicate poison. Retained recovery data is outside the current Error-query frontier. Accessible siblings remain part of complete collection.
+
+Repair-and-call is one transition: never expose a cleared guard before its call completes, and never combine deliberately replaced old poison into its new failure. Repair clears no descendant scope and creates no authority. Assignment/deletion at a final ordinary Error placement can replace/remove it without consuming the old Error; retained guards instead require explicit repair.
 
 - Language Errors may occupy roots, placements, versions, and independent results. Assignment and deletion may replace them.
 - Repairable external poison stays in phase metadata when replacing the target would destroy its capability. Repair clears old poison on success or replaces it with the repair failure; it never silently converts failure to success.
 - Errors never cross export as host data. An Error found in arguments prevents host invocation after all required argument and nested Errors are collected and combined.
 - Existing input Errors preserve their source. A new export or validation failure uses the current invocation and exact boundary kind.
 - An observation failure normally affects only its result.
-- A mutating call's preparation, method, validation, or direct-result failure normally poisons its receiver placement after the defined graph effect. Every direct Error result is a direct-result failure, whether ready, explicitly returned, fulfilled, or rejected. Failure while importing an independent result graph, or reached later through its nested values, does not poison an otherwise successful mutation.
-- If poisoning managed state would remove authoritative external capability, preserve the scope and return the Error.
+- A mutating call's required preparation, method, validation, or direct-result failure follows the scope transition above. Every direct native method Error is a direct-result failure, whether ready, explicitly returned, fulfilled, or rejected. Failure while importing an independent result graph, or reached later through its nested values, does not poison an otherwise successful mutation.
+- A managed mutation scope containing fixed external bindings retains its underlying value and publishes logical poison through its scope guard. Subsequent operations, including live external access through entered contexts, cannot bypass that ancestor until it is repaired. The selected child phase orders the native work but receives no duplicate poison for this failure. A scope at or inside an external boundary instead owns poison in that phase. Repair clears only its selected scope and creates no separate script-level error channel or descendant sweep.
 - A normalized kernel result returns or fulfills with its ordinary Error after required processing. Primitive expression extraction and final native script delivery explicitly convert failure to rejecting transport.
 - On success, `hasError` returns a Boolean and stops once an Error is proven. Already-started shared settlement and publication finish, but unused query work explores no further.
 - On success, `getErrors` scans its complete captured graph and Promise frontier and returns null for no Errors, the unchanged leaf for one distinct Error, or a compound for several. Use the common combination factory once at completion, preserving every distinct cause/context/kind class and unspecified child order.
@@ -399,7 +424,7 @@ Add rejection handling without replacing the Promise or changing its semantic co
 
 Handling is not publication: the handler never publishes poison or satisfies a semantic consumer. Immediate real consumption handles its source Promise; apply the ownership rule to any derived Promise. Use one named `markPromiseHandled` helper only if at least two actual producer sites require this exact operation; otherwise keep the action at its sole ownership site. Do not recursively observe unused host input merely to suppress process warnings. Cascada's discarded-expression handling, including `observeDiscardedExpression`, remains a higher-runtime responsibility.
 
-Rejection observation uses the same ordinary supported-thenable subscription protocol. A native `Promise.prototype.then` call cannot observe a custom receiver. An observer that completes synchronously creates no pending result to mark handled; apply ownership only to a returned pending chain that can reject, without creating a recursive chain of no-op observers. A fulfillment-only external-phase completion carries poison inside its non-thenable record and needs no rejection-only observer. Its derived reactions are separate owned results if they can reject.
+Rejection observation uses the same ordinary supported-thenable subscription protocol. A native `Promise.prototype.then` call cannot observe a custom receiver. An observer that completes synchronously creates no pending result to mark handled; apply ownership only to a returned pending chain that can reject, without creating a recursive chain of no-op observers. A fulfillment-only external-phase completion carries null or exact non-thenable poison directly and needs no rejection-only observer. Its derived reactions are separate owned results if they can reject.
 
 Promise rejection ownership transfers at explicit boundaries:
 

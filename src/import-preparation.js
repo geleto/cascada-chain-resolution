@@ -1,7 +1,7 @@
 import { continueOperation } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
-import { ExternalMutationTree } from "./external-mutation-tree.js"
+import { commitExternalLocations, prepareExternalMutationTree } from "./external-mutation-tree.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -27,16 +27,17 @@ function prepareImportedData(
     const admissions = new Map()
     const retentions = new Set()
     const versions = new Map()
+    const registrations = externalMutationTreeSetup ? new Map() : undefined
     try {
         const value = walk(root)
         const tree = !failure && externalMutationTreeSetup
-            ? inspect(() => ExternalMutationTree.prepare(
+            ? inspect(() => prepareExternalMutationTree(
                 value,
+                externalMutationTreeSetup.mutationAccessTree,
+                externalMutationTreeSetup.context,
                 operationContext,
                 factsOf,
-                readPlacement,
-                externalMutationTreeSetup.scopeMutationPaths,
-                externalMutationTreeSetup.propertyMutationPaths,
+                registrations,
             ))
             : undefined
         if (failure) return failure
@@ -52,7 +53,8 @@ function prepareImportedData(
             }
         }
         if (externalMutationTreeSetup) {
-            externalMutationTreeSetup.externalMutationTree = tree?.commit(operationContext)
+            commitExternalLocations(registrations, operationContext)
+            externalMutationTreeSetup.tree = tree
         }
         state = "committed"
         return value
@@ -61,6 +63,8 @@ function prepareImportedData(
         admissions.clear()
         retentions.clear()
         versions.clear()
+        registrations?.clear()
+        externalMutationTreeSetup = undefined
     }
 
     function inspect(action) {
