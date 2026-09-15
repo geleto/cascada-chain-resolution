@@ -10,8 +10,8 @@ operation had run sequentially.
 
 A `Chain` holds a logical root value. Path operations read and update its graph,
 Promise versions preserve the exact property versions captured by pending work,
-and copy-on-write keeps mutations isolated between owners. Imported host data is
-never modified. Recoverable JavaScript `Error` objects are language values, so
+and copy-on-write keeps mutations isolated between owners. Imported managed data is
+never modified; explicit external mutation changes only its authorized owner. Recoverable JavaScript `Error` objects are language values, so
 a rejected data Promise poisons the affected value without stopping unrelated
 work. Each language failure records its causal source operation and kind.
 
@@ -39,6 +39,8 @@ console.log(await cascada.export(chain, [], operationContext))
 
 ## API reference
 
+The external scope, entry, and repair descriptions below specify the accepted architecture. Hierarchical conformance completion is pending in [Phase 9F-A](docs/first-principles-conformance-plan.md#phase-9f-a-replace-external-scope-coordination).
+
 ```js
 import {
     Chain,
@@ -59,9 +61,12 @@ import {
     isFatalError,
     isPoisonError,
     lookupPath,
+    lookupPathForExpression,
     managedState,
     managedStateClass,
+    repairPath,
     run,
+    selectEntryPath,
 } from "cascada-chain-resolution"
 ```
 
@@ -78,7 +83,8 @@ issued after it do not need to await that Promise: continuations are registered
 in issue order and observe all earlier effects.
 
 Managed records, Arrays, and class instances are traversable. Primitives,
-Functions, Errors, and external identities are terminal values. Records and
+Functions and Errors are terminal values. External identities use native path
+and invocation boundaries rather than managed graph traversal. Records and
 Arrays default to managed; class instances default to external.
 
 ### `new Execution(reporter?)`
@@ -111,7 +117,7 @@ A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Read
 
 The graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) implements `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects directly with the ordinary Error.
 
-[Phase 9E](docs/first-principles-conformance-plan.md#phase-9e-build-the-external-coordination-kernel), including its completion addendum, is implemented: compiler mutation access trees drive atomic external identity registration, and a single-boundary readers-writer coordinator carries mutation poison directly. Phase 9E-A implements idempotent Error unions and bounded query summaries; Phase 9F adds public external-operation routing, logical property snapshots, and repair. Managed values retain ordinary sharing and COW under mutation prefixes; native mutation is confined to its [external owner](docs/external-context-ordering.md#managed-and-external-ownership).
+Compiler mutation access trees drive atomic external identity registration. Native property operations and calls share one readers-writer coordinator per mutable owner. Observations copy mutable property results; failed mutations poison their selected scope, and explicit repair clears that scope. Managed values retain ordinary sharing and COW under mutation prefixes; native mutation is confined to its [external owner](docs/external-context-ordering.md#managed-and-external-ownership).
 
 ### Higher-runtime integration
 
@@ -136,8 +142,8 @@ new ContextChain(context, operationContext, { apis: { db: {}, cache: {} } })
 
 Calls contribute receiver paths and property mutations contribute containing
 paths, independently of their `!` poison scopes. Import follows only named
-properties, records the first external owner, and prunes routes that yield no
-boundary. Every Promise or thenable stops discovery, including synchronous
+properties, records requested nested external scopes as well as their external
+parents, and prunes routes that yield no scope. Every Promise or thenable stops discovery, including synchronous
 delivery; ordinary import still consumes those values normally.
 
 Omitting the tree means no requests. `{}` requests the context root itself and
@@ -207,29 +213,11 @@ their exact source and cause. Expression evaluation belongs to Cascada.
 
 ### `enter(chain, path, operationContext, entryMutable, onEntered)`
 
-Enters the value captured at `path` and passes a temporary Chain to
-`onEntered`. The compiler supplies the exact `entryMutable` Boolean and callback as
-trusted runtime facts. The temporary Chain is closed automatically when the
-callback's direct result or Promise completes.
+Reserve access to a branch and pass a temporary Chain to the callback. Entry supports Cascada reference arguments and delayed control flow, including mixed managed/external branches. It grants no mutation authority: contained operations still obey their bang scope restrictions. Entering a.x leaves a.y available.
 
-With `entryMutable: false`, the callback receives a read-only Chain and the captured
-value is protected from concurrent Cascada mutation for the callback's complete
-lifetime. The public path is not gated, so unrelated operations continue
-normally.
+Managed mutating entry installs a placement gate using ordinary path COW; managed readonly entry leases its capture. Mixed entry also reserves covered external descendants. Entry at a registered external node uses an exclusive tree reservation in either callback mode, while readonly capability still forbids mutation. The compiler's entry-target handoff selects the deepest registered scope for a native-property target and leaves managed/mixed targets unchanged.
 
-With `entryMutable: true`, the callback receives a private mutable Chain. The target
-placement is replaced with a Promise gate before target-dependent callback work
-runs. Later operations on that placement wait while the callback issues its
-private operations. When the callback fulfills, its final private root is
-published through the gate; the callback's own result is returned from `enter`.
-A mutating entry requires a mutable parent Chain.
-
-If path resolution produces a language `Error`, the callback is not invoked and
-the Error is returned. Returning poison, or rejecting the callback's direct
-Promise with poison, completes the entry normally. A callback throw or any
-other rejected callback Promise is fatal, abandons the temporary Chain with the
-failed execution, and does not publish its private state or run fatal-specific
-cleanup.
+The callback's direct completion closes new issuance. Already-issued commands and nested entries remain valid. Managed publication and external effect completion retain separate lifetimes, preserving ready managed siblings while native children remain pending. Returned/admitted rejected poison completes the callback normally; an unexpected internal throw/rejection is fatal. [enter.md](docs/enter.md) specifies capture, reservation ownership, and publication.
 
 ### `export(chain, path, operationContext)`
 
@@ -237,11 +225,14 @@ Returns a host-ready snapshot of the branch captured at the operation's issue
 position. Traversable data is deep-copied without runtime metadata while
 preserving Arrays, holes, property order, aliases, and cycles. Managed class
 instances preserve their admitted prototypes without running constructors;
-external values retain their exact identities.
+observation-only external values retain their exact identities. Registered
+mutable identities produce `ExternalCapabilityEscape` at any depth, including
+after Promise fulfillment. Export acquires no external phase.
 
 If the branch contains one language Error, that contextualized occurrence is
 returned. Several leaves produce a `CompoundPoisonError`; nested compounds are
-flattened and repeated native causes are kept once in logical collection order.
+flattened and deduplicated by cause, source-context identity, and kind, with
+unspecified Error order.
 The result is a Promise when the complete snapshot or Error set depends on
 pending data. A language Error keeps the full scan running; a fatal
 `FatalError` stops it.
@@ -263,6 +254,36 @@ primitive final value contributes nothing. The result is direct when ready;
 a pending result fulfills with the same null or ordinary Error. Query-reflection
 failure returns its own QueryReflectionFailed Error instead of a completed
 collection. No PoisonedValue is created by this operation.
+
+Both Error queries include ordered external subtree metadata without reading native properties. Complete collection includes own and descendant Errors at the selected external scope. A strict-ancestor own poison blocks access; a managed guard remains terminal and hides its retained contents.
+
+### `repairPath(chain, path, operationContext, firstDynamicSegment = path.length)`
+
+Exclusively clear repairable poison throughout the selected managed guard/external subtree, preserving retained values and fixed resource identities. Return undefined without native code. Own poison above the target and permanent binding conflict cannot be cleared. Ordinary Error-valued managed data still uses assignment/deletion. Repair-and-call clears first and invokes afterward under the same reservation; a new failure poisons again.
+
+### Static path provenance and compiler entry selection
+
+Every path operation accepts an optional final `firstDynamicSegment` argument,
+defaulting to `path.length` (fully static). `run` carries it in its facts object.
+The compiler supplies the index of the first computed key, even when that key
+already holds a string or number. Every selected registered resource path must precede that index; computed unregistered native suffixes and ordinary managed paths remain supported.
+Promise-valued path keys are separate work in Phase 10.
+
+`selectEntryPath(chain, path, operationContext, firstDynamicSegment = path.length)`
+returns `{ path, firstDynamicSegment, suffix }`. A native-property target selects its deepest enclosing registered external scope, leaving the suffix for contained commands. Managed and mixed targets stay unchanged. It uses
+only the runtime tree, invokes no native reflection, and does not widen explicit
+`enter` calls. See the [compiler handoff](docs/integration.md#entry-target-selection).
+
+Inside mutable external state, assignment exports the RHS before writing native
+storage and orders the complete write against conflicting ancestor/descendant scope work.
+Neither assignment nor deletion reads the old native target. Registered mutable
+identities and their connecting placements cannot be replaced, removed, or moved.
+
+Mutable property lookup copies the selected graph under an observation phase.
+A direct property Promise is supported; intermediate native Promises and nested
+snapshot thenables are rejected without subscribing. The exact mutable identity
+cannot be extracted. Observation-only external property identities remain exact
+and external on first admission.
 
 ### Data declarations
 
@@ -286,13 +307,15 @@ data properties. Prototype accessors are not Cascada methods, and a managed
 prototype cannot expose a callable or accessor `then` or require private fields, Symbols, hidden mutable state, or native
 internal slots.
 
-### `run(chain, path, method, args, operationContext, { mutationScopeDepth })`
+### `run(chain, path, method, args, operationContext, { mutationScopeDepth, repair, firstDynamicSegment = path.length })`
 
 Invokes a supported method on the receiver at `path`. `args` is the ordered
 Array of explicit arguments. An absent or `undefined` `mutationScopeDepth`
 selects observation; otherwise it selects mutation and gives the depth of the
 `!` prefix, where `0` selects the root. Observation preserves the receiver;
-mutation publishes it through the normal copy-on-write path.
+managed mutation publishes through its selected scope. The required Boolean
+`repair` is normally `false`; `true` requires mutation and performs repair-and-call
+as one ordered transition, without exposing an intermediate cleared guard.
 
 Supported receivers are:
 
@@ -301,6 +324,9 @@ Supported receivers are:
   Array methods are unsupported.
 - Managed records, for own enumerable Function-valued methods.
 - Managed class instances, for methods on their admitted prototype chain.
+- External identities, using exact native receivers and exported arguments.
+  Mutation requires their registered static context location. Native Arrays use
+  native effects and ownership rules, including rejection of receiver escape.
 
 Controlled Array and native String dispatch rejects unsupported calls before
 preparing arguments. Record and managed-class members are resolved only after

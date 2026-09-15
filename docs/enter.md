@@ -2,357 +2,116 @@
 
 ## Status
 
-This document specifies the internal enter runtime primitive. Managed mutating entry gates one known effect path before asynchronous work waits; managed read-only entry protects a captured root without gating that path. Entry into mutable external state instead gates the whole resource binding in either mode, as described below.
+This document specifies the accepted entry architecture. [Phase 9F-A](first-principles-conformance-plan.md#phase-9f-a-replace-external-scope-coordination) implements its hierarchical external reservations; managed entry continues to use ordinary publication and ownership mechanisms. Entry is an access reservation, not a mutation or a `!` poison scope.
 
-A lease preserves an earlier managed value by making later mutations copy; it does not make those mutations wait. A gate preserves an unfinished mutation's place in execution order by making later dependent work wait. These mechanisms protect different facts: managed read-only entry needs a lease, managed mutating entry needs a gate, and mutable-external entry needs a binding gate because copying cannot isolate its exact native identity. A lease on a managed parent does not protect native state owned by a mutable external descendant; commands accessing that descendant still obey its contextual gates and phases.
-
-```cascada
-var player = {
-    name: "george",
-    pos: { x: 1, y: 1 },
-}
-
-if (someSlowCondition()) {
-    player.pos = { x: 2, y: 2 }
-}
-```
-
-A mutating entry makes `player.pos` pending before the condition is available. Work continues through a private Chain, and callback completion starts or arranges publication through that pending placement.
+Entry serves Cascada function arguments passed by reference and delayed control flow. It may select a mixed managed/external branch. A mutating entry at `a.x` prevents conflicting outside access there while its callback decides what to issue; `a.y` remains available. Every contained operation independently obeys managed/external mutation scope restrictions. Holding a mixed entry cannot make `apis!.db.write()` valid when `apis` is managed and contains mutable external resources.
 
 ## API and lifecycle
 
-The module-internal API is callback-based:
-
 ```js
-return enter(chain, path, operationContext, entryMutable, entered =>
-    operation(entered)
-)
+return enter(chain, path, operationContext, entryMutable, entered => {
+    // Issue operations relative to the entered Chain.
+    return result;
+}, firstDynamicSegment);
 ```
 
-If the callback returns `T`, the result shapes are:
+The result is the callback's value or Promise, or a selection Error. Entered Chains use the ordinary data holder, execution binding, and operation APIs; entry sets a readonly capability where applicable and closes new issuance when callback completion is known. The original external-tree node and static path provenance are retained without a copied registration tree or independent context. A reservation-view reference records the entry's covered external access, not additional mutation authority or a public resolver.
 
-```text
-enter(..., onEntered) -> T | PoisonError | Promise<T | PoisonError>
-```
+The callback may be asynchronous. A ready value, ordinary poison value, or admitted callback-Promise poison rejection completes entry normally. Unexpected synchronous callback throws and raw internal rejections follow the existing fatal-on-escape contract. Do not invent entry abort, fatal cleanup, cancellation, or a second result representation. Required operation contexts, execution binding, and closed-entry issuance retain their common checks.
 
-The Promise form fulfills with the completed value or ordinary language Error. An unexpected trusted failure follows the fatal rejection path. The compiler passes `entryMutable` and `onEntered` as trusted runtime facts. `enter` selects an encapsulated mutating or read-only path. These internal paths and completion routines are not APIs and no other operation calls them. The callback-result contract admits language Error: a returned poison and a direct callback-Promise poison rejection both run ordinary entry completion and have the same graph effect. An unexpected synchronous callback throw or raw completion-Promise rejection submits and propagates the authoritative fatal failure. It does not create an entry-specific abort or cleanup transition.
-
-Mutating `enter` uses `walkMutationPath` to perform COW and install a public gate as soon as the target's owning parent exists. After reconstruction it invokes `onEntered` immediately with a private Chain rooted at the direct target or the target Promise. Read-only `enter` uses `walkObservationPath` to resolve the complete target, then starts a counted read entry before invoking the callback; a target or path Error bypasses it. Imported targets already carry their own import status, while runtime-owned targets inherit none from their path. A pending ancestor delays either mode through the selected walker's Promise, without a separate readiness Promise.
-
-`onEntered` may be synchronous or asynchronous. A synchronous callback returns its result directly; an asynchronous callback returns a Promise, including when it simply returns an existing operation or condition Promise. `enter` keeps the Chain active until that Promise fulfills or rejects with admitted poison, then completes the entered scope automatically: read-only completion releases the read entry, while mutating completion closes the private Chain and starts or arranges gate publication. Neither mode accepts new operations through the entered Chain afterward. The callback's return defines the scope's lifetime, so detached work must not use the Chain afterward. Compiler-level async callbacks lower waits to runtime Promise helpers; kernel code does not use raw `async`/`await` or `.then`.
-
-`enter` returns an available callback result directly and never stores it on the Chain. A returned thenable produces the ordinary language-outcome continuation Promise. Fulfillment and admitted callback poison rejection run the same completion path and return or fulfill with the value or exact ordinary Error. A raw rejection becomes a `FatalError` attributed to the `enter` operation and stops at the execution check. Read-only completion releases the read entry, while mutating completion initiates publication without waiting for the gate or its consumers. If reaching the callback was already pending, that existing operation Promise necessarily adopts the callback result.
-
-`enter` does not prepare result ownership. Before returning a direct graph-identity result or fulfilling with one, the callback's consumer applies the ordinary ownership rules. Any result identity that also has another language owner, including reachability from the entered `state.value` at scope completion, must become shared; a newly owned result ceded to the caller need not.
-
-The callback's Chain is rooted at the property version captured at `enter`'s exact program position, which may still hold a Promise. Before publication, a mutating entry owns that data; afterward, already-issued continuations and the public world operate on the same graph through their established Promise version positions. Completion closes the entry, preventing new issuance.
-
-Entry uses an ordinary Chain with an entryMutable restriction and one-shot closed state. Contextual entry retains its originating root context, canonical route, reached runtime-tree node, static-path provenance, and ownership of its own binding gate as needed for live access. Root and entered operations select the same external location records and phase state. Mutable-external entry selects only the whole first boundary through a static path; compiler lowering enters that resource for a delayed conditional write to any native descendant. A request beneath that boundary returns PropertyValidation poison rather than entering the native child or becoming fatal. Target validation precedes child reflection, gate installation, and callback invocation. Read-only failure is local; mutating failure follows the owning external scope's exclusive poison transition, preserving its exact binding and any existing poison. This is a named recoverable entry restriction even when caused by compiler lowering. A normally constructed Chain has no entry restriction or close lifecycle. Entry inherits the source execution and copies no tree; its stable state holder still contains only the language root. Closing the callback Chain prevents new issuance without cancelling already-issued work.
-
-Phase 9F reserves outside external phases only after the entry's contextual binding gate opens. Entry at a mutable external boundary installs that exclusive gate even for a read-only callback, while retaining the exact resource in its private Chain. The gate protects issuance order; entry holds no external phase across the callback. Inner commands use ordinary phases and an explicit repair can consume phase poison. Closing issuance republishes the same binding; later operations remain ordered behind already-issued inner phases. Observation-only external identities need no mutable-resource gate or phase.
-
-Consequently, two read-only entry callbacks cannot overlap their open issuance scopes on one mutable resource. Their pending observations can still overlap after the first callback closes, through the ordinary read phase. A callback that awaits its observations keeps its entry open for that wait.
-
-An entered Chain's managed snapshot does not bypass live ancestor scope guards when it accesses an external identity. Retain its canonical scope context and consult current ancestor ordering/poison in shared external-access preparation. The entry owning a private gate may run its contained work; an older or outside entry cannot treat a later gate as its own. After a managed ancestor fails, later external access through an earlier entered Chain returns that guard's original poison until repair. Ordinary captured managed values remain immutable, and no child phase needs a duplicate poison.
+Closing prohibits new calls through the entered Chain, including after a callback Promise settles. It does not discard state needed by already-issued commands or close nested entries still independently active. Native callbacks use the normal export boundary; direct access to private managed state is not a supported reference-argument shortcut.
 
 ## Mutating entries
 
-Entry protection is required independently of pending delivery: managed mutating entry and either mode of mutable-external entry install their gate before onEntered; managed read-only entry protects its captured value before onEntered. This does not require eager pending-only machinery. Transfer subscription uses initialized staging and captured versions; a transfer Promise version is installed only if its returned transition remains pending.
+Managed mutating entry installs a Promise-backed gate at its selected logical placement before invoking the callback. `walkMutationPath` performs ordinary ancestor COW and reconstruction. Unshared/unleased ancestors need no copy. Shared or leased ancestors must isolate the gate placement so another owner's earlier output neither waits on this entry nor receives its later publication. Entry itself does not eagerly deep-copy the selected value; contained mutations apply their own COW and receiver preparation.
 
-For example:
+Create the private Chain and capture the original target/version before detaching it. Install the public gate before subscribing to pending-source transfer. A direct source initializes the private root normally; a pending source forks its exact captured Promise version into that root. If ancestor COW leaves the source reachable elsewhere, preserve sharing at the transfer boundary. Callback invocation happens after required owning-path reconstruction, not after all descendants become ready.
 
-```js
-return enter(player, ["pos"], operationContext, true, entered => {
-    assignPath(entered, ["x"], 2, operationContext)
-    assignPath(entered, ["y"], 2, operationContext)
-})
-```
-
-the synchronous transition is:
-
-```text
-before:
-
-player.pos  ---> position
-
-after:
-
-player.pos ---> gate Promise
-onEntered receives a Chain rooted at position
-```
-
-The gate is installed through the normal Promise-property transition and receives a fresh Promise version at the mutating `enter`'s program position.
-
-- A deeper operation such as `["pos", "x"]` traverses the gate and waits.
-- An ancestor observation that includes `pos`, such as export or Error collection for `player`, also waits.
-- An operation on an unrelated path continues synchronously.
-- A direct assignment or deletion at exactly `["pos"]` creates a later property version immediately and detaches the gate Promise version. Existing gate consumers still complete, but the later replacement remains live.
-
-The gate is the ordering channel. Every later traversal of the entered path registers after it, so private publication and later effects compose in program order without blocking unrelated data.
+A gate orders current-owner access. Captured earlier versions keep their ordinary values and Promise frontier. Unrelated sibling paths do not wait. Entry does not add language poison on its own: a contained mutation publishes its selected scope effect, while a callback's independent Error result need not poison the entered value.
 
 ## Read-only entries
 
-For managed data and observation-only external identities, no gate is installed. Mutable-external entry instead follows the whole-binding gate contract above and acquires no managed lease on the exact resource. The callback receives a read-only Chain rooted at the captured value. The value retains its own admission and import status.
+A managed read-only entry leases its captured root. Count each lease independently and release this entry's lease after its callback finishes. Outside managed mutations may COW rather than wait. Public lookups and retained results establish permanent sharing before temporary protection ends. Primitives and observation-only external identities need no managed read count.
 
-Every managed identity root increments its metadata `readLeaseCount`, including one already protected by sharing or import. Primitives and observation-only external identities need no read count. Overlapping read-only Chains increment independently, and mutation treats any positive count as a COW condition. This protects the captured root from mutations issued after acquisition until callback completion: those mutations copy away, while earlier effects and Promise settlement remain part of the captured world. Commands issued through the entered Chain use ordinary Promise version semantics.
+A managed parent lease cannot protect mutable external descendants. A mixed read-only entry also reserves observation access over those descendants in the external tree. Other external observations overlap, but conflicting native mutations wait. Readonly capability prevents contained mutations even if an enclosing reservation is exclusive. Entry rooted at a registered external scope retains exclusive outside protection in either callback mode; this does not authorize writes from a read-only callback.
 
-The callback may wait before issuing commands because its returned Promise keeps the Chain active and its read count acquired. After it fulfills, read-only `enter` prevents new issuance and releases the exact value captured at acquisition exactly once. Already-issued commands remain valid through their captured versions. Completing one read entry cannot weaken another or any permanent protection; if no mutation or ownership escape occurred, completing the last read entry restores singly-owned write behavior.
+## Mixed and external entries
 
-A captured value must not escape the entered Chain's lifetime. Observational native work uses `export` on the entered Chain and receives only that snapshot, never the raw metadata-bearing identity or ArrayView backing. The caller must establish permanent sharing for a returned graph identity before read completion; every `enter` consumer owns that preparation. Direct native access or mutation through internal Chain state remains a trusted host/compiler violation.
+An entry target may be managed, mixed, or a registered external scope. Mixed entry is intentionally less restrictive than a managed bang mutation scope. Its managed gate/lease protects managed access, and one subtree reservation protects the covered native state. Both use the entry's captured source turn, not a new operation queue.
 
-Primitive and `undefined` values still use the same callback-Chain shape, avoiding another API variant.
+Registered external entry stores no gate in native properties or in a separate contextual-binding Promise. The common external-tree reservation mechanism protects the subtree. The private Chain holds the same exact native identity. It must not replace the external root or move registered descendants. Entry itself adds no poison and does not consume selected external subtree poison; retain it so contained explicit repair is possible. Strict-ancestor own poison and invalid bindings still block selection. Native operations inside select their own registered scopes and normal failure effects.
+
+Use `selectEntryPath` for compiler lowering. It leaves managed/mixed targets unchanged and maps an unregistered native-property target to its deepest enclosing registered external node. A registered child may be entered independently of its external parent. An explicitly requested unregistered native-property entry returns PropertyValidation, before native child reflection or callback invocation; mutating failure poisons its enclosing selected scope, readonly failure stays local. Existing poison takes precedence. Every registered location crossed must have static source provenance; rebasing does not turn computed segments static.
+
+## Reservation ownership
+
+[External ordering](external-context-ordering.md#external-phases) owns the single direct/subtree frontier algorithm. Before deferred entry work, reserve its covered subtree in the current view and capture earlier conflicting work. An entry creates a covered view in which contained commands use that same algorithm. Outside commands remain in the parent view, where they encounter the entry's reservation. A nested entry creates a nested view under a reservation in its parent's view. Share immutable tree locations and identity binding facts; view-local frontiers are temporary entry ordering state and are released with that view.
+
+This prevents a deadlock such as: child entry A is active; later ancestor entry B waits for A; A issues another contained operation. A's operation uses A's view and cannot queue behind B. It still waits for earlier contained work and cannot exceed its entry's scope or readonly capability. Do not solve this by granting A ownership of B's gate, following a graph of later dependent gates, or cancelling B.
+
+A mutating mixed entry reserves its native subtree exclusively; a mixed read-only entry reserves observation access. The outer reservation waits for required contained native effects, not just the callback result. Register an entry-owned completion obligation at issuance when a command may reach its covered external subtree, even if a managed path gate delays that reservation. Otherwise callback closure could release coverage before the command reaches native state. Complete unused obligations at selection handoff and effectful obligations after required native processing, using the existing completion aggregate rather than a count or queue. Capture the view's unfinished completion frontiers when callback issuance closes; release the outer reservation after those complete. Already-issued nested entry reservations keep their coverage until their own required work ends. Independent nested method-result Promises do not prolong access. Operation effects and direct host-result processing do.
+
+Managed and external completion must remain separate. A parent managed entry may publish its private graph while a native child remains reserved, so a ready managed sibling is usable immediately. Its native paths still observe the live tree reservations. A contained managed child gate remains in the published graph and preserves its own path availability. Do not hold the entire managed parent gate until every child effect finishes, and do not release external reservation coverage at callback closure while child effects remain.
 
 ## Promise frontiers
 
 ### Pending ancestors
 
-A pending ancestor delays both mutating and read-only `enter`. `enter` supplies the mode-specific callbacks; the selected path walker owns traversal and all Promise registration. It captures each pending segment at its exact Promise version position, returns the helper-produced Promise, and invokes the appropriate callback when it reaches the mode-specific target boundary.
-
-For mutating `enter`, a path continuation resumes the mutation walk, performs owning-path COW, installs the gate and any target transfer Promise version, writes the reconstructed branch back, then invokes the completion callback before returning. Consumers registered on the ancestor after mutating `enter` run afterward, observe the completed gate installation, and traverse the gate in their ordinary FIFO order. Earlier registrations retain their earlier positions. Native Promises own native assimilation, while supported custom thenables own nested assimilation before delivering a final value.
-
-For read-only `enter`, `walkObservationPath` likewise invokes its resolution callback before the appropriate FIFO continuation returns. The resolution callback starts the read entry and invokes `onEntered`, or bypasses it for a target or path Error. The walker returns the existing helper Promise, which assimilates that result.
-
-If the owning property is superseded while mutating entry setup waits, the mutation walk resumes against the logical placement at its FIFO position. Neither mode stores readiness state, the source Chain, the public path, or a pending-operation queue on the entered Chain; a direct path registers no Promise helper.
+A pending managed ancestor delays target selection through the normal path walker. Capture its exact version at issuance and run the resumed entry at its FIFO position. Complete path COW and owning-parent writeback before exposing callback work. Later subscribers observe the installed gate; earlier captures retain their own version. Do not register an external reservation outside a managed gate while waiting for work inside that gate.
 
 ### Promise-valued mutating target
 
-When the mutation walk reaches a Promise-valued target, it captures the source version and prepares the private Chain's state. Before subscribing to the transfer, it installs the public gate, detaches the source Promise version, installs the private transfer state, and completes any enclosing writeback that the continuation depends on. Private initialization uses this captured version rather than independently consuming the source before transfer setup is complete. It then forks the captured source through `forkPromiseVersion` at mutating `enter`'s FIFO position. That registration may deliver synchronously. After graph reconstruction and transfer registration, `onEntered` runs immediately.
-
-FIFO delivery, including across settlement, makes the source version's earlier resolver advance `sourceVersion.value` before the transfer callback reads it. This proof holds even when registration synchronously delivers the callbacks. The transfer retains neither source parent nor key, never consumes the raw settlement, marks the value shared when `attachmentRoot` shows that an old COW world retained it, and publishes through the private version's prepared staging state. A direct transfer commits its final logical value; only a returned pending transfer requires a changing Promise version. Target-dependent commands issued through the Chain subscribe to the same source Promise or supported thenable after this transfer; target-independent callback work proceeds immediately and may complete before the target. A derived proxy Promise would fragment the source's FIFO registration order and is forbidden. This single transfer protocol restores concurrency without an Entry object, readiness Promise, or command queue.
+Set up the private root and original version capture, install the public gate, and then fork source availability. Supported synchronous thenables may invoke transfer callbacks immediately, so all state needed by transfer/publication must exist before subscription. The callback can issue operations against its pending private root; entry does not await the source solely to begin issuance.
 
 ### Promise-valued read-only target
 
-`walkObservationPath` handles a Promise-valued target like any other Promise-bearing path segment: it registers at the Promise version's exact FIFO position and invokes its resolution callback with the logical value or contextualized rejection Error. The callback bypasses `onEntered` for an Error; otherwise, it captures the resolved identity's metadata and increments `readLeaseCount` before invoking `onEntered`. Each overlapping read-only entry increments the resolved identity's counter independently. There is no gate or separate target mechanism.
+Read entry uses ordinary observation-path readiness and leases the reached managed value before callback execution. It preserves that logical capture while later mutation COWs. Source attribution and import ownership are unchanged.
 
 ### Pending descendants
 
-Pending descendants do not delay entry setup in either mode. They remain ordinary Promise properties: mutating `enter` may publish the private graph while they are pending, while operations in a read-only callback observe them through normal path semantics.
+Nested Promises do not delay entry setup or ready sibling access. They retain ordinary property versions. Pending managed method receivers are prepared only when that method consumes them. Native snapshots keep their separate ready-only rule.
 
 ## Completion and publication
 
-Here `state` means the entered Chain's private `_state` holder. After the callback returns directly, its returned Promise fulfills, or that Promise rejects with admitted poison, `enter` automatically completes the scope. Both modes first close the Chain, preventing new issuance. Read-only completion then releases the exact root acquired at setup and returns or forwards the operation result. Mutating completion reads the current `state.value`; if it is direct, the lexically captured gate resolver publishes it immediately, while a Promise value captures its Promise version and registers one readiness callback that publishes the Promise version's current value. The operation result is then returned or forwarded without waiting for publication.
+Callback completion closes new issuance first. Managed read-only entry releases its captured lease. Managed mutating entry reads the latest private root's logical value: a ready root resolves the public gate immediately; a pending root subscribes through its captured Promise version and publishes after earlier private commands have advanced it in FIFO order. Subscription at callback closure is essential; do not capture the private root's eventual value before its contained commands are issued. Mark detached publication reactions handled at their origin.
 
-Only gate publication needs this readiness callback; it does not extend the Chain lifetime or delay the operation result. The private-root Promise version's transfer or assignment resolver and every earlier private operation are already registered on the stored Promise, so the publication callback reads the latest logical value from that captured Promise version. Root replacement itself is synchronous and new issuance is then forbidden, so the version cannot be superseded before publication.
+The callback result is not a publication signal. A direct result may be available while selected-root publication remains pending. An independent result Promise does not extend an already-completed mutation's lifetime. Conversely, unfinished external effects promised by issued operations retain the outer reservation even if callback completion is ready. These distinct lifetimes do not justify a universal configurable gate helper.
 
-Passing the stored Promise directly to the gate resolver would instead use native resolver assimilation, which observes the raw settlement rather than the later `state.value`, can invoke a callable thenable again, and can reject the gate.
-
-After scope completion, callback-result forwarding and final-state publication proceed independently. If the private state is ready, publication may finish synchronously before the result is returned; otherwise the result does not wait for it. Resolve the gate with the captured final logical value. An ordinary Error fulfills the gate like another logical value; the gate's already-registered shared publication continuation stores it in its placement before later operations resume. Never forward the original physical Promise to the gate resolver: its outcome may differ from the final logical value in the captured Promise version.
-
-Mutating completion waits on at most one stored `state.value` Promise. A native Promise owns native assimilation, while a supported custom thenable owns nested assimilation and supplies a final non-thenable fulfillment before the first Promise version resolver publishes it. Property-version advancement never publishes a Promise into an existing version. Assigning a new Promise, including the same Promise again, synchronously replaces the root slot with a fresh version and Promise version. A suspended operation cannot create a later root version after closure. Therefore the captured Promise version value must be non-Promise when the readiness callback runs. Seeing a Promise is fatal invariant corruption.
-
-Pending descendant operations may complete after publication. They registered their versions before callback completion, while later public consumers register after the gate, so ordinary FIFO ordering preserves their effects. The controlling rule is:
-
-> Every operation through the entered Chain must be issued before `onEntered` returns or its returned Promise settles with its admitted language outcome.
-
-Detached work must not issue through the closed Chain. The mutating result is not a publication signal: it may be returned or fulfilled while the gate is still publishing or waiting for the stored `state.value` Promise's readiness callback. Re-entering or otherwise operating on the public path remains correct because the installed gate orders that work. Returning a Promise from the callback keeps both mutating and read-only scopes active until asynchronous work finishes.
-
-Assigning an Error to the private root publishes it as data. Returning an operation Error without replacing the root preserves and publishes the private value instead.
+Normal publication installs through the property-version mechanism and completes required index bookkeeping. Failure obeys ordinary publication and scope rules and preserves every required independent result Error. Fatality stops continuation work before publication and is exposed through public pending-result handling; never settle internal gates to simulate fatal cancellation.
 
 ## Ownership and import attribution
 
-Capturing a singly owned value transfers ownership from the source placement to the entered Chain and back through publication. Holding the Chain is not a second language owner and does not itself mark the value shared. Result preparation must nevertheless mark any returned identity that remains reachable from a read-only captured root, the mutating graph that will be published, or another retained world.
+Entry into existing graph data does not reimport it. Transfer preserves category, origin, logical versions, and causal Error attribution. Copying managed ancestors preserves shared children and fixed external bindings. Root and entered Chains use the same operation API; entry adds only readonly/closed capability and its captured location/reservation ownership facts.
 
-If COW above the entered placement leaves the target reachable from the source graph, both graphs retain it. A direct target is marked shared before `onEntered`; for a Promise target, the transfer callback marks the logical value before later private consumers run. The retention condition comes directly from `attachmentRoot`, without a separate Boolean.
-
-Entering a shared or imported path, or one with active read entries, uses the normal mutation walk and copies as required. Imported host data is never mutated in place. Imported identities carry direct origin, while COW copies and already admitted runtime-owned identities do not acquire it. Entered Chains therefore need no sticky boundary field: imported values retain attribution, while the runtime-owned transfer Promise version does not. Replacing a private root drops old attribution unless the new value is itself imported.
-
-When the owning walk has copied a path, assigning the pending gate marks its first copied root shared. Later mutations therefore preserve the issue-time world while the gate can still publish into it. Repeated sequential entries on such a path may COW that owning path again.
+Repairable managed poison belongs to a captured placement state, not shared identity metadata. An earlier managed snapshot does not acquire later guard poison, but live external access through an entered context must respect the canonical scope guard and its reservation order. Repair changes current guard state without changing previously returned Errors. Ordinary retained outputs still require immutable-output protection.
 
 ## Composition and lifecycle constraints
 
-Every successful mutating entry uses a fresh gate and Promise version. Awaiting its operation result does not wait for publication. Calls issued before earlier gates publish remain correctly ordered, but retain a gate, any target transfer version, and their waiters per unpublished entry. Immediate Promise-target callbacks deliberately permit this pipelining; bounding it would require awaiting a separate publication signal.
+Reference arguments to Cascada functions use entry and issue all reference operations through the entered Chain. Native method arguments use export and do not gain reference mutation permission. Compiler delayed-control-flow lowering chooses the smallest correct effect path and calls the public entry-target handoff for external scope boundaries. It never narrows a mixed entry simply because a bang mutation at that mixed root would be invalid.
 
-The callback must not wait through its own public gate:
+When a Cascada call receives multiple reference arguments, the compiler must not acquire conflicting entries sequentially while holding earlier ones. Overlapping arguments share an enclosing reservation and expose relative entered references; disjoint requested branches need one synchronous reservation batch before any member awaits predecessors. This integration belongs to Phase 13 using the common capture/publish kernel; acquiring arguments in opposite orders must not deadlock or let later work overtake an earlier argument. Do not broaden disjoint arguments to a common parent if that would block unrelated siblings.
 
-```js
-return enter(player, ["items"], operationContext, true, entered => {
-    const value = lookupPath(player, ["items", "0"], operationContext)
-    // value depends on callback completion, which is waiting for value
-    return value
-})
-```
-
-It must use the entered Chain:
-
-```js
-return enter(player, ["items"], operationContext, true, entered => {
-    const value = lookupPath(entered, ["0"], operationContext)
-    return operation(value)
-})
-```
-
-The compiler should reject a statically visible self-wait. Dynamic self-wait is a lowering violation that can leave the gate pending because automatic completion waits for `onEntered` to return or for its returned Promise to fulfill.
-
-Disjoint entries proceed independently. A mutating callback's Chain may itself be passed to another mutating `enter`:
-
-```js
-return enter(root, ["player"], operationContext, true, outer =>
-    enter(outer, ["pos"], operationContext, true, inner =>
-        operation(inner)
-    )
-)
-```
-
-Returning the inner mutating `enter` result keeps the outer Chain active until the inner callback completes. Inner completion closes its Chain and initiates its gate publication before forwarding the result; outer completion may therefore publish a graph that still contains the inner gate. That gate preserves the required ordering without a LIFO stack. An inner entry-setup Error bypasses the inner callback but still becomes the outer operation result, so the outer scope completes automatically without a separate cleanup path.
-
-Mutating entry setup at an already gated public placement treats the existing gate as a Promise-valued target. It installs its transfer Promise version and successor gate immediately, then invokes `onEntered`; target-dependent private commands and publication wait at the predecessor gate's Promise version position, while independent callback work overlaps it. The two data versions serialize through their property versions without a separate global Promise tail. Overlapping aliases continue to follow ordinary ownership and COW rules.
+The implementation keeps one explicit owner for an issued operation, normal guarded continuations, and separate release points where source lifetimes differ. Entered external views contain only frontier state for their covered subtree. They do not duplicate managed graph publication, maintain pending-operation queues, or add execution-wide cancellation/ownership registries. Remove superseded owned-gate dependency traversal only after the nested-entry and live-guard behaviors below are preserved.
 
 ## Path errors and fatal failures
 
-A missing final target is valid: mutating entry captures `undefined`, while read-only entry captures `undefined` without a counted read entry. A missing, `null`, `undefined`, primitive, or Error intermediate produces or propagates the ordinary path Error.
+An existing managed path Error or strict-ancestor own poison propagates unchanged. Invalid entry selection invokes no callback. A mutating selection failure follows its prescribed selected/static-prefix poison rule while preserving fixed identities; a readonly failure affects only its result. Gate installation is not permission to invoke arbitrary native effects on a mixed scope. Contained repair may bypass only its selected subtree poison under its reservation and cannot clear a permanent identity conflict.
 
-A mutating entry captures a final Error like any other value and invokes `onEntered` with a Chain rooted there. Completing unchanged republishes the same identity; assigning a new root replaces it. A rejected target Promise is converted once by its source Promise version and transferred as that same language Error identity unless the private root was superseded. The mutating callback may already be running while the target is pending. A read-only entry returns a ready final Error directly or fulfills its pending result with that same Error, without invoking `onEntered`.
-
-The value or Promise returned by `onEntered` describes control-flow completion; it is not imported as graph data. This result channel explicitly admits an existing language Error: returning poison directly or rejecting the direct Promise with that poison performs the same ordinary entry-completion transition and exposes the same poison outcome. An unexpected synchronous throw, an uncontextualized raw rejection, or a fatal rejection escapes a contract that admits no such outcome and is therefore fatal. Compiler lowering must contextualize an expected application failure at its causal boundary, but need not turn an already-contextualized poison rejection into fulfillment. For example:
-
-```js
-return enter(chain, path, operationContext, true, entered => {
-    const finish = value => {
-        if (isPoisonError(value)) {
-            assignPath(entered, [], value, operationContext)
-            return value
-        }
-        return operation(entered, value)
-    }
-    return continueOperation(calculate(item), operationContext, finish, reason => {
-        if (!isPoisonError(reason)) throw reason
-        return finish(reason)
-    })
-})
-```
-
-`calculate` in this example is trusted language work that already classifies application failures, using the public guarded primitives described in [the integration protocol](integration.md). Returning or rejecting with the Error without assigning it preserves the private root. A supported host failure is contextualized inside that work; an unexpected escape from the trusted callback remains fatal.
-
-If `onEntered` throws or its returned Promise rejects outside the admitted poison channel, `enter` submits and propagates the authoritative fatal failure, unwinding that call or Promise reaction. It performs no fatal-only closing, release, private-state discard, or gate settlement: the execution is unusable, later consumers stop through their execution checks, and fatal commit rejects every currently pending operation result through its registered outward rejection action. The underlying callback Promise is neither cancelled nor awaited. Ordinary success, language-Error completion, and local early completion retain their normal entry cleanup.
-
-Imported-data validation produces a language Error with the existing attribution rules. Compiler misuse, host-contract violations, and invariant failures are fatal. Fatal cases include:
-
-- a non-callable `onEntered`;
-- mutation through a read-only Chain;
-- new issuance through a closed Chain;
-- invalid property descriptors during gate installation or publication; and
-- a Promise reaching property-version advancement or the gate-resolver boundary.
+Unexpected runtime failures, execution mismatch, and new issuance through a closed entered Chain retain their established fatal boundaries. No special entry rejection action, contextless execution, abort method, or cleanup Promise is added. Detached publication and already-issued native work retain their existing handled-reaction obligations.
 
 ## Implementation contracts
 
-The implementation lives primarily in:
+Keep managed gate installation and completion at their natural points. Managed mutation gates only returned pending work; entry gates before callback issuance. Share property versions, path COW, and the external reservation kernel, not a helper that hides these different capture moments. Entry setup initializes its private root before a synchronous callback can observe it and completes owning-path writeback before publication can escape.
 
-```text
-src/chain.js
-src/enter.js
-src/property-versions.js
-test/enter.test.js
-```
-
-`src/index.js` re-exports the public Chain types, while `enter.js` creates an ordinary `Chain` with internal entry facts. Existing modules receive only narrow generic extensions: metadata owns the shared read-lease transition used by `enter` and `run`, path walkers own issuance checks, the mutation walk owns COW and mutating entry setup, property versions own exact source sampling and publication, and the Promise helpers own asynchronous operation-result forwarding. The stable `chain._state` holder contains only the language root in `value`; entered capability and closure remain outside the language graph.
-
-### Entered capability and read entries
-
-A normally constructed Chain can always issue observations and mutations. A Chain created by `enter` additionally owns the trusted `entryMutable` Boolean; the mutation walker rejects a read-only entry, and every walker rejects a closed entry. Already-issued recursive continuations do not recheck. `walkMutationPath` accepts the Chain, performs this assertion, and derives `chain._state` internally so assignment, deletion, and mutating entry share one boundary.
-
-Read-only entry setup reuses observation-path capture. The captured value retains its direct import status when entry creates its Chain. Entry then increments the identity's read lease; primitives need no metadata. Completion decrements the same value and deletes its counter at zero. `enter` and `run` share the symmetric metadata lease operations, while each operation balances only its own acquisitions. The mutation walk's single `requiresCopyOnWrite` predicate combines permanent sharing with a positive `readLeaseCount`. Completing the last read entry removes only the temporary COW condition and never clears permanent protection.
-
-### Mutating entry setup
-
-Mutating entry reuses `walkMutationPath` with an optional completion callback. At the target placement, the terminal receives the exact parent/key and optional first copied root; `enter` reads the current value from that stable placement. A direct value, including a synchronously consumed custom-thenable outcome, is recorded for the private Chain. A captured Promise target prepares that Chain, the public gate, and private transfer state before transfer subscription can invoke a callback. A changing transfer Promise version is needed only if the transfer remains pending. The location never escapes.
-
-Each recursive frame receives a synchronous `writeBack` continuation instead of returning a reconstructed node. Its result propagation is:
-
-```js
-function complete(writeBack, next) {
-    writeBack(next)
-    return onComplete?.(isPoisonError(next) ? next : undefined)
-}
-
-function walk(value, index, writeBack) {
-    if (atTarget) {
-        installGateAndTransfer()
-        return complete(writeBack, parent)
-    }
-
-    if (childIsPromise) {
-        // Capture and subscribe before later publication can detach the version.
-        const result = continuePromiseVersion(
-            parent, key, child, operationContext,
-            resolved => walk(resolved, index + 1, writeVersionValue),
-        )
-        if (!pathSelectionComplete) writeBack(parent)
-        // Observe an owned pending result if no immediate consumer receives it.
-        return onComplete ? result : undefined
-    }
-
-    return walk(child, index + 1, next => {
-        writeChild(parent, key, next)
-        writeBack(parent)
-    })
-}
-```
-
-At a target or entry-setup Error, `writeBack` synchronously reconstructs every applicable enclosing frame before the completion callback runs. A possible-Promise branch captures its version and publishes its current parent before subscribing at its exact position; no stale parent writeback follows a synchronously delivered continuation. The pseudocode's capture and observation actions use the ordinary property-version and rejection-ownership mechanisms, not new APIs or state wrappers. Only a returned pending reaction needs observation when its consumer may attach later or the issuance API omits the result. A direct result finishes the available work; a returned pending chain composes deeper ancestors and the final callback result. An actually pending target itself adds no setup frontier because its private Chain is available immediately. `onEntered` therefore runs exactly once after reconstruction, without a sentinel, dual node/result channel, `{ node, result }` record, explicit `new Promise`, callback/backwrite readiness flag, or second semantic reaction on one source.
-
-The writeback continuations belong only to active mutation-walk call frames. Ordinary assignment and deletion omit `onComplete`, retain their fire-and-register result shape, and do not assimilate deeper waits. The entered Chain contains no readiness state, source Chain, captured public path, or operation result, and gains no pending-command method or queue. `runEnteredCallback` invokes the callback and returns an available result directly. A thenable result uses the language-outcome continuation: fulfillment or poison rejection completes the entry and preserves that outcome, while a raw or fatal rejection submits through the execution fatal path and propagates the authoritative Error.
-
-### Gate transitions
-
-For a captured Promise target, setup obtains the source Promise version before gate installation. Successful gate replacement detaches that source; retained or exclusive placement prepares private version state before registering one source-version continuation. The source version's earlier resolver advances its Promise version value; the transfer callback reads that value and stages it for private publication, marking it shared only when `attachmentRoot` shows that the old COW world retained it. If transfer completes synchronously, commit the final private value directly; otherwise install its fresh changing Promise version before the issuing stack returns. The callback retains no source placement. The private holder is unindexed, and its runtime-owned version writes the value physically. The same placement protocol reads live and detached source versions.
-
-Gate installation creates an assigned Promise version and calls `replaceProperty`, whose `commitLiveEdge` transaction captures the old contribution, detaches the old Promise version, writes the gate, removes the old traversable child's reverse-parent edge, substitutes the gate's pending-Promise contribution, and propagates the delta through indexed ancestors. For a Promise target, the detached source and new gate each represent one pending version, so the immediate count delta is normally zero; later source settlement cannot affect the public edge. An unindexed parent has no reverse edge or counters to update.
-
-Gate publication uses property-version advancement through the same transaction: it indexes the published root when the public owner is indexed, adds its reverse-parent edge when traversable, and replaces the gate's pending contribution with the root's counters. The private `chain._state` holder is host state rather than a language-graph parent, so capturing a root adds no reverse-parent edge. When COW retained the source target, direct setup or retained placement has already marked the private root shared.
-
-Property-version advancement fatally rejects an actually pending `newValue` before ref indexing, descriptor changes, or publication. A new possible Promise is consumed through assignment; only its returned pending chain receives a fresh version. Gate assignment uses the ordinary property transition.
+The data holder of an entered Chain has the same representation as a normal Chain. Its context provenance supplies canonical depth and first-dynamic-segment information; its reservation view supplies inherited external access coverage. Gate resolvers stay private to the entry/publication code. A read-only or closed capability is checked at common issuance boundaries; helpers do not repeat malformed-internal-control validation.
 
 ## Verification
 
-Run the complete suite. Parameterize the main fixtures across root/nested paths, direct/pending ancestors, direct/Promise/Error/missing targets, and owned/shared/imported roots or roots with active read entries. Include supported custom delivery inside subscription, pending custom delivery, and a source that delivers earlier queued callbacks before a newly subscribed callback in the same synchronous turn.
-
-Core lifecycle and access:
-
-- isolated internal-module initialization, exact result shapes, validation, exactly-once callback invocation, Error bypass, admitted poison rejection completing normally, and synchronous callback throws or raw/fatal callback-Promise rejection submitting fatal without an entry-specific close or cleanup path;
-- callbacks running only after reconstruction, directly or within the existing ancestor helper continuation, with no readiness Promise or second same-source reaction;
-- `entryMutable: true`, `entryMutable: false`, closed-Chain issuance, continuations issued before closure, and use after completion;
-- synchronous and Promise callback lifetimes, successful closure and read release or publication, fatal callback failure without entry-specific closure, release, or publication, and direct or `runEnteredCallback` result forwarding;
-- operation results never stored on the Chain and lexical gate-resolver retention adding no gate lifecycle fields; and
-- unchanged `Chain` package identity after moving its definition.
-
-Ordering and Promise targets:
-
-- later ancestor consumers traversing the installed gate while earlier registrations retain their positions, deeper and ancestor operations waiting, and siblings continuing;
-- immediate gate installation, exact-path supersession, and operation-result delivery remaining independent from publication;
-- detached-source-to-transfer-Promise version continuation preserving prior effects, COW, attribution, Error identity, cyclic data, and source-owned FIFO order;
-- immediate callback and independent work for a Promise target, while target-dependent commands and publication wait through its private-root transfer Promise version;
-- direct target capture or synchronous transfer without a changing root Promise version, actually pending transfer with exactly one transfer Promise version, and one publication registration for any pending private root;
-- callback-visible private state and enclosing COW reconstruction complete before subscription can use them, without independent source consumption during private initialization or stale writeback after synchronous delivery; and
-- Promise advancement rejection before side effects, the local publication guard after raw-state corruption, and FIFO gate publication.
-
-Ownership and read entries:
-
-- singly owned transfer, retained targets marked shared from `attachmentRoot`, and owning-path COW for shared, imported, or actively read values;
-- mode-independent result preparation marking identities that alias the captured root while preserving ownership transfer for wholly new results;
-- uniform and overlapping read counts, release without weakening permanent protection, direct live replacement, and result aliases becoming shared before release;
-- an export captured before mutating entry retaining its issue-time world across unmarked ownership transfer and private in-place mutation;
-- suspended kernel observation after read completion versus native raw-value lifetime;
-- exact reverse edges and counters across direct capture, Promise-version detachment, publication, and the non-graph private holder; and
-- cycle cuts, aliases, arrays, null-prototype records, and enumerable `__proto__`.
-
-Overlapping entries:
-
-- read then read, with direct and gated targets, independently incremented counts, asynchronous callbacks, staggered completion, and successive counts of two, one, and zero;
-- read then mutate on a direct target, proving a later mutation performs COW and leaves the captured read world unchanged;
-- a read registered before a mutation on the same predecessor gate, proving the read acquires its count synchronously before the following mutation callback runs even when the read callback remains asynchronous;
-- a mutation issued before a read, proving the read captures the new gate and starts only from the mutation's published logical value;
-- mutate then mutate, proving the second gate and callback start immediately while its target-dependent commands and publication wait for the first gate's captured version;
-- mutate then read then mutate, proving the read captures the first gate, the second mutation installs its successor gate, and the second mutation performs COW while the intervening read remains active;
-- read at an ancestor versus mutation at a descendant, read at a descendant versus ancestor replacement, and distinct paths aliasing the same graph identity;
-- representative direct and Promise-valued targets and private roots with synchronous and asynchronous callbacks; and
-- overlapping mutating entries proving that each lexical resolver publishes only its own private `state.value`.
-
-Composition:
-
-- repeated entries, including awaited callbacks that finish before target readiness, retaining backlog proportional to gates that have not yet published;
-- nested callback scopes closing inside-out even when inner publication remains pending;
-- compile-time rejection of a statically visible self-wait and a dynamic self-wait remaining a documented lowering deadlock;
-- immediate callback for an already gated placement, with target-dependent work retaining predecessor FIFO order;
-- disjoint entries proceeding independently;
-- attachment-root pinning causing repeated COW while ordinary gates represent any publication backlog; and
-- pending descendant mutation completing after publication in FIFO order.
+- Enter a.x behind a slow condition and keep a.y immediately available; repeat with shared/imported ancestors and pending source versions.
+- Keep old captured values independent of new gate installation, mutation, poison, and repair. Cover a direct and pending target, aliases, and COW through Array structure.
+- Enter mixed managed parents for reference arguments and control flow; reject an invalid mixed bang inside the otherwise-valid entry without running native code.
+- Enter registered external siblings concurrently; parent entry waits for both. A child continues issuing work while a later parent reservation waits for it, with no deadlock or overtaking.
+- Preserve managed ready-sibling access after parent callback closure while native child work remains pending. Preserve open nested managed and external entries after parent publication.
+- Cover readonly mixed entry, overlapping native observations, blocked descendant mutations, and readonly capability enforcement. External-root readonly entry retains exclusive outside coverage.
+- Verify explicit native-property rejection and compiler selection of the deepest registered scope under multiple host shapes, including computed-prefix rejection.
+- Keep callback Error completion, independent result Promise lifetime, scope poison, recursive repair, permanent binding conflict, and fatal pending-result delivery distinct.

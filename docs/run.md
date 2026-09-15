@@ -8,17 +8,19 @@ The exact host function/method uses `InvocationFailed`; a controlled comparator 
 
 **Implemented.** This is the common invocation layer for standard String and Array operations and managed-record and managed-class methods.
 
-The external receiver route and repair-and-call are Phase 9F work specified in [external ordering](external-context-ordering.md). That route uses native receiver semantics and result ownership; it does not reinterpret external Arrays as controlled managed Arrays. The implementation contract below describes the existing managed/String routes. Phase 9F also makes live external-location preservation a prerequisite of managed receiver isolation and publication.
+External receivers use the same invocation lifecycle with ordered native access and repair-and-call, as specified in [external ordering](external-context-ordering.md). An external Array uses native receiver semantics and result ownership. Controlled managed Array remaps instead validate fixed namespace indexes before committing; unrelated changes remain valid. Arbitrary managed methods cannot mutate a namespace-bearing receiver.
 
 ## Contract
 
 ```js
-run(chain, path, method, args, operationContext, { mutationScopeDepth })
+run(chain, path, method, args, operationContext, { mutationScopeDepth, repair, firstDynamicSegment = path.length })
 ```
 
 `args` is the required Array of explicit arguments. `mutationScopeDepth` is `undefined` for observation; otherwise it is the depth of the selected `!` prefix, where `0` selects the root. Runtime-owned containers and facts are trusted, and retained Arrays are copied before the receiver or any argument settles. Language path segments are validated only when traversal consumes them. After the receiver is classified, internal dispatch rejects `constructor`, an unsupported controlled method, or an unsupported mode without preparing arguments. An observational rejection leaves the receiver unchanged; a mutation rejection publishes the Error through the normal receiver transition.
 
-`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. For mutation, its last segment is the property transformed and replaced; `method` is only the operation applied to that property's value. An empty path targets the Chain root property. A receiver may be a primitive string, logical Array, record, or managed class instance. External class and native internal-slot values may remain in the graph but cannot be receivers. Native Arrays, native Arrays with an attached metadata `arrayView`, and internally branded `ArrayView` instances are logical Arrays.
+`path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. The receiver and selected mutation scope may differ; failure after reaching that scope belongs to it. An empty path targets the Chain root. A receiver may be a primitive String, logical Array, managed record/class, or exact external identity. Arrays with an explicit external declaration use native semantics; other native Arrays, attached views, and runtime ArrayViews retain controlled Array semantics.
+
+The required `repair` Boolean is normally false. True requires a valid mutation scope and clears repairable poison throughout its subtree before normal call preparation/invocation, retaining exclusive access; a new failure poisons again. `firstDynamicSegment` is source provenance, independent of key readiness; a computed segment cannot select a mutable external boundary. [integration.md](integration.md#entry-target-selection) specifies the public compiler handoff and path composition.
 
 ## Dispatch
 
@@ -34,7 +36,8 @@ copyWithin fill pop push reverse shift sort splice unshift
 | `false` | Any other supported method | Invoke it as a trusted observation and return its result. |
 | `true` | Logical Array mutator | Mutate or publish a new receiver and return the JavaScript mutator result. |
 | `true` | Managed method | Isolate, invoke, validate, and publish the receiver; return the method result. |
-| `true` | Other receiver | Publish and return a language Error without invocation. |
+| Either | External receiver | Export arguments, wait for its selected phase when mutable, and invoke the exact native method. |
+| `true` | Unsupported receiver | Publish and return a language Error without invocation. |
 
 A supported logical Array method is selected intrinsically by name even when a receiver property shadows it. Every other Array method name is unsupported; dispatch does not inspect custom properties or prototypes.
 
@@ -42,7 +45,7 @@ Controlled Array table lookup and native String method lookup happen during inte
 
 Managed-record and managed-class member lookup happens only after their required inputs are clean. A record method is an own enumerable Function-valued placement; inherited properties, accessors, and non-enumerables are unavailable. Managed-class lookup selects a data method once from the prepared receiver's admitted prototype chain up to, but excluding, `Object.prototype`. Unrelated prototype accessors are permitted but are not Cascada methods; declaration rejects a callable or accessor `then`. If lookup reaches an accessor or later safely detects an unsafe `then` or another invalid prototype change before invocation or publication, the call returns `InvalidManagedReceiver` and preserves the original receiver; only already-compromised runtime state is fatal. Failed preparation performs none of this application-controlled reflection.
 
-A managed call resolves the complete receiver graph and exports every explicit argument before selecting its method. An observation leases its prepared receiver without a gate. A mutation selects the method before isolation, uses the ordinary receiver gate while pending, selectively isolates receiver identities protected by COW or runtime bookkeeping, and publishes only a valid completed receiver. Shared-graph import protects aliases between a non-receiver mutation result and the receiver. A direct result Promise extends the call; a nested result Promise is ordinary result data and must not later access or expose the receiver. The managed structure of exported argument copies may outlive the call. Exact external identities may be retained or returned inertly but gain no authority. The full contract is in [`managed-invocation.md`](managed-invocation.md).
+A managed call resolves the complete receiver graph and exports every explicit argument before selecting its method. A mutating managed scope/receiver must not contain registered mutable external resources; reject it before invocation. Entry coverage grants no exception. An observation leases its prepared receiver without a gate. A mutation selects the method before isolation, uses the ordinary receiver gate while pending, selectively isolates receiver identities protected by COW or runtime bookkeeping, and publishes only a valid completed receiver. Shared-graph import protects aliases between a non-receiver mutation result and the receiver. A direct result Promise extends the call; a nested result Promise is ordinary result data and must not later access or expose the receiver. The managed structure of exported argument copies may outlive the call. Exact external identities may be retained or returned inertly but gain no authority. The full contract is in [`managed-invocation.md`](managed-invocation.md).
 
 String methods use the ordinary observation path. Their dispatch protocols, such as `Symbol.match`, `Symbol.replace`, and `Symbol.split`, and callable arguments such as replacement callbacks are part of the same trusted read-only call and are subject to the ordinary exported-argument and result-admission boundaries. Controlled Array intrinsics support the methods declared by the Array method table; `sort` and `toSorted` additionally support the comparator contract below. Array callback methods such as `map`, `filter`, `reduce`, and `forEach` are deferred. Array `keys`, `values`, and `entries` are outside the controlled method table; direct Array iteration and spread use the runtime iterator path.
 

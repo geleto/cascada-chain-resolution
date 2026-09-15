@@ -74,6 +74,37 @@ The compiler owns the input. It may emit a fresh literal or reuse a constant acr
 
 Sharing a compiler tree does not share a runtime location. Two independent root ContextChains in one execution still make competing claims if that same compiler input selects the same exact external identity in both contexts. Different selected identities have independent entries; different executions have independent state under the existing single-execution host ownership restriction.
 
-Initial import follows only the tree's named properties in the original context, using already staged/admitted categories. A first external identity becomes a runtime boundary record and ends traversal, even if that compiler node has children. Managed endpoints, absent or primitive values, Errors, Functions, and every Promise or thenable contribute no boundary; newly empty branches disappear. Ordinary data import still consumes thenables normally. Runtime filtering, atomic registration, and internal records are specified in [external context ordering](external-context-ordering.md#static-external-mutation-tree).
+Initial import follows only the tree's named properties in the original context, using already staged/admitted categories. Every visited external object can become a registered scope, including internal nodes: continue following the finite requested child paths beneath it through directly accessible native data properties. Do not stop at the first external identity. Keep all node metadata behind an internal Symbol so child maps and external scope records can coexist. Managed endpoints, absent or primitive values, Errors, Functions, accessors, and every Promise or thenable contribute no scope; newly empty connecting branches disappear. An already-managed identity is never promoted. Newly registered native child objects are admitted as external atomically with discovery. Ordinary data import still consumes thenables normally. Runtime filtering, atomic registration, and internal records are specified in [external context ordering](external-context-ordering.md#static-external-mutation-tree).
 
-Actual operations retain their `firstDynamicSegment` source fact independently of this constructor input. Resolving a computed key to an already recorded location never grants static authority. The compiler tree contains only static prefixes and needs no such field, receiver-used flag, or `!` marker. Entry lowering uses the completed runtime tree through the public Phase 9F handoff; generated code does not inspect internal Symbols or identity entries.
+Actual operations retain their `firstDynamicSegment` source fact independently of this constructor input. Resolving a computed key to an already recorded location never grants static authority. The compiler tree contains only static prefixes and needs no such field, receiver-used flag, or `!` marker. Entry lowering uses the public handoff below; generated code does not inspect internal Symbols or identity entries.
+
+## Entry-target selection
+
+```js
+const selected = selectEntryPath(chain, plannedPath, operationContext, firstDynamicSegment)
+return enter(chain, selected.path, operationContext, entryMutable, entered => {
+    // Issue commands relative to entered, retaining selected.suffix as needed.
+}, selected.firstDynamicSegment)
+```
+
+`selectEntryPath` returns `{ path, firstDynamicSegment, suffix }`. It follows only the completed static tree. A managed or mixed target stays at its requested depth. An external target selects its deepest enclosing registered scope, not necessarily the first native boundary. A target exactly at a registered node stays there; an unregistered native suffix is returned for rebasing inside the selected entry. No suffix is consumed during selection and no dynamic source prefix becomes static. Explicit native-property entry remains invalid; compiler lowering performs this handoff before delayed control flow.
+
+For external apis with registered config and db, independently enter config or db when those are the affected paths; entering external apis reserves both. If apis is managed, entering mixed apis is still valid. Entry supplies ordering only: operations inside it retain their original mutationScopeDepth and obey managed/external bang restrictions. Do not rewrite an invalid mixed bang into a valid child bang or confuse entryMutable with mutation authority. Cascada reference arguments and a delayed conditional assignment use the same entry API. For a delayed a.x assignment, enter a.x and leave a.y available.
+
+For multiple Cascada reference arguments, reserve their selected entries as one issuance batch before waiting. Collapse overlapping scopes under their covering entry and derive relative reference views; preserve disjoint scopes so unrelated siblings remain available. Sequential acquire-and-wait can deadlock when two calls list the same resources in opposite argument orders. Phase 13 defines the public compiler handoff for this batch using the reservation kernel; generated code must not reach private tree state.
+
+The compiler must supply all potential mutable receiver/container routes, including nested registered scopes used by parent-wide native operations. It cannot infer host categories; initial import and the handoff handle those. A parent reset must preserve every registered child identity and location. Promise delivery never changes the fixed tree.
+
+All public path APIs accept `firstDynamicSegment` as their final optional
+argument; `run` carries it alongside `mutationScopeDepth` and the required
+`repair` Boolean. The default is `path.length`, meaning a fully static path.
+For captured prefix and suffix paths, concatenate provenance as
+`prefixDynamic < prefix.length ? prefixDynamic : prefix.length + suffixDynamic`.
+Truncation to length `k` uses `Math.min(firstDynamicSegment, k)`.
+Entered Chains retain canonical prefix provenance internally, so rebasing the
+remaining suffix cannot grant authority lost through an earlier computed key.
+Compiler-generated keys may currently be ready Strings or Numbers; Promise key
+consumption is implemented separately in Phase 10.
+
+Repair-only uses `repairPath(chain, path, operationContext, firstDynamicSegment)`.
+It invokes no native code and clears repairable guard/scope poison throughout the selected subtree. Repair-and-call uses `run` with mutation and `repair: true`; clear first, then perform normal call preparation and invocation under the same reservation. A new failure poisons again. Neither form clears permanent binding conflicts or bypasses own poison above its target.

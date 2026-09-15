@@ -10,7 +10,7 @@ The context importer uses `ContextValueFailed`; causal host-result import uses `
 
 Ordinary `Chain(initialValue, operationContext)` admits existing Cascada data without importing it. `ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` sends its raw host root once through the common importer. The compiler provides a finite tree of static mutation access prefixes, with property maps at every node and `{}` endpoints. Omission means no requests; `{}` requests only the root. Calls contribute receiver routes and property mutations contribute containing routes, independently of poison scopes. [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree) defines the complete compiler contract.
 
-Build the runtime tree during the initial synchronous segment from the original source inputs and staged/admitted categories. Follow only requested own placement keys. The first external identity becomes a boundary record and ends that branch, even if its compiler node has children. Remove non-external endpoints and prune empty connecting branches. The compiler retains its unchanged tree; build only the resulting runtime branches and records and release all compiler input references before construction returns.
+Build the runtime tree during the initial synchronous segment from the original source inputs and staged/admitted categories. Follow only requested own placement keys. Record external scopes at requested prefixes and continue through requested native child data placements; external nodes can have children. Stage external admission for newly registered native objects, without reclassifying existing managed identities. Remove non-external endpoints and prune empty connecting branches. The compiler retains its unchanged tree; build only the resulting runtime branches and records and release all compiler input references before construction returns.
 
 Authority discovery is a finite occurrence walk, separate from identity admission. Every recursive step consumes a compiler-tree edge, so aliases and context cycles require no subtree enumeration, relative-path cache, or cycle-cut mechanism. Preserve explicitly selected distinct locations for duplicate-identity validation. Discovery adds no reflection beyond its requested prefixes and never enumerates an unrequested managed subtree; ordinary import retains its one-per-identity admission walk.
 
@@ -20,7 +20,8 @@ Admission, origin, sharing, placement versions, runtime records, and identity bi
 
 ## Admission walk
 
-Each available synchronous segment uses one transactional identity walk:
+Each available synchronous segment uses one transactional identity walk. Its admission dispatcher classifies/reuses identities; managed-container preparation handles logical properties and their continuations. External identities stop ordinary data traversal, while finite external-tree discovery remains a separate named-path walk within the same transaction:
+
 
 1. Recognize native Errors and classify every other newly reached identity from its declarations and defaults.
 2. Traverse new managed records, Arrays, and class instances once while preserving aliases and cycles.
@@ -33,6 +34,23 @@ Subscriptions made during validation share one segment-local lifecycle fact: `st
 The walk inspects only own enumerable string-keyed data properties. It neither invokes accessors nor inspects non-enumerables. A supported enumeration, descriptor, validation, or host-reflection failure returns a contextual language Error for that whole synchronous segment and commits nothing from it; an existing contextual Error remains data and an internal failure is fatal. A native Error at the root returns its occurrence wrapper. A nested native Error remains physically unchanged while the importer stages its wrapper as that placement's fixed logical version. Separate raw-Error introductions may produce equivalent immutable wrappers. Collection deduplicates by raw cause, source-context identity, and kind; no Error identity map must survive a segment merely to intern wrappers. Existing contextualized Errors propagate by exact reference.
 
 An already admitted identity keeps its category and origin and is not rescanned. When importing it adds another owner, an admitted managed identity is marked shared. Import builds no refcount index.
+
+Method-result admission additionally checks traversable result occurrences for
+registered mutable capabilities. A call inside mutable external state also
+rejects its exact native receiver. These checks reuse the admission walk and
+logical placements without reclassifying admitted sources or scanning opaque
+interiors. Capture key candidates before inspecting individual descriptors, so a failing descriptor cannot hide later siblings. A failed ready result segment preserves all discoverable ready Errors alongside its capability or reflection failure. Newly owned deferred segments retain that result policy.
+
+Borrowed pending placements also apply the result policy, through copies of their containers and the borrowed ancestors that reach them. Reuse the staged placement walk to preserve aliases and ready cycles; unchanged branches stay shared. Existing managed availability keeps its original settlement and attribution. A result continuation consumes the captured source version after its normal settlement, then validates and publishes only into the result copy. A previously unconsumed Chain placement first establishes its ordinary source settlement. Neither result validation nor later source replacement rewrites that captured version. Copy admission and result versions commit with the result segment; abandoned result work leaves source settlement intact. Nested result availability does not extend the completed receiver phase.
+
+The host-result ownership contract
+forbids later receiver access or exposure through nested result work.
+
+Observation-only external property results use an external root admission rule:
+a newly reached object stays exact and external, while existing admission is
+unchanged. Mutable external property sources instead use the dedicated snapshot
+transaction, which admits only successful output copies. Availability handling
+must not admit such a source before the snapshot selects its logical read rule.
 
 Public `import(value, operationContext)` creates no static external mutation tree. An unregistered external identity remains observation-only; an already registered identity keeps its binding and access restrictions through every alias. Import cannot downgrade it to freely observable data. Only initial ContextChain import may establish mutation authority.
 
@@ -61,4 +79,4 @@ Application code must not mutate managed data after passing it to Cascada. Exter
 
 Mutation paths select external authority without changing managed admission or ownership. Managed aliases and cycles retain their ordinary import semantics, even across those paths; new imported managed identities remain shared. Paths containing no directly accessible external boundary add no tree node. Import creates no separate capture selector or per-scope ownership map.
 
-External code may retain a read-only reference to a managed identity, but must not mutate it even through an external receiver's child property. Native writable state stays within its declared external owner; an explicitly external record may own plain state together with native services. Property observations from mutable external state provide detached managed snapshots. Host-method results instead follow ordinary import, so the host must return independent data or relinquish mutation of the returned managed graph. See the [ownership boundary](external-context-ordering.md#managed-and-external-ownership).
+Retaining a managed reference grants native code no permission to inspect or mutate its raw storage. Returning an inert reference remains supported through logical result import and its existing borrowed-version isolation. Native writable state stays within its declared external owner; an explicitly external record may own plain state together with native services. Property observations from mutable external state provide detached managed snapshots. Host-method results instead follow ordinary import, so the host must return independent data or relinquish mutation of the returned managed graph. See the [ownership boundary](external-context-ordering.md#managed-and-external-ownership).

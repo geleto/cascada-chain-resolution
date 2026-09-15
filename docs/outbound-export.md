@@ -2,7 +2,7 @@
 
 **Status:** Implemented.
 
-Phase 9F adds the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
+Export enforces the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
 
 Export is the single outbound graph boundary. It prepares an ordered batch of host-call inputs, one script result, or an internal host snapshot such as Array comparator input with the same identity-aware copier.
 
@@ -54,4 +54,4 @@ The result is synchronous when every consumed frontier transition returns direct
 
 Export adds no owner or shared mark to its source. This relies on ordinary ownership rules: another valid Cascada owner marks managed data shared, and later mutation uses COW. Application code must not mutate data after passing it to Cascada. Exact external state remains governed by its own ordering and mutation authority; export grants none.
 
-`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/internal-step.js` owns complete root readiness and guarded continuation, while `src/operation-lifecycle.js` owns operation closure and releases; observation and invocation code call the two export shapes directly.
+`src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/managed-traversal.js` shares managed key capture and placement delivery with receiver preparation; export reserves output keys before pending delivery and applies copying to each delivered value. `src/internal-step.js` owns complete root readiness and guarded continuation, while `src/operation-lifecycle.js` owns operation closure and releases; observation and invocation code call the two export shapes directly.

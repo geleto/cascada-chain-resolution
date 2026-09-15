@@ -2,9 +2,9 @@
 
 This document defines the observable contract of the Cascada chain-resolution kernel. Implementation details live in [`import-preparation.md`](import-preparation.md), [`counters-implementation.md`](counters-implementation.md), and [`work-bounds.md`](work-bounds.md).
 
-`ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local first-external-boundary records, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
+`ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local registered external scope records, including requested nested native scopes, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
 
-External public-operation routing, scope metadata queries, fixed mutable namespaces, and whole mutable-external entry are planned for Phase 9F. Their target contract includes whole-owner serialization of native property writes and recoverable rejection of mutable-native-child entry, as defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
+The accepted hierarchical external design orders conflicting ancestor/descendant scopes while siblings overlap. Mixed entry remains valid, while managed bang scopes exclude mutable external resources. Explicit unregistered native-property entry fails recoverably. These contracts require the pending Phase 9F-A completion, as defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
 
 ## Values
 
@@ -217,8 +217,8 @@ path regardless of realm or subclass; their subclass prototypes and methods
 are deliberately normalized away.
 External classes, declared external records/Arrays, and native internal-slot
 objects are identity leaves. The graph does not traverse, index, or copy their
-state. The current path and `run` implementation does not yet enter external
-state; Phase 9F supplies the ordered native suffix and property snapshot boundary.
+state. Path operations and `run` enter native state through its ordered external
+boundary; mutable property results are detached managed snapshots.
 Managed-class export creates
 an independent metadata-free object with the admitted prototype without
 invoking its constructor.
@@ -251,12 +251,12 @@ contextualized to the import operation.
 Import:
 
 - records origin and marks newly imported managed identities shared;
-- retains already admitted identities without rescanning or changing origin, except when managed mutation-result import must establish ownership throughout a managed mutation result;
+- retains already admitted identities without rescanning or changing origin, except when method-result import revisits their graph to enforce boundary restrictions and shared ownership;
 - consumes nested possible Promises and retains continuations only for returned pending work; and
 - does not build subtree counters.
 
 Newly reached host objects receive external metadata recording their admitted
-category and origin. Import traverses only new managed identities and stops at
+category and origin. Ordinary import traverses only new managed identities and stops at
 external identities, Functions, and Errors. A nested native Error remains
 physical host data while a fixed placement overlay stores its logical wrapper.
 Import commits no metadata or placement version from a synchronous segment
@@ -585,17 +585,9 @@ repair-and-call on the selected retained managed scope or external boundary.
 
 ### `repairPath(chain, path, operationContext)`
 
-Performs an ordered repair-only operation at a retained managed scope guard or
-existing fixed external boundary. It clears only that scope's poison, invokes no
-external code, and returns `undefined` directly or through a Promise when it must
-wait for path resolution or earlier work. A managed guard exposes its retained
-value again; independently poisoned descendants remain poisoned. A deeper repair
-cannot pass an unrepaired ancestor. Ordinary managed Error values still use
-assignment or deletion for recovery.
+Exclusively repair the selected managed guard or registered external subtree. Clear covered repairable scope poison, preserve retained values and fixed identities, and return undefined without native code. Do not clear ordinary Error-valued managed properties, permanent binding conflicts, or own poison above the target. A derived ancestor summary does not block child repair. Repair-and-call clears first and then performs normal call preparation and invocation under the same reservation; only new failures poison again.
 
-Repair creates no registration and cannot establish or transfer mutation
-authority. For a target at or inside an external boundary, it stops at that
-boundary; an opaque suffix, including a pending segment, is not consumed.
+Registered external scopes may be nested. Resolve selection through static source provenance and the deepest relevant tree node, not a first-boundary-only rule. Repair creates no registration, identity transfer, or native rollback. See [scope transitions](error-handling.md#scope-transitions).
 
 ### `export(chain, path, operationContext)`
 
@@ -644,7 +636,7 @@ operation instead produces `QueryReflectionFailed`. A ready query returns that
 poison directly and a pending query fulfills with that same ordinary Error. It is not a
 positive answer and is not an Error found in the graph.
 
-At a mutable external scope, contextual queries observe ordered phase metadata without native property reflection or capability extraction: healthy state gives false/null, poison gives true/the original Error, and a binding conflict is a visible Error. Ancestor queries include their required accessible external scopes through the static tree and ordinary query owner. A poisoned managed guard is terminal: its retained children, including Promises and independently poisoned scopes, are recovery state and are not traversed. Inert aliases gain no authority, and later repair cannot change a captured query result.
+At a mutable external scope, contextual queries consume ordered tree metadata without native reflection: collect own and descendant Errors at the selected subtree, including when its root owns poison. Strict-ancestor own poison blocks access; derived sibling summaries do not. A managed guard remains terminal and hides retained managed contents. Preserve original null/single/compound results and captured query results after recursive repair.
 
 ### `getErrors(chain, path, operationContext)`
 
@@ -726,7 +718,7 @@ extends receiver protection or private mutation until settlement; a nested
 result Promise is ordinary imported data. A mutation validates and admits the
 completed receiver before publishing it through the ordinary transition. It
 returns the published receiver for `this`; every other result is imported, and
-managed mutation-result import marks all reached managed aliases shared without
+common method-result import marks all reached managed aliases shared without
 copying them.
 
 A `sort` or `toSorted` comparator remains executable control outside the graph.

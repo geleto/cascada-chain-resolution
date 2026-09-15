@@ -26,6 +26,8 @@ Nested calls such as `this.increaseBy(1)` are ordinary JavaScript calls on the p
 
 ## Call lifecycle
 
+Receiver preparation and export share `managed-traversal.js` for complete managed-property capture and delivery. Preparation retains receiver leases and its own graph identity and Error state. Receiver validation shares only key capture: it reads existing versions or raw descriptors without consuming newly produced availability. Native snapshotting, selective receiver copying, and transactional admission retain their different traversal rules.
+
 One operation context performs the call:
 
 1. Select the managed boundary from the admitted receiver category, method name, and mode without reflecting on the method.
@@ -40,7 +42,9 @@ If receiver selection is pending, the common coordinator consumes each possible 
 
 ## Receiver preparation
 
-Phase 9F uses the common [scope transition](error-handling.md#scope-transitions). A managed scope containing registered mutable external bindings retains its fixed namespace under a logical poison guard. Arbitrary managed mutating methods whose receiver intersects that namespace are rejected before invocation, so no namespace-specific `preserveReceiver` copy or invalid-candidate recovery is needed. External calls cannot modify the managed namespace. Ordinary managed receivers outside it retain the preparation and isolation below.
+A managed mutating scope and receiver must contain no registered mutable external resources. Canonical scope selection uses the external tree; receiver preparation checks reached identities too, so aliases cannot bypass this restriction. Observation-only external identities remain opaque leaves. Reject before invocation, preserving the selected value under owner-isolated scope poison where repair applies. Entering a mixed branch grants no exemption.
+
+Invocation uses the common [scope transition](error-handling.md#scope-transitions). A managed scope containing registered mutable external bindings retains its fixed namespace under a logical poison guard. Arbitrary managed mutating methods whose receiver intersects that namespace are rejected before invocation, so no namespace-specific `preserveReceiver` copy or invalid-candidate recovery is needed. External calls cannot modify the managed namespace. Ordinary managed receivers outside it retain the preparation and isolation below.
 
 Preparation consumes the complete receiver graph because method code may read any state through `this`. Capture candidate keys and validate their placement descriptors before consuming their values. A failed descriptor contributes its causal Error without hiding other known keys; failed key-list reflection ends only that inaccessible interior. It resolves every reached Promise through its captured property version, including Promises revealed by fulfillment, and collects every reached contextual Error. Aliases and cycles are preserved. Imported storage may retain a physical Promise or native Error while the working receiver exposes its logical value.
 
@@ -70,7 +74,7 @@ A clean receiver is published through the ordinary mutation transition. A receiv
 
 ## Results and direct Promises
 
-Managed result admission uses ordinary import for observations. A mutation returning its working receiver selects the published receiver and marks it shared when retained as output. Every other mutation uses managed mutation-result import: it traverses even an already admitted managed root and marks every reached managed identity shared. A mutation prefix or external child does not change these ownership rules. A mutation can move a result descendant onto a shorter receiver path, where sharing only the result root would not protect it. Managed mutation-result import protects that descendant without result-provenance state. Its cost is one identity traversal of the non-receiver mutation result.
+Observations and non-receiver mutation results use common method-result import: it traverses even an already admitted managed root, enforces result-boundary restrictions, and marks every reached managed identity shared. A mutation returning its working receiver selects the published receiver and marks it shared when retained as output. A mutation prefix or external child does not change these ownership rules. A mutation can move a result descendant onto a shorter receiver path, where sharing only the result root would not protect it. The common result traversal protects that descendant without result-provenance state or a separate mutation-result policy.
 
 Managed operation results have shape `T | PoisonError | Promise<T | PoisonError>`. Required completion publishes the logical outcome and returns or fulfills with its ordinary Error. Only a result extracted for an expression uses rejecting transport through `lookupPathForExpression`.
 

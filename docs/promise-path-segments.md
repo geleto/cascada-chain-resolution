@@ -8,6 +8,8 @@ A path segment is a String or Number operation input. Normalize it only after it
 
 The path carries each actual input value plus one trusted compiler fact: the first dynamic-segment position. A ready computed key is still dynamic. Preserve this fact through path capture, composition, and entered contexts; do not infer staticness from a String/Number value or thenable readiness.
 
+Public APIs carry this source fact as the final optional `firstDynamicSegment` argument, or within `run` facts; its default is `path.length`. `selectEntryPath` and entered Chains preserve it when splitting or rebasing paths. Computed mutation routing already captures its static failure prefix; Promise-valued key consumption remains Phase 10 work.
+
 The operation protects the longest resolved path prefix before a continuation remains pending. This is the narrowest scope that can preserve sequential behavior while the next key is unknown.
 
 ## Preparation
@@ -27,7 +29,7 @@ If the known prefix already fails, return or publish the ordinary path Error wit
 
 An unused segment Promise remains host-owned. Cascada does not wait for it or attach a rejection observer merely to suppress host-level unhandled-rejection reporting.
 
-Initial mutation-tree discovery filters the compiler's finite tree of static access prefixes, with `{}` endpoints. It follows only named original placements, records the first external owner, and removes non-external endpoints and empty branches. An endpoint at a managed `!` scope does not request descendant discovery; poison scopes remain separate operation facts. Computed keys never contribute child locations. A recorded owner may precede a dynamic native suffix. Independently, every original value on a mutable-resource route must be directly accessible: any Promise or thenable stops discovery, including synchronous delivery. Registration never substitutes its imported outcome or resumes after delivery. See [compiler construction](integration.md#compiler-construction-of-the-mutation-access-tree).
+Initial mutation-tree discovery filters the compiler's finite tree of static access prefixes, with `{}` endpoints. It follows only named original placements, records requested external scopes including nested native nodes, and removes non-external endpoints and empty branches. An endpoint at a managed `!` scope does not request descendant discovery; poison scopes remain separate operation facts. Computed keys never contribute child locations. A recorded owner may precede a dynamic native suffix. Independently, every original value on a mutable-resource route must be directly accessible: any Promise or thenable stops discovery, including synchronous delivery. Registration never substitutes its imported outcome or resumes after delivery. See [compiler construction](integration.md#compiler-construction-of-the-mutation-access-tree).
 
 Prefix-wide mutation ordering is unavoidable. For `value[pendingKey]`, no descendant is known until the key resolves, so a later operation anywhere beneath `value` may conflict.
 
@@ -49,15 +51,15 @@ A computed key before a mutable boundary makes that selection invalid even if th
 
 Dynamic paths that select ordinary managed or observation-only external data remain supported. Do not reject them just because another child of the same prefix is mutable. Their ordinary managed prefix lease/gate preserves value ordering. No speculative external selection or global candidate wait is needed.
 
-Once a static path selects one mutable external boundary, reserve its ordinary observation or mutation phase before waiting for any dynamic native-suffix input key. Earlier managed and binding-entry gates precede this reservation. Keep that selected phase through required boundary completion. A new mutable resource cannot be selected through the suffix, and no deferred key grants additional authority.
+Once a static path selects one mutable external boundary, reserve its ordinary observation or mutation phase before waiting for any dynamic native-suffix input key. Earlier managed gates and inherited entry reservation ownership determine this turn. Keep that selected phase through required boundary completion. A dynamic suffix cannot select a registered descendant, and no deferred key grants static authority.
 
 Promise-valued operation-input keys are different from stored native property values. After crossing an external boundary, intermediate stored values, method receivers, and selected callables must be ready; do not await a stored Promise to continue the suffix. A final lookup value or direct call result may be consumed for availability. Final assignment/deletion does not read or consume the old target.
 
 Prefix protection composes with the selected mutation scope. A coarser prefix gate can remain the publication vehicle, but it does not broaden the Error location after scope selection. Independent result readiness extends neither completed path protection nor receiver publication. Read/export/query capture finishes before source protection ends; repair retains its selected transition through publication.
 
-Mutable-external entry requires a static path to the whole first external boundary. Compiler lowering enters that boundary for delayed conditional writes to any native descendant. Its context-binding gate prevents outside access while the callback issues work; contained operations reserve normal external phases, and entry itself holds none. Ordinary managed entry still supports Promise-valued keys. A Promise stored at its selected managed target retains the existing entry behavior.
+External entry requires a static registered scope; compiler native-property selection uses the deepest enclosing registered node. Managed/mixed targets remain unchanged and use ordinary managed path protection plus external subtree reservation where needed. Covered entry views keep contained work ahead of later outside waiters. Managed entry still supports Promise-valued keys where they do not select registered resources.
 
-Repair targets only its selected retained managed guard or statically selected external scope. A marker inside native state clamps to the first external boundary without consuming its unused suffix. It bypasses no poisoned ancestor and clears no descendant poison.
+Repair selects its registered external subtree or managed guard, clears covered repairable poison before a call, and bypasses no strict-ancestor own poison. Derived ancestor summaries do not block child repair. It never clears permanent binding conflicts or ordinary managed Error-valued properties.
 
 ## Scope
 

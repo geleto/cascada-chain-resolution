@@ -6,11 +6,11 @@ This plan records the final design and the work needed to bring `src` into confo
 
 `AGENTS.md` is authoritative for settled contracts. Source and tests are authoritative for completed mechanisms.
 
-Phase 9C, its supported-thenable addendum and completion step, and Phases 9D-0, 9D-A, 9D-B, and 9D-C are implemented. Phase 9E, including its completion addendum, implements atomic registration, compiler mutation access trees, Symbol-backed location records, and single-owner coordination with direct poison completion. Phase 9E-A implements idempotent Error unions and bounded graph presence summaries. Phase 9F next routes public external operations and implements logical snapshots. Managed ownership remains independent of mutation scopes; external mutation is confined to state owned by its selected external boundary.
+Phases 9C through 9E-A supply the implemented graph/Error, admission, and binding foundations. Phase 9F-A is the next pending completion: hierarchical external-tree reservations, separate repairable guard metadata, recursive repair, and mixed-entry ownership. Existing public external routes require this conformance cutover. Phase 10 follows with Promise-valued path segments; Phase 13 integrates Cascada.
 
 ## Current checkpoint and agreed changes
 
-The current kernel has ordinary FIFO subscriptions, atomic import and index publication, successful-output native-then validation, immutable causal Error wrappers, complete semantic Error collection, one local close transition, and the public higher-runtime API. Poison remains ordinary non-thenable Error data. Expression lookup returns a ready PoisonedValue or a directly rejecting pending Promise; getErrors returns null or a combined Error, and query failures fulfill with ordinary Error data. Context import validates unique external locations and commits execution-local bindings. The internal external coordinator supplies readers-writer ordering and repairable phase poison; public operation routing remains Phase 9F.
+The current kernel has ordinary FIFO subscriptions, atomic import and index publication, successful-output native-then validation, immutable causal Error wrappers, complete semantic Error collection, one local close transition, and the public higher-runtime API. Poison remains ordinary non-thenable Error data. Expression lookup returns a ready PoisonedValue or a directly rejecting pending Promise; getErrors returns null or a combined Error, and query failures fulfill with ordinary Error data. Context import validates unique external locations and commits execution-local bindings. Phase 9F provides the public boundary baseline. Phase 9F-A replaces its coordination and guard representation; its source-file replacement map below defines the work rather than treating existing tests as proof of the new design.
 
 | Agreed requirement | Implementation owner |
 | --- | --- |
@@ -21,23 +21,23 @@ The current kernel has ordinary FIFO subscriptions, atomic import and index publ
 | A detected missing required Promise version fails immediately at publication; fatal detection never waits for the corrupt source to settle | Phase 9C completion |
 | Dependency-scoped readiness and a semantic target handoff; an independent result does not retain a completed path or receiver | Addendum for existing routes; Phase 10 for Promise-valued paths |
 | Recoverable failure leaves every retained refcount index valid, including downward closure through cycle cuts | Phase 9D-0, preserved by 9D-A query recovery |
-| Successful ready and pending outputs obey the same native `then` surface restriction | Phase 9D-0; 9D-B expression-boundary verification; 9F/13 boundary integration |
-| Raw failure payloads exposed through `Error.cause` are diagnostic-only host data and cannot expose unexported managed state or mutation-capable external identities; source attribution remains the originating operation's source-error context | Phase 9D-A contract and kernel producer audit; 9F/13 integration |
+| Successful ready and pending outputs obey the same native `then` surface restriction | Phase 9D-0; 9D-B expression-boundary verification; 9F-A/13 boundary integration |
+| Raw failure payloads exposed through `Error.cause` are diagnostic-only host data and cannot expose unexported managed state or mutation-capable external identities; source attribution remains the originating operation's source-error context | Phase 9D-A contract and kernel producer audit; 9F-A/13 integration |
 | Immutable Error wrappers propagated by reference; cause/context/kind deduplication in queries and compounds; unspecified Error order; no persistent wrapper interning | Phase 9D-A, preserved by 9D-B and 13 |
 | Operation context is trusted compiler/runtime protocol; malformed root integration calls produce ordinary programming errors, while defects escaping a valid operation enter its fatal guard | Phase 9D-A kernel entry audit; Phase 13 compiler/integration verification |
-| No required Error is lost: complete collection is part of determinism; Error order and only the enumerated reporting/detection races may vary | Existing 9C fatal semantics; 9D-A collection/query tests; 9D-B graph/expression boundary; 9E/9F invalid-binding tests; Phase 13 integration |
-| Reject off-path regular-Chain access locally in either import order; do not poison the context, rewrite old placements, or revoke settled results | Phase 9E binding kernel and 9F/10 access routing |
-| Competing independent context registrations invalidate one shared binding at otherwise-valid import commit; no first-arrival winner or repairable authority transfer | Phase 9E, with 9F/10 integration |
-| Reject distinct compiler-selected paths to one external identity within a root context at import; merge shared prefixes and native suffixes under one owner; retain one binding location | Phase 9E completion; 9F public access integration; 10 pending-route preservation |
-| One actual external boundary per phase handle; completion-only read groups; observations never add or clear poison | Phase 9E; Phase 9F query composition |
+| No required Error is lost: complete collection is part of determinism; Error order and only the enumerated reporting/detection races may vary | Existing 9C fatal semantics; 9D-A collection/query tests; 9D-B graph/expression boundary; 9E/9F-A invalid-binding tests; Phase 13 integration |
+| Reject off-path regular-Chain access locally in either import order; do not poison the context, rewrite old placements, or revoke settled results | Phase 9E binding kernel and 9F-A/10 access routing |
+| Competing independent context registrations invalidate one shared binding at otherwise-valid import commit; no first-arrival winner or repairable authority transfer | Phase 9E binding baseline, with 9F-A/10 integration |
+| Reject distinct selected paths to one identity atomically; retain requested nested external scopes | Phase 9E atomic binding; Phase 9F-A hierarchical discovery |
+| One selected subtree reservation; upward completion dependencies and separate poison summaries | Phase 9F-A |
 | Compiler-owned mutation access trees with `{}` endpoints; bounded filtering into Symbol-backed location records; no receiver cache or phase payload wrapper | Phase 9E completion; Phase 13 compiler emission |
-| Static mutable-resource selection; deterministic dynamic-route failure scope; no speculative candidate reservations | Phase 9F path facts and Phase 10 segment handling |
-| Earlier managed and whole-resource entry-binding gates precede external phases; inner commands use normal phases | Phase 9F entry integration; Phase 13 lowering |
-| Idempotent compound Error union; bounded immediate-child query summaries | Phase 9E-A before Phase 9F query integration |
-| Mutable-only fixed namespace; upfront structural restrictions; ordered external scope metadata queries | Phase 9F |
-| One selected scope owns mutation poison; retain managed scopes with fixed native bindings, block every contextual descendant route, and repair only that scope | Phase 9F scope guards and publication; Phase 10 pending paths |
-| Managed lookup, import, retention, and mutation use ordinary sharing, leases, versions, and COW regardless of `!`; external methods mutate only their external owner's state | Phase 9F ownership and boundary integration; Phase 10 dynamic paths |
-| Keep the separate ready-only mutable-external property snapshot contract, including logical reads of reached managed sources | Phase 9F snapshot integration |
+| Static mutable-resource selection; deterministic dynamic-route failure scope; no speculative candidate reservations | Phase 9F-A path facts and Phase 10 segment handling |
+| Earlier managed placement gates precede external reservations; mixed entry uses covered reservation views | Phase 9F-A and Phase 13 lowering |
+| Idempotent compound Error union; bounded immediate-child query summaries | Phase 9E-A before Phase 9F-A query integration |
+| Mutable-only fixed namespace; upfront structural restrictions; ordered external scope metadata queries | Phase 9F-A |
+| Own poison stays at its scope; ancestor summaries preserve child Errors; repair clears selected subtree before a call | Phase 9F-A, preserved by Phase 10 |
+| Managed lookup, import, retention, and mutation use ordinary sharing, leases, versions, and COW regardless of `!`; external methods mutate only their external owner's state | Phase 9F-A ownership and boundary integration; Phase 10 dynamic paths |
+| Keep the separate ready-only mutable-external property snapshot contract, including logical reads of reached managed sources | Phase 9F-A snapshot integration |
 | One public package API for Chain operations, guarded higher-runtime work, Error factories, and expression extraction | 9D-B public surface; Phase 13 compiler/runtime consumers |
 | Final Promise-backed placement terminology and one explicit prepare/install/continue/publish/commit/detach lifecycle | Phase 9D-C atomic terminology migration |
 | Separate ordinary graph Errors from expression PoisonedValue; use public factories and preserve complete collection | 9D-B kernel expression boundary; Phase 13 compiler/runtime migration |
@@ -425,7 +425,7 @@ Keep the existing public `import(value, errorContext)` API and make its implemen
 - a host root explicitly passed to public `import`, including each context root as a whole;
 - call results already handled by common host invocation.
 
-A Promise fulfilled from either boundary continues that same import; it is not another boundary case. Phase 8 routes managed-method results through this importer. Phase 9F does the same for external calls and property reads. Neither phase adds another inbound walk.
+A Promise fulfilled from either boundary continues that same import; it is not another boundary case. Phase 8 routes managed-method results through this importer. Phase 9F-A does the same for external calls and property reads. Neither phase adds another inbound walk.
 
 Do not import Chain construction from existing Cascada data, assignment, return, or internal transfer. Those operations preserve admission, origin, and ownership. External identities remain observation-only until Phases 9A–9F add mutation authority and ordering.
 
@@ -455,7 +455,7 @@ Reflection and failure rules are:
 
 Delete the superseded imported/runtime split and its supporting machinery: runtime-island detection, `hasOperationalMetadata`, `promoteRoot`, the runtime walk, `runtimeScanned`, `metadataBeforeRuntimeScan`, `discoverRuntimePromise`, the root/result preparation split, host-change reconciliation, and import-specific ArrayView handling.
 
-Phase 7A adds the matching outbound boundary without reopening admission. Phase 9F reuses this importer for external operations.
+Phase 7A adds the matching outbound boundary without reopening admission. Phase 9F-A reuses this importer for external operations.
 
 ### Verification
 
@@ -499,9 +499,9 @@ Use one exporter and one boundary graph copier for:
 - every explicit argument passed through an existing host call; and
 - every script result.
 
-Phase 7C reuses the exporter for controlled host-callback inputs. Phase 8 reuses it for managed-method arguments. Phase 9F reuses it for external-method arguments and external-property assignments.
+Phase 7C reuses the exporter for controlled host-callback inputs. Phase 8 reuses it for managed-method arguments. Phase 9F-A reuses it for external-method arguments and external-property assignments.
 
-Keep `run(chain, path, method, mutation, ...arguments)` through Phase 8. Its rest parameter already supplies one internal argument Array; pass that Array directly to common export. Phase 9A replaces the signature with the argument-Array and operation-facts API; Phase 9F adds repair to that facts record when repair becomes usable.
+Keep `run(chain, path, method, mutation, ...arguments)` through Phase 8. Its rest parameter already supplies one internal argument Array; pass that Array directly to common export. Phase 9A replaces the signature with the argument-Array and operation-facts API; Phase 9F-A adds repair to that facts record when repair becomes usable.
 
 Existing managed-record receiver calls remain on their current path until Phase 8 replaces them with managed invocation. A managed receiver is invocation working state, not an exported input.
 
@@ -528,7 +528,7 @@ Export preserves admitted managed-class prototypes. This makes exported managed-
 - Batch export preserves successful root positions and combines failed roots with unspecified Error order, flattening nested compounds and deduplicating leaves by cause/source/kind.
 - Any reached Error prevents host invocation or assignment and replaces a script result. No Error crosses the host boundary.
 
-Use this one rule for script results, host arguments, controlled callback inputs, and Phase 9F external-property assignment. Add no policy switch or second Error walk.
+Use this one rule for script results, host arguments, controlled callback inputs, and Phase 9F-A external-property assignment. Add no policy switch or second Error walk.
 
 ### 3. Correct lease lifetimes
 
@@ -574,7 +574,7 @@ Keep the existing load-bearing leases: managed receiver preparation, an exact ma
 - Capture a pending placement through its exact Promise version. Its FIFO continuation traverses every newly revealed branch synchronously before returning.
 - After each transition, retain only output copies, identity maps, and captured property versions. Never reread already captured state; read a newly revealed branch once, synchronously, at the FIFO position of its captured Promise version.
 - Acquire no managed source lease, and retain no selection lease after the export handoff. Later managed mutation may proceed normally without changing the captured export.
-- Phase 9F independently keeps required external identity phases through settlement.
+- Phase 9F-A independently keeps required external identity phases through settlement.
 
 Export records no external use and grants no external mutation authority.
 
@@ -589,7 +589,7 @@ Export has an open output lifetime. Local operation closure releases partial out
 - Every existing host call uses Phase 6 import for its result, including the operation Promise for a direct Promise.
 - Every script result uses common export.
 - Phase 8 reuses export and import for managed methods.
-- Phase 9F rejects mutation-capable external identities during host-input export, reuses export for external-property assignment, and snapshots values read from mutable external state.
+- Phase 9F-A rejects mutation-capable external identities during host-input export, reuses export for external-property assignment, and snapshots values read from mutable external state.
 
 ### Verification
 
@@ -659,7 +659,7 @@ Do not cancel shared settlement, detach versions, suppress source Promise reject
 - Phase 7D orders internal dispatch, preparation, member resolution, isolation, and invocation.
 - Phase 7E unifies the lifetime mechanism, applies it to registered preparation and Promise-aware scalar conversion outside invocation, and makes nested components share their operation's owner.
 - Phase 8 extends the shared lifetime across managed receiver preparation and argument export.
-- Phases 9F and 10 keep external boundary preparation inside the selected operation lifetime while preserving phase completion rules.
+- Phases 9F-A and 10 keep external boundary preparation inside the selected operation lifetime while preserving phase completion rules.
 - Phase 10 applies it while Promise-valued path segments resume from their protected prefix.
 
 ### Verification
@@ -697,7 +697,7 @@ Logical Arrays support only Cascada's controlled method table:
 
 Store each generic fallback's native intrinsic in the controlled method table. A specialized producer captures any intrinsic it needs beside its implementation. Never read `Array.prototype` during selection or invocation. This removes dynamic host-property reads from the call path; it is not a defense against primordial tampering. Controlled intrinsics receive only runtime-owned working data, prepared scalar values, or retained payload in positions that store it without inspection. Cascada assumes the global `Array`, `Array[Symbol.species]`, the standard Array intrinsics, and `Array.prototype` remain unmodified; document this trusted runtime requirement rather than adding protocol-defense machinery to every internal Array.
 
-Delete Array-override selection, receiver export, result import, override-specific receiver-lease inference, and the Array own-language-property shadow check. The latter can only produce a misleading error for an index-shaped unsupported method name. Retain `requiresArrayMaterialization` only for representation mutation and COW. Preserve controlled behavior and eligible backing reuse. Imported Array storage never becomes mutable ArrayView backing. External Arrays remain unsupported until Phase 9F adds exact external operations.
+Delete Array-override selection, receiver export, result import, override-specific receiver-lease inference, and the Array own-language-property shadow check. The latter can only produce a misleading error for an index-shaped unsupported method name. Retain `requiresArrayMaterialization` only for representation mutation and COW. Preserve controlled behavior and eligible backing reuse. Imported Array storage never becomes mutable ArrayView backing. External Arrays use the public native boundary established by Phase 9F and preserved under hierarchical ordering in Phase 9F-A.
 
 Keep the generic native-equivalence path: a definition without a specialized producer runs its captured same-named intrinsic against the internal remap. Keep `view`, direct observation, remap production, and native fallback as distinct load-bearing cases. Document their observation and mutation precedence in the table header rather than replacing them with a result union or hand-written method implementations.
 
@@ -749,7 +749,7 @@ Exporting the dense comparator snapshot once preserves aliases and cycles across
 
 Comparison count intentionally determines Error consumption. With zero or one sortable record, neither default conversion nor comparator export runs, so an Error remains retained Array data. With at least two sortable records, default conversion consumes an Error as its conversion outcome, while comparator export consumes every Error it reaches before external code. This also removes the current eager conversion failure for a lone unconvertible value and matches the absence of a native comparison.
 
-The native sorter receives only internal placement records. Its wrapper passes paired exported values to the exact comparator Function with `undefined` as `this`; repeated comparisons reuse the same exported identities. The comparator runs synchronously, may mutate or retain exported managed values, treats exact Functions and external identities as read-only, and must not reenter Cascada. Phase 9F later rejects mutation-capable external identities before they reach a controlled callback; observation-only identities remain exact and read-only.
+The native sorter receives only internal placement records. Its wrapper passes paired exported values to the exact comparator Function with `undefined` as `this`; repeated comparisons reuse the same exported identities. The comparator runs synchronously, may mutate or retain exported managed values, treats exact Functions and external identities as read-only, and must not reenter Cascada. The Phase 9F boundary rejects mutation-capable external identities before they reach a controlled callback; Phase 9F-A preserves that behavior; observation-only identities remain exact and read-only.
 
 Consume the comparator result directly without import or coercion. An Error is the callback Error outcome. A Promise or any other non-Number result is a validation Error. A ready Number, including `NaN`, reaches the sorter. The snapshot is neither the receiver nor the result; final ordering moves the original property placements.
 
@@ -971,7 +971,7 @@ Keep receiver preparation, argument export, and receiver isolation as three exis
 - Prepare only the complete receiver. Export arguments through `exportManyValues`; do not materialize or cross-remap receiver and argument identities.
 - Remove registered argument-preparation leases. Keep only selection-to-receiver protection, observation receiver leases, and mutation receiver-source leases until isolation.
 - Finalization only validates that the receiver contains no Promise or Error and admits new identities as runtime-owned. Remove its active-read-lease scan: exported arguments cannot retain Cascada argument identities, and receiver-source leases end at isolation.
-- Delete registered result copying. Use ordinary import for observations and managed mutation-result import for non-receiver mutation results. Managed mutation-result import revisits admitted managed containers and marks every reached managed identity shared, protecting descendants split between the result and final receiver without result-provenance tracking. Keep the complete-graph copier only for qualifying receiver-isolation subgraphs.
+- Delete registered result copying. Use common method-result import for observations and non-receiver mutation results. It revisits admitted managed containers and marks every reached managed identity shared, protecting descendants split between the result and final receiver without result-provenance tracking. Keep the complete-graph copier only for qualifying receiver-isolation subgraphs.
 - Simplify receiver materialization and remapping to receiver input only. Delete the old joint receiver/argument preparation, forced result-copy map, `prepareResult`, and the copier's `promiseFound` result.
 - Delete the record half of the old own-placement shadow check, `getRecordMethod`, and the `TYPE.Record` host-call branch. Retain managed-class own-placement shadowing and route records into managed selection.
 
@@ -988,12 +988,12 @@ One Promise returned directly by the method extends the managed invocation and b
 - Managed code may access its invocation-owned receiver and inspect read-only exact external arguments until that Promise settles. Every asynchronous access of either kind must belong to it and finish before settlement. Exact external identities may be retained or returned inertly. The managed structure of exported argument copies may outlive the invocation; exact external leaves follow the same rule.
 - Detached receiver or external-input work, later receiver access from a nested result Promise, and re-entry into the invocation's execution while its external action is active are forbidden trusted-contract violations. A separate execution may start synchronously. A nested result Promise must not fulfill with the receiver; return it directly when its completion retains invocation state. It may carry an exact external identity inertly but cannot inspect or mutate it after its guard ends. Add no async-context tracking.
 - An observation leases every traversable prepared-receiver identity through settlement. Fulfillment imports the result with ordinary shared ownership; rejection remains rejection and leaves the receiver unchanged. Release leases after the last access on every completion path. Later mutations use COW without waiting; add no readers-writer phase.
-- A mutation ends receiver-source leases after isolation and keeps its private receiver behind the ordinary transition gate; the gate, not another lease, protects it. Fulfillment uses managed mutation-result import for a non-receiver result, validates the receiver, and publishes one mutation outcome. The result cannot become observable before receiver publication.
+- A mutation ends receiver-source leases after isolation and keeps its private receiver behind the ordinary transition gate; the gate, not another lease, protects it. Fulfillment uses common method-result import for a non-receiver result, validates the receiver, and publishes one mutation outcome. The result cannot become observable before receiver publication.
 - Keep internal preparation readiness separate from the produced method result. The common coordinator must not pass a produced result Promise through an internal continuation whose rejection is fatal.
 - Observe a direct mutation Promise at the managed boundary and return a non-rejecting internal completion to the mutation transition. Fulfillment creates the normal mutation outcome. Rejection creates an outcome that poisons the receiver while its `result` remains the admitted direct Promise, so the operation Promise adopts its contextualized rejection.
 - If a mutation returns its working receiver, return the published receiver with ordinary result ownership. A receiver validation failure publishes at the selected mutation scope and becomes the operation result; pending transport rejects only after that graph effect is published.
 
-Import every managed result without copying it. Ordinary observation import may retain an admitted root without rescanning. A non-receiver mutation result uses managed mutation-result import because arbitrary JavaScript mutation may detach an admitted result container while leaving descendants in the receiver.
+Import every managed result without copying it. Common method-result import revisits admitted containers to enforce result-boundary restrictions and retain reached managed descendants. This also protects a non-receiver mutation result when arbitrary JavaScript mutation detaches an admitted result container while leaving descendants in the receiver; it needs no separate import policy.
 
 ### Verification
 
@@ -1035,7 +1035,7 @@ Import every managed result without copying it. Ordinary observation import may 
 - Equivalent record and class failures produce the same cause/source/kind membership and balanced selection and receiver leases; tests do not assert Error order.
 - Receiver preparation and isolation retain their aliases, cycles, logical Array, admitted-prototype, metadata, and refcount guarantees after the simplification.
 
-Phase 9D-A supersedes the ready-versus-rejected direct-Error distinction: every direct Error follows the same call-failure rules, while an Error from an independent nested result remains independent. Phase 9F adds the live-external-leaf exception to ordinary receiver poisoning.
+Phase 9D-A supersedes the ready-versus-rejected direct-Error distinction: every direct Error follows the same call-failure rules, while an Error from an independent nested result remains independent. Phase 9F-A supplies owner-isolated repairable guard metadata and external subtree poison independently of ordinary Error-valued properties.
 
 Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`managed-invocation.md`](managed-invocation.md), [`data-classes.md`](data-classes.md), [`runtime-spec.md`](runtime-spec.md), [`run.md`](run.md), and the public API documentation.
 
@@ -1050,8 +1050,8 @@ Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md)
 - **ContextChain:** a public Chain subclass that imports a root host context and filters its compiler mutation access tree. Entered contextual Chains retain the originating route and select the same runtime records.
 - **Mutation scope:** the placement whose logical state receives one mutation's success, failure, or repair. `!` selects it independently of the actual native owner. Assignment/deletion default to their target; observations have no mutation scope.
 - **Compiler mutation access tree:** a finite own String-keyed property map of static mutation access prefixes, with `{}` endpoints. Calls contribute receiver paths, property mutations contribute containing paths, and repair-only contributes its selected scope path. The kernel leaves this compiler-owned input unchanged.
-- **Static external mutation tree:** the context-local runtime tree produced by filtering those explicit routes during initial import. Its connecting maps terminate at first external boundaries; non-external endpoints and empty branches disappear.
-- **External boundary/location:** the first external owner reached on a static context route. Its runtime leaf record contains the Symbol-valued identity entry and canonical context/path information, and is itself the registered location.
+- **Static external mutation tree:** fixed context-local child maps with Symbol-held scope metadata. Registered external nodes may contain requested nested scopes; prune managed endpoints and empty connecting branches.
+- **External boundary/location:** a registered external scope on a static context route, including nested native scopes. Its Symbol-held record identifies its canonical context/path and binding; first native crossing and selected mutation scope are separate facts.
 - **Actual use:** performing a supported call or property operation through its owning external boundary. Managed retention and copying grant no native authority; metadata queries inspect ordered scope state without native property access.
 - **Mutable external value:** an exact external identity registered at one context location. It is a receiver capability; native property access uses that owner's phase and cannot expose the capability as a value.
 - **External snapshot:** the detached managed value produced by reading mutable external state. It preserves graph topology, supported prototypes, and Functions while copying traversable data under its synchronous nested-readiness contract.
@@ -1059,7 +1059,7 @@ Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md)
 
 ### Problem
 
-External ordering needs explicit execution-scoped coordination and mutation-scope facts. Establish these foundations without changing external behavior; Phase 9F exposes repair and routes public external operations. Phase 13 cuts Cascada over from its hidden external sequencing mechanism.
+External ordering needs explicit execution-scoped coordination and mutation-scope facts. Establish these foundations without changing external behavior; Phase 9F supplies public external operations; Phase 9F-A replaces their coordination and repair semantics. Phase 13 cuts Cascada over from its hidden external sequencing mechanism.
 
 ### Design
 
@@ -1081,23 +1081,23 @@ new ContextChain(
 
 Both constructors require an operation context. Keep these fixed runtime arguments positional. `Chain` admits existing Cascada data, while a root `ContextChain` imports raw host data and accepts the compiler-owned mutation access tree. These trusted control facts need no defensive shape validation.
 
-Ordinary Chains are mutation-capable and need no capability flag or close lifecycle. `enter` creates an ordinary Chain with an exact internal `entryMutable` Boolean and one-shot closed state. Contextual entry retains its originating context, canonical route, and reached runtime-tree node as needed to preserve source provenance and live guard checks. Shared tree-query functions select boundaries without putting methods among child keys. Observations use the common walker, while mutations additionally assert the entry restriction. Keep no entered subclass, parallel operation path, or compatibility alias for `_mutates`. Ordinary Chains expose no public `close()` method.
+Ordinary and writable entered Chains need no mutation capability flag. `enter` uses the ordinary two-argument Chain constructor, sets `_readOnly` only for read-only entry, and sets `_closed` at its shared callback-completion point before lease release or publication. The common Chain operation-entry check rejects new issuance through a closed Chain; already-issued work retains its root storage. Chain has no entry-specific closure method. Contextual entry retains its external-tree branch and compact origin facts; external boundary records supply canonical paths and contexts for live guard checks. Shared tree-query functions select boundaries without putting methods among child keys. Observations use the common walker, while mutations additionally assert the entry restriction. Keep no entered subclass, parallel operation path, or compatibility alias for `_mutates`. Ordinary Chains expose no public `close()` method.
 
-Every Chain belongs to the execution supplied by its initialization operation context. Related top-level Chains use operation contexts with the same execution; internally created child, private, and entered Chains inherit that execution through their operation contexts. Independent work explicitly creates its own execution. Missing required operation context is fatal and never creates a private execution. Different executions never share external authority, phases, or poison.
+Every Chain belongs to the execution supplied by its initialization operation context. Related top-level Chains use operation contexts with the same execution; internally created child, private, and entered Chains inherit that execution through their operation contexts. Independent work explicitly creates its own execution. Missing required operation context never creates a private execution; malformed root integration may throw an ordinary programming exception, while a defect escaping valid operation work follows its enclosing fatal boundary. Different executions never share external authority, phases, or poison.
 
 `ContextChain` gives root context import and external mutation indexing an explicit public boundary. It extends Chain and uses the same operations. Its `mutationAccessTree` input is the compact compiler tree specified in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree); Phase 9E completion supplies the final runtime representation and constructor cutover.
 
 For `apis.data!.write()`, `apis!.data.write()`, `apis.data.status = value`, and `delete apis.data.status`, the compiler contribution is `{ apis: { data: {} } }`. Calls select their receivers and property writes/deletions their containing paths, regardless of poison-scope depth. Only static prefixes appear in the compiler tree, so import never evaluates or retains a computed suffix.
 
-The common importer processes the host root once. Omission means no discovery requests; `{}` requests only the root as a potential external owner. Import filters requested original placements using staged/admitted categories, removes non-external endpoints, and records first external owners without searching managed subtrees. Public `import(value, operationContext)` creates no mutation authority or registration and never downgrades an existing binding.
+The common importer processes the host root once. Omission means no discovery requests; `{}` requests only the root as a potential external owner. Import filters requested original placements using staged/admitted categories, removes non-external endpoints, and records external scopes, including requested native descendants, without searching unrelated subtrees. Public `import(value, operationContext)` creates no mutation authority or registration and never downgrades an existing binding.
 
 Import failure classification remains unchanged. A supported boundary or host-reflection failure produces a language Error for the current synchronous segment; an existing Error in the input remains data; an internal failure is fatal. Admission, origin, sharing, Promise versions, tree leaves, and new external identity entries are one transaction: stage them locally and publish them only when the segment commits. A later Promise fulfillment is its own segment, so its failure poisons only that captured placement and does not undo the earlier import.
 
-`enter` creates an ordinary Chain from the selected value, source execution, and exact `entryMutable` Boolean. It selects a reached node of the same runtime tree without copying or registering it. The boundary record is unique to its originating ContextChain and canonical path; retain the originating route needed to apply live ancestor guards even when the entered Chain holds an older managed snapshot. Ordinary authority lookup stops at the first boundary. Mutable-external entry accepts only that whole boundary through a static route and gates its context binding as specified in Phase 9F. Execution identity entries own binding state and phase cursors; exclusive completions fulfill directly with null or exact poison.
+`enter` creates an ordinary Chain and preserves canonical tree/provenance facts. Managed and mixed entry use normal placement gates/leases; external subtree coverage uses a reservation view under Phase 9F-A. External nodes can have nested scopes and completion is separate from poison. No contextual-binding gate or first-boundary-only entry rule remains in the final design.
 
 Keep state at its natural scope:
 
-- In Phase 9A, the execution owns only the future Phase 9E external identity use-and-phase map. Phase 9B moves existing execution-scoped graph state into it.
+- In Phase 9A, the execution owns the external identity binding map; Phase 9F-A scope nodes own reservations and poison. Phase 9B moves existing execution-scoped graph state into it.
 - A root ContextChain with discovered external boundaries owns its static external mutation tree. An entered Chain carries the reached node as its own tree root.
 - Admission, COW protection, leases, versions, refcounts, and canonical thenable-continuation state temporarily remain module-wide until Phase 9B localizes them. Identity declarations, captured thenability, and managed-class registration remain runtime-wide configuration.
 - Export copies, traversal sets, invocation releases, and similar temporary state remain operation-local.
@@ -1123,7 +1123,7 @@ The path carries its input segments and one trusted compiler fact: firstDynamicS
 
 At issuance, copy every retained path and argument Array. Trust the compiler/runtime-owned record, method, and scope depth. Do not inspect or validate a language path segment before traversal reaches it. Replace the old signature directly and add no adapter.
 
-Phase 9A uses only the presence of `run`'s scope depth to preserve observation-versus-mutation dispatch. Assignment and deletion remain ordinary mutations. Phase 9F consumes the numeric depths when it selects managed and external scopes; retaining the final API now avoids a transitional signature or adapter.
+Phase 9A uses only the presence of `run`'s scope depth to preserve observation-versus-mutation dispatch. Assignment and deletion remain ordinary mutations. Phase 9F-A consumes the numeric depths when it selects managed and external scopes; retaining the final API now avoids a transitional signature or adapter.
 
 All path-consuming public operations share the same captured firstDynamicSegment fact, including lookup, queries, export, assignment, deletion, run, repair, and entry. Keep it with path input using one consistent public representation, not inside opaque source-error context or per-segment wrapper objects. Assignment/deletion default their mutation scope to the target; run retains mutationScopeDepth and repair. Compiler control facts are trusted and need no malformed-call tests.
 
@@ -1143,10 +1143,10 @@ Lookup and `run` consume their receiver path. Assignment and deletion traverse o
 Implement the **Static external mutation tree** section of [`external-context-ordering.md`](external-context-ordering.md) as the authoritative algorithm:
 
 - builds the tree and commits unique identity bindings inside the initial ContextChain import transaction;
-- provides the internal anchored-path query for an exact boundary, first boundary prefix, or live scope descendants;
+- provides the internal anchored-path query for an exact boundary, deepest registered prefix, or required scope descendants;
 - keeps the tree fixed after construction and derives live authority from its shared identity bindings.
 
-Readers-writer phases fulfill exclusive completions directly with null or exact poison. Invalid bindings leave the runtime tree intact and remain visible to queries. Phase 9F routes public operations through the coordinator and rejects controlled changes that would disturb the fixed namespace.
+Hierarchical reservations propagate completion dependencies upward; own poison and descendant Error summaries are separate tree metadata. Invalid bindings leave the runtime tree intact and remain visible to queries. Phase 9F-A routes public operations through the coordinator and rejects controlled changes that would disturb the fixed namespace.
 
 ### Verification
 
@@ -1165,7 +1165,7 @@ Readers-writer phases fulfill exclusive completions directly with null or exact 
 - Compiler/runtime control facts receive no defensive shape validation. Whole-root replacement/deletion contributes no compiler request; a root receiver or property-container request contributes `{}`. `mutationScopeDepth === 0` selects the root poison scope; observation uses `undefined`.
 - Normally constructed Chain instances carry no entry state. Chains created by `enter` preserve read-only, mutating, and closed issuance behavior through the common Chain implementation; no `_mutates` alias remains.
 - Caller mutation of captured inputs cannot change issued work.
-- The static tree and binding map support the internal coordinator. Public external-ordering routes and mutable-capability rejection switch together in Phase 9F; no conflict pruning or first-use state is retained.
+- The static tree and binding map support the internal coordinator. Public external-ordering routes and mutable-capability rejection switch together in Phase 9F-A; no conflict pruning or first-use state is retained.
 - Rewrite [`enter.md`](enter.md) to document the common Chain representation; remove its current ordinary-Chain capability and close contract when the code changes.
 
 ---
@@ -1727,7 +1727,7 @@ Recoverable failure leaves every retained refcount index valid. Successful value
 - The complete managed receiver validation walk checks native `then` lookup on each managed receiver identity before successful mutation publication, including newly created descendants and previously admitted managed identities. Inspect own descriptors and the actual prototype chain through the exact supported reflection boundary; callable data properties and accessors produce `InvalidManagedReceiver` without invoking accessors. This includes non-enumerable own properties, Array non-index properties, and inherited descriptors. Preserve declaration and method-selection validation of managed prototypes. Prior admission is not proof that host mutation preserved safe lookup.
 - Use this same check to reject unadmitted stored thenables without consuming them. Known managed identities with unsafe `then` still contribute Errors from their other graph placements. A validation failure uses the existing receiver-failure effect. No separate Promise-validation branch or per-placement callable-`then` branch remains in receiver validation.
 - Ready assignment and Promise-backed publication keep their existing `PropertyValidation` rule for an ordinary callable `then` placement. A non-callable data `then` stays ordinary data. The native lookup check does not expand graph traversal to non-enumerables or Array non-index properties, or copy hidden fields into managed output.
-- Managed result admission, external observation, export, and public result completion preserve these source invariants and exact-value contracts. Complete receiver preparation, COW isolation, transition gates, and immediate publication when only an independent result remains pending retain their existing semantics. Phase 9F applies this rule to its new external routes and Phase 13 to host-facing render routes.
+- Managed result admission, external observation, export, and public result completion preserve these source invariants and exact-value contracts. Complete receiver preparation, COW isolation, transition gates, and immediate publication when only an independent result remains pending retain their existing semantics. Phase 9F-A applies this rule to its new external routes and Phase 13 to host-facing render routes.
 
 ### Verification and implementation
 
@@ -1805,7 +1805,7 @@ The concrete failure is a managed observation that executes `throw this`. Its pu
 
 The failure-payload policy in this plan preserves exact public cause identity by requiring diagnostic-only host payloads: raw returned Errors, throw/rejection reasons, and references reachable from them must not retain an unexported managed source or a mutation-capable external identity. This is an explicit restriction on supported host failure payloads, not a consequence of wrapper freezing or merely a cleanup implementation detail. Primitive reasons and compliant native Errors retain their exact causes. If arbitrary payloads containing protected identities must be supported, the public cause boundary must change so it cannot expose those identities directly; exact unrestricted public causes and source protection cannot both be assumed.
 
-Document this as a host contract in `data-limitations.md` and the host-call API, not a promise of deep runtime enforcement. Audit runtime-created validation reasons and diagnostic payloads so the runtime itself never embeds a protected receiver, argument, or capability. Construct fixed messages and safe primitive facts instead. Do not walk arbitrary causes, invoke getters, export/copy a thrown receiver, or add a cause registry merely to enforce this restriction. Preserve hook-free contextualization and cause/context/kind deduplication. If unrestricted arbitrary object throws are required later, hiding raw causes behind a trusted diagnostic interface is a separate API revision; it is not part of this cutover. Phase 9F applies the restriction to exact external receivers, and Phase 13 applies it to higher-runtime host boundaries.
+Document this as a host contract in `data-limitations.md` and the host-call API, not a promise of deep runtime enforcement. Audit runtime-created validation reasons and diagnostic payloads so the runtime itself never embeds a protected receiver, argument, or capability. Construct fixed messages and safe primitive facts instead. Do not walk arbitrary causes, invoke getters, export/copy a thrown receiver, or add a cause registry merely to enforce this restriction. Preserve hook-free contextualization and cause/context/kind deduplication. If unrestricted arbitrary object throws are required later, hiding raw causes behind a trusted diagnostic interface is a separate API revision; it is not part of this cutover. Phase 9F-A applies the restriction to exact external receivers, and Phase 13 applies it to higher-runtime host boundaries.
 
 Settle the kernel Error surface in this phase, before instances are frozen. Kernel Errors expose `name`, unformatted `message`, opaque `errorContext`, optional exact `cause`, `kind` on poison, and `.errors` only on `CompoundPoisonError`. They do not expose Cascada's legacy `_errorContext`, expanded `context`, `fullMessage`, `totalErrorCount`, `kinds`, `getInfo`, line, column, path, or label fields. Phase 13 must provide source formatting and compatibility presentation, if desired by an application, as a separate immutable diagnostic view; it never decorates the frozen kernel Error. This is a deliberate API cutover, not a deferred decision.
 
@@ -1816,7 +1816,7 @@ Every poison call site supplies a `kind` from the authoritative table in `error-
 - Implement exactly the complete table in `error-handling.md`; implementation-only kinds are invalid.
 - Rename transport-specific pairs to `ChainValueFailed`, `ContextValueFailed`, `AssignmentValueFailed`, and `OperationInputFailed`, and rename one-to-one `...Threw` kinds to their action-based `...Failed` replacements.
 - Use `InvalidCallbackResult` for every unsupported controlled-callback result, including a Promise where a synchronous result is required.
-- Treat `UserCallThrew` as a semantic split, never a rename or compatibility alias: audit every former call site and use `InvocationFailed` for the selected external Function or method and its direct result boundary, or `ControlledCallbackFailed` for a callback or comparator owned by a controlled operation. Distinguish forbidden mutation-capability export (`ExternalCapabilityEscape`, implemented in Phase 9F) from export reflection failure (`ExportReflectionFailed`).
+- Treat `UserCallThrew` as a semantic split, never a rename or compatibility alias: audit every former call site and use `InvocationFailed` for the selected external Function or method and its direct result boundary, or `ControlledCallbackFailed` for a callback or comparator owned by a controlled operation. Distinguish forbidden mutation-capability export (`ExternalCapabilityEscape`, implemented in Phase 9F-A) from export reflection failure (`ExportReflectionFailed`).
 - Use PascalCase keys equal to their string values. Audit trusted construction and forwarding paths when they change, and verify their outcomes without adding runtime membership checks. `Multiple` is only the compound meta-kind; no empty, arbitrary, or generic fallback is valid.
 - A kind names the violated semantic contract, while the opaque source identifies its causal source. Preserve a distinction when contract, graph/result effect, recovery meaning, or materially useful diagnosis differs; collapse transport or implementation-mechanism splits when those facts are the same. Do not merge import, lookup, query, and export reflection merely because reflection was their physical mechanism.
 - Messages remain separate from kind and source.
@@ -2212,113 +2212,19 @@ Fixed placement versions share installation, reading, and detachment but do not 
 
 ## Phase 9E: Build the external coordination kernel
 
-Implemented, including the compiler tree input, runtime location records, and direct poison transport specified below. Public external-operation cutover remains in 9F. Observation-only external identities remain unlocked.
+The atomic admission, binding, compiler-input, and public-context foundation is implemented. Hierarchical scope discovery and reservation replacement are pending in Phase 9F-A. Keep this phase's transactional and identity invariants; the end-state tree and scheduling mechanisms are specified by Phase 9F-A and external-context-ordering.md.
 
-### 1. Filter the compiler mutation access tree at import
+### Binding and compiler input
 
-Use `ContextChain(initialValue, operationContext, mutationAccessTree = undefined)`. The compiler emits a finite own String-keyed property map at every node, including `{}` endpoints. [Compiler construction rules](integration.md#compiler-construction-of-the-mutation-access-tree) are authoritative: calls contribute receiver routes, assignment/deletion contribute containing routes, repair-only contributes its selected route, and every route stops before its first source-computed segment. Poison scope remains an operation fact. Merge prefixes at compilation, with no terminal flag when a requested node also has children. Omission means no requests; `{}` requests only the root. Whole-root replacement/deletion contributes no route.
+Accept one compiler-owned finite property tree, including {} endpoints, without modifying or retaining it. Discover only directly accessible original named data placements; every Promise/thenable source stops discovery independently of normal import delivery. Omitted requests select nothing. Managed endpoints grant no authority. Reuse staged/admitted identity facts and perform no unrelated subtree search or admitted-identity reclassification.
 
-The compiler retains its input. Do not mutate it, retain it in deferred import callbacks, require fresh allocation per context, or add a reuse option. Build only the filtered runtime branches and location records, without a preliminary deep copy or request trie. No String endpoint or path-list compatibility API remains.
+Stage admission, shared ownership, versions, discovered locations, and registrations atomically. Reject two distinct selected paths to one external identity within a context before commit, including finite selected aliases/cycles. An abandoned import cannot change existing bindings or permit its subscribed work to publish. Otherwise-valid independent context registrations invalidate shared authority at commit; regular-Chain import and inert aliases do not.
 
-During initial synchronous import, walk the compiler tree together with the original context inputs:
+The execution-local identity map distinguishes correct contextual use, invalid off-path use, and permanent binding conflict. Correct entry-derived routes retain the original canonical context and static provenance. Off-path use fails locally in either import order; no earlier output is rewritten and no exposure/alias history is stored. Mutable identities belong to only one execution under the host contract.
 
-- Use staged/admitted categories. A first external identity becomes one location record and ends traversal immediately, even when the compiler node contains requested descendants.
-- At a managed container, read only the compiler node's requested own language placements. Remove managed endpoints and branches left without records. Do not enumerate a managed subtree to discover resources.
-- Missing or primitive values, Errors, and Functions contribute no record. Every original Promise or thenable stops discovery, including fulfilled Promises and synchronous custom delivery. Reuse admission facts without a second thenable probe or subscription. Ordinary import retains its normal logical reader and thenable consumption.
-- Root discovery setup applies only to the directly supplied original root. Later root or placement delivery never extends authority, even when an earlier import has settled an overlay for that source.
-- Every recursive step consumes a compiler-tree edge. Preserve distinct explicit routes through managed aliases and cycles without an identity visited set, recursion-stack cut, completed-scope cache, or relative-path collection. Bound tree reflection to requested placement occurrences and allocation to those routes and produced records.
+### Verification retained by Phase 9F-A
 
-Stage exact-identity-to-location registrations in the same import transaction as admission, sharing, and placement versions. A second distinct selected location for one identity fails the entire initial segment with import-attributed `ExternalLocationConflict`, leaving prior bindings unchanged. Shared compiler prefixes and several native suffixes beneath one first owner produce one location. Unselected and thenable-only aliases create no claim. Supported reflection failure abandons the same segment; already-owned pending callbacks cannot admit or publish after abandonment.
-
-Commit entries only after the whole synchronous segment validates. An otherwise-valid competing ContextChain registration invalidates shared authority for both locations; a regular Chain's import creates no claim. Preserve the first binding Error. No arrival-order winner, late discovery, or repairable authority transfer is introduced.
-
-### 2. Make each runtime boundary record its location
-
-The runtime tree contains own String-keyed branch maps and terminal location records, as specified by [runtime nodes](external-context-ordering.md#runtime-nodes-and-identity-validation). Each immutable record holds:
-
-- `[EXTERNAL_BOUNDARY]`: its execution-local identity entry, using one internal Symbol;
-- its immutable canonical root-relative `path`;
-- the originating root `context` needed for canonical guards and binding-entry ordering.
-
-The Symbol is both the discriminator and the entry reference. The compiler never emits it. No Boolean external flag, class discriminator, node wrapper, separate location token, duplicate entry field, or receiver/identity cache is needed. The identity entry's valid `binding` points directly to this record; conflict replaces that binding with Error while the record stays in the tree. The same entry owns the phase cursor.
-
-Arrange ContextChain initialization so committed records have their canonical context anchor before construction returns, preserving the common import transaction and root-value publication lifecycle. Entered Chains select the same records and retain the originating route needed for live access. They do not register, copy a subtree, or derive authority from an old managed snapshot.
-
-Keep navigation in common tree-query functions that accept a runtime node and relative path. Do not put query methods among String child keys. Check the boundary Symbol before traversing or enumerating a node so record metadata is never treated as a child path. Preserve exact branch selection, first-boundary lookup for native suffixes, exact-boundary selection for entry, and descendant enumeration including conflicted entries. A native suffix must not silently widen an explicit entry request. Prune only during construction; committed records and their connecting namespace stay fixed.
-
-Separate actual-value verification from record-only authority checks:
-
-- At an actual boundary crossing, look up the reached value in the execution's identity map. Its entry must equal the record's Symbol-valued entry; a mismatch remains the fatal fixed-identity violation. Do not store another exact identity merely to repeat this comparison.
-- Validate current authority by checking the entry's binding against the record or returning its existing conflict Error. Reservation, metadata queries, and deferred authority rechecks use that entry directly, without native reflection or reconstructing a receiver.
-- An actual external value reached without a contextual location remains observation-only if unregistered. Registered off-path access returns local `ExternalLocationConflict` without changing the legitimate binding or phase.
-- Ordinary Chain/execution and entered-Chain checks remain at their existing public boundaries. Trusted compiler and internal records gain no defensive shape validation, brand registry, or malformed-call tests.
-
-### 3. Coordinate one actual external boundary
-
-`ExternalOperationContext.reserve(operationContext, boundary, exclusive, repair)` validates the selected record's binding and reserves one phase immediately, or returns its binding Error without reservation. Its native `ready` Promise waits for captured predecessors; `prepare()` then rechecks current authority and returns the exact blocking poison unless repairing. `complete(failure)` releases the phase after required boundary work. Actual-value verification occurs where traversal reaches the boundary; the coordinator needs no stored receiver.
-
-Reach the boundary through earlier managed and context-binding entry gates first. At that path's FIFO turn, publish the successor before subscribing to predecessors. Reserve before waiting for native-suffix inputs. Capture explicit graph inputs at issuance through ordinary versions and leases; capture does not grant external authority or require unused action inputs to finish behind a blocker.
-
-A contextual Error query composes independent observations of required scope records under its existing query owner. It does not select several owners for one native action. Keep no candidate map, provisional mode, reselection, whole-selection aggregate, or second scheduler. Public outward fatal-result registration belongs to the existing operation boundary.
-
-### 4. Use one readers-writer cursor with direct poison completion
-
-Observations wait for the preceding mutation. Mutations and repairs wait for preceding mutations and observations. Observations do not wait for one another. Every native property mutation belongs to the entire first external owner: reserve before waiting for its assigned input, hold through complete export and native write, and install no Promise or managed gate in native storage.
-
-The cursor holds the latest exclusive completion Promise and an optional ReadGroup. An observation captures that exclusive predecessor and joins the current group. The next exclusive reservation seals the group, captures its drain and the exclusive predecessor, and installs its successor before attaching either wait. An empty group stays joinable until sealing.
-
-ReadGroup holds only its pending count, sealed state, and native completion Promise/resolver. Its completion is a drain signal with no payload. An exclusive completion fulfills directly with `null` or the exact ordinary `PoisonError`/`CompoundPoisonError`. Initialize healthy state with `Promise.resolve(null)` and resolve subsequent completions with their chosen poison directly. No payload record, wrapper callback, or `.poison` extraction remains.
-
-Consume completions through common guarded FIFO continuations, including already-settled native Promises. Do not infer readiness from a separately exposed value or add a synchronous shortcut. Completion sources are fulfillment-only; potentially rejecting derived reactions retain ordinary ownership.
-
-An observation releases only after its captured predecessor and required snapshot or metadata work. Early query closure stops query-only work but does not release reservations prematurely. Fatality neither completes nor cancels internal phases: resumed work stops at the common execution check, and outward pending results reject independently.
-
-### 5. Publish only phase-owned poison
-
-- Observation success or failure preserves predecessor poison exactly. ReadGroup collects no observation Errors.
-- A normal mutation blocked by predecessor poison returns that same Error, skips native work and unused action preparation, and forwards it unchanged.
-- An executable external-scope mutation publishes its required failure in that phase. A managed ancestor owning the failure is published first by Phase 9F; the child's phase completes with unchanged predecessor poison. The coordinator stays independent of managed graph state.
-- Repair bypasses only the selected scope's old poison and publishes clear state or the new failure. It neither repairs descendants nor changes authority.
-- A binding conflict discovered after reservation cannot change repairable phase poison. Revalidate before deferred host access; already-invoked work finishes its required boundary processing.
-- Fatal Error never becomes phase poison and adds no completion or cleanup state. Containment quarantine and observation-driven poison propagation have no role under the host ownership contract.
-
-### Completion addendum: implementation and verification
-
-Implemented. The constructor, tree queries, location records, coordinator, and existing callers use the final representation below. Public external routing remains in 9F.
-
-Verification: `npm.cmd test -- --reporter dot` passes all 1,294 tests. The bounded-discovery regressions pre-admit shared graphs, then verify zero descendant reads for a root endpoint and exactly one read per requested placement, including an explicit route through a cycle. Binding, thenable, import-abandonment, entry, phase-poison, and fatal-delivery regressions pass; source searches find no superseded constructor or discovery path.
-
-| Work | Owning phase |
-| --- | --- |
-| Compact compiler-tree constructor input; bounded filtering and pruning; Symbol-backed location records; removal of receiver caches and completion payload wrappers; existing caller/fixture cutover | **9E completion addendum, complete** |
-| Actual-value/entry verification and record-only binding checks as internal kernel primitives; canonical location and entered-tree navigation | **9E completion addendum, complete** |
-| Idempotent Error union and immediate-child query summaries | **9E-A**, after the addendum; these fix separate graph-summary issues |
-| Apply source-staticness and actual-value checks to public operations; live ancestor guards; native receiver selection; binding-entry gates; snapshotting and contextual Error queries; public entry-target handoff | **9F** |
-| Pending input-key delivery through those existing routes and guards | **10** |
-| Generate canonical mutation access trees in Cascada; compiled-code size/allocation choices; consume the public operation and entry handoff | **13**, in Cascada |
-
-The 9E addendum verifies its internal coordination and tree interfaces without implementing the 9F public external routes early. Install canonical location metadata now; enforce live ancestor ordering and poison when those routes are integrated in 9F. Removing exponential discovery does not replace 9E-A's independent graph-counter correction.
-
-Rewrite `external-mutation-tree.js` around the one compiler-guided walk and common queries. Remove request insertion, subtree scanning, relative discovery caching, cycle flags, node methods/wrappers, duplicated boundary/location fields, and receiver storage. Update `chain.js`, `import.js`, `import-preparation.js`, `enter.js`, coordinator consumers, and test fixtures directly to the final tree input and records; add no adapter. Keep ordinary import's logical reader and atomic staging. Update `external-operation.js` to use record-only authority checks and direct poison completion, preserving actual-value validation at its causal crossing.
-
-Fixtures supply compiler-shaped trees explicitly. Do not reconstruct scope-list behavior in a test helper by scanning host data to infer its external descendants, and do not retain a path-list overload merely to preserve existing tests. Compiler emission tests belong to Phase 13; kernel tests supply the specified output and prove its interpretation.
-
-The README documents the constructor shape and links to `integration.md` for compiler construction. The ordering architecture owns runtime records and filtering. Phase 13 emits the compiler tree; Phase 9F consumes these completed runtime queries for public routing and entry selection.
-
-Verify supported behavior through ContextChain import and existing coordinator integration tests:
-
-- Compiler-shaped inputs use `{}` at every endpoint. Cover omitted input versus root `{}`, root calls and property writes versus whole-root replacement, overlapping prefixes, Number/String key equivalence, empty String keys, `__proto__`, and keys matching record or former query-method names.
-- Test one compiler tree against contexts with the first external boundary at the root, an internal requested node, or an endpoint, and against an entirely managed context. Prune rejected endpoints and newly empty branches. No native child reflection occurs after reaching an external owner.
-- Scope position does not alter access selection: `apis!.db.write()` and `apis.db!.write()` contribute the same route. Property assignment/deletion never inspect the old final target. Static-prefix requests ending at a managed node never scan its descendants or evaluate a computed key.
-- Preserve native Promise and custom-thenable coverage at root, intermediate, and terminal positions, including synchronous delivery, rejection, and already-settled import overlays. Direct siblings still register; ordinary import results, rejection ownership, and Error attribution stay unchanged. Discovery adds no subscription.
-- Cover a direct alias plus a thenable-only alias in both traversal orders, explicit duplicate locations through managed aliases and finite cycle routes, repeated native suffix requests under one owner, regular/context import orders, competing context claims, and cross-execution isolation.
-- Verify bounded discovery with a self-cyclic tail wrapped twelve times by `{ left: previous, right: previous }`: only thirteen managed identities represent exponentially many routes. Pre-admit it to isolate discovery work. Compiler input `{}` must inspect no descendants; a finite selected route must read only its named occurrences. Test a shared acyclic graph with many unrequested routes to a resource too; discovery neither expands nor registers them. Assert the finite work bound rather than implementation-specific cache contents or timing.
-- Reuse one unchanged compiler tree for several contexts/executions. Distinct selected identities have independent entries. The same selected identity in two independent ContextChains of one execution still creates the ordinary shared conflict, even when the compiler object is identical. Different executions keep independent runtime records and phases under the existing host ownership contract. Failed construction cannot mutate the compiler input; abandoned callbacks cannot publish or invalidate an existing binding.
-- Verify the internal actual-value/entry check makes a mismatch fatal at a valid boundary crossing, off-path access returns local poison, and common tree queries retain conflicting records for metadata consumers. Canonical selection through entered Chains returns the original record; exact branch lookup does not accept a native-child suffix. Phase 9F verifies the public PropertyValidation outcome and live guard behavior.
-- Preserve overlapping observations, full-group drain, readers finishing before later readers join, sealing, independent owners, whole-owner pending property input/write ordering, and native FIFO delivery for pending and settled predecessors.
-- Verify healthy completion is `null` and leaf/compound poison remains the exact original object through native completion, observations, blocked mutation, and repair. Preserve old captured outcomes, binding-conflict behavior, unused never-settling arguments behind a blocker, and managed-scope-owned failure leaving child phase poison unchanged.
-- Preserve query-owner early closure with later normal phase release, complete required metadata collection, no native reflection during metadata queries, causal host throws/rejections, and prompt outward fatal delivery behind a never-settling predecessor.
-- Run the full suite. Source searches must leave no alternate constructor format, subtree-discovery machinery, redundant boundary/receiver representation, completion payload wrapper, speculative selection API, or fatal cancellation path.
+Preserve constructor input ownership, safe literal keys including __proto__, transactional rollback, existing-admission behavior, import permutations, settled-output immutability, directly reachable root selection, thenable skipping, conflicting bindings, and no late discovery. Test real operation inputs and supported reflection failure, not malformed trusted compiler-tree shapes. Hierarchical discovery additionally records requested native descendants rather than assuming external nodes are leaves; its new verification belongs to Phase 9F-A.
 
 ## Phase 9E-A: Preserve Error identity and bound query summaries
 
@@ -2342,345 +2248,172 @@ Implemented. Error union preserves an input representing the complete result, an
 
 Verified by the full suite: 1,309 tests pass with strict unhandled-rejection handling. `test/error-union.test.js` covers complete-union reuse, overlapping compounds with and without a complete input, and public collection/publication identity across ready and pending delivery; `test/presence-summaries.test.js` covers dense aliases, reconvergence, pending frontiers, and cyclic diamonds. `test/index-recovery.test.js` also covers a later discovered subscription settling an earlier skipped version, requiring another discovery pass. Import, COW, Array remap, publication-failure, and index-recovery tests use the independent local-contribution verifier.
 
-## Phase 9F: Route and cut over external operations
+## Phase 9F: Public external operation baseline
 
-This phase preserves Phase 9E's import-time rejection of distinct candidate paths to one external identity and uses its single-location binding/access policy. Regular-Chain aliases fail locally without invalidating the context; only competing context registrations create shared invalid authority. No old placement is rewritten.
+The public external routes, logical property snapshots, fixed-location admission checks, and method-result isolation are present in the working implementation. Keep their supported boundary, Error, and ownership behaviors as the starting point for Phase 9F-A. This checkpoint does not claim conformance to the hierarchical reservation and subtree-repair architecture.
 
-### Problem
+The replacement scope is explicit in Phase 9F-A: reuse stable boundary/import/export mechanisms, rewrite conflicting coordination and routing sections, and remove their superseded state in the same cutover. Do not revert unrelated 9F correctness fixes or completed 9C?9E-A mechanisms.
 
-Phases 9A through 9E-A provide execution-local graph state, causal Error handling, the static external mutation tree, durable identity state, readers-writer phases, poison, and internal repair. Route every external call and property operation through those mechanisms and expose repair. This repository has no hidden sequence-Chain implementation to remove; Cascada's compiler/runtime migration belongs to Phase 13.
+## Phase 9F-A: Replace external scope coordination
 
-### 0. Preserve managed ownership at external boundaries
+**Status: not implemented; next implementation phase after the 9F baseline.** Existing public external operations, snapshots, Error queries, and borrowed-result handling provide implementation material, but do not constitute the hierarchical end state specified here. Complete this phase before Phase 10 and the Phase 13 compiler cutover. Use the existing architecture documents; create no separate replacement architecture or permanent audit document.
 
-Apply the [ownership boundary](external-context-ordering.md#managed-and-external-ownership) throughout the public cutover. An external method may mutate only state owned by its selected first external boundary. A managed ancestor, sibling, or aliased identity stays managed and cannot be mutated through native references, even under a broader `!`. Separately owned external resources likewise gain no mutation permission from a shared managed parent. Hosts that need one native operation to mutate a combined graph declare its owning record external before import.
+### Replacement strategy and source boundaries
 
-- Managed lookup, assignment inputs, retained results, entered branches, and parent captures keep ordinary sharing, leases, captured versions, COW, and receiver isolation. A `!` path or an external child changes neither their category nor their ownership rules. Keep the existing protection of pending versions, Array backing, receiver/result aliases, indexes, and imported storage.
-- Keep ordinary import identity admission and within-graph aliases/cycles. A raw identity admitted as managed is read-only to external code, wherever native references to it occur. Do not detach initial managed aliases according to mutation paths, promote admitted identities to native-writable storage, scan opaque interiors, or track hidden aliases. Supported checks apply only at actually reached boundaries; excluded hidden writes remain a host-contract violation.
-- The static tree records discovered external boundaries and their parents for authority, ordering, and fixed-location checks. Paths finding no external boundary add nothing. Add no capture selector, persistent scope-copy markers, descendant copy flags, or managed-source storage mode.
-- Managed-only observations need no external phase solely because they lie under a `!` prefix or have an external sibling. They still obey ordinary managed gates and captured versions. Actual external access reaches its owning boundary through earlier managed gates before reserving its phase. Phase 10 protects dynamic managed prefixes through the ordinary walkers and rejects dynamic mutable-boundary selection without reserving speculative phases. A broader managed mutation prefix retains its ordinary gate but does not authorize effects on other external owners.
-- Preserve opaque external references through managed sharing and COW without reading or cloning their interiors. A retained parent grants no external authority at its new location. Direct capability extraction and native export retain their rejection rules, and graph changes must preserve live registered locations.
-- Copy property results read inside mutable external state under that boundary's observation phase. A reached managed source is read through its logical versions and Array projection; the snapshot never grants native mutation of that source. Retain the existing ready-only nested snapshot contract. Ordinary managed pending data remains supported without that restriction.
-- Host-method results keep their ordinary import contract: return independent data or relinquish mutation of the returned managed identities. A host that will keep mutating a returned graph must provide a detached copy. A new shallow result container does not establish independence for its descendants. Do not add a general borrowed-result adapter or scope-dependent Array implementation to ordinary managed operations.
-- State the corresponding native-collection limitation in `data-limitations.md`: an external Array uses native method effects and result ownership, not the controlled Array method table. Receiver-returning native methods fail the existing receiver-escape check; shallow borrowed results require host-provided detachment or ownership relinquishment. Do not add implicit callback export, automatic observational mutators, or a second set of Array algorithms at the external boundary.
-- Apply ownership to dependencies as well as effects. A hidden read of another mutable external owner's state is unordered, even when the selected receiver is observation-only. Require one combined external owner or explicit detached inputs; keep immutable configuration and read-only protected managed source references permitted. Check only actually reached identity metadata, never closures or opaque interiors.
+This is a replacement phase, not an additive compatibility layer. Start from the final invariants and rewrite the coordination modules whose state model changes. A full rewrite of those modules is preferred to retaining branches that translate between old and new state. For larger mixed-purpose modules, remove the affected section and reimplement it while keeping independent algorithms intact. No wholesale source revert is required: it would discard useful boundary and ownership fixes.
 
-### 1. Finalize the public operation API
-
-Extend `run` with the required exact `repair` Boolean:
-
-~~~js
-run(chain, path, method, args, operationContext, {
-  mutationScopeDepth,
-  repair,
-})
-~~~
-
-- `repair: true` requires a mutation scope, is valid only for `run`, and performs repair-and-call.
-- Assignment and deletion accept no repair fact.
-- Add `repairPath(chain, path, operationContext)` for repair-only. It targets the selected retained managed scope or registered external boundary, creates no registration or authority, and invokes no external code. It clears scope poison while preserving the retained value; ordinary Error values still use assignment/deletion. Add it to the public facade and package-surface classification so pending repair uses the common outward fatal boundary while ready repair remains direct.
-- Assignment still replaces, and deletion removes, an ordinary Error at their final managed placement. Neither operation implicitly repairs a retained managed guard or external phase poison.
-- Keep assignment/deletion's non-blocking issuance contract. Required publication and poison effects continue independently of that immediate return. Do not add a completion-Promise API to force scripts to collect mutation failures. Recoverable script failure derives only from poisoned returned data; repair and replacement may remove Errors, and complete collection does not retain failures outside the required output/data frontier. Fatal result delivery remains separate.
-
-#### Retained managed scope poison
-
-The common semantics are defined by [scope transitions](error-handling.md#scope-transitions); this section specifies retained namespace storage.
-
-The selected mutation scope owns the failure once. A scope at or inside an external boundary uses that boundary's phase poison. A managed scope retaining fixed external bindings keeps its underlying value and records poison in scope metadata. For `api.managedContainer!.externalApi.someCall()`, failure poisons `managedContainer` only; the selected child still has an exclusive ordering phase but receives no new poison for that failure. Ordinary managed scopes without fixed native bindings keep ordinary Error-value publication. An unauthorized alias mutation follows its local graph-failure effect without changing the legitimate context's scope or phase.
-
-- Keep the guard at its owning context placement, independent of shared managed identity metadata. Preserve earlier captured values through ordinary versions/COW. Use one authoritative scope record for retained state and poison, referenced from the existing logical placement/transition and canonical context-tree path as needed; add no second poison copy on descendants, graph-wide registry, or reverse alias index.
-- Placement versions already live in metadata. Use that existing representation to expose the scope's logical Error, retaining its actual previous logical value once as recovery state. Repair publishes the retained value through an ordinary placement transition; it neither assumes physical storage still holds that value nor changes an earlier captured Error version back into data. Poison and repair preserve protected ancestors through ordinary COW. They need no copy of the retained scope's children solely to change its guard. COW of a surrounding context preserves the canonical scope's guard and recovery association; an ordinary captured data copy keeps the logical Error and gains no recovery authority. Do not put a mutable poison field on the retained managed identity or copy operational metadata wholesale.
-- Normal lookup, `hasError`, `getErrors`, export, and subsequent mutation observe the guard's Error and do not traverse its retained contents. Integrate this at the common logical-value/publication boundary; indexed Error queries must agree with unindexed queries. Retained data is recovery state, not an additional graph or Error-collection frontier. A captured Error stays immutable after repair.
-- All live external access obeys current ancestor guards, including operations issued later through a previously entered Chain. Its managed snapshot does not grant authority to bypass live context ordering or poison. Carry the canonical ancestor scope context through entry and enforce it in shared external-access preparation. Preserve legitimate access by the entry that owns its private gate; an older or outside entry cannot treat that later gate as its own. Do not solve this by poisoning child phases or rereading an old managed snapshot as current authority.
-- Publish managed-scope poison before completing the child external phase. Pass only phase-owned failure to `ExternalOperationContext.complete`: use `complete(null)` when the managed guard owns the new failure, preserving any existing child predecessor poison. This keeps the Phase 9E coordinator unaware of managed data and needs no second failure policy or mode on that coordinator.
-- A blocked descendant contributes the existing ancestor Error and performs no host access or new scope poisoning. Required input Error collection remains complete without changing the blocking guard's original poison. Independently preexisting descendant poison remains intact; it is not another copy of this operation's failure.
-- Repair orders through the selected scope's existing managed transition or external phase. It bypasses and clears that scope only, making retained managed data available again. Repair-and-call bypasses that selected scope's old poison, then clears it on success or replaces it with the new failure. Pass external repair intent to the coordinator only when the selected repair scope is external. A deeper repair cannot pass an unrepaired ancestor, and repairing an ancestor performs no descendant sweep or implicit child repair. Ordinary assignment/deletion cannot clear a retained scope guard.
-- Preserve the fixed namespace under its guard. Reject forbidden namespace replacement, remapping, and arbitrary managed mutating receivers before effects; do not invoke on a preserved candidate and validate afterward. An external call cannot modify its managed namespace. Ordinary managed receiver isolation outside that namespace remains unchanged.
-
-#### Static mutable-resource paths
-
-Carry one firstDynamicSegment source fact with captured path input through all public path operations and entry composition. Ready computed keys remain dynamic; segment readiness and input validation keep their separate meanings. Compiler/runtime facts are trusted, but ready String values alone cannot establish this authority distinction. Do not place source provenance inside opaque errorContext or allocate a wrapper per segment.
-
-For concatenation of captured paths `prefix` and `suffix`, use `prefix.firstDynamicSegment < prefix.length ? prefix.firstDynamicSegment : prefix.length + suffix.firstDynamicSegment`. Path length is the fully static sentinel, so an unconditional minimum would incorrectly mark a static suffix dynamic. Truncating to length `k` uses `Math.min(firstDynamicSegment, k)`. Entry retains canonical prefix provenance independently of its relative suffix; removing an already consumed computed prefix must not grant static authority. Verify fully static concatenation, a computed key in either operand, truncation before and after that key, empty paths, and nested entry rebasing. A whole-path Boolean cannot distinguish forbidden computed resource selection from a permitted computed suffix inside a statically selected resource.
-
-For a managed `api` containing mutable external `db`, distinguish `api.db!.addUser(1)` from `api[getDbApiSynchronously()]!.addUser(1)`. Only the former supplies the static child location. Verify that returning `"db"` directly, through a synchronous custom thenable, or through a pending Promise leaves the latter dynamic. Cover a resource registered by another static use and a program containing only the dynamic mutation request. Context discovery must not evaluate expressions or build child candidates from that request.
-
-After applying any existing prefix guard, reject a computed route that would select a mutable external boundary before native reflection or phase reservation. Use ExternalLocationConflict with a static-path diagnostic. Observation returns its local Error. Mutation uses an explicit managed scope already selected before the dynamic key, or the longest static managed prefix when its intended scope lies beyond that key. Retain that failure location independently of detection timing. Phase 10 adds pending delivery of the same rule; no candidate reservation or guessed-resource poison exists even for ready computed keys.
-
-A dynamic route to managed data or an observation-only external identity remains supported, including beside registered mutable siblings. Dynamic keys inside an already statically selected mutable boundary remain valid native suffix inputs. Fixed namespace restrictions apply only to registered mutable identities in their originating context; physical COW and inert aliases do not create another namespace or external authority.
-
-#### Whole mutable-external entry
-
-Compiler lowering enters only the whole first mutable external boundary through a static path, never a native child. A conditional modification of resource.startPosition.x enters resource even while the condition is pending. An entry is a whole-resource exclusive control-flow scope, including a read-only callback; the entered Chain's capability still forbids writes when entryMutable is false. Observation-only external identities need no mutable-resource lock.
-
-Reuse the ordinary entry gate at the contextual binding. Keep the exact resource in the private Chain, with its canonical tree location and own gate ownership. Outside and earlier entered routes wait at that binding gate before reserving external phases; commands inside reserve normal phases and bypass only their own binding gate. Entry holds no external phase across its callback. Already-reserved predecessor work keeps its captured path turn and never waits for a later entry gate; deferred binding validation does not restart path capture. Close issuance and republish the same binding through ordinary gate publication; already-issued native work remains ordered by its phases. No private phase scheduler, native child Chain, resource copy, or native-property managed writeback is needed. Inner repair remains possible because entry itself does not consume phase poison.
-
-A requested property beneath a mutable external boundary is PropertyValidation poison, even when incorrect compiler lowering generated it. Check this once at semantic entry target selection, before native child reflection, gate installation, or callback invocation; do not convert it to a fatal trusted-control defect or silently widen the target. Respect existing ancestor guards and external phase predecessors. Read-only entry failure is local; mutating entry failure publishes at the owning external scope without replacing its exact binding. Existing poison remains the original Error.
-
-Compiler analysis enforces static whole-boundary entry where the boundary is known. Host category and exact binding still come from runtime admission/discovery; lowering cannot infer the first external boundary merely from a bang position. Preserve path provenance through nested entries so a computed prefix cannot become static by rebasing a suffix. Entry is control flow, not an arbitrary namespace replacement.
-
-Define the public kernel/Cascada handoff for entry-target selection in this phase. Generated setup uses the completed import tree to resolve the relevant static prefixes of access/effect paths before delayed callback work starts; source analysis alone cannot classify host objects. A requested scope already above the external boundary retains its managed entry, while a planned scope below that boundary must be lowered to the whole boundary with the remaining operation suffix rebased into the entered Chain. Selection uses runtime-owned tree facts without native child reflection, waiting for keys, or creating authority. Dynamic native suffix inputs remain unconsumed until their ordered operation reaches them. Selection must not silently widen an explicit `enter` call: the strict child-entry validation above remains in force. Expose only the path information needed by generated code through the documented public API, without a second tree or scheduler. Phase 13 consumes this handoff. Verify the same compiled static effect path against contexts whose first external boundary occurs at different depths, plus an entirely managed context, and preserve fine-grained managed entry wherever no external boundary requires widening.
-
-### Common scope transitions and Error queries
-
-Implement the [scope transition table](error-handling.md#scope-transitions) once before category routing. Resolve the selected scope and report receiver effect/result into its existing transition. Preparation, controlled methods, managed invocation, external work, and deferred writeback must not publish independent receiver poison when an ancestor scope owns the failure. Preserve the distinct successful mutation/independent Error-result case.
-
-A blocking guard returns its exact leaf or compound Error and skips descendant work, unused suffixes, and invocation-only argument preparation. Retain issuance capture, already-owned rejection handling, and shared settlement. New failures before reaching a scope follow ordinary prefix rules; failure after reaching it belongs to that scope. Repair-and-call bypasses old poison privately until its one ordered completion and never reintroduces the replaced Error.
-
-Contextual hasError/getErrors observe accessible runtime-owned scope poison in phase order without native reflection or capability extraction. Exact healthy scope results are false/null; poison results are true/the original Error. Ancestor queries combine all required accessible managed Errors and external-scope metadata observations, using the static tree and ordinary query owner. A zero managed summary must not hide external scopes. A poisoned guard is terminal and its retained children are not traversed or awaited. Binding conflicts remain visible Errors; copied aliases gain no live authority. Preserve captured query results across later repair, and release already-reserved observations normally after hasError short-circuits.
-
-### 2. Use one external-operation lifecycle
-
-Implement the [routing and capture points](external-context-ordering.md#routing-and-capture-points) before extending category-specific invocation. In particular, replace `run`'s unconditional selection of `walkMutationPath` for every mutating call: an external scope must not trigger managed-prefix COW before method dispatch discovers the external receiver. Use the fixed tree and scope depth to select the required transitions, while actual traversal still respects earlier logical gates and guards. Property operations likewise classify the containing placement rather than consuming the final old value. Reuse the existing traversal and transition mechanisms; add no complete parallel external walker or phase reservation at the root ahead of earlier managed gates.
-
-After hook-free internal dispatch accepts the operation:
-
-1. Capture the final compiler-provided operation facts.
-2. Query the complete receiver or property path for the exact external boundary or first boundary prefix. Observations query too. Select the owning external boundary for the actual host effect; a broader managed mutation scope does not select unrelated owners for mutation.
-3. Capture ready managed property versions and explicit inputs at issuance. Traverse earlier managed gates through their existing FIFO continuations before reserving a descendant external phase. The fixed single context location makes that gate the ordering boundary for all valid access; an outside phase must not block work inside the entry whose gate it awaits.
-4. At the statically selected mutable boundary, create one single-boundary phase handle and publish its successor before subscribing to its predecessor. Observation-only identities require no phase. Preserve the managed scope or entry-binding gate independently. Export rejects mutable capabilities instead of acquiring authority for them.
-5. Wait only for required readiness and selected phase predecessors. Validate current bindings before host access. A later conflict is a shared binding Error; an off-path regular access is operation-local. Neither causes eager graph rewriting. A reservation invalidated by a later binding conflict forwards its predecessor poison unchanged; an already-invalid binding acquires no reservation.
-6. A blocking scope or binding Error returns its original poison before descendant or action-only input preparation. Otherwise finish the executable boundary's required preparation and complete Error collection; preparation failure skips native work.
-7. Otherwise traverse the captured host suffix once and resolve or invoke its selected member once.
-8. Process the boundary result: import call results and observation-only external-property results; snapshot property results inside mutable external state.
-9. Publish managed state, external phase poison, or repair, then fulfill exclusive completions with null or exact poison and release observation drain signals.
-
-Before step 7, do not inspect the selected external receiver's host suffix, descriptors, getters, setters, properties, or methods. Earlier argument export and other required boundary preparation may perform only the host reflection explicitly allowed by their own contracts and causal boundaries. Prepare a callable as executable rather than importing it as data. Constructors remain unsupported.
-
-Waiting at an earlier managed gate delays reservation of the known static location; it does not create authority. Once the reached boundary's phase is reserved, its host suffix cannot acquire a phase for another identity. A mutation-capable identity found in host input fails export without acquiring a phase.
-
-Integrate Phase 9E's actual-value/entry verification at the reached boundary and its record-only authority checks at reservation and deferred host access. Test an external owner whose ordered mutation replaces an owned native child used as a later method receiver: subsequent invocation uses the replacement after the predecessor completes, through the same owner phase and unchanged tree record. A mutating call on the owner and one on its native child serialize together; no child phase or receiver cache exists. Managed receiver access still follows ordinary captured versions and COW.
-
-### 3. Compose managed and external mutation scopes
-
-`mutationScopeDepth` identifies the complete `!` prefix:
-
-- **External scope:** select the exact external boundary. Use its phase and no managed COW, lease, or gate. A deeper `!` clamps to the first external boundary because the host suffix is opaque.
-- **Managed scope:** use the ordinary managed transition at that prefix. An external host effect selects only its reached first external boundary; managed siblings and other external owners remain outside that effect.
-- A managed method receives no authority over opaque external descendants merely because they occur in its receiver.
-- Queue at an earlier managed gate before reserving descendant external phases. Once this operation reaches its managed working value, publish its selected external successor before waiting for that external predecessor. Do not confuse the earlier gate with this operation's own publication gate.
-- Keep a pending managed gate and selected external phases through the same direct-Promise boundary.
-- If a managed mutation scope owns an external call's failure, retain its underlying prefix and publish the managed guard's poison before releasing the child phase. The child phase preserves predecessor poison unchanged; it does not receive the same failure. If the selected mutation scope is external, its own phase remains the poison owner.
-
-For managed `apis` containing external `db`:
-
-- `apis.db!.write()` selects `db`.
-- `apis!.db.refresh()` protects and publishes managed `apis` and selects `db` for the host effect. It cannot mutate managed `apis` data or a separately owned external sibling.
-- If `apis` is external, either form selects only `apis`.
-
-Mutation scopes grant no COW bypass or native ownership of managed data. All managed retention uses ordinary sharing and COW; external identities remain exact and mutate only their owned state under their phases. Use an explicitly external aggregate when one native operation needs a combined mutable receiver graph.
-
-The registered mutable resource paths and their context ancestors form a fixed namespace. Reject whole replacement/deletion of its nodes, structural remapping of resource-bearing nodes, and arbitrary managed mutating methods whose receiver includes that namespace before effects. Use the affected static-tree path once at common mutation selection; do not prepare a whole proposed graph to rediscover fixed bindings. Ordinary off-namespace children remain freely mutable, and observation-only external identities impose no namespace restriction.
-
-Physical COW preserves the same namespace bindings. Entry, scope poison, and repair use logical placement/guard transitions without replacing the resource-bearing structure. Remove the namespace-specific preserveReceiver proposal, candidate validation, and recovery copies. Ordinary receiver isolation, storage preflight, and validation remain required outside the namespace.
-
-Entry follows the whole-boundary contract in section 1. Managed entry can gate a namespace prefix while its contained operations mutate permitted children. It cannot publish arbitrary root replacement through that private Chain. Reuse the same namespace selection check for public and entered operations, including their deferred continuations.
-
-### 4. Route external calls and properties
-
-The first external boundary owns its opaque host suffix:
-
-- Traverse that suffix only after the boundary's predecessor phase completes.
-- Give no deeper host identity another tree location or phase.
-- Never scan untouched external properties.
-
-Traverse ready native intermediate values synchronously after the selected predecessors and explicit inputs finish. A Promise or supported thenable reached before the final lookup value is invalid: do not subscribe, await, admit its fulfillment, or resume the suffix. Method receivers and selected callables must likewise be ready. Consume availability only for the final lookup value or direct host-call result, retaining the phase through that boundary completion. Snapshot only the final selected property result and keep its nested-data prohibition. Preserve the same ready-only restriction for an admitted managed source reached through a native alias. This concerns values stored along the native path, separately from Phase 10's operation-input keys.
-
-A property-only path reaching an admitted managed source uses its logical property helpers and ready snapshot semantics. The reference grants no managed mutation placement or raw native receiver: a direct host call on that managed receiver returns `InvocationFailed`, and a write/delete targeting its managed storage returns `UnsupportedMutation`, before native action. Use ordinary managed paths or methods on a returned snapshot instead. Apply these checks only to actually reached metadata. A native method selected on an external receiver may retain read-only managed references, but mutating them through hidden code violates the host ownership contract. Host-call results retain ordinary import; a host that continues mutating returned storage must supply a detached copy.
-
-Property operations behave as follows:
-
-| Operation | Boundary behavior |
+| Current source area | Required treatment |
 | --- | --- |
-| Read exact mutation-capable identity | Return `ExternalCapabilityEscape`; do not expose it or record use |
-| Read below mutable external state | Return a detached managed snapshot |
-| Read observation-only external state | Use ordinary import |
-| Write | Export the captured right-hand value before native assignment or setter; any Error prevents the write; successful assignment has logical result `undefined` |
-| Delete | Perform native deletion; a false native result is `ExternalPropertyDeleteFailed`, while successful deletion has logical result `undefined` |
+| external-mutation-tree.js | Rewrite nested discovery, node metadata, and scope-selection queries. Preserve atomic identity proposals, duplicate rejection, static-source filtering, and compiler-input ownership. |
+| external-operation.js | Replace ReadGroup, reservePhase, exclusive/read cursor state, and poison-carrying completion. Use one hierarchical completion kernel. Retain supported binding/capability validation at its natural boundary; no wrapper preserving the old phase API solely for callers. |
+| path-context.js | Rewrite contextual routing around canonical nodes and covered entry views. Delete scopeRecord recovery/gate maps, contextGuards/descendantGates scans, dependsOnOwnedGate traversal, and entryLocation's search for an owned binding gate. Preserve path provenance and public entry-selection behavior required by the final contract. |
+| path-operation.js | Rewrite routing/coordinator orchestration from selected access scope, poison owner, and inherited reservation coverage. Remove successful managed-bang/native-effect composition, mutation-only gate registration hooks, and duplicate guard/phase state. Keep OperationOwner and result-boundary responsibilities. |
+| enter.js | Rewrite mixed/external reservation setup and release. Retain managed source-version transfer, path COW, callback closure, and latest-private-root publication where their invariants are unchanged. Remove external contextual-binding gates and owned-gate maps. |
+| observations.js | Replace external metadata-query composition and owned/dependent-gate bypass branches. Keep ordinary managed path capture, expression validation, and graph-query pruning. Parent metadata queries use one covering reservation, not child reservations reacquired behind their own waiter. |
+| mutations.js | Replace retained-namespace recovery side writes and external routing. Remove target.onPublish if its only purpose was the deleted scope-gate index. Keep ordinary transformValue/transformProperty publication timing, source/result Error combination, Array conversion, and managed path COW. |
+| property-versions.js, language-properties.js, meta.js, refcounts.js | Add guard state to the existing owning-placement mechanism and update all logical consumers consistently. Do not add a parallel guard value transport, identity-wide poison bit, or second graph index. Preserve normal Promise staging/installation/settlement and visible-edge maintenance. |
+| external-access.js, external-snapshot.js, import-preparation.js, import.js, export.js | Reuse native boundary conversion, snapshots, complete collection, and borrowed-result isolation. Update selected-scope/binding plumbing for hierarchy; do not rewrite these algorithms merely to reduce file count or unify different readiness contracts. |
+| run.js, array-invocation.js, index.js, chain.js | Replace affected integration points directly. Remove obsolete namespace/phase options when their implementation is gone. Preserve public signatures unless an explicit integration requirement needs a change; no compatibility overloads or duplicate public fatal boundaries. |
 
-A native setter must finish synchronously. Assignment and deletion are mutations. Without a broader `!`, their mutation scope is the complete target path. Replacing an external-valued managed placement is a managed structural write; reaching external state before the final key is a host property operation.
+Introduce no new module merely to wrap the deleted interface. A small dedicated reservation module is appropriate if it owns the complete common algorithm; choose final boundaries after the kernel experiment. Entry views and ordinary reservations must call the same implementation, not two implementations sharing terminology.
 
-Use native `Reflect.set`/`Reflect.deleteProperty` at the exact causal host boundary and inspect their Boolean success; do not silently accept a false Proxy result. Existing thrown/rejected failures use the same action kind. Export the RHS before native assignment, retain no managed source in native storage, and never read back the assigned property to manufacture a result. Neither final assignment nor deletion reads or consumes the old target. Replacing/deleting a Promise-valued property is valid, but traversing that Promise to reach another target is not. Deferred failure must publish its defined graph or external-phase poison without a separate script-level mutation-result check.
+Implement in dependency order: prove reservation/entry lifetime rules; replace tree registration and selection; add guard/poison/repair state; cut over routing and entry; migrate queries and remaining public consumers; delete obsolete code. Temporary experiment code may exist during development, but must be removed before completing the phase. Do not maintain two production algorithms as an incremental migration strategy.
 
-For mutable external `config.db`, `config.db.query()` is an observation and `config.db!.close()` is a mutation. `var db = config.db` fails because it would expose the capability. `var status = config.db.status` returns a detached managed snapshot.
+### Completion checklist
 
-External calls use ordinary result import, with two additional escape checks:
+- Every public external access path and contextual query uses the new kernel, including work issued through entered Chains and work delayed before native selection.
+- No reader counter, old phase cursor, poison-completion payload, contextual-binding gate, recovery side store, or dependent-gate bypass remains active or exported. Search for ReadGroup, reservePhase, ownedGates, dependsOnOwnedGate, registerScopeGate, record.recovery, and their structural equivalents; renaming them is not removal.
+- Keep ordinary managed gates, counted managed leases, property-version capture, closure checks, and independent effect/result lifetimes. Those are not superseded external mechanics.
+- All retained tests protect final semantics; rewrite obsolete expected behavior without preserving compatibility fixtures. Keep regression coverage for supported reflection, Error membership, source attribution, pending publication, aliases/cycles, and fatal handling.
+- Inspect module imports/exports, unused state/options, comments, examples, public docs, and package exports. Delete unused helpers and experimental files in the same change. No audit artifact is required.
+- Mark 9F-A complete only after full public integration verification and this deletion check. Phase 10 and Phase 13 consume the final mechanism, not a second cleanup phase.
 
-- Reject every identity recorded in any static external mutation tree.
-- For a call inside mutable external state, also reject its exact native receiver anywhere in traversable result data, including below the indexed opaque boundary and after direct-Promise fulfillment. A genuinely observation-only external receiver may return itself through ordinary import: its storage is read-only and its established external category remains exact. The additional scan protects mutable native state, not identity equality by itself.
+### 1. Establish the final semantic boundaries
 
-Errors are terminal diagnostic data rather than traversable result containers. Apply Phase 9D-A's failure-payload restriction to external throws, rejections, and returned Errors: neither their exact reason nor reachable diagnostic references may retain the selected mutation-capable receiver or another unexported protected identity. Do not claim that the traversable-result receiver scan catches `Error.cause` or arbitrary diagnostic fields. Audit runtime-generated snapshot/capability/repair failures to avoid such references; document unsafe host payloads without adding cause traversal or a second capability scanner.
+Use mutation-and-observation.md for the four managed mechanisms and entry distinction, external-context-ordering.md for native reservations, error-handling.md for poison/repair, enter.md for reference/control-flow entry, and data-limitations.md for host restrictions. Treat these as final requirements, not selectable compatibility modes.
 
-Apply Phase 9D-0's successful-value native `then` contract to observation-only exact identities and detached managed snapshots. Snapshot adoption and validation must not produce a managed value whose native lookup can assimilate it through an inherited or hidden callable/accessor `then`. Preserve the snapshot walk's existing prohibition on nested Promises and its graph-copy semantics; do not add another availability-consumption path to repair invalid snapshot data.
+- Managed mutation scopes and mutating managed receivers exclude registered mutable external resources. Observation-only external references remain opaque leaves. Reject invalid mixed scopes before invoking code, preserving their selected root value under a repairable guard.
+- External scopes may nest. Sibling work overlaps; ancestor/descendant operations conflict when at least one mutates. Parent-wide native methods remain supported and preserve fixed registered identities/locations.
+- Entry may be mixed. It reserves access only and never exempts contained operations from mutation scope rules. Support Cascada reference arguments and path-specific delayed control flow.
+- Repair clears the selected subtree first. Repair-and-call performs subsequent preparation and invocation under the same exclusive reservation; new failure poisons again without old repaired Errors.
+- Preserve nonblocking result availability, imported-data protection, complete required Error unions, shared/leased managed isolation, ordinary final Error replacement, and independent nested-result lifetimes.
 
-An opaque external result that secretly contains a receiver alias remains a host-contract violation because Cascada does not inspect opaque state.
+### 2. Build a fixed hierarchical external tree
 
-### 5. Snapshot mutable external properties
+Extend compiler-guided initial discovery to requested native child data placements below an external node. A runtime node can contain both child keys and a Symbol-held external scope record. Keep canonical path/context, binding, reservation, and poison facts inside internal metadata rather than reserving property names. Continue through the finite compiler paths only; do not enumerate native interiors or add an endpoint-used flag.
 
-Use one dedicated synchronous snapshot transaction. It has export's visible graph-copy semantics but is neither export nor an import mode:
+Reuse existing managed admission. Newly discovered native object scopes are staged as external, not default-managed, and already-managed identities are never promoted. Only original own data placements are eligible. Skip absent, accessor, primitive, Error, Function, and all thenable sources; ordinary import still consumes availability normally. Prune empty connecting branches and keep initial admission/registration atomic. Preserve duplicate-path rejection, independent-context conflict policy, and no registration from later settlement.
 
-- Preserve aliases, cycles, Arrays with length and holes, prototypes, Functions, and enumerable own String-keyed properties.
-- Omit symbols, inherited properties, and non-enumerables.
-- Copy every traversable source identity and admit each copy as managed.
-- Validate a custom-prototype copy with the managed-class prototype contract without registering that prototype globally.
-- Preserve Functions without granting external authority.
-- Treat getter and Proxy failures as property-operation Errors.
-- Discard output on Error while completing the synchronously discoverable required Error frontier. Never expose a partial copy.
-- Copy admitted managed sources through their logical properties and Array projections; reject any registered mutable external identity reached in output, including a cycle back to the selected boundary, with `ExternalCapabilityEscape`.
+Distinguish first native crossing from selected external scope. Explicit external bang selects its node; default operations select the deepest registered scope covering their receiver/container, and unregistered suffixes remain under that scope. Registered descendants require static source provenance even below an external parent. Dynamic ordinary suffix keys remain supported but cannot select registered nodes. Root and entered routes use the same location facts. Unexpected replacement of a fixed identity remains fatal; supported invalid selection stays poison.
 
-A possible Promise selected directly as the property result is consumed through the common helper. A synchronous custom outcome proceeds directly to snapshotting; an actually pending result retains the phase through later delivery and snapshot completion. The synchronous snapshot walk itself accepts no Promise or supported thenable, even one that could deliver synchronously; a nested one produces `InvalidExternalSnapshot` without invocation, Promise version, or continuation. Completed managed-receiver validation retains its own equivalent prohibition on stored thenables. These are validation contracts, not opportunities to await or unwrap nested data.
+Update tree queries for exact registered entry targets, deepest covering scopes, mixed namespace branches, and native crossing without adapters for leaf-only records. Update compiler integration and public examples. No source operation needs to scan an unrelated tree branch just to select its scope.
 
-The final snapshot contains no external location or mutation authority. Export, managed receiver isolation, and this snapshot may share only identical low-level container, key-reading, and safe-definition helpers; do not build one configurable graph walker.
+### 3. Replace external phase state with upward completion dependencies
 
-Implement the [snapshot transaction](external-context-ordering.md#snapshot-transaction) directly. The source-reading boundary is selected from existing execution metadata, with no admission or second source index. Reuse `language-properties.js` for managed key candidates, presence, and logical values; `array-view.js` for logical Arrays; and the admitted prototype for copy construction. Raw external state retains its external reflection semantics. Select only the explicit path and produced output graph. Do not snapshot whole managed ancestors or unrelated descendants merely because one reached source is managed.
+Implement the dependency table in external-context-ordering.md: observation waits for selected subtree mutations plus strict-ancestor direct mutations; mutation/repair waits for selected subtree observations/mutations plus strict-ancestor direct observations/mutations. Keep direct and subtree frontiers distinct so siblings remain independent and parent observations exclude child mutations.
 
-The same read rule applies when the explicit property suffix reaches managed source data. Reject an unresolved logical value there with `InvalidExternalSnapshot`; do not subscribe or wait behind a gate while holding an external phase. Ready fixed and Promise-backed logical values are copied without touching their stale physical sources or bypassing FIFO publication. The direct host property-result Promise is the sole asynchronous snapshot input; nested host thenables, including synchronous custom thenables, remain invalid. This keeps the existing ready-data snapshot restriction without creating a configurable export mode, async managed-source subwalk, extra lease, or gate.
+One fulfillment-only completion Promise represents an operation's required native effects and boundary processing. Keep capture and publication synchronous and composable for a related set of reservations, so Phase 13 reference-argument batching needs no second scheduler. Capture every prerequisite before adding that completion to the selected direct frontier and the matching subtree frontier on each ancestor. Compose pending frontiers with the common guarded continuation helpers; propagate completion rather than child counts. Identity-check frontier cleanup before clearing references and retain no settled-operation history. Work/allocation is bounded by selected depth and outstanding dependency edges.
 
-Use one identity map for host and managed nodes together, registering each output container before children. Continue Error collection after output is discarded, retaining only visitation and diagnostic state. Validate prototypes, managed-class shape, and native `then` safety before committing the copies' admission in one synchronous segment. Do not run ordinary import on the source or leave partially admitted output after failure. Source identities, metadata, versions, authority, and phase poison remain unchanged.
+Pass earlier managed gates before external reservation. Reserve before input waits, export, suffix-key waits, or native reflection. Capture explicit inputs at original issuance. Revalidate binding before deferred native access without restarting ordering capture. Completion carries no Error state; poison is maintained separately. Fatality stops resumptions and rejects public pending results without settling or cancelling internal reservations.
 
-Managed parent retention follows section 0: use ordinary sharing and COW, retaining opaque external leaves only as inert references. Access through a copied parent grants no authority, and export rejects a mutable capability at any depth. Ordinary call-result import borrows managed storage; hosts must return independent data or relinquish mutation of that storage and its managed descendants. Import preserves managed aliases without scope-dependent normalization or hidden-native-alias scans.
+Use this kernel for calls, read/write/delete, repair, Error metadata queries, and external entry. Delete the single-owner reader-group cursor and direct-poison completion transport when this replacement passes. Do not retain a mode selecting the previous algorithm. Measure overlapping ready/pending sibling work and frontier retention; an implementation with fewer helpers but duplicated queue state is not a simplification.
 
-### 6. Keep mutation-capable external values out of host inputs
+### 4. Store poison at its owner and summarize descendants
 
-Host-input export copies managed data and preserves observation-only external identities exactly. If it reaches an identity recorded in any static external mutation tree of the execution, return `ExternalCapabilityEscape` and perform no host call or write. Apply this to:
+External scope metadata stores own poison separately from its native value and gate. Track immediate child branches containing Errors, propagating membership changes upward without descendant counters or persistent compound wrappers. Do not install child Errors as ancestor-owned poison. The canonical tree remains fixed and acyclic; permanent binding conflict is a separate, nonrepairable source for access/query results. Its discovery must update Error summaries at both the existing and newly committed locations: before replacing a valid binding with conflict, its existing location is available for upward propagation. Later competing locations seed their own summaries from the already-conflicted entry. No reverse alias registry is needed.
 
-- explicit method arguments;
-- external-property write values;
-- script results; and
-- controlled-callback inputs.
+A strict-ancestor own poison blocks with that original Error. Otherwise selected whole-subtree work checks its complete required Error union after predecessors and invokes no native action when blocked. Healthy siblings remain usable. A blocked mutation adds no poison; observations add no scope poison. Update error summaries before releasing completion so the next operation cannot miss the effect. Whole-subtree metadata queries hold one covering observation reservation and collect child records directly; they must not reacquire child reservations after a later writer has queued behind that query.
 
-The same rule applies after Promise fulfillment. No provenance token, lookup-to-call owner, provisional input phase, or release callback is needed: a value is either observation-only or forbidden from crossing as input.
+External getErrors collects required own and descendant metadata, including children when the selected external root also owns poison. It does not read native properties or await hidden managed recovery data. Use existing Error deduplication and null/single/compound results; preserve every distinct cause/source/kind and do not reattribute propagation. hasError may short-circuit. Queries blocked above their target retain ordinary blocker semantics. Managed index pruning cannot hide external summary work.
 
-`run` retains the existing managed capture rules after internal dispatch. Producing lookups have already captured and shared their logical values; selected preparation uses ordinary leases, COW, and placement versions.
+### 5. Make repairable managed guards owner-isolated metadata
 
-Controlled Arrays retain their specialized preparation:
+Retain the managed scope value and its captured version. Store poison in the owning placement state rather than replacing the retained value with Error or setting an identity-wide flag. Logical consumers expose the guard Error; explicit repair accesses retained state. Ordinary Error-valued properties continue to use existing replacement/deletion behavior and are not implicitly converted into guards.
 
-- `concat` captures logical structure and versions through its existing argument leases.
-- `fill`, `push`, `unshift`, `splice`, `toSpliced`, and `with` store payload without inspecting it.
-- `includes`, `indexOf`, and `lastIndexOf` compare only the root primitive or identity.
-- Numeric and string positions synchronously capture values required for conversion; external identities are invalid there.
-- `sort` and `toSorted` with a comparator export one comparator-visible snapshot. Common export rejects a mutation-capable element before the comparator runs.
+Use ordinary path COW and version capture for poison installation and clearing. Publish a new placement-state record when guard state changes so earlier captured placements and returned values/Errors remain stable. A copied parent preserves its child's logical guard/value state without mutable guard sharing. Pending retained values keep original source settlement, origin, attribution, and index bookkeeping. Parent visibility uses the logical guard result; update the ordinary placement index contribution once on poison/clear, without simultaneously exposing retained-child and Error edges. The tree may reference the current canonical placement record for live native guards, but must not own a duplicate Error.
 
-### 7. Preserve phase lifetime, poison, and attribution
+Support invalid mixed bang failure, forbidden fixed-namespace replacement/deletion, and supported ancestor reflection/publication failure without losing registered identities. Serialize these guard transitions with covered external work through the common namespace reservation. A mixed-scope rejection never runs the requested call. Root and older entered routes see current canonical native blocking while ordinary managed snapshots retain their captured state.
 
-- Route every live-execution exit after phase reservation through normal completion, including blocked access and recoverable preparation or boundary failure. Complete only after captured predecessors and required boundary work; local query closure alone cannot release a phase. Fatality leaves internal phases alone and rejects outward pending results independently.
-- A direct operation Promise retains selected phases and any managed gate through final result import, snapshot, or rejection.
-- A nested result Promise is result data and extends neither phases nor authority.
-- External storage never receives a Cascada Error value, Promise version, or poison replacement for the exact external object. A poisoned exported write value prevents the native write and poisons the selected managed guard or external phase. Test both scope choices: native property and identity remain intact, later access is blocked by the one owning scope, and repairing it allows a clean operation. A native Error read by an observation poisons only its returned language data.
-- Every observation failure affects only its result, including snapshot and reflection failure. Reservation exclusivity does not grant mutation intent or permission to poison.
-- Failed or rejected mutation publishes its required combined Error at its selected poison scope only. Under a managed guard, complete ordered child phases with unchanged predecessor poison. Publish the guard before those completions. Completed native effects remain visible after repair; no rollback or duplicate descendant poison is introduced.
-- Conflict performs no access through the selected external receiver, is permanent, and cannot be repaired.
-- Repair-only bypasses and clears repairable predecessor poison and returns `undefined`. Repair-and-call bypasses old poison, then clears it on success or publishes the new mutation Error.
-- External code must not synchronously re-enter its execution while its invocation remains active. Attempted same-execution re-entry is fatal. A separate execution may start immediately; independent work in the original execution may start after the synchronous host call returns with its own explicit operation context.
-- A direct host Promise must not depend on a nested operation ordered behind its own active managed gate or external phase. Such a dependency cycle is invalid host behavior.
+Remove detached recovery-value side storage and Error-as-retained-scope publication once placement guard metadata provides all behaviors. Do not delete recovery semantics merely because valid mixed mutations disappeared. Keep supported Proxy failure attribution and complete independent result/publication Errors; no new tamper defenses or integrity scans are required.
 
-Attribute new failures at the selecting operation:
+### 6. Implement subtree repair
 
-| Failure | Kind |
-| --- | --- |
-| Getter, descriptor, or Proxy property read, including a ready Error result or direct rejection | `ExternalPropertyReadFailed` |
-| Setter or deletion | `ExternalPropertyWriteFailed` / `ExternalPropertyDeleteFailed` |
-| Member selection, call throw, returned Error, or direct call rejection | Phase 9D-A invocation kind |
-| Direct native call on a managed receiver reached through an external alias | `InvocationFailed` |
-| External write/delete targeting managed storage through an alias | `UnsupportedMutation` |
-| Promise reached as an intermediate native property-path value | `ExternalPropertyReadFailed` |
-| Mutation-capable identity escape | `ExternalCapabilityEscape` |
-| Promise nested in mutable-property snapshot | `InvalidExternalSnapshot` |
-| Repair validation | `ExternalRepairFailed` |
-| Fixed-leaf identity mismatch | fatal `FatalError` |
+Repair-only exclusively reserves the selected scope/subtree, checks authority and strict-ancestor own poison, clears covered repairable guards and external own poison, updates summary membership, and exposes retained values. It performs no native action and returns undefined. Derived ancestor summaries do not block repairing their child. Permanent conflicts and ordinary Error-valued managed properties are not erased.
 
-Preexisting poison and mutation poison retain their original child attribution. Repair-and-call host failure keeps its host-call kind.
+Repair-and-call performs that same clearing before normal call preparation and invocation, retaining the reservation until required processing finishes. If preparation, selection, method execution, or its direct result fails, poison only with new required Errors. Preflight all scope/placement selection needed for repair before clearing metadata; no recoverable native storage operation belongs to the clearing step. A permanent conflict in a descendant is retained and still blocks any subsequent whole-subtree call. No outside operation observes intermediate clearing. Fixed node identities and paths remain unchanged; repair creates no authority and is not physical rollback.
 
-The external-property observation is one causal boundary. Do not split action throw from returned or rejected Error with a second value kind or a multi-kind `runExternalBoundary` policy; all have the same selected operation, recovery, graph effect, and useful diagnosis.
+### 7. Unify mixed and external entry with reservation ownership
 
-### 8. Cut over atomically
+Retain managed placement gates/leases, private Chain roots, ordinary ancestor COW, and source-version transfer. Entry permits mixed branches and grants no mutation authority. No eager selected-subtree copy is required; actual managed mutations perform their normal COW.
 
-Switch calls, property operations, managed/external scope composition, mutable-input rejection, snapshots, repair, and entered contextual Chains together. Remove superseded local routing in the same change. Phase 13 removes Cascada's hidden sequence mechanism when it adopts this public API.
+An entry reserves its external subtree in the current reservation view. Mixed mutating entry is exclusive; mixed managed readonly entry is observational; external-root entry retains exclusive outside protection in both callback modes. External entry retains selected subtree poison for contained repair rather than consuming it itself; strict-ancestor own poison and invalid binding still block selection. Explicit unregistered native-property entry remains recoverable PropertyValidation, while compiler selection chooses its deepest registered enclosing scope. Managed/mixed target depth is unchanged.
 
-Keep no adapter, overlapping scheduler, fallback path, live external occurrence graph, reverse leaf index, external-input provenance, or second invocation path.
+Use a covered reservation view for contained commands, with the same frontier algorithm and original tree locations. Earlier outside work is captured by the outer reservation; later conflicting outside work waits on it. Contained work does not rejoin that later queue. Nested entries reserve within their parent's view and retain their own lifetime. Store only actual covered authority/provenance and pending frontier state; no duplicate native operation queue, scope scheduler for managed data, or copied registration tree.
+
+Register an entry-owned completion obligation for external-bound work at original issuance, before a managed gate/path wait can defer its actual external reservation. Use the view's completion aggregation, not an operation counter or another queue. Discharge an unused obligation when selection finishes without native work; otherwise retain it through the required external effect, not an independent result Promise. At callback closure, stop new issuance and capture both these obligations and unfinished contained external effects before completing the outer reservation. Open nested entries continue to retain their coverage. Independent nested result Promises do not extend access. Managed root publication remains separate: publish its logical value through existing versions, leaving pending child gates in place and ready managed siblings usable while native work continues.
+
+Remove contextual external binding gates, owned-gate dependency/bypass traversal, and parallel unfinished-scope indexes only once entry views and live guard references replace their behaviors. Do not combine managed root publication with the external view's all-effects completion. Reuse normal Chain representation; readonly/closed checks remain at common issuance boundaries.
+
+### 8. Preserve boundary and import behavior
+
+Keep ExternalAccess responsible for native suffix traversal and result conversion; PathOperation owns route selection, reservation, and final scope effect. No second reservation is acquired while walking a native suffix. Reads use logical snapshots when they reach managed sources; native methods cannot directly use those sources as managed storage.
+
+Native arguments and assigned values use common export. An Error-valued RHS causes no native write and poisons its selected scope. Native write/delete false and throws preserve action-specific kinds; a setter is invoked once without readback. Method receiver results that expose registered mutable identities fail capability checks after any completed effects. An independent ordinary result Error does not retroactively poison successful mutation publication.
+
+Keep atomic ready-only mutable property snapshots, direct-Promise availability, nested-Promise rejection without subscription, logical managed/ArrayView reads, aliases/cycles, prototypes/Functions, complete discoverable Error collection, and no source admission before copy selection. Observation-only property import stays distinct. Snapshots never poison on observation failure.
+
+Keep ordinary method-result import nonblocking for nested availability. Existing managed result graphs use captured logical versions, selective borrowed pending copies and ancestor propagation where result policy differs, source Error attribution, unchanged source settlement, aliases/cycles, and unchanged-branch sharing. The host relinquishes mutation of returned managed data. No new ready-only result limitation, whole-result await, or automatic native receiver snapshot is introduced.
+
+Share the containing operation owner for path export and other identical lifetimes. Preserve separate output release, receiver publication, entry closure, query finality, and independent result processing. Close work only after required effects/collection and preserve common fatal handling without cancellation.
+
+### 9. Cut over and remove superseded mechanics
+
+Replace all public external lookup, expression extraction, Error-query, export, assignment/deletion, call, repair, and entry routes together once the kernel is proven. No public result registers duplicate fatal rejection ownership. Existing graph Errors remain nonthenable; expression extraction retains its ready PoisonedValue/pending-rejection distinction.
+
+Delete obsolete first-boundary-only tree selection, leaf-only location assumptions, reader counters/cursors, binding gates, duplicate poison transport, recovery side stores, and dependent-gate bypass/index code as each replacement lands. Do not delete static binding checks, normal managed property versions/COW/leases, immutable outputs, borrowed-result copies, or mixed-entry lifetime handling. Keep source/architecture terminology aligned and remove unused tests only when they pin a superseded representation; migrate semantic regressions to the new public behavior.
+
+Treat net simplification as a measured outcome. The new ownership rule removes successful mixed mutation composition, while nested scopes add hierarchy and entry views. Compare code/state and full integration behavior; do not claim all old gate code removable until the tests establish that. Retain no prototype modules, adapter routes, or audit files after the final implementation.
 
 ### Verification
 
-#### Static authority and identity use
+#### Discovery, authority, and fixed structure
 
-- Initial context import filters the compiler mutation access tree into directly accessible first-external-boundary records. Non-external endpoints are pruned; Promise/thenable sources, delivery, and later graph changes add no leaf.
-- Initial mutable-authority discovery skips all Promise and thenable sources, including synchronous custom deliveries and already-settled logical overlays. Ordinary import may consume them but adds no authority through their outcomes; failed import leaves no latent subscription able to add admission or authority.
-- Absolute ContextChain use and the equivalent relative entered-Chain use resolve to the same leaf in either issuance order.
-- Another Chain, path, copied/moved alias, or Promise-revealed occurrence conflicts before host access. The first reason remains stable.
-- Duplicate discovery of one normalized location merges; distinct candidate paths to one external identity reject the complete initial context import without changing existing bindings. Competing otherwise-valid independent context registrations invalidate shared authority at import commit. Entered Chains reuse the original leaf without registering again.
-- Tree queries derive authority from shared binding state without deleting invalid discovery leaves. An unregistered identity remains observation-only; a known invalid identity fails rather than falling back to observation-only behavior.
-- Managed assignment and later COW leave original live bindings unchanged.
-- Replacement, deletion, and Array remapping reject before disturbing a live leaf; unrelated Array changes remain valid.
-- Reject arbitrary managed mutation of a namespace-bearing receiver before its method runs, whether the receiver is owned, imported, shared, leased, or indexed. Reject whole namespace replacement/deletion/remapping without preparing a preserved candidate. Verify allowed sibling managed writes, physical COW, nested entry, scope poison, and explicit repair keep the same mutable identities and paths. Observation-only external children impose no restriction.
-- Traversal validates the exact live identity against its leaf entry. Mismatch is fatal.
+- Register external parent and child scopes from one finite compiler tree; verify safe property names, external branches with metadata and children, managed endpoint pruning, no native subtree enumeration, and no getters/thenables during discovery.
+- Skip synchronous/fulfilled thenable routes while ordinary import still works. Register requested native objects as external without reclassifying previously managed identities.
+- Preserve atomic duplicate-path rollback, cyclic selected aliases, context/context conflict, context/regular import permutations, inert aliases, no retroactive output failure, and no late node creation.
+- Enforce static provenance at nested scopes, including ready computed keys, dynamic unregistered suffixes, entered route rebasing, and deterministic mutation-failure scope. Keep unrelated dynamic managed/observation-only paths valid.
+- Reject replacement/deletion/remapping of registered nodes and connecting paths, while ordinary native child replacements and managed sibling changes remain valid. A violating host replacement at a committed location retains its fixed-identity failure classification.
 
-#### Snapshot and ownership integration
+#### Ordering and entry
 
-- Retain a managed value below a `!` prefix and a managed parent containing registered external children. Later managed writes and methods preserve the retained logical values through ordinary COW and leases. Include pending captured versions, nested poison, aliases/cycles, Array remaps, and entered Chains; no eager scope snapshot or extra source category is needed.
-- Initial managed aliases across compiler mutation paths retain ordinary admission and ownership behavior, in either discovery order and with synchronous or pending delivery. A mutation path with no discovered external boundary creates no tree nodes or external dependencies. Preserve segment atomicity and abandoned-callback behavior.
-- A pending external mutation of one owner must not block a managed sibling lookup solely because a compiler scope contains both. Existing managed prefix gates still order operations that actually share that prefix transition. Verify that a broad managed `!` selects only the reached external owner for native effects and does not consume an unrelated sibling's phase poison.
-- Use an explicitly external owning record containing plain state and a native service. Native methods and property writes update its owned state under the same boundary; property snapshots remain unchanged after later mutation. Ordinary managed data elsewhere keeps sharing/COW. Do not add hidden-alias corruption tests: the host contract forbids an external owner from mutating admitted managed identities, even through `this.child`.
+- Exercise config.init and db.addUser overlapping, then parent reset waiting for both and blocking later children. Repeat all read/write combinations at equal, ancestor, descendant, and sibling scopes.
+- A parent observation waits for child writes and excludes later child writes, but overlaps child observations. Waiting child operations participate in captured frontiers before they start.
+- Cover pending RHS export, method arguments, direct Promise results, rejected input, snapshot failure, and later ready operations; none may overtake an earlier reservation.
+- Issue a native-bound command inside an entry while an earlier managed gate delays its route, then close the callback. The outer reservation must still cover that command when it later reaches native access. Repeat with selection poison and an independent pending result.
+- Query an external parent, queue a parent mutation, and ensure collecting child metadata does not acquire a reservation behind that mutation.
+- Verify identity-checked aggregate cleanup cannot erase newer work, and completed frontiers release references without permanent Promise history. No reservation includes itself or later waiters.
+- Enter a mixed branch for reference arguments and delayed control flow; contained invalid mixed bang poisons but runs no method. Entry at a.x leaves a.y ready under shared/imported/COW ancestors.
+- Exercise child entry, later parent entry, then more commands from the child; no deadlock or overtaking. Preserve nested entry after parent closure and native command order after mixed root publication.
+- A ready managed sibling remains available while native child effects are pending. Closing the callback alone does not release native coverage; an independent nested result does not prolong completed effects.
+- Test readonly mixed entry observation coverage, readonly external-root exclusive coverage, nested readonly capability, deepest registered entry selection, and invalid native-property entry.
 
-- Copy an already-managed Record, Array, and managed class reached as the direct external property result and below a larger host result; copies have distinct identities and preserve aliases/cycles spanning both source categories. Preserve the source's own-property visibility and admitted prototype.
-- Cover physical raw Errors replaced by fixed contextualized versions, synchronously delivered thenables retained physically, settled Promise versions, and ArrayView remaps/holes. Output must use logical values and complete original Error attribution, never raw storage or a physical backing Array.
-- An unresolved managed property or gate on the selected managed suffix or inside the output graph returns local `InvalidExternalSnapshot` without another subscription. Test a gate whose completion would depend on the current external phase: the observation fails promptly and releases normally, rather than deadlocking. A physically retained but logically ready Promise is valid; a raw nested thenable remains invalid even if synchronously ready.
-- Combine ready poison, getter/Proxy failure, invalid nested availability, and later enumerable sibling Errors. Collect all required distinct failures without exposing partial output, committing its admission, or changing phase poison. Invalid nested thenables are not invoked, and unselected branches are untouched.
-- Retain a managed parent containing a registered external leaf and ordinary managed data. Mutate the external owner through its valid location, and mutate the managed data through its ordinary path. The retained managed values stay unchanged; using its inert capability through the retained parent fails locally, while native export rejects it at any depth. No lookup traverses an external interior merely to retain its managed parent.
-- Reaching another registered mutable identity through a host suffix fails before its properties or methods are inspected; a cycle to the selected capability cannot escape by snapshotting. No late phase is acquired.
-- A data observation copies a managed source, but a native call or write directly targeting it through the external alias is rejected before hooks or effects. The classified observation failure remains local; an authorized mutation failure follows the selected mutation poison rule. Do not add tests expecting detection of hidden closure/private-field writes excluded by the host contract.
+#### Poison, repair, and captured values
 
-#### Ordering and scopes
+- Child poison blocks whole-parent work but not healthy siblings; strict-ancestor own poison blocks all descendants unchanged. Blocked attempts create no extra Error or child poison.
+- Combine own and multiple child Errors at an external subtree, deduplicating overlapping compounds without loss, including query while selected root owns poison. Query no native properties and retain hasError short-circuit semantics.
+- Register a competing context after the first tree already has healthy summaries; ancestor hasError/getErrors must see conflict in both contexts without a reverse alias index. Repeat a third registration and repair; permanent conflict remains visible.
+- Repair a child through a derived ancestor summary; reject bypass of ancestor-owned poison. Repair parent clears every repairable descendant. Permanent conflict remains and summaries update before successors resume.
+- Repair-and-call clears first: ready/pending preparation failure and method throw/rejection poison only with new Errors. Repaired old Errors never reappear. Repair-only performs no host work.
+- Poison/repair a managed scope while an older lookup, entered snapshot, or placement capture retains its previous state. Neither guard installation nor clearing mutates that earlier logical value or Error. Retain pending source versions and causal context.
+- Preserve fixed resource identities after invalid mixed-scope rejection and supported ancestor reflection/publication failure. Verify ordinary final Error replacement separately from guard repair.
 
-- Distinguish a literal static resource path from the same ready String produced by a computed segment. The latter produces local validation poison before native access; ready and pending variants publish mutation failure at the same predetermined managed scope/static prefix. Test a valid managed or observation-only external sibling through the same computed prefix and valid dynamic native suffixes below a statically selected mutable owner.
-- Query a healthy and poisoned external scope directly and from a managed ancestor. Require false/null or true/the original Error, no native getters, and complete accessible sibling membership. Repeat with a poisoned ancestor retaining hidden Errors and a never-settling Promise: return that guard's exact Error without hidden traversal. Verify indexed/unindexed agreement, query ordering around mutation/repair, and stable previous results.
+#### Boundary and lifetime regressions
 
-- Fail `api.managedContainer!.externalApi.someCall()` on ready and pending host routes, including partial native effects. The parent guard is the sole new poison owner. Subsequent parent/descendant lookups, queries, exports, mutations, and attempted deeper repair observe its original Error without native access. Repairing `managedContainer` restores access; the child needs no second repair and still has the same identity and predecessor phase state.
-- Capture an entered Chain before that failure, wait in its callback, then issue external access through it after the ancestor mutation was issued and after poison publication. It must respect the later ancestor gate and then return the same poison, with no host reflection. Test nested entries and entry directly at the external child. Preserve legitimate private work by the entry owning the gate, and preserve ordinary pre-failure managed snapshots. This proves that single-scope poisoning has no contextual bypass.
-- Compare parent-scoped and child-scoped failures. An independently preexisting child poison remains after parent repair and requires its own explicit repair; the parent operation never copies its new failure into that child. Guard installation and clearing agree across indexed/unindexed `hasError`, complete `getErrors`, lookup, and export, with stable cause/source/kind and immutable earlier Error outputs.
-
-- Observations wait for the previous exclusive phase and overlap one another. Mutation and repair wait for the read group.
-- A descendant phase is reserved only after earlier managed gates permit reaching that fixed location; it is published before waiting for its external predecessor. No host suffix creates late authority.
-- Start a mutating `enter`, suspend its callback, issue an outside observation of an external child, then resume the callback and mutate that child. The inner mutation and entry must complete before the outside observation, without a phase/gate cycle. Repeat with outside mutation and repair, nested entries, and a broader managed `!`. Entry itself never holds a phase needed by its nested operations.
-- `apis.db!.write()`, `apis!.db.refresh()`, and an opaque external ancestor select the documented scopes. Cover `api.db!.addUser(1); api.db.getUserData(); api.db.getUserInfo(); api!.close()` with external `api`: both observations wait for mutation, overlap one another, and finish before close. Have mutation replace a property or method and assert the later selection sees it; no getter, descriptor, or method lookup occurs before its predecessor. Repeat with managed prefixes and separate registered siblings.
-- External mutation uses no managed gate. A managed prefix independently uses ordinary COW and gating.
-- A broader managed scope grants no native mutation authority over sibling owners; invalid or otherwise unselected identities grant no host authority. Promise-valued path reservations are verified in Phase 10.
-- Root and entered Chains share ordering and poison for the same leaf in both issuance directions.
-- For the same static child-entry request, a managed branch retains ordinary fine-grained entry while a mutable external receiver produces PropertyValidation without invoking the callback or reflecting on the native child. Cover both entry modes, existing leaf/compound poison, pending predecessors, unchanged native bindings, and no execution fatal.
-- Issue an assignment of a never-settled input to one external property, then two observations of unrelated properties, then another mutation. No later native action may run before the first input is exported and written. Both observations may then overlap, and the next mutation must wait for both. Include rejection, deep pending assignment input, old target Promises that must not be read, and synchronous inputs; no Promise or gate may be installed in native storage.
-- Verify that an external predecessor waiting for its argument can complete after a later entry installs its binding gate. Deferred binding validation must not make that predecessor wait for the entry whose inner phase follows it.
-- Compare `api.db!.write()` and `api!.db.write()` with managed `api` and external `db`: the former must not enumerate or COW managed ancestors merely to locate its receiver; the latter also protects and publishes the managed scope. Cover an earlier managed gate, a pending native result, and failure in each scope.
-- Issue a mutable-external observation with a pending native-suffix key, then a mutation of an unrelated native property. The mutation waits for that observation; another observation in the same group may overlap. Repeat with a pending call argument and with a primitive final read result. Phase 10 supplies Promise-valued suffix keys; Phase 9F covers ordinary call-input waits.
-- Start a complete contextual Error query over a ready mutable scope and an unrelated pending managed branch, then issue repair of the mutable scope. The query retains the scope's earlier poison regardless of when the unrelated branch settles. Earlier branch gates still delay the corresponding metadata reservation.
-- Enter a whole mutable external boundary before a slow condition resolves, issue outside reads/writes, then issue inner native property operations. Outside access waits at the binding gate, inner work completes without a phase/gate cycle, and later operations follow the inner phases. Cover nested and earlier captured entries, read-only capability enforcement, false conditions, poison and repair, and observation-only identities without locks. Compiler tests reject dynamic mutable entry and enter the resource root for deep conditional writes.
-
-#### Boundaries and cleanup
-
-- Through each public operation route that reserves phases, queue a successor on the same external owner and verify progress after success and every recoverable exit: predecessor poison, late binding conflict, input/export validation failure, native throw/rejection, property reflection or snapshot failure, repair failure, and `hasError` early closure, as applicable. Assert exact successor poison and no premature native action while required predecessors or boundary work remain pending. Exercise ready and pending routes using the normal test timeout; add no production timeout, readiness flag, or cleanup registry. Fatal tests instead assert outward rejection without requiring internal phase release.
-- An authorized external method or property mutation can change its exact receiver and then fail, including a Proxy write/delete trap that changes data before throwing. Verify retained effects, causal Error attribution, phase poison, successor ordering, and repair without rollback. Apply the managed-storage trap restriction only when the kernel changes managed placements; do not apply it inside opaque external state or to runtime-internal Array remapping.
-- Cross argument-export, host-call, result-admission/snapshot, and post-call capability failures at the same operation. Retain every independent failure the operation is required to collect, while applying the documented managed-placement, external-phase, and operation-result effects separately. A safely rejected pre-call selection preserves state when required; an independent result failure does not erase a completed valid mutation, and phase publication cannot overwrite an already discovered operation Error. Verify ready, synchronous-custom, and pending routes, unchanged Error attribution, and no host invocation after required preparation fails.
-- During a later synchronous subscription, deliver earlier captured versions and then continue mixed managed/external path selection. Earlier operations must use their captured logical versions and selected exact external identities, never reread a newer managed prefix. Preserve aliases and occurrence-specific authority while bounding cycles. Pair failures with retained-index and owner-isolation checks; do not expand leases, gates, or phases to unrelated result Promises.
-
-- External operations return directly when all required predecessor and operation transitions complete synchronously; a native predecessor subscription makes the result pending even after that predecessor has settled. Required preparation precedes every host reflection or invocation.
-- Parameterize direct host-call and property-result routes with ordinary values, synchronous custom delivery, pending custom delivery, and native Promises. Once predecessor continuations permit execution, synchronous success and failure finish required import or snapshotting and phase publication in that transition; pending delivery retains exactly the selected phase and any required managed gate through boundary completion.
-- A method selected through mutable external state remains callable without exposing that function as a property value.
-- Mutable external identities never escape through lookup, return, export, external-property assignment, script result, or callback input. Internal managed assignment may retain an alias but grants no authority; access through another unregistered location fails locally without poisoning the context.
-- Exact selection validates current binding authority after phase predecessors and before host access. Regular-Chain aliases fail locally in either import order; competing contexts share invalid authority. No selection grants partial host access or commits a new cross-context use claim.
-- Every explicit host argument and external write value uses common export, including after Promise fulfillment.
-- Native write/delete traps returning false produce their action-specific failure and mutation poison, with no assigned-value or Boolean success payload. A setter receives an independent exported RHS, is selected/invoked once after ordering and preparation, and is never read back. An external Array uses native behavior: a scalar-returning mutation can succeed, while a receiver-returning mutation fails the result escape check after its effects and requires repair. Do not pin behavior for hidden borrowed-result or callback violations outside the host contract.
-- Importing an already registered external identity through public import, a method result, or a regular Chain never downgrades its binding restrictions. Cover both valid and conflicted entries and deferred delivery, without changing any legitimate phase state.
-- Mutable-property snapshots preserve Arrays, aliases, cycles, prototypes, and Functions while copying every traversable identity, including already-managed sources. They reject invalid nested availability and registered mutable identities, complete every discoverable Error, and expose no partial data or output admission.
-- Observation-only property results and all call results use ordinary import. Calls inside mutable external state additionally reject their exact receiver. A genuinely observation-only external identity may return itself unchanged; it gains no mutation authority.
-- A direct property Promise retains its phase until snapshot completion. Nested snapshot Promises create no Promise version or continuation.
-- Reject a Promise or supported thenable as an intermediate native value without subscription, including an already-fulfilled native Promise and a synchronously delivering custom thenable. Cover lookup, call, assignment, and deletion; no suffix getter, setter, or method is reached. A final lookup Promise remains supported. Final assignment/deletion replaces or removes a Promise-valued target without reading it or taking ownership of its rejection. Keep other required input Error collection complete; an observation failure stays local and an authorized mutation poisons its selected phase.
-- A nested ready custom thenable is rejected by snapshot validation without invoking `then`, just like a pending one. A completed managed receiver containing either is likewise invalid; direct-result consumption must not weaken either nested-data contract.
-- Comparator sort rejects mutation-capable elements through common export and needs no extra phase or release callback.
-- Exclusive completions fulfill directly with null or exact non-thenable poison; ReadGroup is a drain signal. Observations preserve predecessor poison, blocked mutation returns the same Error, and only explicit repair clears it. Each native operation has one actual selected boundary.
-- Failure and repair preserve the Phase 9D-A contexts and kinds; repair never clears conflict.
-- External snapshot, capability, invocation-validation, and repair Errors expose no protected identity in runtime-created reasons. Compliant external failure payloads preserve exact cause and source on ready and deferred routes, while the host documentation explicitly covers unsafe diagnostic references. Successful observation-only exact outputs and detached snapshots obey the same native `then` invariant before and after a pending phase predecessor.
-- External ordering uses only the static tree, execution identity map, ordinary managed path continuations, and common phase kernel. This repository retains no alternate external scheduler or routing adapter.
-
-Update [`AGENTS.md`](../AGENTS.md), [`data-limitations.md`](data-limitations.md), [`external-context-ordering.md`](external-context-ordering.md), [`managed-and-external-state.md`](managed-and-external-state.md), [`managed-invocation.md`](managed-invocation.md), [`import-preparation.md`](import-preparation.md), [`outbound-export.md`](outbound-export.md), [`run.md`](run.md), [`runtime-spec.md`](runtime-spec.md), compiler lowering, path-operation documentation, and public API documentation.
-
----
+- Preserve ready-only snapshot copies, ArrayView logical keys/length/holes, aliases/cycles, prototypes, complete Error collection, no partial admission, no pending nested subscriptions, and independent output identity.
+- Preserve nonblocking fresh and already-managed nested method results, borrowed-result source version/attribution, unchanged branches, source/result isolation, and deferred capability rejection without extending the completed receiver reservation.
+- Retain setter/no-readback, write/delete false, export failure before native effects, getter/direct-result failure kinds, independent result/publication Error union, and native receiver escape after effects.
+- Verify query closure does not acquire unused reservations, already-reserved work releases normally in a live execution, discarded pending work remains handled, and fatality stops before further native work/publication without settling internal gates.
+- Run the full existing integration suite after migration. Update assertions for accepted hierarchical scope and recursive-repair behavior, not to conceal regressions in ordering, source isolation, or Error completeness.
 
 ## Phase 10: Support Promise-valued path segments
 
@@ -2713,8 +2446,8 @@ Reuse captured versions and FIFO continuations. Do not add callback-ran flags, a
 - Observation returns its local Error. Mutation publishes at an explicit managed scope already selected before the dynamic key; when its intended scope lies beyond the key, use the longest static managed prefix. Capture this fallback location from path facts before waiting, and publish through the existing mutation transition. Never poison a guessed leaf or all resources beneath the prefix.
 - Detection time may depend on path readiness; Error location does not. A poisoned prefix returns its original Error before any new validation or unused segment work.
 - Dynamic paths selecting ordinary managed or observation-only external data remain supported even when their shared prefix also contains a registered mutable sibling. No blanket rejection of a mixed managed prefix is allowed.
-- A dynamic key inside an already statically selected external owner remains an ordinary native suffix key. Stored native intermediate values, receivers, and callables must be ready; only final lookup values or direct call results consume availability. Final assignment/deletion does not read the old target.
-- Static whole-boundary entry follows Phase 9F. Compiler lowering does not enter a mutable native property or rebase a computed route into static authority. Managed entry keeps Promise-valued key support.
+- A dynamic key within an unregistered suffix remains valid, but cannot select or cross a registered descendant without static provenance. Stored native intermediate values, receivers, and callables must be ready; only final lookup values or direct call results consume availability. Final assignment/deletion does not read the old target.
+- Entry follows Phase 9F-A: managed/mixed targets retain their requested depth; native-property lowering selects the deepest enclosing registered scope. Explicit unregistered native-property entry remains invalid. Rebasing cannot grant static authority.
 
 ### 4. Reuse the operation lifetime and publication boundary
 
@@ -2724,7 +2457,7 @@ Every pending continuation uses common guarded helpers. In a live execution it f
 
 A mutation owner closes after its required gate publication, not its immediate issuance return. Repair closes after its selected scope transition. Read/export/query source protection ends only after final capture; export output keeps its separate lifetime. An independent result cannot extend completed receiver or path protection. A blocking scope ends action-only work without waiting for unused arguments, retaining owned rejection handling and shared settlement.
 
-Repair reaches only its selected retained managed guard or statically selected external boundary. A marker inside native state stops at the first boundary without consuming its unused suffix. It bypasses no poisoned ancestor and clears no child poison.
+Repair selects its managed guard or registered external subtree through static provenance, clears covered repairable poison before any call, and bypasses no strict-ancestor own poison. It does not erase ordinary managed Error-valued properties or permanent binding conflicts.
 
 ### Verification
 
@@ -2835,8 +2568,9 @@ If a runtime feature no longer has one of these semantics, remove its kind from 
 - Canonicalize routes from entered Chains against their originating root context before truncation and merging. Preserve computed-prefix provenance across rebasing; a relative static suffix cannot grant authority lost in its prefix. Include nested-entry and observation-only programs in compiler tests: the former contribute the correct root-relative routes, while the latter emit no mutation requests merely for method calls.
 - Test generated trees for different `!` positions on the same receiver, property assignment/deletion, root cases, overlapping routes, conditional mutations, dynamic receiver versus native-suffix keys, and special property names. Reuse one compiled program with managed and external contexts at different first-boundary depths, including constant-tree reuse across renders. Verify generated setup has no application-expression evaluation or subtree scan, and retain compact shared prefixes in emitted code.
 - Replace the hidden external sequencing mechanism with public context-path calls, property operations, and repair, then remove its compiler/runtime routing in that same Cascada cutover. Inventory its actual consumers first: `SequenceChain` also serves explicitly declared sequences, so do not delete unrelated sequence language features merely because they share an implementation. No sequence adapter or duplicate external scheduler remains.
-- Adopt Phase 9F's single-scope poison and repair semantics, plus its whole-resource entry contract. Preserve the first-dynamic-segment source fact through operation paths and entry composition. Lower slow conditional native writes by entering the statically selected whole mutable resource, never its native child; observation-only external paths remain unrestricted by mutable authority. Lowering preserves the ordinary non-blocking assignment/deletion contract and owns rejection handling for pending work it creates or discards; it does not collect discarded recoverable outcomes into script failure. Export only the selected script result: repair clears the targeted retained guard, while fresh replacement may remove ordinary Error values. Supply raw context roots once to `ContextChain`; ordinary imports create no authority and cannot downgrade existing bindings.
-- Use Phase 9F's public entry-target selection handoff after context import; do not guess host categories or external-boundary depth from source mutation markers. Emit rebased operation suffixes for the selected whole-resource entry and retain ordinary managed entry paths when the supplied context is managed. A managed read lease alone cannot order native descendant access deferred by a callback; plan the required mutable-resource entries before that deferred work. Test one compiled program with managed and external host shapes at different boundary depths.
+- Adopt Phase 9F-A subtree poison summaries, clear-before-call recursive repair, and mixed-entry reservations. Preserve first-dynamic-segment source facts; compiler reference arguments and delayed control flow use enter without granting bang authority. Keep nonblocking assignment/deletion and recoverable failure from selected returned data, not an execution-wide Error history.
+- Use the public entry-target handoff after context import: leave managed/mixed targets unchanged and select the deepest enclosing registered external scope for native-property targets. Emit relative suffixes and static provenance without guessing host categories. Supply nested mutation access paths; preserve fixed registered identities under native reset. Test the same compiled source with managed and external host shapes.
+- Lower multiple Cascada reference arguments without sequential acquire-and-wait. Collapse overlapping entries under a covering reservation and derive relative reference views; publish disjoint entry reservations in one synchronous batch before awaiting any predecessor. Use the common kernel's capture-before-publish protocol and a documented public handoff, not private tree access. Test reversed argument order, shared ancestor/descendant arguments, pending predecessors, and unrelated sibling progress. Phase 9F-A must leave capture/publish composable for this batch; do not add speculative public overloads during the kernel replacement.
 
 This phase changes Cascada's consumers of the public kernel API. Expression implementation, operator semantics, and compiler expression design belong to Cascada and are outside this project's deliverables. Do not implement or redesign them here.
 
