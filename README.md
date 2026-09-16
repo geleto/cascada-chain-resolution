@@ -39,7 +39,7 @@ console.log(await cascada.export(chain, [], operationContext))
 
 ## API reference
 
-The external scope, entry, and repair descriptions below specify the accepted architecture. Hierarchical conformance completion is pending in [Phase 9F-A](docs/first-principles-conformance-plan.md#phase-9f-a-replace-external-scope-coordination).
+The mutation, external scope, entry, and repair descriptions below specify the accepted architecture. Managed rollback and hierarchical conformance are pending in [Phase 9F-A](docs/first-principles-conformance-plan.md#phase-9f-a-scope-coordination-and-managed-rollback).
 
 ```js
 import {
@@ -117,7 +117,7 @@ A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Read
 
 The graph result contract is `T | PoisonError | Promise<T | PoisonError>`. Error queries succeed with ordinary data and report a query failure separately. [Phase 9D-B](docs/first-principles-conformance-plan.md#phase-9d-b-separate-graph-errors-from-expression-failure-values) implements `lookupPathForExpression` and a separate `PoisonedValue` expression container: ready expression failure returns the container, and pending expression failure rejects directly with the ordinary Error.
 
-Compiler mutation access trees drive atomic external identity registration. Native property operations and calls share one readers-writer coordinator per mutable owner. Observations copy mutable property results; failed mutations poison their selected scope, and explicit repair clears that scope. Managed values retain ordinary sharing and COW under mutation prefixes; native mutation is confined to its [external owner](docs/external-context-ordering.md#managed-and-external-ownership).
+Compiler mutation access trees drive atomic external identity registration and hierarchical ordering of overlapping native scopes. Observations copy mutable property results. A failed managed mutation discards private changes and retains its pre-operation value beneath placement poison; repair exposes that baseline. Failed external mutations retain native effects and poison their selected tree scope; repair clears covered external subtree poison without native rollback. See [mutation and observation](docs/mutation-and-observation.md) and [external ordering](docs/external-context-ordering.md).
 
 ### Higher-runtime integration
 
@@ -215,7 +215,7 @@ their exact source and cause. Expression evaluation belongs to Cascada.
 
 Reserve access to a branch and pass a temporary Chain to the callback. Entry supports Cascada reference arguments and delayed control flow, including mixed managed/external branches. It grants no mutation authority: contained operations still obey their bang scope restrictions. Entering a.x leaves a.y available.
 
-Managed mutating entry installs a placement gate using ordinary path COW; managed readonly entry leases its capture. Mixed entry also reserves covered external descendants. Entry at a registered external node uses an exclusive tree reservation in either callback mode, while readonly capability still forbids mutation. The compiler's entry-target handoff selects the deepest registered scope for a native-property target and leaves managed/mixed targets unchanged.
+Managed mutating entry installs a placement gate using ordinary path COW; managed read-only entry leases its capture. Covered external resources use exclusive reservations for mutating entry and observation reservations for read-only entry, including at an external root. Contained commands use the same ordering algorithm in private ordering state covered by the outer reservation. Entry is not a callback-wide rollback transaction. Compiler entry selection chooses the deepest registered scope for a native-property target and leaves managed/mixed targets unchanged.
 
 The callback's direct completion closes new issuance. Already-issued commands and nested entries remain valid. Managed publication and external effect completion retain separate lifetimes, preserving ready managed siblings while native children remain pending. Returned/admitted rejected poison completes the callback normally; an unexpected internal throw/rejection is fatal. [enter.md](docs/enter.md) specifies capture, reservation ownership, and publication.
 
@@ -259,7 +259,7 @@ Both Error queries include ordered external subtree metadata without reading nat
 
 ### `repairPath(chain, path, operationContext, firstDynamicSegment = path.length)`
 
-Exclusively clear repairable poison throughout the selected managed guard/external subtree, preserving retained values and fixed resource identities. Return undefined without native code. Own poison above the target and permanent binding conflict cannot be cleared. Ordinary Error-valued managed data still uses assignment/deletion. Repair-and-call clears first and invokes afterward under the same reservation; a new failure poisons again.
+Clear selected managed scope poison to expose its preserved pre-operation value, and clear repairable poison in a covered external subtree without reverting native effects. Use ordinary managed ordering and required exclusive external reservations. Successful repair returns undefined without invoking a native method or external-resource read/write. A healthy or absent managed target needs no managed change; an ordinary Error without a retained baseline returns that Error unchanged. Own poison above the target and permanent binding conflict cannot be cleared. Ordinary Error data and independent earlier managed failures are not erased. A replaceable managed location may instead be assigned/deleted; fixed resource locations remain protected. Repair-and-call clears first, then invokes under the same protection; a new failed managed mutation rolls back to that repaired baseline and poisons again.
 
 ### Static path provenance and compiler entry selection
 

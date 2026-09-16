@@ -2,9 +2,9 @@
 
 ## Status
 
-This document specifies the accepted entry architecture. [Phase 9F-A](first-principles-conformance-plan.md#phase-9f-a-replace-external-scope-coordination) implements its hierarchical external reservations; managed entry continues to use ordinary publication and ownership mechanisms. Entry is an access reservation, not a mutation or a `!` poison scope.
+This document specifies the accepted entry architecture. [Phase 9F-A](first-principles-conformance-plan.md#phase-9f-a-scope-coordination-and-managed-rollback) implements its hierarchical external reservations; managed entry continues to use ordinary publication and ownership mechanisms. Entry is an access reservation, not a mutation or a `!` poison scope.
 
-Entry serves Cascada function arguments passed by reference and delayed control flow. It may select a mixed managed/external branch. A mutating entry at `a.x` prevents conflicting outside access there while its callback decides what to issue; `a.y` remains available. Every contained operation independently obeys managed/external mutation scope restrictions. Holding a mixed entry cannot make `apis!.db.write()` valid when `apis` is managed and contains mutable external resources.
+Entry serves Cascada function arguments passed by reference and delayed control flow. It may select a mixed managed/external branch. A mutating entry at `a.x` prevents conflicting outside access there while its callback decides what to issue; `a.y` remains available. Every contained operation independently obeys managed/external mutation scope restrictions. Holding a mixed entry cannot make `apis!.db.write()` valid when `apis` is managed and its canonical route covers registered mutable external locations. Inert aliases elsewhere do not forbid controlled managed writes and grant no external authority.
 
 ## API and lifecycle
 
@@ -19,6 +19,8 @@ The result is the callback's value or Promise, or a selection Error. Entered Cha
 
 The callback may be asynchronous. A ready value, ordinary poison value, or admitted callback-Promise poison rejection completes entry normally. Unexpected synchronous callback throws and raw internal rejections follow the existing fatal-on-escape contract. Do not invent entry abort, fatal cleanup, cancellation, or a second result representation. Required operation contexts, execution binding, and closed-entry issuance retain their common checks.
 
+Entry selects a location; it does not consume the final target as an ordinary value operation. An Error at that target, including scope poison with a retained baseline, is valid entry input. Transfer its complete logical placement state into the private root before callback work and preserve it on publication. An Error on a strict ancestor still prevents reaching the target. This permits reference functions and entered control flow to inspect, repair, or replace poisoned managed targets under their ordinary capability; read-only entry permits inspection only.
+
 Closing prohibits new calls through the entered Chain, including after a callback Promise settles. It does not discard state needed by already-issued commands or close nested entries still independently active. Native callbacks use the normal export boundary; direct access to private managed state is not a supported reference-argument shortcut.
 
 ## Mutating entries
@@ -27,19 +29,19 @@ Managed mutating entry installs a Promise-backed gate at its selected logical pl
 
 Create the private Chain and capture the original target/version before detaching it. Install the public gate before subscribing to pending-source transfer. A direct source initializes the private root normally; a pending source forks its exact captured Promise version into that root. If ancestor COW leaves the source reachable elsewhere, preserve sharing at the transfer boundary. Callback invocation happens after required owning-path reconstruction, not after all descendants become ready.
 
-A gate orders current-owner access. Captured earlier versions keep their ordinary values and Promise frontier. Unrelated sibling paths do not wait. Entry does not add language poison on its own: a contained mutation publishes its selected scope effect, while a callback's independent Error result need not poison the entered value.
+A gate orders current-owner access. Captured earlier versions keep their ordinary values and Promise frontier. Unrelated sibling paths do not wait. Successful entry setup does not add language poison: a contained mutation publishes its selected scope effect, while a callback's independent Error result need not poison the entered value.
 
 ## Read-only entries
 
 A managed read-only entry leases its captured root. Count each lease independently and release this entry's lease after its callback finishes. Outside managed mutations may COW rather than wait. Public lookups and retained results establish permanent sharing before temporary protection ends. Primitives and observation-only external identities need no managed read count.
 
-A managed parent lease cannot protect mutable external descendants. A mixed read-only entry also reserves observation access over those descendants in the external tree. Other external observations overlap, but conflicting native mutations wait. Readonly capability prevents contained mutations even if an enclosing reservation is exclusive. Entry rooted at a registered external scope retains exclusive outside protection in either callback mode; this does not authorize writes from a read-only callback.
+A managed parent lease cannot protect mutable external descendants. Every read-only entry reserves observation access to covered external resources, including when its root is a registered external scope. Other observations overlap, while conflicting native mutations wait through the entry's required access lifetime. Readonly capability prevents contained mutation even when an enclosing entry holds exclusive access. Managed read-only roots additionally keep their ordinary lease; unregistered observation-only external identities need no reservation.
 
 ## Mixed and external entries
 
 An entry target may be managed, mixed, or a registered external scope. Mixed entry is intentionally less restrictive than a managed bang mutation scope. Its managed gate/lease protects managed access, and one subtree reservation protects the covered native state. Both use the entry's captured source turn, not a new operation queue.
 
-Registered external entry stores no gate in native properties or in a separate contextual-binding Promise. The common external-tree reservation mechanism protects the subtree. The private Chain holds the same exact native identity. It must not replace the external root or move registered descendants. Entry itself adds no poison and does not consume selected external subtree poison; retain it so contained explicit repair is possible. Strict-ancestor own poison and invalid bindings still block selection. Native operations inside select their own registered scopes and normal failure effects.
+Registered external entry stores no gate in native properties or in a separate contextual-binding Promise. The common external-tree reservation mechanism protects the subtree. The private Chain holds the same exact native identity and must not replace its root or move registered descendants. As for managed entry, poison at the selected scope is retained for contained inspection or repair; strict-ancestor own poison and invalid binding block selection. Successful entry setup adds no poison. Native operations inside select their own registered scopes and normal failure effects.
 
 Use `selectEntryPath` for compiler lowering. It leaves managed/mixed targets unchanged and maps an unregistered native-property target to its deepest enclosing registered external node. A registered child may be entered independently of its external parent. An explicitly requested unregistered native-property entry returns PropertyValidation, before native child reflection or callback invocation; mutating failure poisons its enclosing selected scope, readonly failure stays local. Existing poison takes precedence. Every registered location crossed must have static source provenance; rebasing does not turn computed segments static.
 
@@ -49,7 +51,7 @@ Use `selectEntryPath` for compiler lowering. It leaves managed/mixed targets unc
 
 This prevents a deadlock such as: child entry A is active; later ancestor entry B waits for A; A issues another contained operation. A's operation uses A's view and cannot queue behind B. It still waits for earlier contained work and cannot exceed its entry's scope or readonly capability. Do not solve this by granting A ownership of B's gate, following a graph of later dependent gates, or cancelling B.
 
-A mutating mixed entry reserves its native subtree exclusively; a mixed read-only entry reserves observation access. The outer reservation waits for required contained native effects, not just the callback result. Register an entry-owned completion obligation at issuance when a command may reach its covered external subtree, even if a managed path gate delays that reservation. Otherwise callback closure could release coverage before the command reaches native state. Complete unused obligations at selection handoff and effectful obligations after required native processing, using the existing completion aggregate rather than a count or queue. Capture the view's unfinished completion frontiers when callback issuance closes; release the outer reservation after those complete. Already-issued nested entry reservations keep their coverage until their own required work ends. Independent nested method-result Promises do not prolong access. Operation effects and direct host-result processing do.
+A mutating entry reserves its native subtree exclusively; a read-only entry reserves observation access. Track every issued command that may reach covered native state through its required effect completion, including commands delayed by managed gates. Safe early reservation lets the ordinary reservation perform that tracking. If reservation must be delayed, register the same completion at issuance and reuse it at reservation, with no second completion or parallel retained tracking scheme. Selection failure must publish its required effect before completion. At callback closure stop issuance and capture outstanding completions, including already-issued nested entries, before releasing outer coverage. Do not retain independent nested method-result Promises. Phase 9F-A evaluates and selects one reservation timing implementation.
 
 Managed and external completion must remain separate. A parent managed entry may publish its private graph while a native child remains reserved, so a ready managed sibling is usable immediately. Its native paths still observe the live tree reservations. A contained managed child gate remains in the published graph and preserves its own path availability. Do not hold the entire managed parent gate until every child effect finishes, and do not release external reservation coverage at callback closure while child effects remain.
 
@@ -57,7 +59,7 @@ Managed and external completion must remain separate. A parent managed entry may
 
 ### Pending ancestors
 
-A pending managed ancestor delays target selection through the normal path walker. Capture its exact version at issuance and run the resumed entry at its FIFO position. Complete path COW and owning-parent writeback before exposing callback work. Later subscribers observe the installed gate; earlier captures retain their own version. Do not register an external reservation outside a managed gate while waiting for work inside that gate.
+A pending managed ancestor delays target selection through the normal path walker. Capture its exact version at issuance and run the resumed entry at its FIFO position. Complete path COW and owning-parent writeback before exposing callback work. Later subscribers observe the installed gate; earlier captures retain their own version. Native access cannot pass that managed gate. Any reservation acquired before the gate must belong to the correct ordering view so contained work cannot queue behind the outside reservation; Phase 9F-A verifies this before retaining early reservation.
 
 ### Promise-valued mutating target
 
@@ -77,13 +79,13 @@ Callback completion closes new issuance first. Managed read-only entry releases 
 
 The callback result is not a publication signal. A direct result may be available while selected-root publication remains pending. An independent result Promise does not extend an already-completed mutation's lifetime. Conversely, unfinished external effects promised by issued operations retain the outer reservation even if callback completion is ready. These distinct lifetimes do not justify a universal configurable gate helper.
 
-Normal publication installs through the property-version mechanism and completes required index bookkeeping. Failure obeys ordinary publication and scope rules and preserves every required independent result Error. Fatality stops continuation work before publication and is exposed through public pending-result handling; never settle internal gates to simulate fatal cancellation.
+Entered-root publication transfers the complete logical placement state, including any retained rollback baseline and original source version, through the ordinary property-version mechanism. Resolving a gate with only the visible Error would lose recovery state. Capture that state from the same latest private root at closure or deferred publication; nested transfer must not recapture the baseline from an earlier root or restore the entry-start value. Keep the Error unchanged, update any canonical namespace reference, and complete required index bookkeeping in that publication. Failure obeys ordinary publication and scope rules and preserves every required independent result Error. Fatality stops continuation work before publication and is exposed through public pending-result handling; never settle internal gates to simulate fatal cancellation.
 
 ## Ownership and import attribution
 
 Entry into existing graph data does not reimport it. Transfer preserves category, origin, logical versions, and causal Error attribution. Copying managed ancestors preserves shared children and fixed external bindings. Root and entered Chains use the same operation API; entry adds only readonly/closed capability and its captured location/reservation ownership facts.
 
-Repairable managed poison belongs to a captured placement state, not shared identity metadata. An earlier managed snapshot does not acquire later guard poison, but live external access through an entered context must respect the canonical scope guard and its reservation order. Repair changes current guard state without changing previously returned Errors. Ordinary retained outputs still require immutable-output protection.
+Managed rollback and scope poison belong to captured placement state, not shared identity metadata. Each contained managed mutation preserves its own pre-operation value; successful earlier commands remain committed if a later command fails. Entry gates access but creates no callback-wide rollback transaction. A healthy earlier snapshot does not acquire later poison, while native access still obeys canonical namespace poison. Repair reveals the preserved baseline without changing previously returned Errors.
 
 ## Composition and lifecycle constraints
 
@@ -95,7 +97,7 @@ The implementation keeps one explicit owner for an issued operation, normal guar
 
 ## Path errors and fatal failures
 
-An existing managed path Error or strict-ancestor own poison propagates unchanged. Invalid entry selection invokes no callback. A mutating selection failure follows its prescribed selected/static-prefix poison rule while preserving fixed identities; a readonly failure affects only its result. Gate installation is not permission to invoke arbitrary native effects on a mixed scope. Contained repair may bypass only its selected subtree poison under its reservation and cannot clear a permanent identity conflict.
+A managed path Error or own poison on a strict ancestor propagates unchanged and prevents callback invocation. An Error at the selected target does not invalidate entry; preserve its complete placement state for contained operations. A failed mutating selection follows its prescribed selected/static-prefix poison rule while preserving fixed identities; a readonly selection failure affects only its result. Gate installation grants no native mutation authority on a mixed scope. Contained repair can clear only its selected recoverable state and cannot clear a permanent identity conflict.
 
 Unexpected runtime failures, execution mismatch, and new issuance through a closed entered Chain retain their established fatal boundaries. No special entry rejection action, contextless execution, abort method, or cleanup Promise is added. Detached publication and already-issued native work retain their existing handled-reaction obligations.
 
@@ -110,8 +112,10 @@ The data holder of an entered Chain has the same representation as a normal Chai
 - Enter a.x behind a slow condition and keep a.y immediately available; repeat with shared/imported ancestors and pending source versions.
 - Keep old captured values independent of new gate installation, mutation, poison, and repair. Cover a direct and pending target, aliases, and COW through Array structure.
 - Enter mixed managed parents for reference arguments and control flow; reject an invalid mixed bang inside the otherwise-valid entry without running native code.
+
+- Enter an already-poisoned managed target in both modes: inspection runs, mutating repair/replacement restores normal use, and readonly mutation remains forbidden. Cover ordinary Error data without a baseline, strict-ancestor blockers, and pending delivery of target poison. Repeat through nested entry and compiler-style conditional/reference callbacks.
 - Enter registered external siblings concurrently; parent entry waits for both. A child continues issuing work while a later parent reservation waits for it, with no deadlock or overtaking.
 - Preserve managed ready-sibling access after parent callback closure while native child work remains pending. Preserve open nested managed and external entries after parent publication.
-- Cover readonly mixed entry, overlapping native observations, blocked descendant mutations, and readonly capability enforcement. External-root readonly entry retains exclusive outside coverage.
+- Cover read-only mixed and external-root entry with observation coverage: concurrent observations proceed, conflicting mutations wait, and nested readonly capability remains enforced.
 - Verify explicit native-property rejection and compiler selection of the deepest registered scope under multiple host shapes, including computed-prefix rejection.
 - Keep callback Error completion, independent result Promise lifetime, scope poison, recursive repair, permanent binding conflict, and fatal pending-result delivery distinct.

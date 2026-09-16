@@ -4,7 +4,7 @@ This document defines the observable contract of the Cascada chain-resolution ke
 
 `ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local registered external scope records, including requested nested native scopes, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
 
-The accepted hierarchical external design orders conflicting ancestor/descendant scopes while siblings overlap. Mixed entry remains valid, while managed bang scopes exclude mutable external resources. Explicit unregistered native-property entry fails recoverably. These contracts require the pending Phase 9F-A completion, as defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
+The accepted hierarchical external design orders conflicting ancestor/descendant scopes while siblings overlap. Mixed entry remains valid, while managed bang scopes exclude canonical registered mutable external locations. Inert aliases elsewhere do not forbid controlled managed writes; native managed receiver preparation still rejects registered mutable identities. Explicit unregistered native-property entry fails recoverably. These contracts require the pending Phase 9F-A completion, as defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
 
 ## Values
 
@@ -331,6 +331,8 @@ the root with `null`.
 
 Deleting an array index removes the own property and preserves array length.
 
+Failed mutation must not grow an Array merely to store poison at an out-of-range index. The owning Array is then the poison and rollback scope, unless an explicit broader scope already covers it. Preserve its complete length, holes, values, and captured versions for repair. In-range failure remains local when structure is unaffected. Select required structural ownership before publication; see [managed structural effects](error-handling.md#managed-structural-effects).
+
 ## Property writes
 
 A missing target key is created as an own enumerable, writable, configurable
@@ -353,9 +355,7 @@ Managed storage may use a host-supplied Proxy under the
 Each primitive write, definition, or deletion implements the requested operation
 on success and leaves the represented graph unchanged on failure. Storage work
 precedes placement-version and refcount commit. This is a trusted restriction,
-with no Proxy detection or rollback machinery; it does not require whole-operation
-atomicity for managed methods or external mutations. Internal Array remapping
-Proxies remain runtime control representations.
+without Proxy detection or inverse trap replay. The enclosing managed mutation protects its baseline and discards failed working changes; external mutation retains completed native effects. Internal Array remapping Proxies remain runtime control representations.
 
 ## Placement versions
 
@@ -583,9 +583,11 @@ normal mutation path; observation preserves the receiver. See
 `repair` is an exact Boolean. `true` requires a mutation scope and performs
 repair-and-call on the selected retained managed scope or external boundary.
 
+Every managed mutation, including controlled writes, preserves its selected scope before writing. Success publishes working state; failure discards it and publishes ordinary scope poison with the baseline retained in placement metadata. Required publication failure also rolls back; independent result failure does not. Entry and command sequences are not rollback units. Higher-level guard/recover owns sequence rollback.
+
 ### `repairPath(chain, path, operationContext)`
 
-Exclusively repair the selected managed guard or registered external subtree. Clear covered repairable scope poison, preserve retained values and fixed identities, and return undefined without native code. Do not clear ordinary Error-valued managed properties, permanent binding conflicts, or own poison above the target. A derived ancestor summary does not block child repair. Repair-and-call clears first and then performs normal call preparation and invocation under the same reservation; only new failures poison again.
+Clear the selected managed placement's scope poison to expose its pre-operation value/version, and repairable own poison in a covered external subtree without native rollback. Use ordinary managed ordering and required external reservations. Successful repair returns undefined without invoking a native method. Healthy or absent managed targets need no managed change; ordinary Error data without a retained baseline returns that same Error and blocks repair-and-call. Strict-ancestor own poison and permanent binding conflict remain blockers. Restoring a managed baseline does not erase independent earlier failures or ordinary Error data within it. Repair-and-call clears first and starts a new managed baseline from the repaired state.
 
 Registered external scopes may be nested. Resolve selection through static source provenance and the deepest relevant tree node, not a first-boundary-only rule. Repair creates no registration, identity transfer, or native rollback. See [scope transitions](error-handling.md#scope-transitions).
 

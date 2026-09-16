@@ -20,7 +20,7 @@ run(chain, path, method, args, operationContext, { mutationScopeDepth, repair, f
 
 `path` is the complete receiver path and distinguishes a missing final property from one containing `undefined`. The receiver and selected mutation scope may differ; failure after reaching that scope belongs to it. An empty path targets the Chain root. A receiver may be a primitive String, logical Array, managed record/class, or exact external identity. Arrays with an explicit external declaration use native semantics; other native Arrays, attached views, and runtime ArrayViews retain controlled Array semantics.
 
-The required `repair` Boolean is normally false. True requires a valid mutation scope and clears repairable poison throughout its subtree before normal call preparation/invocation, retaining exclusive access; a new failure poisons again. `firstDynamicSegment` is source provenance, independent of key readiness; a computed segment cannot select a mutable external boundary. [integration.md](integration.md#entry-target-selection) specifies the public compiler handoff and path composition.
+The required `repair` Boolean is normally false. True requires a valid mutation scope. It clears selected managed placement poison to reveal its baseline, and covered external subtree poison, before normal call preparation/invocation under the same required ordering. A new managed failure rolls back to the repaired baseline and poisons again; no deliberately cleared Error is restored. Repair does not create authority or revert native effects.
 
 ## Dispatch
 
@@ -61,7 +61,7 @@ Lowering captures every argument position before issuing `run`, preserving omiss
 | --- | --- |
 | Controlled Array input | None. The wrapper resolves only values the method consumes and leaves retained payloads exact, including Error and Promise values. |
 | `sort` or `toSorted` comparator input | One exported snapshot containing every comparator-visible value. |
-| Managed receiver | Prepare the complete logical graph; materialize only paths required for receiver representation or isolation. |
+| Managed receiver | Prepare the complete logical graph; observations materialize required paths, while mutations use a receiver graph isolated from the scope's protected rollback baseline. |
 | Managed arguments | Export every explicit argument as one independent graph. |
 | Ordinary observation, including a String method | Resolve the receiver through its path; export and resolve every argument before invocation. |
 
@@ -154,9 +154,9 @@ The common continuation helper performs each required ordinary `.then` subscript
 
 While traversing to the receiver's owning parent, `walkMutationPath` calls `metadata.requiresCopyOnWrite(value)` on each path object. The first `true` starts path copy-on-write through the owning parent.
 
-Observation always preserves the receiver. Mutation preserves it when `attachmentRoot` is defined or `metadata.requiresCopyOnWrite(receiver)` is true. `attachmentRoot` is the first copied node retained by the mutation walk; its presence means the old world still retains the receiver. `requiresCopyOnWrite` decides whether the current logical version must be preserved; it does not perform copying.
+Observation preserves its captured receiver. Every managed mutation preserves its selected scope's pre-operation value until required publication succeeds, using ordinary ownership and path COW. Working representations may be mutated in place only after they are independent of that baseline. Existing attachment/ownership facts determine copying; do not add a second rollback ownership system.
 
-If preservation is unnecessary, a supported native representation is updated in place. Eligible endpoint mutation derives an `ArrayView` while preserving the current receiver. Numeric `slice` derives a bounds-only view. Eligible `concat` extends only the receiver's hidden backing and returns a longer view; it does not mutate an argument backing. Otherwise the active logical Array is copied or materialized into an owned native Array and the logical operation is applied there. A copying mutation may write the final shape back to an eligible owned native receiver to preserve its identity; COW publishes the new representation.
+Eligible endpoint mutations derive an ArrayView while preserving the baseline receiver. Numeric slice derives a bounds-only view. Eligible concat extends only the receiver's hidden backing and returns a longer view; it does not mutate an argument backing. Other mutations use an independent owned Array or remap representation and publish that candidate after success. Do not replay a candidate into the protected baseline merely to preserve native identity: supported failure during replay must leave the pre-operation logical state intact.
 
 `push`, `pop`, and `shift` use [`array-view.md`](array-view.md) when endpoint sharing is eligible. `unshift` uses the remap path when its receiver must be preserved. Each retained fixed placement in a derived view keeps its logical value and attribution; each actually pending property receives a Promise version forked at the derivation's FIFO position even though the views share its physical backing slot. Otherwise a captured intrinsic plans a sparse property-placement remap. Copying operations initialize present placements because the result retains them all; in-place mutation obtains a placement only when the intrinsic reads that index. Writing a placement records a move, writing a raw argument records an addition, and indexed deletion and length writes remain explicit operations. `concat` combines captured remaps and internally wrapped retained items. Default and comparator sort share one placement-record pipeline.
 
@@ -199,7 +199,7 @@ A `run` receiver path ending at either intrinsic `length` selects a number, neve
 
 `run` returns `T | PoisonError | Promise<T | PoisonError>`. A ready Error is directly inspectable; a pending call fulfills with its ordinary Error after required graph effects and complete preparation. A result retained by Cascada goes into an operation Chain; `lookupPathForExpression` supplies rejecting transport only when that result enters an expression.
 
-A mutation may capture an independent removed-value Error before replaying its receiver. If replay also fails, publish the replay failure at the receiver and combine both failures for the operation result. A pending independent result waits only in that result; receiver publication remains immediate. Nested removed-result payload remains unconsumed.
+A mutation may capture an independent removed-value Error before completing its private receiver work. If required replay or publication also fails, discard the working changes, publish scope poison retaining the baseline, and combine independent result/receiver failures for the operation result. A successful removal remains committed when its independent result is Error. An independent pending result does not delay completed receiver publication.
 
 A broken observation path returns its path-access Error. A broken mutation path installs that Error under the ordinary mutation rule and returns it. An observation with a missing final receiver, final Error, Error-valued selected method, Error-poisoned argument, unsupported receiver, method, overload, or native input returns a language Error without invocation. Errors contained in receiver elements or properties remain data unless the selected operation consumes and converts that value. A mutation rejected after receiver classification publishes its validation Error through the selected scope transition and returns that Error. A blocking scope instead returns its original poison without descendant or action-only argument work.
 
