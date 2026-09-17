@@ -1,5 +1,6 @@
+import { externalLocations } from "./support.js"
 import * as externalTree from "../src/external-mutation-tree.js"
-import { EXTERNAL_BOUNDARY } from "../src/external-mutation-tree.js"
+import { TREE_NODE } from "../src/external-mutation-tree.js"
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
 import { OrderedThenable } from "./ordered-thenable.js"
@@ -42,18 +43,18 @@ describe("context external foundations", () => {
 
         expect(chain instanceof Chain).to.be(true)
         expect(readPath(chain, [])).to.be(root)
-        expect(externalTree.findExactBoundary(chain._externalMutationTree, ["apis", "selected"])
-            [EXTERNAL_BOUNDARY])
+        expect(externalTree.findBranch(chain._externalMutationTree, ["apis", "selected"])
+            [TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(selected))
-        expect(externalTree.findBoundary(chain._externalMutationTree, [
+        expect(externalTree.tracePath(chain._externalMutationTree, [
             "apis",
             "selected",
             "name",
-        ])[EXTERNAL_BOUNDARY])
+        ]).boundary[TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(selected))
-        expect(externalTree.findBoundary(chain._externalMutationTree, ["apis", "ignored"]))
+        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "ignored"]).boundary)
             .to.be(undefined)
-        expect(externalTree.findBoundary(chain._externalMutationTree, ["other"]))
+        expect(externalTree.tracePath(chain._externalMutationTree, ["other"]).boundary)
             .to.be(undefined)
         expect(execution._externalIdentities.get(selected)).to.be.an(Object)
         expect(execution._externalIdentities.get(ignored)).to.be(undefined)
@@ -70,13 +71,13 @@ describe("context external foundations", () => {
             { nested: { target: {} } },
         )
 
-        expect(externalTree.findBoundary(chain._externalMutationTree, ["oldTarget"]))
+        expect(externalTree.tracePath(chain._externalMutationTree, ["oldTarget"]).boundary)
             .to.be(undefined)
-        expect(externalTree.findExactBoundary(chain._externalMutationTree, [
+        expect(externalTree.findBranch(chain._externalMutationTree, [
             "nested",
             "target",
         ])
-            [EXTERNAL_BOUNDARY])
+            [TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(nestedTarget))
 
         const externalRoot = external({ status: 1 })
@@ -86,7 +87,7 @@ describe("context external foundations", () => {
             new Execution(),
             {},
         )
-        expect(externalTree.findExactBoundary(rootChain._externalMutationTree, [])[EXTERNAL_BOUNDARY])
+        expect(externalTree.findBranch(rootChain._externalMutationTree, [])[TREE_NODE].entry)
             .to.be(rootChain._execution._externalIdentities.get(externalRoot))
     })
 
@@ -115,14 +116,12 @@ describe("context external foundations", () => {
             { left: { child: {}, other: {} } },
         )
 
-        const boundaryPaths = externalTree.findDescendantBoundaries(chain._externalMutationTree, [])
-            .map(boundary => boundary.path.join("."))
+        const boundaryPaths = externalLocations(chain._externalMutationTree, [])
+            .map(boundary => boundary[TREE_NODE].path.join("."))
             .sort()
         expect(boundaryPaths).to.eql(["left"])
-        const left = externalTree.findExactBoundary(chain._externalMutationTree, ["left"])
-        expect(left[EXTERNAL_BOUNDARY].binding).to.be(left)
-        expect(Object.isFrozen(left)).to.be(true)
-        expect(Object.isFrozen(left.path)).to.be(true)
+        const left = externalTree.findBranch(chain._externalMutationTree, ["left"])
+        expect(left[TREE_NODE].entry.binding).to.be(left)
     })
 
     it("treats numeric and string property paths alike", () => {
@@ -134,11 +133,11 @@ describe("context external foundations", () => {
             { values: { 0: {} } },
         )
 
-        expect(externalTree.findExactBoundary(chain._externalMutationTree, ["values", "0"])
-            [EXTERNAL_BOUNDARY])
+        expect(externalTree.findBranch(chain._externalMutationTree, ["values", "0"])
+            [TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(service))
-        expect(externalTree.findExactBoundary(chain._externalMutationTree, ["values", 0])
-            [EXTERNAL_BOUNDARY])
+        expect(externalTree.findBranch(chain._externalMutationTree, ["values", 0])
+            [TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(service))
     })
 
@@ -171,10 +170,10 @@ describe("context external foundations", () => {
             { nested: { service: {} } },
         )
 
-        expect(externalTree.findExactBoundary(chain._externalMutationTree, [
+        expect(externalTree.findBranch(chain._externalMutationTree, [
             "nested",
             "service",
-        ])[EXTERNAL_BOUNDARY])
+        ])[TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(service))
     })
 
@@ -203,7 +202,7 @@ describe("context external foundations", () => {
         const existing = external()
         const original = new ContextChain({ existing }, "original context", execution, { existing: {} })
         const existingEntry = execution._externalIdentities.get(existing)
-        const originalBinding = externalTree.findExactBoundary(original._externalMutationTree, ["existing"])
+        const originalBinding = externalTree.findBranch(original._externalMutationTree, ["existing"])
         const service = external()
         const failure = new Error("cannot discover context tree")
         let placementReads = 0
@@ -254,11 +253,11 @@ describe("context external foundations", () => {
             { service: {} },
         )
 
-        const firstBoundary = externalTree.findExactBoundary(first._externalMutationTree, ["service"])
-        const secondBoundary = externalTree.findExactBoundary(second._externalMutationTree, ["service"])
-        const isolatedBoundary = externalTree.findExactBoundary(isolated._externalMutationTree, ["service"])
-        expect(firstBoundary[EXTERNAL_BOUNDARY]).to.be(secondBoundary[EXTERNAL_BOUNDARY])
-        expect(firstBoundary[EXTERNAL_BOUNDARY]).not.to.be(isolatedBoundary[EXTERNAL_BOUNDARY])
+        const firstBoundary = externalTree.findBranch(first._externalMutationTree, ["service"])
+        const secondBoundary = externalTree.findBranch(second._externalMutationTree, ["service"])
+        const isolatedBoundary = externalTree.findBranch(isolated._externalMutationTree, ["service"])
+        expect(firstBoundary[TREE_NODE].entry).to.be(secondBoundary[TREE_NODE].entry)
+        expect(firstBoundary[TREE_NODE].entry).not.to.be(isolatedBoundary[TREE_NODE].entry)
         expect(firstBoundary).not.to.be(secondBoundary)
         expect(firstBoundary).not.to.be(isolatedBoundary)
     })
@@ -272,7 +271,7 @@ describe("context external foundations", () => {
             execution,
             { apis: { group: { service: {} } } },
         )
-        const rootLocation = externalTree.findExactBoundary(chain._externalMutationTree, [
+        const rootLocation = externalTree.findBranch(chain._externalMutationTree, [
             "apis",
             "group",
             "service",
@@ -282,23 +281,22 @@ describe("context external foundations", () => {
 
         enter(chain, ["apis"], false, entered => {
             expect(entered instanceof ContextChain).to.be(false)
-            const enteredBoundary = externalTree.findExactBoundary(entered._externalMutationTree, [
+            const enteredBoundary = externalTree.findBranch(entered._externalMutationTree, [
                 "group",
                 "service",
             ])
-            expect(enteredBoundary[EXTERNAL_BOUNDARY]).to.be(chain._execution._externalIdentities.get(service))
+            expect(enteredBoundary[TREE_NODE].entry).to.be(chain._execution._externalIdentities.get(service))
             expect(enteredBoundary).to.be(rootLocation)
             enter(entered, ["group"], false, nested => {
                 expect(nested instanceof ContextChain).to.be(false)
-                boundary = externalTree.findExactBoundary(nested._externalMutationTree, ["service"])
+                boundary = externalTree.findBranch(nested._externalMutationTree, ["service"])
                 enteredExecution = nested._execution
             })
         })
 
-        expect(boundary[EXTERNAL_BOUNDARY]).to.be(chain._execution._externalIdentities.get(service))
+        expect(boundary[TREE_NODE].entry).to.be(chain._execution._externalIdentities.get(service))
         expect(boundary).to.be(rootLocation)
-        expect(boundary.context).to.be(chain)
-        expect(boundary.path).to.eql(["apis", "group", "service"])
+        expect(boundary[TREE_NODE].path).to.eql(["apis", "group", "service"])
         expect(enteredExecution).to.be(execution)
     })
 
@@ -310,21 +308,20 @@ describe("context external foundations", () => {
             new Execution(),
             { apis: { service: {} } },
         )
-        const rootBoundary = externalTree.findExactBoundary(chain._externalMutationTree, ["apis", "service"])
+        const rootBoundary = externalTree.findBranch(chain._externalMutationTree, ["apis", "service"])
         let enteredBoundary
 
         enter(chain, ["apis"], true, entered => {
-            enteredBoundary = externalTree.findExactBoundary(entered._externalMutationTree, ["service"])
+            enteredBoundary = externalTree.findBranch(entered._externalMutationTree, ["service"])
             assignPath(entered, ["value"], 2)
         })
 
         expect(enteredBoundary).to.be(rootBoundary)
-        expect(enteredBoundary.context).to.be(chain)
-        expect(enteredBoundary.path).to.be(rootBoundary.path)
+        expect(enteredBoundary[TREE_NODE].path).to.be(rootBoundary[TREE_NODE].path)
         expect(await readPath(chain, ["apis", "value"])).to.be(2)
     })
 
-    it("keeps entry branches exact while boundary and descendant queries clamp native suffixes", () => {
+    it("keeps entry branches exact and selects the enclosing native scope", () => {
         const service = external({ client: { name: "primary" } })
         const chain = new ContextChain(
             { apis: { service } },
@@ -332,14 +329,14 @@ describe("context external foundations", () => {
             new Execution(),
             { apis: { service: {} } },
         )
-        const rootBoundary = externalTree.findExactBoundary(chain._externalMutationTree, ["apis", "service"])
+        const rootBoundary = externalTree.findBranch(chain._externalMutationTree, ["apis", "service"])
         const enteredTree = externalTree.findBranch(chain._externalMutationTree, [
             "apis",
             "service",
             "client",
         ])
 
-        const descendants = externalTree.findDescendantBoundaries(chain._externalMutationTree, [
+        const descendants = externalLocations(chain._externalMutationTree, [
             "apis",
             "service",
             "client",
@@ -347,9 +344,9 @@ describe("context external foundations", () => {
         expect(enteredTree).to.be(undefined)
         expect(externalTree.findBranch(chain._externalMutationTree, ["apis", "service"]))
             .to.be(rootBoundary)
-        expect(externalTree.findBoundary(chain._externalMutationTree, ["apis", "service", "client"]))
+        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "service", "client"]).boundary)
             .to.be(rootBoundary)
-        expect(descendants).to.eql([rootBoundary])
+        expect(descendants).to.eql([])
     })
 
     it("does not discover external state hidden behind Functions or Errors", () => {
@@ -367,9 +364,9 @@ describe("context external foundations", () => {
             new Execution(),
             { callable: { service: {} }, failure: { service: {} }, visible: {} },
         )
-        const boundaries = externalTree.findDescendantBoundaries(chain._externalMutationTree, [])
+        const boundaries = externalLocations(chain._externalMutationTree, [])
 
-        expect(boundaries.map(boundary => boundary.path)).to.eql([["visible"]])
+        expect(boundaries.map(boundary => boundary[TREE_NODE].path)).to.eql([["visible"]])
     })
 
     it("keeps the static tree stable through managed COW and Array remapping", () => {
@@ -380,14 +377,14 @@ describe("context external foundations", () => {
             new Execution(),
             { branch: { firstService: {} } },
         )
-        const objectBoundary = externalTree.findExactBoundary(objectChain._externalMutationTree, ["branch", "firstService"])
+        const objectBoundary = externalTree.findBranch(objectChain._externalMutationTree, ["branch", "firstService"])
         const retainedBranch = lookupPath(objectChain, ["branch"])
 
         assignPath(objectChain, ["branch", "value"], 2)
 
         expect(readPath(objectChain, ["branch", "value"])).to.be(2)
         expect(retainedBranch.value).to.be(1)
-        expect(externalTree.findExactBoundary(objectChain._externalMutationTree, [
+        expect(externalTree.findBranch(objectChain._externalMutationTree, [
             "branch",
             "firstService",
         ])).to.be(objectBoundary)
@@ -399,21 +396,13 @@ describe("context external foundations", () => {
             new Execution(),
             { values: { 0: {} } },
         )
-        const arrayBoundary = externalTree.findExactBoundary(arrayChain._externalMutationTree, ["values", "0"])
+        const arrayBoundary = externalTree.findBranch(arrayChain._externalMutationTree, ["values", "0"])
 
-        const result = run(
-            arrayChain,
-            ["values"],
-            "push",
-            [1],
-            { mutationScopeDepth: 1 },
-        )
-
-        expect(result).to.be(2)
+        expect(assignPath(arrayChain, ["values", 1], 1)).to.be(undefined)
         expect(readPath(arrayChain, ["values", "length"])).to.be(2)
         expect(readPath(arrayChain, ["values", "0"])).to.be(secondService)
         expect(readPath(arrayChain, ["values", "1"])).to.be(1)
-        expect(externalTree.findExactBoundary(arrayChain._externalMutationTree, [
+        expect(externalTree.findBranch(arrayChain._externalMutationTree, [
             "values",
             "0",
         ])).to.be(arrayBoundary)
@@ -530,7 +519,7 @@ describe("direct context authority discovery", () => {
                     : { indirect: position === "terminal" ? {} : { resource: {} }, direct: {} }
                 const chain = new runtime.ContextChain(root, ctx, request)
                 const tree = chain._externalMutationTree
-                assert.deepEqual(externalTree.findDescendantBoundaries(tree, []).map(record => record.path),
+                assert.deepEqual(externalLocations(tree, []).map(record => record[TREE_NODE].path),
                     position === "root" ? [] : [["direct"]])
                 assert.equal(ctx.execution._externalIdentities.has(resource), false)
                 if (kind.endsWith("thenable")) assert.equal(source.value.subscriptions, 1)
@@ -562,7 +551,7 @@ describe("direct context authority discovery", () => {
                     const subscriptions = source.value.subscriptions
                     const request = Object.fromEntries(entries.map(([key]) => [key, { resource: {} }]))
                     const chain = new runtime.ContextChain(root, ctx, request)
-                    assert.deepEqual(externalTree.findDescendantBoundaries(chain._externalMutationTree, []).map(record => record.path),
+                    assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path),
                         [["direct", "resource"]])
                     if (kind.endsWith("thenable"))
                         assert.equal(source.value.subscriptions, alreadyImported ? subscriptions : 1)
@@ -570,7 +559,7 @@ describe("direct context authority discovery", () => {
                     assert.equal(await runtime.lookupPath(chain, ["indirect"], ctx), delivered)
                     assert.equal(root.indirect, source.value)
                     assert.equal(ctx.execution._externalIdentities.get(resource).binding,
-                        externalTree.findExactBoundary(chain._externalMutationTree, ["direct", "resource"]))
+                        externalTree.findBranch(chain._externalMutationTree, ["direct", "resource"]))
                 })
             }
         }
@@ -590,7 +579,7 @@ describe("direct context authority discovery", () => {
             const failure = await runtime.lookupPath(chain, ["source"], ctx)
             assert.equal(failure.cause, cause)
             assert.equal(failure.errorContext, ctx.errorContext)
-            assert.deepEqual(externalTree.findDescendantBoundaries(chain._externalMutationTree, []).map(record => record.path), [["direct"]])
+            assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["direct"]])
         })
     }
 
@@ -608,7 +597,7 @@ describe("direct context authority discovery", () => {
         const chain = new runtime.ContextChain(root, ctx, { indirect: {}, direct: {} })
         assert.equal(probes, 1)
         assert.equal(subscriptions, 1)
-        assert.deepEqual(externalTree.findDescendantBoundaries(chain._externalMutationTree, []).map(record => record.path), [["direct"]])
+        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["direct"]])
     })
 
     it("does not search descendants of a managed endpoint", () => {
@@ -625,7 +614,7 @@ describe("direct context authority discovery", () => {
         const db = external(), ignored = external(), nested = external()
         const root = { api: { db, ignored, managed: { nested } }, pending: new OrderedThenable() }
         const chain = new runtime.ContextChain(root, ctx, { api: { db: {}, managed: {} }, pending: {} })
-        assert.deepEqual(externalTree.findDescendantBoundaries(chain._externalMutationTree, []).map(record => record.path), [["api", "db"]])
+        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["api", "db"]])
         assert.equal(ctx.execution._externalIdentities.has(ignored), false)
         assert.equal(ctx.execution._externalIdentities.has(nested), false)
     })
@@ -634,7 +623,7 @@ describe("direct context authority discovery", () => {
         const ctx = { execution: new runtime.Execution(), errorContext: "explicit routes" }
         const root = { api: { first: external(), group: { second: external() }, managed: { n: 1 } } }
         const chain = new runtime.ContextChain(root, ctx, { api: { first: {}, group: { second: {} }, managed: {} } })
-        assert.deepEqual(externalTree.findDescendantBoundaries(chain._externalMutationTree, []).map(record => record.path), [
+        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [
             ["api", "first"], ["api", "group", "second"],
         ])
         assert.equal(externalTree.findBranch(chain._externalMutationTree, ["api", "managed"]), undefined)

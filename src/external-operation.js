@@ -1,140 +1,104 @@
 import * as errors from "./error.js"
-import { EXTERNAL_BOUNDARY } from "./external-mutation-tree.js"
-import { continueOperation, runInternalStep } from "./internal-step.js"
+import { TREE_NODE, bindingError } from "./external-mutation-tree.js"
+import { continueOperation } from "./internal-step.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 
-function locationFailure(operationContext) {
-    return errors.validationError(
-        "External access requires its registered context location",
-        operationContext,
-        errors.ERROR_KIND.ExternalLocationConflict,
-    )
+function capabilityError(operationContext) {
+    return errors.validationError("Mutable external identities cannot leave their context location",
+        operationContext, errors.ERROR_KIND.ExternalCapabilityEscape)
 }
 
-// An absent registration permits observation-only access. A conflicting
-// registration remains a failure even though its tree leaf has no authority.
-function validateExternalAccess(identity, boundary, operationContext) {
-    return runInternalStep(operationContext, () => {
-        const entry = operationContext.execution._externalIdentities.get(identity)
-        if (boundary && entry !== boundary[EXTERNAL_BOUNDARY]) {
-            throw new Error("External identity changed at its fixed context location")
-        }
-        if (boundary) return validateExternalBinding(boundary)
-        if (!entry) return null
-        if (errors.isPoisonError(entry.binding)) return entry.binding
-        return locationFailure(operationContext)
-    })
+function externalLocationError(operationContext) {
+    return errors.validationError("External access requires its registered context location",
+        operationContext, errors.ERROR_KIND.ExternalLocationConflict)
 }
 
-// A committed entry binds this location or holds its permanent conflict poison.
-function validateExternalBinding(boundary) {
-    const { binding } = boundary[EXTERNAL_BOUNDARY]
-    return binding === boundary ? null : binding
+function validateExternalAccess(identity, node, operationContext) {
+    const entry = operationContext.execution._externalIdentities.get(identity)
+    if (node && entry !== node[TREE_NODE].entry)
+        throw new Error("External identity changed at its fixed context location")
+    if (node) return bindingError(node)
+    if (!entry) return null
+    return errors.isPoisonError(entry.binding) ? entry.binding : externalLocationError(operationContext)
 }
 
-// Observations wait for the preceding mutation, never for each other.
-// The next mutation seals this group and waits for all its observations.
-// Keep an empty group joinable until sealing; its Promise carries no poison.
-class ReadGroup {
-    pending = 0
-    sealed = false
-    constructor() {
-        const { promise, resolve } = Promise.withResolvers()
-        this.promise = promise
-        this.resolve = resolve
-    }
-    finish() {
-        this.pending--
-        this.complete()
-    }
-    seal() {
-        this.sealed = true
-        this.complete()
-    }
-    complete() {
-        if (!this.sealed || this.pending !== 0) return
-        this.resolve()
-        this.resolve = undefined
-    }
+// An entry's outside reservation covers this private view. The same conflict
+// algorithm runs inside it, without joining outside work waiting for the entry.
+function createReservationView(root) {
+    return { root, frontiers: new WeakMap(), effects: new Set() }
 }
 
-function reservePhase(entry, exclusive) {
-    const cursor = entry.phase ??= {
-        exclusive: Promise.resolve(null),
-        readers: undefined,
+function frontier(node, view) {
+    const record = node[TREE_NODE]
+    let current = view ? view.frontiers.get(node) : record.frontier
+    if (!current) {
+        current = { reads: new Set(), writes: new Set(), subtreeReads: new Set(), subtreeWrites: new Set() }
+        if (view) view.frontiers.set(node, current)
+        else record.frontier = current
     }
-    const predecessor = cursor.exclusive
-    if (!exclusive) {
-        const readers = cursor.readers ??= new ReadGroup()
-        readers.pending++
-        // Observation failures belong to their result. Completion only drains
-        // the group, ignoring failure so it cannot change phase poison.
-        return { predecessor, complete: () => readers.finish() }
-    }
-
-    const { promise, resolve } = Promise.withResolvers()
-    const readers = cursor.readers
-    cursor.exclusive = promise
-    cursor.readers = undefined
-    readers?.seal()
-    return {
-        predecessor,
-        drain: readers?.promise,
-        complete: resolve,
-    }
+    return current
 }
 
-class ExternalOperationContext {
-    // The caller has selected one static boundary and passed earlier managed
-    // gates. Reserve before waiting for predecessors, inputs, or native keys.
-    static reserve(operationContext, boundary, exclusive = false, repair = false) {
-        return runInternalStep(operationContext, () => {
-            const failure = validateExternalBinding(boundary)
-            return failure ?? new ExternalOperationContext(
-                operationContext, boundary, exclusive || repair, repair,
-            )
-        })
-    }
-
-    constructor(operationContext, boundary, exclusive, repair) {
+// One reservation at issuance orders required effects even when managed path
+// capture is pending. Its completion Promise is allocated only for a waiter.
+class ExternalEffect {
+    constructor(node, mutation, view, operationContext) {
+        this.view = view
         this.operationContext = operationContext
-        this.boundary = boundary
-        this.repair = repair
-        const { predecessor, drain, complete } = reservePhase(boundary[EXTERNAL_BOUNDARY], exclusive)
-        this.completePhase = complete
-        // The successor is already installed. Every reader in the captured group
-        // waits for this predecessor, so waiting for predecessor then drain is sufficient.
-        // Ordinary continuations preserve FIFO even for settled native Promises.
-        this.ready = continueOperation(predecessor, operationContext, poison =>
-            continueOperation(drain, operationContext, () => {
-                this.predecessorPoison = poison
-            }),
-        )
+        view?.effects.add(this)
+        this.node = node
+        const predecessors = new Set()
+        const selected = frontier(node, this.view)
+        for (const work of selected.subtreeWrites) predecessors.add(work)
+        if (mutation) for (const work of selected.subtreeReads) predecessors.add(work)
+        for (let parent = node === this.view?.root ? undefined : node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
+            const state = frontier(parent, this.view)
+            for (const work of state.writes) predecessors.add(work)
+            if (mutation) for (const work of state.reads) predecessors.add(work)
+            if (parent === this.view?.root) break
+        }
+        // A later mutation transitively covers same-scope/descendant work.
+        // Removing frontier membership does not finish that work's lifetime.
+        if (mutation) for (const work of predecessors)
+            if (work.node[TREE_NODE].path.length >= node[TREE_NODE].path.length) work.removeMemberships()
+        const memberships = this.memberships = [mutation ? selected.writes : selected.reads]
+        for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
+            const state = frontier(ancestor, this.view)
+            memberships.push(mutation ? state.subtreeWrites : state.subtreeReads)
+            if (ancestor === this.view?.root) break
+        }
+        for (const membership of memberships) membership.add(this)
+        const wait = predecessors.size === 1 ? predecessors.values().next().value.promise :
+            predecessors.size ? Promise.all([...predecessors].map(work => work.promise)) : undefined
+        this.readiness = continueOperation(wait, operationContext, () => { this.readiness = undefined })
     }
 
-    // Call after readiness and again before host access if preparation waited.
-    prepare() {
-        return runInternalStep(this.operationContext, () =>
-            validateExternalBinding(this.boundary) ??
-            (this.repair ? null : this.predecessorPoison),
-        )
+    get promise() {
+        return (this.completion ??= Promise.withResolvers()).promise
     }
 
-    complete(failure = null) {
-        return runInternalStep(this.operationContext, () => {
-            if (errors.isFatalError(failure)) throw failure
-            if (!this.completePhase) return
-            // A binding conflict cannot change phase poison. A blocked mutation
-            // forwards its exact predecessor; repair replaces it deliberately.
-            const poison = errors.isPoisonError(this.boundary[EXTERNAL_BOUNDARY].binding)
-                ? this.predecessorPoison
-                : this.repair ? failure : this.predecessorPoison ?? failure
-            this.completePhase(poison)
-            this.completePhase = undefined
-            this.boundary = undefined
-            this.predecessorPoison = undefined
-            this.ready = undefined
-        })
+    removeMemberships() {
+        for (const membership of this.memberships ?? []) membership.delete(this)
+        this.memberships = undefined
+    }
+
+    complete() {
+        if (!this.node) return
+        // A failed managed prefix can finish before native access. Keep its
+        // predecessor chain intact for later reservations that captured us.
+        const operationContext = this.operationContext
+        markPromiseHandled(continueOperation(this.readiness, operationContext, () => {
+            this.removeMemberships()
+            this.view?.effects.delete(this)
+            this.completion?.resolve()
+            this.completion = this.view = this.node = this.operationContext = undefined
+        }), operationContext)
     }
 }
 
-export { ExternalOperationContext, validateExternalAccess, validateExternalBinding }
+function pendingEffects(view) {
+    if (view.effects.size === 1) return view.effects.values().next().value.promise
+    if (view.effects.size) return Promise.all([...view.effects].map(work => work.promise))
+}
+
+export { capabilityError, createReservationView, externalLocationError, ExternalEffect, pendingEffects, validateExternalAccess }

@@ -39,7 +39,7 @@ console.log(await cascada.export(chain, [], operationContext))
 
 ## API reference
 
-The mutation, external scope, entry, and repair descriptions below specify the accepted architecture. Managed rollback and hierarchical conformance are pending in [Phase 9F-A](docs/first-principles-conformance-plan.md#phase-9f-a-scope-coordination-and-managed-rollback).
+Managed mutations retain their pre-operation value for repair. External scopes order overlapping work hierarchically; their repair clears poison without rolling back native effects.
 
 ```js
 import {
@@ -175,7 +175,9 @@ Assigns `value` to the selected property, creating a missing final property when
 needed. An empty path replaces the root. Assignment uses copy-on-write whenever
 the current logical value must be preserved for another owner.
 `mutationScopeDepth` gives the depth of the compiler-selected `!` scope; by
-default, only the target is selected.
+default, only the target is selected in managed storage. Native property writes
+use the deepest registered scope covering the containing receiver, capped by
+the selected `!` prefix. The old final value does not select a narrower scope.
 
 Successful issuance returns `undefined`, including when traversal must resume
 after a Promise. A failure found synchronously is published at the failed
@@ -185,8 +187,8 @@ to the graph.
 ### `deletePath(chain, path, operationContext, mutationScopeDepth = path.length)`
 
 Deletes the selected property. A missing final property is a no-op, deleting an
-Array index preserves its length, and an empty path replaces the root with
-`null`. `mutationScopeDepth` has the same meaning as for `assignPath`.
+Array index preserves its length. An empty path on an entered Chain deletes
+its selected placement; on an ordinary Chain it replaces the root with `null`. `mutationScopeDepth` has the same meaning as for `assignPath`.
 
 Its return behavior matches `assignPath`: success and suspended issuance return
 `undefined`, while a synchronous failed mutation publishes and returns its
@@ -352,3 +354,8 @@ mutate only their isolated receiver graph. Every explicit argument is exported.
 A direct result Promise extends the managed invocation, while a Promise nested
 inside a synchronous result is ordinary result data and must not later expose
 the receiver or an argument identity.
+
+A managed Array containing registered mutable external resources cannot be a
+mutation scope, including for `push`. Ordinary index assignment and `length`
+growth remain valid when they preserve registered locations: their placement
+scope differs from an explicit bang on the whole Array.

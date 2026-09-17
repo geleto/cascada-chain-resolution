@@ -119,7 +119,7 @@ describe("placement versions across representation boundaries", () => {
 
     for (const method of ["pop", "shift"]) {
         for (const indexed of [false, true]) {
-            it(`failed ${method} replay leaves an alias's pending version usable, indexed=${indexed}`, async () => {
+            it(`${method} leaves an alias's pending version usable, indexed=${indexed}`, async () => {
                 const ctx = context()
                 const pending = Promise.withResolvers()
                 const failure = new Error("Array deletion")
@@ -132,7 +132,8 @@ describe("placement versions across representation boundaries", () => {
                 const retained = runtime.lookupPath(chain, ["right", "0"], ctx)
                 verifyRefCounts(ctx, chain._state)
                 pending.resolve(4)
-                assert.equal((await work).cause, failure)
+                assert.equal(await work, 4)
+                assert.deepEqual(runtime.export(chain, ["left"], ctx), [])
                 assert.equal(await retained, 4)
                 assert.equal(ctx.execution.fatalError, null)
                 verifyRefCounts(ctx, chain._state)

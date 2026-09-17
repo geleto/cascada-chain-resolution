@@ -252,12 +252,12 @@ describe("complete publication failures", () => {
                         return Reflect.set(target, key, value, receiver)
                     },
                 })
-                const chain = new runtime.Chain(source, ctx)
+                const chain = new runtime.Chain(new Proxy({ items: source }, { set() { throw publication } }), ctx)
                 buildRefIndex(source, ctx)
-                const work = runtime.run(chain, [], method, [], ctx, { mutationScopeDepth: 0 })
+                const work = runtime.run(chain, ["items"], method, [], ctx, { mutationScopeDepth: 1 })
                 const receiverFailure = runtime.lookupPath(chain, [], ctx)
                 assert.equal(receiverFailure.cause, publication)
-                assert.equal(receiverFailure.kind, runtime.ERROR_KIND.InvalidArrayOperation)
+                assert.equal(receiverFailure.kind, runtime.ERROR_KIND.PropertyMutationFailed)
                 if (pending) {
                     assert(work instanceof Promise)
                     later.reject(original)

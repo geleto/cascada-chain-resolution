@@ -11,6 +11,7 @@ import {
     importValue,
     lookupPath,
     readPath,
+    runtime,
     managedStateClass,
     thrownBy,
     verifyRefCounts,
@@ -320,7 +321,6 @@ describe("managed class copy-on-write", () => {
         const source = Object.create(null)
         source.value = 1
         new Chain(source)
-        Object.setPrototypeOf(source, Object.prototype)
         importValue(source, "null prototype")
         const chain = new Chain(source)
 
@@ -329,7 +329,7 @@ describe("managed class copy-on-write", () => {
 
         expect(copy).not.to.be(source)
         expect(Object.getPrototypeOf(copy)).to.be(null)
-        expect(Object.getPrototypeOf(source)).to.be(Object.prototype)
+        expect(Object.getPrototypeOf(source)).to.be(null)
         expect(source.value).to.be(1)
         expect(copy.value).to.be(2)
     })
@@ -396,9 +396,7 @@ describe("managed class copy-on-write", () => {
         const failure = chain._state.value
 
         expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Cannot access property through missing or primitive value",
-        )
+        expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(source.value).to.be(1)
     })
 
@@ -421,9 +419,7 @@ describe("managed class copy-on-write", () => {
 
         expect(copy).not.to.be(root)
         expect(copy.branch instanceof Error).to.be(true)
-        expect(copy.branch.message).to.be(
-            "Cannot access property through missing or primitive value",
-        )
+        expect(copy.branch.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(copy.sibling).to.be(true)
         expect(source.value).to.be(1)
         verifyRefCounts(root, copy)
@@ -449,9 +445,7 @@ describe("managed class copy-on-write", () => {
         const failure = chain._state.value.branch
 
         expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Cannot access property through missing or primitive value",
-        )
+        expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(source.value).to.be(1)
     })
 
@@ -513,9 +507,7 @@ describe("managed class copy-on-write", () => {
         const failure = chain._state.value
 
         expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be(
-            "Cannot access property through missing or primitive value",
-        )
+        expect(failure.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(source.value).to.be(1)
     })
 

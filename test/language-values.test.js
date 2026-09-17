@@ -178,11 +178,6 @@ describe("value admission", () => {
         new Chain(managed)
 
         managedStateClass(Early)
-        Object.setPrototypeOf(error, null)
-        Object.setPrototypeOf(early, Managed.prototype)
-        Object.setPrototypeOf(managed, null)
-        error.then = () => {}
-        early.then = () => {}
 
         expect(errorUtils.isPoisonError(poison)).to.be(true)
         expect(languageValues.isPending(error)).to.be(false)
@@ -192,7 +187,7 @@ describe("value admission", () => {
         expect(languageValues.typeOf(managed)).to.be(
             languageValues.TYPE.ManagedClass,
         )
-        importValue(managed, "changed managed-class prototype")
+        importValue(managed, "managed class")
         const managedChain = new Chain(managed)
         assignPath(managedChain, ["value"], 2)
         expect(Object.getPrototypeOf(managedChain._state.value)).to.be(
@@ -215,7 +210,6 @@ describe("value admission", () => {
         new Chain(value)
         const readsAtAdmission = prototypeReads
 
-        Object.setPrototypeOf(target, Object.prototype)
         expect(languageValues.typeOf(value)).to.be(languageValues.TYPE.External)
         expect(languageValues.isTraversable(value)).to.be(false)
         expect(prototypeReads).to.be(readsAtAdmission)

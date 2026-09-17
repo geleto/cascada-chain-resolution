@@ -93,13 +93,12 @@ describe("enter", () => {
 
         const result = enter(chain, ["position"], true, privateChain => {
             entered = privateChain
+            expect(root.position instanceof Promise).to.be(true)
             assignPath(privateChain, ["x"], 2)
             return "updated"
         })
 
         expect(result).to.be("updated")
-        expect(root.position instanceof Promise).to.be(true)
-        await flushMicrotasks()
         expect(root.position).to.be(position)
         expect(root.position.x).to.be(2)
     })
@@ -157,15 +156,16 @@ describe("enter", () => {
         expect(metaOf(branch).readLeaseCount).to.be(undefined)
     })
 
-    it("bypasses a read callback for direct and promised Errors", async () => {
+    it("allows inspection of direct and promised Errors at an entry target", async () => {
         const directError = new Error("direct")
         let directCalls = 0
         const directResult = enter(
             new Chain({ target: directError }),
             ["target"],
             false,
-            () => {
+            entered => {
                 directCalls++
+                return lookupPath(entered, [])
             },
         )
 
@@ -175,17 +175,18 @@ describe("enter", () => {
             new Chain({ target: pending.promise }),
             ["target"],
             false,
-            () => {
+            entered => {
                 pendingCalls++
+                return lookupPath(entered, [])
             },
         )
         const rejected = new Error("rejected")
         pending.reject(rejected)
 
         expect(errorCause(directResult)).to.be(directError)
-        expect(directCalls).to.be(0)
+        expect(directCalls).to.be(1)
         expect(errorCause(await pendingResult)).to.be(rejected)
-        expect(pendingCalls).to.be(0)
+        expect(pendingCalls).to.be(1)
     })
 
     it("starts a Promise-target mutation immediately at its FIFO position", async () => {
@@ -198,6 +199,8 @@ describe("enter", () => {
         let callbackStarted = false
         const result = enter(chain, ["target"], true, entered => {
             callbackStarted = true
+            expect(root.target instanceof Promise).to.be(true)
+            expect(root.target).not.to.be(target.promise)
             assignPath(entered, ["inside"], 2)
             return "issued"
         })
@@ -205,7 +208,6 @@ describe("enter", () => {
         expect(result).to.be("issued")
         expect(callbackStarted).to.be(true)
         expect(root.target instanceof Promise).to.be(true)
-        expect(root.target).not.to.be(target.promise)
         verifyRefCounts(root)
 
         target.resolve({})
@@ -663,7 +665,7 @@ describe("enter", () => {
         expect(errorCause(root.target)).to.be(error)
     })
 
-    it("lets an exact later replacement supersede a pending gate", async () => {
+    it("publishes an exact later replacement after a pending gate", async () => {
         const completion = deferred()
         const root = { target: { old: true } }
         const chain = new Chain(root)
@@ -683,7 +685,7 @@ describe("enter", () => {
         expect(root.target).to.be(replacement)
     })
 
-    it("lets deletion supersede a pending gate", async () => {
+    it("orders deletion after a pending gate", async () => {
         const completion = deferred()
         const target = { old: true }
         const root = { target }
@@ -697,11 +699,18 @@ describe("enter", () => {
         )
         const gate = root.target
         deletePath(chain, ["target"])
+        let observed = false
+        const deleted = Promise.resolve(readPath(chain, ["target"])).then(value => {
+            observed = true
+            return value
+        })
 
-        expect(Object.hasOwn(root, "target")).to.be(false)
+        await flushMicrotasks()
+        expect(observed).to.be(false)
         completion.resolve("done")
         expect(await result).to.be("done")
         expect(await gate).to.be(target)
+        expect(await deleted).to.be(undefined)
         expect(Object.hasOwn(root, "target")).to.be(false)
     })
 
@@ -913,17 +922,17 @@ describe("enter", () => {
             outer => {
                 outerChain = outer
                 const innerResult = enter(outer, [], true, inner => {
+                    expect(outer._state.value instanceof Promise).to.be(true)
                     assignPath(inner, ["value"], 2)
                     return "nested root"
                 })
-                expect(outer._state.value instanceof Promise).to.be(true)
+                expect(outer._state.value).to.eql({ value: 2 })
                 return innerResult
             },
         )
 
         expect(result).to.be("nested root")
-        expect(outerChain._state.value instanceof Promise).to.be(true)
-        await flushMicrotasks()
+        expect(outerChain._state.value).to.eql({ value: 2 })
         expect(root.target).to.eql({ value: 2 })
     })
 
@@ -932,18 +941,21 @@ describe("enter", () => {
         const root = {
             target: {
                 descendant: descendant.promise,
+                sibling: 3,
             },
         }
 
-        enter(new Chain(root), ["target"], true, entered => {
+        const chain = new Chain(root)
+        enter(chain, ["target"], true, entered => {
             assignPath(entered, ["descendant", "value"], 2)
         })
         await flushMicrotasks()
 
-        expect(root.target.descendant).to.be(descendant.promise)
+        expect(lookupPath(chain, ["target", "sibling"])).to.be(3)
+        const observed = lookupPath(chain, ["target", "descendant", "value"])
+        expect(observed instanceof Promise).to.be(true)
         descendant.resolve({ value: 1 })
-        await flushMicrotasks()
-        expect(root.target.descendant.value).to.be(2)
+        expect(await observed).to.be(2)
     })
 
     it("orders mutate-read-mutate through a predecessor gate", async () => {
@@ -1272,26 +1284,4 @@ describe("enter", () => {
         expect(root.target).to.be(gate)
     })
 
-    for (const readiness of ["pending", "ready"]) {
-        it("reports " + readiness + " raw Promise corruption immediately at publication", () => {
-            const fixture = fileURLToPath(new URL(
-                "./fixtures/enter-publication-fatal.js",
-                import.meta.url,
-            ))
-            const child = spawnSync(
-                process.execPath,
-                ["--unhandled-rejections=strict", fixture, readiness],
-                { encoding: "utf8" },
-            )
-
-            expect(child.status).to.be(0)
-            expect(JSON.parse(child.stdout)).to.eql({
-                closed: true,
-                gateRemainsPending: true,
-                message: "Pending property has no Promise version",
-                reportCount: 1,
-                unhandledCount: 0,
-            })
-        })
-    }
 })

@@ -24,6 +24,33 @@ import {
 } from "./support.js"
 
 describe("managed invocation", () => {
+    for (const pending of [false, true]) {
+        it(`retains result graph Errors when receiver validation fails, pending=${pending}`, async () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: {} }, hold = Promise.withResolvers()
+            const receiverError = new Error("receiver"), first = new Error("first result"), second = new Error("second result")
+            const never = new Promise(() => {})
+            const chain = new runtime.Chain(runtime.import({ n: 1, change() {
+                const complete = () => {
+                    this.n = receiverError
+                    return { first, nested: [first, second], independent: never }
+                }
+                return pending ? hold.promise.then(complete) : complete()
+            } }, ctx), ctx)
+            const result = runtime.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 })
+            assert.equal(result instanceof Promise, pending)
+            hold.resolve()
+            const failure = await result
+            assert.equal(failure.kind, runtime.ERROR_KIND.Multiple)
+            assert.deepEqual(new Set(failure.errors.map(error => error.cause)), new Set([receiverError, first, second]))
+            const scope = runtime.getErrors(chain, [], ctx)
+            assert.equal(scope.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
+            assert.equal(scope.cause, receiverError)
+            assert.equal(runtime.repairPath(chain, [], ctx), undefined)
+            assert.equal(runtime.lookupPath(chain, ["n"], ctx), 1)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
     it("uses the same managed boundary for record methods", () => {
         const value = {
             count: 1,
@@ -38,8 +65,9 @@ describe("managed invocation", () => {
         const chain = new Chain(value)
 
         expect(run(chain, [], "increment", [], { mutationScopeDepth: 0 })).to.be(2)
-        expect(chain._state.value).to.be(value)
-        expect(value.count).to.be(2)
+        expect(chain._state.value).not.to.be(value)
+        expect(chain._state.value.count).to.be(2)
+        expect(value.count).to.be(1)
     })
 
     it("isolates a protected record mutation", () => {
@@ -461,10 +489,11 @@ describe("managed invocation", () => {
 
         const result = run(chain, [], "add", [2], { mutationScopeDepth: 0 })
 
-        expect(chain._state.value).to.be(source)
-        expect(result).to.be(source)
-        expect(source.x).to.be(3)
-        expect(metaOf(source).shared).to.be(true)
+        expect(chain._state.value).not.to.be(source)
+        expect(result).to.be(chain._state.value)
+        expect(result.x).to.be(3)
+        expect(source.x).to.be(1)
+        expect(metaOf(result).shared).to.be(true)
     })
 
     it("copies a protected receiver before direct class mutation", () => {
@@ -509,7 +538,7 @@ describe("managed invocation", () => {
         expect(metaOf(result).shared).to.be(true)
     })
 
-    it("copies only a protected receiver descendant", () => {
+    it("isolates the complete receiver including protected descendants", () => {
         class Line {
             move() {
                 this.start.x++
@@ -524,9 +553,9 @@ describe("managed invocation", () => {
 
         run(chain, [], "move", [], { mutationScopeDepth: 0 })
 
-        expect(chain._state.value).to.be(line)
-        expect(line.start).not.to.be(start)
-        expect(line.start.x).to.be(2)
+        expect(chain._state.value).not.to.be(line)
+        expect(chain._state.value.start).not.to.be(start)
+        expect(chain._state.value.start.x).to.be(2)
         expect(start.x).to.be(1)
     })
 
@@ -565,8 +594,8 @@ describe("managed invocation", () => {
 
         run(chain, [], "setStart", [options], { mutationScopeDepth: 0 })
 
-        expect(line.start).not.to.be(point)
-        expect(line.start).to.eql(point)
+        expect(chain._state.value.start).not.to.be(point)
+        expect(chain._state.value.start).to.eql(point)
         expect(metaOf(point).readLeaseCount).to.be(undefined)
     })
 
@@ -610,8 +639,8 @@ describe("managed invocation", () => {
         pending.resolve(3)
         await result
 
-        expect(holder.value).not.to.be(argument)
-        expect(holder.value.value).to.be(3)
+        expect(chain._state.value.value).not.to.be(argument)
+        expect(chain._state.value.value.value).to.be(3)
         expect(argument.value).to.be(pending.promise)
     })
 
@@ -631,10 +660,10 @@ describe("managed invocation", () => {
 
         run(chain, [], "move", [options], { mutationScopeDepth: 0 })
 
-        expect(line.same).to.be(false)
-        expect(line.start).to.be(point)
-        expect(line.start.x).to.be(2)
-        expect(point.x).to.be(2)
+        expect(chain._state.value.same).to.be(false)
+        expect(chain._state.value.start).not.to.be(point)
+        expect(chain._state.value.start.x).to.be(2)
+        expect(point.x).to.be(1)
         expect(options.point).to.be(point)
     })
 
@@ -769,7 +798,7 @@ describe("managed invocation", () => {
         expect(result instanceof Promise).to.be(true)
         expect(validChain._state.value instanceof Promise).to.be(true)
         expect(await result).to.be(2)
-        expect(validChain._state.value).to.be(valid)
+        expect(validChain._state.value).not.to.be(valid)
         expect(validChain._state.value.value).to.be(2)
     })
 
@@ -794,7 +823,7 @@ describe("managed invocation", () => {
             { mutationScopeDepth: 0 },
         ))).to.be(resultError)
         expect(chain._state.value.cause).to.be(resultError)
-        expect(value.value).to.be(2)
+        expect(value.value).to.be(1)
     })
 
     it("attributes an Error added inside an admitted mutation result", () => {
@@ -827,8 +856,8 @@ describe("managed invocation", () => {
         expect(failure.cause).to.be(cause)
         expect(failure.errorContext).to.be("test run")
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvocationFailed)
-        expect(chain._state.value).to.be(value)
-        expect(Object.hasOwn(value, "result")).to.be(false)
+        expect(chain._state.value).not.to.be(value)
+        expect(Object.hasOwn(chain._state.value, "result")).to.be(false)
     })
 
     it("keeps a direct mutation Promise private through fulfillment", async () => {
@@ -855,7 +884,7 @@ describe("managed invocation", () => {
 
         expect(errorCause(await result)).to.be(resultError)
         expect(chain._state.value.cause).to.be(resultError)
-        expect(value.count).to.be(2)
+        expect(value.count).to.be(1)
     })
 
     it("poisons a direct mutation Promise rejection without making it fatal", async () => {
@@ -1074,13 +1103,13 @@ describe("managed invocation", () => {
     it("poisons native then descriptor failure at receiver validation", () => {
         const execution = useTestExecution()
         const cause = new Error("then descriptor failed")
-        const child = new Proxy({ fail: false }, {
+        const traps = {
             getOwnPropertyDescriptor(target, key) {
                 if (target.fail && key === "then") throw cause
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
-        })
-        const chain = new Chain({ child, change() { this.child.fail = true } })
+        }
+        const chain = new Chain({ child: { fail: false }, change() { this.child = new Proxy(this.child, traps); this.child.fail = true } })
         const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
         expect(failure.cause).to.be(cause)
@@ -1091,20 +1120,21 @@ describe("managed invocation", () => {
     it("poisons receiver validation reflection failures", () => {
         const failure = new Error("receiver reflection failed")
         const target = { fail: false }
-        const state = new Proxy(target, {
+        const traps = {
             ownKeys(value) {
                 if (value.fail) throw failure
                 return Reflect.ownKeys(value)
             },
-        })
+        }
         class Value {
             change() {
+                this.state = new Proxy(this.state, traps)
                 this.state.fail = true
             }
         }
         managedStateClass(Value)
         const value = new Value()
-        value.state = state
+        value.state = target
         const chain = new Chain(value)
 
         const validationFailure = run(
@@ -1184,7 +1214,7 @@ describe("managed invocation", () => {
 
         const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
-        expect(result).to.be(holder.point)
+        expect(result).to.be(chain._state.value.point)
         expect(result.x).to.be(2)
         run(chain, [], "change", [], { mutationScopeDepth: 0 })
         expect(result.x).to.be(2)
@@ -1235,7 +1265,7 @@ describe("managed invocation", () => {
 
         const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
-        expect(result.me).to.be(value)
+        expect(result.me).to.be(chain._state.value)
         expect(result.me instanceof Value).to.be(true)
         expect(result.me.x).to.be(2)
         run(chain, [], "change", [], { mutationScopeDepth: 0 })
@@ -1289,8 +1319,9 @@ describe("managed invocation", () => {
             [],
             { mutationScopeDepth: 0 },
         ))).to.be(failure)
-        expect(chain._state.value).to.be(value)
-        expect(value.value).to.be(2)
+        expect(chain._state.value).not.to.be(value)
+        expect(chain._state.value.value).to.be(2)
+        expect(value.value).to.be(1)
     })
 
     it("awaits direct Promise results and retains nested Promise results", async () => {
@@ -1336,9 +1367,9 @@ describe("managed invocation", () => {
         const chain = new Chain(holder)
         run(chain, [], "append", [], { mutationScopeDepth: 0 })
 
-        expect(holder.native).to.be(true)
-        expect(Array.isArray(holder.items)).to.be(true)
-        expect(holder.items).to.eql([1, , 3, 4])
+        expect(chain._state.value.native).to.be(true)
+        expect(Array.isArray(chain._state.value.items)).to.be(true)
+        expect(chain._state.value.items).to.eql([1, , 3, 4])
         expect(run(new Chain(view), [], "join", [","], {})).to.be("1,,3")
     })
 
@@ -1401,9 +1432,9 @@ describe("managed invocation", () => {
 
         run(chain, [], "change", [], { mutationScopeDepth: 0 })
 
-        expect(holder.earlier).to.be(holder.later.child)
-        expect(holder.earlier).not.to.be(child)
-        expect(holder.earlier.value).to.be(2)
+        expect(chain._state.value.earlier).to.be(chain._state.value.later.child)
+        expect(chain._state.value.earlier).not.to.be(child)
+        expect(chain._state.value.earlier.value).to.be(2)
         expect(child.value).to.be(1)
     })
 

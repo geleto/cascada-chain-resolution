@@ -6,34 +6,42 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as managedInvocation from "./managed-invocation.js"
 import {
+    captureMutationResult,
     transformProperty,
     walkMutationPath,
 } from "./mutations.js"
-import { walkObservationPath } from "./observations.js"
+import { PathOperation } from "./path-operation.js"
 
 function run(chain, path, method, args, operationContext, facts) {
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        const mutationScopeDepth = facts.mutationScopeDepth
-        path = [...path]
+        const operation = new PathOperation(chain, path, operationContext,
+            facts.mutationScopeDepth, facts.repair, facts.firstDynamicSegment ?? path.length)
+        path = operation.route.path
         args = [...args]
-        const mutation = mutationScopeDepth !== undefined
-
-        return invocation.invokeMethod(
+        const mutation = operation.mutation
+        let externalAccess
+        const result = invocation.invokeMethod(
             operationContext,
             method,
             mutation,
             args,
-            getMethodDescription,
-            invokeWithReceiver => mutation
-                ? runMutation(chain, path, operationContext, invokeWithReceiver)
-                : walkObservationPath(
-                    chain,
-                    path,
-                    operationContext,
-                    invokeWithReceiver,
-                ),
+            context => getMethodDescription(context, externalAccess),
+            invokeWithReceiver => {
+                const native = access => {
+                    externalAccess = access
+                    return invokeWithReceiver(access.identity, true)
+                }
+                if (!mutation || operation.externalScope) return operation.observe(invokeWithReceiver, native)
+                return operation.mutate((scope, state, privateChain, suffix) => {
+                    if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
+                    const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
+                    return internalSteps.continueOperation(outcome, operationContext, outcome =>
+                        errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
+                            ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
+                })
+            },
         )
+        return mutation ? operation.finishMutation(result) : operation.finish(result)
     })
 }
 
@@ -55,21 +63,14 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
                 target.replaceReceiver(error)
                 return error
             }
-            return transformProperty(
-                target,
-                operationContext,
-                (receiver, mutationContext) => invokeWithReceiver(
-                    receiver,
-                    mutationContext.present,
-                    mutationContext.mustPreserveValue,
-                ),
-            )
+            return transformProperty(target, operationContext, (receiver, state) =>
+                invokeWithReceiver(receiver, state.present))
         },
         result => result,
     )
 }
 
-function getMethodDescription(invocationContext) {
+function getMethodDescription(invocationContext, externalAccess) {
     const {
         method,
         mutation,
@@ -89,6 +90,13 @@ function getMethodDescription(invocationContext) {
             method,
             invocationContext.operationContext,
         )
+    }
+
+    if (externalAccess) {
+        return {
+            prepareArguments: () => invocationContext.exportArguments(),
+            invoke: args => externalAccess.call(method, args),
+        }
     }
 
     const type = languageValues.typeOf(receiver, invocationContext.operationContext)

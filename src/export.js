@@ -1,18 +1,15 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
+import { capabilityError } from "./external-operation.js"
 import * as internalSteps from "./internal-step.js"
-import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
-import * as propertyVersions from "./property-versions.js"
+import { walkManagedProperties } from "./managed-traversal.js"
 
-function exportValue(value, operationContext) {
-    const owner = new operationLifecycle.OperationOwner(operationContext)
-    return exportValues([value], owner, outcome => {
-        owner.close()
-        return errorUtils.isPoisonError(outcome) ? outcome : outcome[0]
-    })
+function exportValue(value, owner) {
+    return exportValues([value], owner, outcome =>
+        errorUtils.isPoisonError(outcome) ? outcome : outcome[0])
 }
 
 function exportManyValues(values, owner) {
@@ -92,6 +89,10 @@ function exportValues(values, owner, onResult) {
             collect(value)
             return undefined
         }
+        if (operationContext.execution._externalIdentities.has(value)) {
+            collect(capabilityError(operationContext))
+            return undefined
+        }
         if (
             !languageValues.isTraversable(value, operationContext) ||
             visited.has(value)
@@ -104,67 +105,20 @@ function exportValues(values, owner, onResult) {
             )
             if (copies) copies.set(value, output)
         }
-        const keys = []
-        step(() => {
-            for (const key of languageProperties.enumerableLanguageKeyCandidates(
-                value,
-                operationContext,
-            )) {
-                const present = step(() => languageProperties.hasLanguageProperty(
-                    value,
-                    key,
-                    operationContext,
-                ))
-                if (present === true) keys.push(key)
-            }
-        })
-        const waits = []
-        for (const key of keys) {
-            const child = step(() =>
-                languageProperties.readLanguageProperty(
-                    value,
-                    key,
-                    operationContext,
-                ),
-            )
-            if (errorUtils.isPoisonError(child)) continue
-            let readiness
-            if (languageValues.isPending(child, operationContext)) {
-                // Fix output key order at capture, before any settlement.
-                if (copies)
-                    writeOutputProperty(copies.get(value), key, undefined)
-                readiness = propertyVersions.continuePromiseVersion(
-                    value,
-                    key,
-                    child,
-                    operationContext,
-                    publish,
-                    owner,
-                )
-            } else readiness = publish(child)
-            if (languageValues.isPending(readiness, operationContext))
-                waits.push(readiness)
-
-            function publish(resolved) {
+        return walkManagedProperties(value, owner, step,
+            (resolved, key, present = true) => {
+                if (!present) {
+                    if (copies) delete copies.get(value)[key]
+                    return undefined
+                }
                 const readiness = walk(resolved)
-                if (copies)
-                    writeOutputProperty(
-                        copies.get(value),
-                        key,
-                        outputOf(resolved),
-                    )
+                if (copies) writeOutputProperty(copies.get(value), key, outputOf(resolved))
                 return readiness
-            }
-        }
-        return waits.length === 0
-            ? undefined
-            : internalSteps.continueOperation(
-                  Promise.all(waits),
-                  operationContext,
-                  () => undefined,
-                  undefined,
-                  owner,
-              )
+            },
+            key => {
+                // Fix output key order at capture, before any settlement.
+                if (copies) writeOutputProperty(copies.get(value), key, undefined)
+            })
     }
 }
 

@@ -124,10 +124,10 @@ function arrayLengthMutationRequiresCopy(array, length, operationContext) {
         if (descriptor?.writable !== true) return true
     }
 
-    for (let index = current - 1; index >= length; index--) {
+    for (const key of arrayViews.arrayKeyCandidates(array, operationContext, length, current)) {
         const descriptor = getLanguagePropertyDescriptor(
             array,
-            String(index),
+            key,
             operationContext,
         )
         if (descriptor && (
@@ -146,8 +146,7 @@ function assertCanSetLanguageProperty(parent, key, operationContext) {
     assertWritable(descriptor)
 }
 
-function assertDataPlacement(descriptor, missingMessage) {
-    if (!descriptor) fatalPropertyError(missingMessage)
+function assertDataPlacement(descriptor) {
     if (!descriptor.enumerable) {
         fatalPropertyError("Cannot mutate non-enumerable property")
     }
@@ -165,17 +164,6 @@ function assertWritable(descriptor) {
 
 function fatalPropertyError(message) {
     throw new Error(message)
-}
-
-function assertPromisePropertyShape(parent, key, operationContext) {
-    return assertDataPlacement(
-        getLanguagePropertyDescriptor(parent, key, operationContext),
-        "Cannot resolve missing Promise property",
-    )
-}
-
-function assertCanPublishPromiseProperty(parent, key, operationContext) {
-    assertWritable(assertPromisePropertyShape(parent, key, operationContext))
 }
 
 function assertCanDeleteLanguageProperty(parent, key, operationContext) {
@@ -229,6 +217,7 @@ function readLanguageProperty(parent, key, operationContext) {
 
 function hasLanguageProperty(parent, key, operationContext) {
     key = String(key)
+    if (metadata.metaOf(parent, operationContext)?.placementVersions?.[key]?.present === false) return false
     parent = arrayViews.projectionOf(parent, operationContext)
     const propertyKind = classifyProjectedProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return false
@@ -279,8 +268,6 @@ export {
     STRING_LENGTH,
     arrayLengthMutationRequiresCopy,
     assertCanDeleteLanguageProperty,
-    assertCanPublishPromiseProperty,
-    assertPromisePropertyShape,
     assertCanSetLanguageProperty,
     classifyLanguageProperty,
     deleteLanguageProperty,

@@ -5,11 +5,12 @@ import { Execution } from "../../src/execution.js"
 const root = { target: { value: 1 } }
 const operationContext = { execution: new Execution(), errorContext: "fixture" }
 let callbackCount = 0
+let gate
 const result = enter(new Chain(root, operationContext), ["target"], operationContext, true, () => {
     callbackCount++
+    gate = root.target
     return "done"
 })
-const gate = root.target
 const published = await gate
 await new Promise(resolve => setImmediate(resolve))
 

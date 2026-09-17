@@ -11,6 +11,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
+import { capabilityError } from "./external-operation.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -22,7 +23,8 @@ const arraySort = Array.prototype.sort
 // captured intrinsic on a property remap. methodResult is absent for pure
 // observations, RETURN_RECEIVER for receiver-returning mutators, or a result
 // publisher. viewMethodResult reconstructs a view mutation's method result.
-// leaseReceiverThroughResult protects placements captured by delayed observations.
+// leaseInputsThroughResult protects receiver placements and retained payloads
+// until a delayed observation has captured its output.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 const ARRAY_METHODS = {
     __proto__: null,
@@ -44,24 +46,24 @@ const ARRAY_METHODS = {
     },
     flat: {
         inputs: [numericInput],
-        leaseReceiverThroughResult: true,
+        leaseInputsThroughResult: true,
         remap: flatRemap,
     },
     includes: { prepare: prepareSearchArguments, observe: includes },
     indexOf: {
-        leaseReceiverThroughResult: true,
+        leaseInputsThroughResult: true,
         prepare: prepareSearchArguments,
         observe: indexOf,
     },
     join: { inputs: [stringInput], observe: join },
     lastIndexOf: {
-        leaseReceiverThroughResult: true,
+        leaseInputsThroughResult: true,
         prepare: prepareSearchArguments,
         observe: lastIndexOf,
     },
     pop: {
         intrinsic: Array.prototype.pop,
-        methodResult: publishElement,
+        methodResult: retainElement,
         view: tryPopArrayView,
         viewMethodResult: getLastElementPlacement,
     },
@@ -78,13 +80,13 @@ const ARRAY_METHODS = {
     },
     shift: {
         intrinsic: Array.prototype.shift,
-        methodResult: publishElement,
+        methodResult: retainElement,
         view: tryShiftArrayView,
         viewMethodResult: getFirstElementPlacement,
     },
     slice: { inputs: [numericInput, numericInput], observe: slice },
     sort: {
-        leaseReceiverThroughResult: true,
+        leaseInputsThroughResult: true,
         prepare: prepareSortArguments,
         remap: prepareSortedRemap,
         methodResult: RETURN_RECEIVER,
@@ -95,9 +97,9 @@ const ARRAY_METHODS = {
         remainingArgsAsPayload: true,
         methodResult: publishArray,
     },
-    toReversed: { intrinsic: Array.prototype.toReversed },
+    toReversed: { intrinsic: Array.prototype.toReversed, leaseInputsThroughResult: true },
     toSorted: {
-        leaseReceiverThroughResult: true,
+        leaseInputsThroughResult: true,
         prepare: prepareSortArguments,
         remap: prepareToSortedRemap,
     },
@@ -105,6 +107,7 @@ const ARRAY_METHODS = {
         inputs: [numericInput, numericInput],
         intrinsic: Array.prototype.toSpliced,
         remainingArgsAsPayload: true,
+        leaseInputsThroughResult: true,
     },
     // No prepared arguments makes join use its default separator.
     toString: { observe: join },
@@ -116,6 +119,7 @@ const ARRAY_METHODS = {
     with: {
         inputs: [numericInput, PASS_AS_PAYLOAD],
         intrinsic: Array.prototype.with,
+        leaseInputsThroughResult: true,
     },
 }
 
@@ -183,33 +187,20 @@ function publishValue(value) {
     return value
 }
 
-function publishElement(element, sourceSurvives, invocationContext) {
-    return sourceSurvives
-        ? retainElement(element, invocationContext)
-        : transferElement(element)
-}
-
-function publishArray(remap, sourceSurvives, invocationContext) {
-    return arrayRemaps.createArrayFromRemap(
-        remap,
-        invocationContext.operationContext,
-        undefined,
-        sourceSurvives,
-    )
-}
-
-function transferElement(element) {
-    return propertyVersions.isPropertyPlacement(element)
-        ? element.resolveValue()
-        : element
+function publishArray(remap, invocationContext) {
+    return arrayRemaps.createArrayFromRemap(remap, invocationContext.operationContext)
 }
 
 function retainElement(element, invocationContext) {
-    const result = transferElement(element)
+    const result = propertyVersions.isPropertyPlacement(element)
+        ? element.resolveValue()
+        : element
     return internalSteps.continueOperation(
         result,
         invocationContext.operationContext,
         value => {
+            if (invocationContext.operationContext.execution._externalIdentities.has(value))
+                return capabilityError(invocationContext.operationContext)
             metadata.markShared(value, invocationContext.operationContext)
             return value
         },
@@ -373,7 +364,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
             values => {
                 const output = new Array(source.length)
                 for (let index = 0; index < keys.length; index++)
-                    output[keys[index]] = values[index]
+                    if (source[keys[index]].present !== false) output[keys[index]] = values[index]
                 return output
             },
             invocationContext,
@@ -384,7 +375,7 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
 function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
     return runArrayStep(invocationContext, () => {
         if (errorUtils.isPoisonError(placement)) return placement
-        if (depth === 0) return placement
+        if (depth === 0) return placement.resolvePresence()
         return internalSteps.continueOperation(
             placement.resolveValue(),
             invocationContext.operationContext,
@@ -485,6 +476,7 @@ function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
             const sortable = []
             const undefinedPlacements = []
             for (const record of ready) {
+                if (record.placement?.present === false) continue
                 if (!errorUtils.isPoisonError(record) && record.value === undefined) {
                     undefinedPlacements.push(record.placement)
                 } else {
@@ -750,7 +742,8 @@ function orderedIndexSearch(
                             invocationContext.operationContext,
                         ),
                         invocationContext.operationContext,
-                        resolved => resolved === searchValue ? current : next(),
+                        resolved => languageProperties.hasLanguageProperty(thisValue, key, invocationContext.operationContext) &&
+                            resolved === searchValue ? current : next(),
                         undefined,
                         invocationContext,
                     )

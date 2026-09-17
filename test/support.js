@@ -1,3 +1,4 @@
+import { TREE_NODE, findBranch } from "../src/external-mutation-tree.js"
 import * as internalSteps from "../src/internal-step.js"
 import expect from "expect.js"
 
@@ -109,7 +110,7 @@ function run(chain, path, method, args, facts) {
         method,
         args,
         chainOperationContext(chain, "test run"),
-        facts,
+        { repair: false, ...facts },
     )
 }
 
@@ -399,4 +400,15 @@ export {
     expectCounts,
     thrownBy,
     verifyRefCounts,
+}
+
+export function externalLocations(tree, path = []) {
+    const found = []
+    visit(findBranch(tree, path))
+    return found
+    function visit(node) {
+        if (!node) return
+        if (node[TREE_NODE].identity) found.push(node)
+        for (const child of Object.values(node)) visit(child)
+    }
 }

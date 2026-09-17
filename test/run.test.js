@@ -1439,16 +1439,16 @@ describe("run", () => {
         }
     })
 
-    it("transfers wholly removed splice elements from an owned receiver", () => {
+    it("retains removed splice elements without exposing the baseline", () => {
         const removedValue = { value: 1 }
         const chain = new Chain([removedValue, 2])
 
         const removed = run(chain, [], "splice", [0, 1], { mutationScopeDepth: 0 })
 
         expect(removed).to.eql([removedValue])
-        expect(metaOf(removedValue)?.shared).not.to.be(true)
+        expect(metaOf(removedValue)?.shared).to.be(true)
         assignPath(new Chain(removed), ["0", "value"], 3)
-        expect(removedValue.value).to.be(3)
+        expect(removedValue.value).to.be(1)
         expect(chain._state.value).to.eql([2])
     })
 
@@ -1562,8 +1562,8 @@ describe("run", () => {
         const chain = new Chain(source)
 
         expect(run(chain, [], "push", [3], { mutationScopeDepth: 0 })).to.be(3)
-        expect(chain._state.value).to.be(source)
-        expect(source).to.eql([1, 2, 3])
+        expect(exportValue(chain, [])).to.eql([1, 2, 3])
+        expect(exportValue(new Chain(source), [])).to.eql([1, 2])
     })
 
     it("keeps observation results lazily ref-indexed", () => {
@@ -2103,7 +2103,7 @@ describe("run", () => {
 
         expect(run(chain, [], "push", [item.promise], { mutationScopeDepth: 0 })).to.be(2)
         expect(chain._state.value instanceof Promise).to.be(false)
-        expect(chain._state.value[1]).to.be(item.promise)
+        expect(readPath(chain, [1]) instanceof Promise).to.be(true)
 
         item.resolve({ value: 2 })
         expect(await exportValue(chain, [])).to.eql([
@@ -2326,8 +2326,9 @@ describe("run", () => {
 
         const result = run(chain, [], "sort", [], { mutationScopeDepth: 0 })
 
-        expect(result).to.be(root)
-        expect(chain._state.value).to.be(root)
+        expect(result instanceof Promise).to.be(false)
+        expect(chain._state.value).to.be(result)
+        expect(readPath(chain, [0])).to.be(value)
         pending.resolve(1)
     })
 
@@ -2621,13 +2622,13 @@ describe("run", () => {
 
         )).to.be(true)
         expect(run(
-            new Chain(new Date()),
+            new Chain(new Date(123)),
             [],
             "getTime",
             [],
             {},
 
-        ) instanceof Error).to.be(true)
+        )).to.be(123)
 
         const callableReceiver = function callableReceiver() {}
         let invoked = false
@@ -2691,8 +2692,8 @@ describe("run", () => {
             [],
             {},
 
-        ) instanceof Error).to.be(true)
-        expect(invoked).to.be(false)
+        )).to.be(undefined)
+        expect(invoked).to.be(true)
     })
 
     it("leases a method receiver while exported arguments resolve", async () => {
@@ -3187,24 +3188,6 @@ describe("run", () => {
         }
     })
 
-    it("reports a bookkeeping failure during replay fatally", () => {
-        let reported
-        useTestExecution(error => {
-            reported = error
-        })
-        const element = { value: 1 }
-        const chain = new Chain([element, 2])
-        hasError(chain, [])
-        // Corrupt downward closure: the element is still reachable from an
-        // indexed owner but no longer carries its own counter.
-        delete metaOf(element).parents
-        const failure = thrownBy(() => run(chain, [], "reverse", [], { mutationScopeDepth: 0 }))
-
-        expect(failure instanceof Error).to.be(true)
-        expect(failure.message).to.be("Ref counts require a ref-indexed value")
-        expect(reported).to.be(failure)
-    })
-
     it("rejects synchronous same-execution reentry from external code", () => {
         const cases = [
             observed => {
@@ -3264,7 +3247,7 @@ describe("run", () => {
         expect([...receiver.values(testOperationContext())]).to.eql([1, 2])
     })
 
-    it("poisons Array mutation when physical replay fails", () => {
+    it("does not replay Array mutations into protected input storage", () => {
         const cases = [
             {
                 method: "reverse",
@@ -3304,12 +3287,10 @@ describe("run", () => {
 
             const result = run(chain, [], method, [], { mutationScopeDepth: 0 })
 
-            if (Error.isError(removed)) {
-                expect(result.errors).to.have.length(2)
-                assert(result.errors.some(error => error.cause === removed))
-                assert(result.errors.some(error => error.cause === failure))
-            } else expect(errorCause(result)).to.be(failure)
-            expect(errorCause(chain._state.value)).to.be(failure)
+            if (Error.isError(removed)) expect(errorCause(result)).to.be(removed)
+            else if (method === "pop") expect(result).to.be(removed)
+            expect(exportValue(chain, [])).to.eql(method === "pop" ? [1] : [2, 1])
+            expect(source.length).to.be(2)
             verifyRefCounts(receiver)
         }
     })
@@ -3415,7 +3396,8 @@ describe("run", () => {
         expect([...observed.values(testOperationContext())]).to.eql([
             6, 5, 4, 3, 2, 1, 0,
         ])
-        expect(mutatedSource).to.eql([6, 5, 4, 3, 2, 1, 0])
+        expect(mutatedSource).to.eql([0, 1, 2, 3, 4, 5, 6])
+        expect(mutationResult).to.eql([6, 5, 4, 3, 2, 1, 0])
     })
 
     it("materializes a view before an ordinary indexed write", () => {

@@ -8,6 +8,8 @@ import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
+import { PathOperation } from "./path-operation.js"
+import { collectPoison } from "./external-mutation-tree.js"
 
 class ErrorQueryContext extends operationLifecycle.OperationOwner {
     constructor(operationContext, collect = false) {
@@ -15,21 +17,39 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
         if (collect) this.errors = new Set()
     }
     release() {
+        if (this.externalReadiness) markPromiseHandled(this.externalReadiness, this.operationContext)
+        this.externalReadiness = undefined
         this.errors = undefined
         this.resolveOutcome = undefined
         this.visited = undefined
     }
-    run(chain, path, onResolved) {
+    run(chain, path, onResolved, firstDynamicSegment = path.length) {
         return internalSteps.runInternalStep(this.operationContext, () => {
-            chain._assertOperationContext(this.operationContext)
-            return walkObservationPath(
-                chain,
-                path,
-                this.operationContext,
-                value => onResolved(value, this),
-                error => this.finish(error),
-                errorUtils.ERROR_KIND.QueryReflectionFailed,
-            )
+            const operation = new PathOperation(chain, path, this.operationContext, undefined, false, firstDynamicSegment)
+            const node = operation.route.node
+            operation.reserve(node)
+            const inspect = value => {
+                if (errorUtils.isPoisonError(value) || !node) return onResolved(value, this)
+                const effect = operation.effect
+                // External metadata capture has its own last use. Managed
+                // Error collection may finish earlier, or continue much longer.
+                operation.effect = undefined
+                const captured = internalSteps.continueOperation(effect.readiness, this.operationContext, () => {
+                    if (this.open) {
+                        const blocker = operation.blocker(false)
+                        if (blocker) this.found(blocker)
+                        else for (const error of collectPoison(node)) this.found(error)
+                    }
+                    effect.complete()
+                })
+                if (languageValues.isPending(captured, this.operationContext)) this.externalReadiness = captured
+                return this.open ? onResolved(value, this) : this.result
+            }
+            const result = operation.observe(inspect,
+                access => access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false),
+                error => this.finish(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
+            return operation.finish(internalSteps.continueOperation(result, this.operationContext,
+                value => this.open && errorUtils.isPoisonError(value) ? onResolved(value, this) : value))
         })
     }
     found(error) {
@@ -47,6 +67,10 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
     }
     complete(readiness, result) {
         if (!this.open) return this.result
+        if (this.externalReadiness) {
+            readiness = Promise.all([readiness, this.externalReadiness])
+            this.externalReadiness = undefined
+        }
         if (!languageValues.isPending(readiness, this.operationContext))
             return this.finish(result())
         const outcome = new Promise(resolve => {
@@ -66,20 +90,22 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
 }
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
-function lookupPath(chain, path, operationContext) {
+function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length) {
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        return walkObservationPath(chain, path, operationContext, value => {
+        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+        const retain = value => {
             metadata.markShared(value, operationContext)
             return value
-        })
+        }
+        return operation.finish(operation.observe(retain, access =>
+            internalSteps.continueOperation(access.read(), operationContext, retain)))
     })
 }
 
-function lookupPathForExpression(chain, path, operationContext) {
+function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        return walkObservationPath(chain, path, operationContext, value => {
+        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+        const validate = value => {
             if (errorUtils.isPoisonError(value)) return value
             switch (typeof value) {
                 case "string":
@@ -94,7 +120,9 @@ function lookupPathForExpression(chain, path, operationContext) {
                         errorUtils.ERROR_KIND.InvalidExpressionValue,
                     )
             }
-        })
+        }
+        return operation.finish(operation.observe(validate, access =>
+            internalSteps.continueOperation(access.read(), operationContext, validate)))
     })
 }
 
@@ -102,33 +130,31 @@ function lookupPathForExpression(chain, path, operationContext) {
 function readPath(chain, path, operationContext) {
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
-        return walkObservationPath(chain, path, operationContext, value => value)
+        return walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value)
     })
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------
-function exportPath(chain, path, operationContext) {
+function exportPath(chain, path, operationContext, firstDynamicSegment = path.length) {
     return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        return walkObservationPath(
-            chain,
-            path,
-            operationContext,
-            value => exportValue(value, operationContext),
-        )
+        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+        return operation.finish(operation.observe(
+            value => exportValue(value, operation),
+            access => access.read(true),
+        ))
     })
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
-function hasError(chain, path, operationContext) {
+function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
     const queryContext = new ErrorQueryContext(operationContext)
-    return queryContext.run(chain, path, hasErrorAtPathValue)
+    return queryContext.run(chain, path, hasErrorAtPathValue, firstDynamicSegment)
 }
 
 function hasErrorAtPathValue(value, queryContext) {
     if (errorUtils.isPoisonError(value)) return queryContext.finish(true)
     if (!languageValues.isTraversable(value, queryContext.operationContext)) {
-        return queryContext.finish(false)
+        return queryContext.complete(undefined, () => false)
     }
     return searchForFirstError(value, queryContext)
 }
@@ -143,9 +169,9 @@ function searchForFirstError(value, queryContext) {
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
-function getErrors(chain, path, operationContext) {
+function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
     const queryContext = new ErrorQueryContext(operationContext, true)
-    return queryContext.run(chain, path, getErrorsAtPathValue)
+    return queryContext.run(chain, path, getErrorsAtPathValue, firstDynamicSegment)
 }
 
 function getErrorsAtPathValue(value, queryContext) {
@@ -267,6 +293,7 @@ function walkObservationPath(
     onResolved,
     onUserCodeFailure = undefined,
     reflectionKind = errorUtils.ERROR_KIND.LookupReflectionFailed,
+    { onExternal, externalDepth = Infinity, owner } = {},
 ) {
     const rootState = chain._state
     const targetPath = ["value", ...path]
@@ -281,6 +308,10 @@ function walkObservationPath(
             languageValues.admitReadyValue(key, operationContext)
             return onResolved(key, false)
         }
+        return readPlacement(parent, key, index)
+    }
+
+    function readPlacement(parent, key, index) {
         const present = languageProperties.hasLanguageProperty(
             parent,
             key,
@@ -291,26 +322,28 @@ function walkObservationPath(
             key,
             operationContext,
         )
-        if (languageValues.isPending(value, operationContext)) {
-            return propertyVersions.continuePromiseVersion(
-                parent,
-                key,
-                value,
-                operationContext,
-                propertyValue => runTraversal(
-                    () => walkValue(propertyValue, index, true),
-                ),
-            )
-        }
-        return walkValue(value, index, present)
+        const version = propertyVersions.getPlacementVersion(parent, key, operationContext)
+        return readCaptured(value, version, index, present)
     }
 
-    function walkValue(value, index, present) {
+    function readCaptured(value, version, index, present) {
+        if (version) value = version.value
+        if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present, version?.recovery)
+        return propertyVersions.continueCapturedPromiseVersion(
+            value, version, operationContext,
+            propertyValue => runTraversal(() => walkValue(propertyValue, index, version.present !== false, version.recovery)), owner,
+        )
+    }
+
+    function walkValue(value, index, present, recovery) {
+        if (onExternal && !errorUtils.isPoisonError(value) &&
+            (index === externalDepth || metadata.metaOf(value, operationContext)?.type === languageValues.TYPE.External))
+            return onExternal(value, path.slice(index), index)
         if (
             index === targetPath.length - 1 ||
             errorUtils.isPoisonError(value)
         ) {
-            return onResolved(value, present)
+            return onResolved(value, present, index, recovery)
         }
         if (typeof value === "string") {
             const key = languageProperties.normalizePathSegment(
@@ -334,6 +367,7 @@ function walkObservationPath(
     }
 
     function runTraversal(traverse) {
+        if (owner && !owner.open) return undefined
         return errorUtils.catchExternalThrow(
             traverse,
             operationContext,

@@ -148,7 +148,7 @@ describe("complete failure outcomes", () => {
                 const nested = new Error("inside child")
                 const reflection = new Error("reflection")
                 let fail = false
-                const child = new Proxy({ bad: 0, nested: 0 }, {
+                const traps = {
                     ownKeys(value) {
                         if (fail && trap === "keys") throw reflection
                         return Reflect.ownKeys(value)
@@ -157,11 +157,12 @@ describe("complete failure outcomes", () => {
                         if (fail && key === (trap === "then" ? "then" : "bad") && trap !== "keys") throw reflection
                         return Reflect.getOwnPropertyDescriptor(value, key)
                     },
-                })
+                }
                 const receiver = {
-                    first: 0, child, last: 0,
+                    first: 0, child: { bad: 0, nested: 0 }, last: 0,
                     change() {
                         const finish = () => {
+                            this.child = new Proxy(this.child, traps)
                             this.first = first
                             this.last = last
                             this.child.nested = nested
@@ -176,7 +177,7 @@ describe("complete failure outcomes", () => {
                 const failure = await runtime.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 })
                 assert(runtime.isPoisonError(failure))
                 const expected = new Set([first, last, reflection])
-                if (trap !== "keys") expected.add(nested)
+                if (trap === "placement") expected.add(nested)
                 assert.equal(leaves(failure).length, expected.size)
                 assert.deepEqual(new Set(leaves(failure).map(error => error.cause)), expected)
                 assert(leaves(failure).every(error => error.kind === runtime.ERROR_KIND.InvalidManagedReceiver && error.errorContext === ctx.errorContext))
@@ -257,7 +258,7 @@ describe("complete failure outcomes", () => {
         const chain = new runtime.Chain({
             child,
             change() {
-                Object.defineProperty(metadata.metaOf(child, ctx), "type", { get() { throw cause } })
+                Object.defineProperty(metadata.metaOf(this.child, ctx), "type", { get() { throw cause } })
             },
         }, ctx)
         assert.throws(() => runtime.run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 }), failure => {
@@ -271,27 +272,30 @@ describe("complete failure outcomes", () => {
     for (const mutation of [false, true]) {
         for (const [delivery, deliver] of Object.entries(deliveries)) {
             for (const nested of [false, true]) {
-                it(`preserves a ${nested ? "nested" : "root"} receiver after rejected prototype selection in ${mutation ? "mutation" : "observation"} mode with ${delivery} preparation`, async () => {
+                it(`handles rejected prototype selection at a ${nested ? "nested" : "root"} scope in ${mutation ? "mutation" : "observation"} mode with ${delivery} preparation`, async () => {
                     const ctx = context()
                     let calls = 0
                     class Value {
                         n = 1
+                        get invalid() { calls++; throw new Error("must not invoke accessor") }
                         read() { calls++; return this.n }
                     }
                     runtime.managedStateClass(Value)
                     const value = new Value()
                     const chain = new runtime.Chain(nested ? { value } : value, ctx)
                     const path = nested ? ["value"] : []
-                    const descriptor = Object.getOwnPropertyDescriptor(Value.prototype, "read")
-                    Object.defineProperty(Value.prototype, "read", { get() { calls++; throw new Error("must not invoke accessor") } })
-                    const work = runtime.run(chain, path, "read", [deliver(0)], ctx, mutation ? { mutationScopeDepth: path.length } : {})
+                    const work = runtime.run(chain, path, "invalid", [deliver(0)], ctx, mutation ? { mutationScopeDepth: path.length } : {})
                     if (delivery !== "pending") assert(runtime.isPoisonError(work))
                     const failure = await work
                     assert.equal(failure.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
                     assert.equal(calls, 0)
                     assert.equal(ctx.execution.fatalError, null)
+                    assert.equal(runtime.getErrors(chain, path, ctx), mutation ? failure : null)
+                    if (mutation) {
+                        assert.equal(runtime.lookupPath(chain, [...path, "n"], ctx), failure)
+                        assert.equal(runtime.repairPath(chain, path, ctx), undefined)
+                    }
                     assert.equal(await runtime.lookupPath(chain, [...path, "n"], ctx), 1)
-                    Object.defineProperty(Value.prototype, "read", descriptor)
                     assert.equal(runtime.run(chain, path, "read", [], ctx, {}), 1)
                     assert.equal(calls, 1)
                     verifyRefCounts(ctx, chain._state.value)

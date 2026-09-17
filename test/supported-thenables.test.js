@@ -1,5 +1,5 @@
-import * as externalTree from "../src/external-mutation-tree.js"
-import { EXTERNAL_BOUNDARY } from "../src/external-mutation-tree.js"
+import { externalLocations } from "./support.js"
+import { TREE_NODE } from "../src/external-mutation-tree.js"
 import * as internalSteps from "../src/internal-step.js"
 import { markPromiseHandled } from "../src/thenable-subscription.js"
 import assert from "node:assert/strict"
@@ -377,7 +377,7 @@ describe("supported thenables", () => {
         const removed = runtime.run(chain, ["items"], "pop", [], ctx, { mutationScopeDepth: 1 })
         assert.equal(values.isPending(removed, ctx), true)
         markPromiseHandled(removed, ctx)
-        assert.deepEqual(runtime.lookupPath(chain, ["items"], ctx), [1])
+        assert.deepEqual(runtime.export(chain, ["items"], ctx), [1])
         assert.equal(runtime.run(chain, ["items"], "push", [2], ctx, { mutationScopeDepth: 1 }), 2)
     })
 
@@ -448,10 +448,9 @@ describe("supported thenables", () => {
         assert.equal(subscriptions, 1)
         assert.equal(root.a, source)
         assert.equal(runtime.lookupPath(chain, ["a"], ctx), shared)
-        const boundaries = externalTree.findDescendantBoundaries(chain._externalMutationTree, [])
-        assert.deepEqual(boundaries.map(boundary => boundary.path), [["b", "resource"]])
-        assert.equal(boundaries[0].context, chain)
-        assert.equal(ctx.execution._externalIdentities.get(shared.resource), boundaries[0][EXTERNAL_BOUNDARY])
+        const boundaries = externalLocations(chain._externalMutationTree, [])
+        assert.deepEqual(boundaries.map(boundary => boundary[TREE_NODE].path), [["b", "resource"]])
+        assert.equal(ctx.execution._externalIdentities.get(shared.resource), boundaries[0][TREE_NODE].entry)
     })
 
     it("adds no external authority after pending delivery", async () => {

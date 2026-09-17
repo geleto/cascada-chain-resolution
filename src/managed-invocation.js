@@ -1,3 +1,4 @@
+import { captureManagedKeys, walkManagedProperties } from "./managed-traversal.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
@@ -6,10 +7,10 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import { capabilityError } from "./external-operation.js"
 import { createEmptyContainerCopy } from "./mutations.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import * as refcounts from "./refcounts.js"
 
 function getManagedMethodDescription(invocationContext) {
     const { mutation, receiver } = invocationContext
@@ -19,7 +20,7 @@ function getManagedMethodDescription(invocationContext) {
         ? selectManagedRecordMethod
         : selectManagedClassMethod
     return {
-        leaseReceiverThroughResult: !mutation,
+        leaseInputsThroughResult: !mutation,
         prepareArguments: () =>
             prepareManagedReceiverAndArguments(invocationContext),
         invoke(prepared) {
@@ -107,6 +108,10 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 
     function visit(value) {
         if (!invocationContext.open) return undefined
+        if (invocationContext.operationContext.execution._externalIdentities.has(value)) {
+            preparation.errors.add(capabilityError(invocationContext.operationContext))
+            return undefined
+        }
         if (errorUtils.isPoisonError(value)) {
             preparation.errors.add(value)
             return undefined
@@ -120,48 +125,7 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         preparation.visited.add(value)
         invocationContext.retainReceiver(value)
 
-        const keys = []
-        catchFailure(() => {
-            for (const key of languageProperties.enumerableLanguageKeyCandidates(
-                value,
-                invocationContext.operationContext,
-            )) {
-                const present = catchFailure(() => languageProperties.hasLanguageProperty(
-                    value,
-                    key,
-                    invocationContext.operationContext,
-                ))
-                if (present === true) keys.push(key)
-            }
-        })
-
-        const waits = []
-        for (const key of keys) {
-            const child = catchFailure(
-                () => languageProperties.readLanguageProperty(
-                    value,
-                    key,
-                    invocationContext.operationContext,
-                ),
-            )
-            if (!languageValues.isPending(child, invocationContext.operationContext)) {
-                const nested = visit(child)
-                if (nested) waits.push(nested)
-                continue
-            }
-            const continued = catchFailure(() => {
-                const result = propertyVersions.continuePromiseVersion(
-                    value,
-                    key,
-                    child,
-                    invocationContext.operationContext,
-                    visit,
-                )
-                return result
-            })
-            if (continued) waits.push(continued)
-        }
-        return combineReadiness(invocationContext, waits)
+        return walkManagedProperties(value, invocationContext, catchFailure, visit)
     }
 
     function catchFailure(step) {
@@ -195,18 +159,6 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
         preparation.receiver = undefined
         preparation.visited = undefined
     }
-}
-
-function combineReadiness(invocationContext, waits) {
-    if (waits.length === 0) return undefined
-    if (waits.length === 1) return waits[0]
-    return internalSteps.continueOperation(
-        Promise.all(waits),
-        invocationContext.operationContext,
-        () => undefined,
-        undefined,
-        invocationContext,
-    )
 }
 
 // Common dispatch rejects `constructor` before either managed policy runs.
@@ -256,14 +208,11 @@ function selectManagedClassMethod(receiver, invocationContext) {
         )
         if (descriptor) {
             if (!("value" in descriptor)) {
-                const failure = errorUtils.validationError(
+                return errorUtils.validationError(
                     "Managed class methods must be data properties",
                     operationContext,
                     errorUtils.ERROR_KIND.InvalidManagedReceiver,
                 )
-                return invocationContext.mutation
-                    ? { mutatedValue: receiver, result: failure }
-                    : failure
             }
             return typeof descriptor.value === "function"
                 ? descriptor.value
@@ -289,10 +238,7 @@ function prepareMethodReceiver(receiver, invocationContext) {
                 return materializeObservationReceiver(receiver, invocationContext)
             }
             invocationContext.releaseReceivers()
-            return isolateMutationReceiver(
-                receiver,
-                invocationContext,
-            )
+            return copyCompleteGraph(receiver, invocationContext.operationContext)
         },
         invocationContext.operationContext,
         errorUtils.ERROR_KIND.InvalidManagedReceiver,
@@ -387,84 +333,6 @@ function materializeObservationReceiver(receiver, invocationContext) {
     }
 }
 
-function isolateMutationReceiver(receiver, invocationContext) {
-    const { operationContext } = invocationContext
-    const copies = new Map()
-    const placements = new Map()
-    const visited = new Set()
-    let value = receiver
-    visit(receiver, undefined, undefined)
-    for (const [source, destination] of copies) {
-        for (const placement of placements.get(source) ?? []) {
-            reconnect(placement, destination)
-        }
-    }
-    return value
-
-    function visit(source, parent, key) {
-        if (!languageValues.isTraversable(source, operationContext)) return
-
-        const placement = { parent, key }
-        let sourcePlacements = placements.get(source)
-        if (!sourcePlacements) {
-            sourcePlacements = []
-            placements.set(source, sourcePlacements)
-        }
-        sourcePlacements.push(placement)
-
-        if (copies.has(source) || visited.has(source)) return
-        visited.add(source)
-        if (
-            (parent === undefined && invocationContext.preserveReceiver) ||
-            requiresIsolation(source, operationContext)
-        ) {
-            copyCompleteGraph(source, operationContext, copies)
-            return
-        }
-
-        for (const key of languageProperties.enumerableLanguageKeys(
-            source,
-            operationContext,
-        )) {
-            visit(
-                languageProperties.readLanguageProperty(source, key, operationContext),
-                source,
-                key,
-            )
-            if (copies.has(source)) return
-        }
-    }
-
-    function reconnect(placement, destination) {
-        if (placement.parent === undefined) {
-            value = destination
-            return
-        }
-        if (copies.has(placement.parent)) return
-        if (languageProperties.propertyMutationRequiresCopy(
-            placement.parent,
-            placement.key,
-            operationContext,
-        )) {
-            copyCompleteGraph(placement.parent, operationContext, copies)
-            return
-        }
-        propertyVersions.assignProperty(
-            placement.parent,
-            placement.key,
-            destination,
-            operationContext,
-        )
-    }
-}
-
-function requiresIsolation(value, operationContext) {
-    return metadata.requiresCopyOnWrite(value, operationContext) ||
-        refcounts.getRefCounter(value, operationContext) !== undefined ||
-        propertyVersions.hasPlacementVersions(value, operationContext) ||
-        arrayViews.requiresArrayMaterialization(value, operationContext)
-}
-
 function copyCompleteGraph(source, operationContext, copies = new Map()) {
     if (languageValues.isPending(source, operationContext)) {
         throw new Error("Prepared managed receiver contains a Promise")
@@ -533,23 +401,23 @@ function invokeMutation(callable, receiver, args, operationContext) {
         if (Error.isError(value)) return failed(value)
         // Direct method failure poisons the receiver. Importing an independent
         // result can fail separately after the method has completed its mutation.
+        const failures = { errors: new Set() }
         const imported =
             value === receiver
                 ? receiver
-                : imports.importManagedMutationMethodResult(
+                : imports.importReadyMethodResult(
                       value,
                       operationContext,
+                      failures,
                   )
-        return finishMutation(receiver, imported, operationContext)
+        return finishMutation(receiver, imported, failures.errors, operationContext)
     }
 }
 
-function finishMutation(receiver, result, operationContext) {
+function finishMutation(receiver, result, resultErrors, operationContext) {
     const failure = validateReceiver(receiver, operationContext)
     if (failure) {
-        result = errorUtils.isPoisonError(result)
-            ? errorUtils.combineErrors([failure, result], "Managed mutation failed")
-            : failure
+        result = errorUtils.combineErrors([failure, ...resultErrors], "Managed mutation failed")
     }
     return {
         mutatedValue: failure ?? receiver,
@@ -601,20 +469,7 @@ function validateReceiver(receiver, operationContext) {
         }
         languageValues.admitReadyValue(value, operationContext)
         if (!languageValues.isTraversable(value, operationContext)) return
-        const keys = []
-        inspect(() => {
-            for (const key of languageProperties.enumerableLanguageKeyCandidates(
-                value,
-                operationContext,
-            )) {
-                const present = inspect(() => languageProperties.hasLanguageProperty(
-                    value,
-                    key,
-                    operationContext,
-                ))
-                if (present === true) keys.push(key)
-            }
-        })
+        const keys = captureManagedKeys(value, operationContext, inspect)
         for (const key of keys) {
             // Validation must inspect retained data without consuming it.
             const version = metadata.metaOf(value, operationContext).placementVersions?.[key]

@@ -27,11 +27,10 @@ class InvocationContext extends operationLifecycle.OperationOwner {
         this.releaseReceivers = this.#receiverLeases.release
     }
 
-    setReceiver(receiver, present, preserve = false) {
+    setReceiver(receiver, present) {
         this.receiverReached = true
         this.receiver = receiver
         this.receiverPresent = present
-        this.preserveReceiver = preserve
     }
 
     exportArguments() {
@@ -140,13 +139,23 @@ function invokeMethod(
     )
 
     function finish(value) {
+        if (mutation && !errorUtils.isPoisonError(value)) {
+            // Receiver publication can finish before an independently returned
+            // value. That value still owns invocation work until delivery.
+            value.result = internalSteps.continueOperation(value.result, operationContext, close)
+            return value
+        }
+        return close(value)
+    }
+
+    function close(value) {
         // Call completion releases the same resources on success and language failure.
         operationLifecycle.close(invocationContext)
         return value
     }
 
-    function invokeWithReceiver(receiver, present, preserveReceiver = false) {
-        invocationContext.setReceiver(receiver, present, preserveReceiver)
+    function invokeWithReceiver(receiver, present) {
+        invocationContext.setReceiver(receiver, present)
         const methodDescription = getMethodDescription(invocationContext)
         if (errorUtils.isPoisonError(methodDescription)) {
             invocationContext.releaseArgumentsAwaitingReceiver()
@@ -165,25 +174,19 @@ function invokeMethod(
         )
 
         function invokePrepared(readyArguments) {
-            let receiverLeaseContinues = false
             let result = readyArguments
             if (!errorUtils.isPoisonError(readyArguments)) {
                 result = methodDescription.invoke(readyArguments)
-                if (
-                    methodDescription.leaseReceiverThroughResult &&
-                    languageValues.isPending(result, operationContext)
-                ) {
-                    receiverLeaseContinues = true
-                }
                 if (methodDescription.admitMethodResult) {
                     result = methodDescription.admitMethodResult(result)
-                    if (languageValues.isPending(result, operationContext)) {
-                        receiverLeaseContinues = true
-                    }
                 }
             }
-            invocationContext.releaseArguments()
-            if (!receiverLeaseContinues) invocationContext.releaseReceivers()
+            const pendingInputUse = (methodDescription.leaseInputsThroughResult || methodDescription.admitMethodResult) &&
+                languageValues.isPending(result, operationContext)
+            if (!pendingInputUse) {
+                invocationContext.releaseArguments()
+                invocationContext.releaseReceivers()
+            }
             return result
         }
     }
@@ -221,6 +224,7 @@ function createLeaseLedger(operationContext) {
 }
 
 export {
+    createLeaseLedger,
     getFunctionMethodDescription,
     invokeMethod,
     invokeFunction,

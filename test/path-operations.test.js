@@ -383,7 +383,7 @@ describe("path assignment", () => {
 
         expect(deleted instanceof Error).to.be(true)
         expect(chain._state.value).to.be(deleted)
-        expect(root).to.eql([1])
+        expect(root).to.eql([1, 2, 3])
     })
 
     it("treats Array length reflection failures as language Errors", () => {
@@ -451,7 +451,7 @@ describe("path assignment", () => {
         }
     })
 
-    it("turns an Array length write trap into mutation poison", () => {
+    it("copies an Array before applying a length write", () => {
         const failure = new Error("length write failed")
         const target = [1, 2]
         const array = new Proxy(target, {
@@ -464,8 +464,9 @@ describe("path assignment", () => {
 
         const result = assignPath(chain, ["length"], 1)
 
-        expect(errorCause(result)).to.be(failure)
-        expect(chain._state.value).to.be(result)
+        expect(result).to.be(undefined)
+        expect(exportValue(chain, [])).to.eql([1])
+        expect(target).to.eql([1, 2])
     })
 
     it("attributes intrinsic errors to an imported receiver", () => {
@@ -483,8 +484,7 @@ describe("path assignment", () => {
         expect(deletion.message).to.be("Cannot delete length")
         expect(deletion.errorContext).to.be("test deletion")
         expect(mutation.message).to.be(
-            "run cannot use an Array or String length property as a " +
-            "mutation receiver",
+            "run cannot use an Array or String length property as a mutation receiver",
         )
         expect(mutation.errorContext).to.be("test run")
         expect(source).to.eql([1])
@@ -530,7 +530,7 @@ describe("path assignment", () => {
 
         expect(failure).to.be(undefined)
         expect(chain._state.value).to.be(root)
-        expect(root.values).to.eql([1, 2])
+        expect(root.values instanceof Error).to.be(true)
         const observed = lookupPath(chain, ["values", "length", "x"])
         expect(observed instanceof Error).to.be(true)
         expect(observed.message).to.be(
@@ -543,13 +543,14 @@ describe("path assignment", () => {
         const chain = new Chain(root)
 
         expect(assignPath(chain, ["length"], 3)).to.be(undefined)
-        expect(root.length).to.be(3)
-        expect(Object.keys(root)).to.eql(["0"])
+        expect(root.length).to.be(1)
+        expect(Object.keys(exportValue(chain, []))).to.eql(["0"])
+        expect(lookupPath(chain, ["length"])).to.be(3)
 
         const error = assignPath(chain, ["length"], 1.5)
         expect(error instanceof Error).to.be(true)
         expect(chain._state.value).to.be(error)
-        expect(root.length).to.be(3)
+        expect(root.length).to.be(1)
     })
 
     it("materializes before a restricted Array shrink", () => {
@@ -959,13 +960,13 @@ describe("path assignment", () => {
 
         expect(assignPath(chain, ["0"], "zero")).to.be(undefined)
         expect(assignPath(chain, [2], "two")).to.be(undefined)
-        expect(root.length).to.be(3)
-        expect(root["0"]).to.be("zero")
-        expect(1 in root).to.be(false)
-        expect(root[2]).to.be("two")
+        expect(chain._state.value.length).to.be(3)
+        expect(chain._state.value["0"]).to.be("zero")
+        expect(1 in chain._state.value).to.be(false)
+        expect(chain._state.value[2]).to.be("two")
 
         expect(assignPath(chain, [-0], "numeric minus zero")).to.be(undefined)
-        expect(root[0]).to.be("numeric minus zero")
+        expect(chain._state.value[0]).to.be("numeric minus zero")
 
         for (const key of [
             "01",

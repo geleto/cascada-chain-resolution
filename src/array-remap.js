@@ -2,12 +2,8 @@ import * as arrayViews from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
+import * as internalSteps from "./internal-step.js"
 import * as refcounts from "./refcounts.js"
-
-const KIND_ADD = 0
-const KIND_DELETE = 1
-const KIND_LENGTH = 2
-const KIND_MOVE = 3
 
 function createRemap(
     array,
@@ -32,210 +28,69 @@ function createRemap(
     return remap
 }
 
-class ArrayMutation {
-    #array
-    #operationContext
-    // Present for a traced partial remap that must be replayed against the
-    // source; absent when the supplied remap is already complete.
-    #operations
-
-    constructor(array, remap, operationContext, operations = undefined) {
-        this.#array = array
-        this.#operationContext = operationContext
-        this.#operations = operations
-        this.remap = remap
-        this.working = remap
-    }
-
-    static trace(array, operationContext) {
-        const operations = []
-        const deleted = new Set()
-        let sourceLength = arrayViews.logicalArrayLength(array, operationContext)
-        const remap = new Array(sourceLength)
-        const mutation = new ArrayMutation(
-            array,
-            remap,
-            operationContext,
-            operations,
-        )
-        mutation.working = new Proxy(remap, {
-            has(target, key) {
-                if (!arrayViews.isArrayIndex(key)) {
-                    return Reflect.has(target, key)
-                }
-                if (Object.hasOwn(target, key)) return true
-                if (deleted.has(key) || Number(key) >= sourceLength) return false
-                return languageProperties.hasLanguageProperty(
-                    array,
-                    key,
-                    operationContext,
-                )
-            },
-            get(target, key, receiver) {
-                if (!arrayViews.isArrayIndex(key)) {
-                    return Reflect.get(target, key, receiver)
-                }
-                if (Object.hasOwn(target, key)) return target[key]
-                if (deleted.has(key) || Number(key) >= sourceLength) {
-                    return undefined
-                }
-                // Assignment could invoke an inherited numeric setter.
-                const placement = propertyVersions.getPropertyPlacement(
-                    array,
-                    key,
-                    operationContext,
-                )
-                if (placement) languageProperties.writeLanguageProperty(
-                    target,
-                    key,
-                    placement,
-                    operationContext,
-                )
-                return placement
-            },
-            set(target, key, value) {
-                if (key === "length") {
-                    record({ kind: KIND_LENGTH, value })
-                    sourceLength = Math.min(sourceLength, value)
-                } else if (arrayViews.isArrayIndex(key)) {
-                    record(createPlacementOperation(value, Number(key)))
-                }
-                return Reflect.set(target, key, value, target)
-            },
-            deleteProperty(target, key) {
-                if (arrayViews.isArrayIndex(key)) {
-                    deleted.add(key)
-                    record({
-                        kind: KIND_DELETE,
-                        index: Number(key),
-                    })
-                }
-                return Reflect.deleteProperty(target, key)
-            },
-        })
-        return mutation
-
-        function record(operation) {
-            languageProperties.writeLanguageProperty(
-                operations,
-                String(operations.length),
-                operation,
+function traceArrayMutation(array, operationContext) {
+    // Untouched placements remain in the source until the intrinsic completes.
+    const deleted = new Set()
+    let sourceLength = arrayViews.logicalArrayLength(array, operationContext)
+    const partial = new Array(sourceLength)
+    const working = new Proxy(partial, {
+        has(target, key) {
+            if (!arrayViews.isArrayIndex(key)) {
+                return Reflect.has(target, key)
+            }
+            if (Object.hasOwn(target, key)) return true
+            if (deleted.has(key) || Number(key) >= sourceLength) return false
+            return languageProperties.hasLanguageProperty(
+                array,
+                key,
                 operationContext,
             )
-        }
-    }
-
-    requiresCopy() {
-        // ArrayView receivers are materialized or handled by a view transition
-        // before this preflight; this method considers only the native Array.
-        const operations = this.#operations ?? operationsForRemap(this.remap)
-        for (const operation of operations) {
-            const requiresCopy = operation.kind === KIND_LENGTH
-                ? languageProperties.arrayLengthMutationRequiresCopy(
-                    this.#array,
-                    operation.value,
-                    this.#operationContext,
-                )
-                : languageProperties.propertyMutationRequiresCopy(
-                    this.#array,
-                    String(operation.kind === KIND_DELETE
-                        ? operation.index
-                        : operation.newIndex),
-                    this.#operationContext,
-                    operation.kind === KIND_DELETE,
-                )
-            if (requiresCopy) return true
-        }
-        return false
-    }
-
-    materialize() {
-        if (!this.#operations) return this.remap
-        const remap = createRemap(this.#array, this.#operationContext)
-        for (const operation of this.#operations) {
-            if (operation.kind === KIND_LENGTH) {
-                remap.length = operation.value
-            } else if (operation.kind === KIND_DELETE) {
-                delete remap[operation.index]
-            } else {
-                languageProperties.writeLanguageProperty(
-                    remap,
-                    String(operation.newIndex),
-                    operation.kind === KIND_MOVE
-                        ? operation.placement
-                        : operation.value,
-                    this.#operationContext,
-                )
+        },
+        get(target, key, receiver) {
+            if (!arrayViews.isArrayIndex(key)) {
+                return Reflect.get(target, key, receiver)
             }
-        }
-        this.remap = remap
+            if (Object.hasOwn(target, key)) return target[key]
+            if (deleted.has(key) || Number(key) >= sourceLength) {
+                return undefined
+            }
+            // Assignment could invoke an inherited numeric setter.
+            const placement = propertyVersions.getPropertyPlacement(
+                array,
+                key,
+                operationContext,
+            )
+            if (placement) languageProperties.writeLanguageProperty(
+                target,
+                key,
+                placement,
+                operationContext,
+            )
+            return placement
+        },
+        set(target, key, value) {
+            if (key === "length") {
+                sourceLength = Math.min(sourceLength, value)
+            }
+            return Reflect.set(target, key, value, target)
+        },
+        deleteProperty(target, key) {
+            if (arrayViews.isArrayIndex(key)) {
+                deleted.add(key)
+            }
+            return Reflect.deleteProperty(target, key)
+        },
+    })
+    return { working, materialize }
+
+    function materialize() {
+        const remap = createRemap(array, operationContext, 0, sourceLength)
+        remap.length = partial.length
+        for (const key of deleted) delete remap[key]
+        for (const key of Object.keys(partial))
+            languageProperties.writeLanguageProperty(remap, key, partial[key], operationContext)
         return remap
     }
-
-    apply() {
-        const operations = this.#operations ?? operationsForRemap(this.remap)
-        const placementCount = new Map()
-        this.remap.forEach(placement => {
-            if (!propertyVersions.isPropertyPlacement(placement)) return
-            placementCount.set(
-                placement,
-                (placementCount.get(placement) ?? 0) + 1,
-            )
-        })
-        for (const operation of operations) {
-            if (operation.kind === KIND_MOVE) operation.placement.captureVersion()
-        }
-
-        for (const operation of operations) {
-            if (operation.kind === KIND_LENGTH) {
-                propertyVersions.commitArrayLength(
-                    this.#array,
-                    operation.value,
-                    this.#operationContext,
-                )
-                continue
-            }
-            if (operation.kind === KIND_DELETE) {
-                propertyVersions.deleteProperty(
-                    this.#array,
-                    String(operation.index),
-                    this.#operationContext,
-                )
-                continue
-            }
-            const key = String(operation.newIndex)
-            const entry = operation.kind === KIND_MOVE
-                ? operation.placement
-                : operation.value
-            const retained = operation.kind === KIND_ADD ||
-                (placementCount.get(entry) ?? 0) > 1
-            placeEntry(
-                this.#array,
-                key,
-                entry,
-                retained,
-                this.#operationContext,
-            )
-        }
-    }
-}
-
-function createPlacementOperation(entry, newIndex) {
-    return propertyVersions.isPropertyPlacement(entry)
-        ? {
-            kind: KIND_MOVE,
-            placement: entry,
-            newIndex,
-        }
-        : { kind: KIND_ADD, newIndex, value: entry }
-}
-
-function operationsForRemap(remap) {
-    return Array.from({ length: remap.length }, (_, newIndex) => {
-        return newIndex in remap
-            ? createPlacementOperation(remap[newIndex], newIndex)
-            : { kind: KIND_DELETE, index: newIndex }
-    })
 }
 
 function createArrayFromRemap(
@@ -268,15 +123,13 @@ function placeRemap(
     offset = 0,
     retained = true,
 ) {
-    remap.forEach((entry, index) => {
-        const key = String(offset + index)
-        placeEntry(destination, key, entry, retained, operationContext)
-    })
+    for (const index of Object.keys(remap))
+        placeEntry(destination, String(offset + Number(index)), remap[index], retained, operationContext)
 }
 
 function placeEntry(destination, key, entry, retained, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        placePlacement(destination, key, entry, operationContext, retained)
+        propertyVersions.transferPlacement(entry.captureVersion(), destination, key, operationContext, retained)
         return
     }
     propertyVersions.assignProperty(
@@ -288,41 +141,26 @@ function placeEntry(destination, key, entry, retained, operationContext) {
     )
 }
 
-function placePlacement(
-    destination,
-    key,
-    placement,
-    operationContext,
-    retained = true,
-) {
-    placement.captureVersion()
-    const stringKey = String(key)
-
-    const value = placement.value
-    if (languageValues.isPending(value, operationContext)) {
-        propertyVersions.forkPromiseVersion(
-            placement.promiseVersion,
-            value,
-            destination,
-            stringKey,
-            operationContext,
-            retained,
-        )
-        return
+// The intrinsic has already made every output position present. A source gate
+// that publishes absence therefore contributes explicit undefined, not a hole.
+function settleDenseRemap(remap, operation) {
+    const waits = []
+    for (const key of Object.keys(remap)) {
+        const placement = remap[key]
+        if (!propertyVersions.isPropertyPlacement(placement)) continue
+        const pending = internalSteps.continueOperation(placement.resolvePresence(), operation.operationContext, () => {
+            if (placement.present === false) remap[key] = undefined
+        }, undefined, operation)
+        if (languageValues.isPending(pending, operation.operationContext)) waits.push(pending)
     }
-
-    propertyVersions.assignProperty(
-        destination,
-        stringKey,
-        value,
-        operationContext,
-        retained,
-    )
+    return internalSteps.continueOperation(waits.length ? Promise.all(waits) : undefined,
+        operation.operationContext, () => remap, undefined, operation)
 }
 
 export {
-    ArrayMutation,
+    traceArrayMutation,
     createArrayFromRemap,
     createRemap,
     placeRemap,
+    settleDenseRemap,
 }

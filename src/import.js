@@ -4,11 +4,8 @@ import { prepareImportedData } from "./import-preparation.js"
 
 const IMPORT_POLICY = {
     Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed },
-    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed },
-    ManagedMutationMethodResult: {
-        kind: errorUtils.ERROR_KIND.InvocationFailed,
-        retainAdmittedDescendants: true,
-    },
+    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, externalResult: true },
+    ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, externalRoot: true },
 }
 
 function importValue(value, operationContext) {
@@ -19,12 +16,17 @@ function importMethodResult(value, operationContext) {
     return importData(value, operationContext, IMPORT_POLICY.MethodResult)
 }
 
-function importManagedMutationMethodResult(value, operationContext) {
-    return importData(
-        value,
-        operationContext,
-        IMPORT_POLICY.ManagedMutationMethodResult,
-    )
+function importExternalProperty(value, operationContext) {
+    return importData(value, operationContext, IMPORT_POLICY.ExternalProperty)
+}
+
+function importReadyMethodResult(value, operationContext, failures, receiver) {
+    // The direct result is ready. Expose this admission segment's diagnostics
+    // to call completion; independently pending descendants have their own lifetime.
+    return prepareImportedData(value, operationContext, {
+        ...IMPORT_POLICY.MethodResult,
+        receiver,
+    }, undefined, failures)
 }
 
 function importContext(value, operationContext, externalMutationTreeSetup) {
@@ -67,5 +69,6 @@ export {
     importValue as import,
     importContext,
     importMethodResult,
-    importManagedMutationMethodResult,
+    importExternalProperty,
+    importReadyMethodResult,
 }

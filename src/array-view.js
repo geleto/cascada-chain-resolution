@@ -258,9 +258,8 @@ function isArrayIndex(key) {
         String(index) === key
 }
 
-// Logical keys of a logical Array range. A range spanning the complete
-// backing pays only for present keys; a strict subrange inspects exactly its
-// selected indexes, so its cost may include the selected holes.
+// Broad ranges enumerate present backing keys; narrow ranges inspect selected
+// indexes. Removing an endpoint must not turn sparse traversal into a hole scan.
 function enumerableArrayKeys(
     arrayOrView,
     operationContext,
@@ -270,7 +269,7 @@ function enumerableArrayKeys(
     const projection = projectionOf(arrayOrView, operationContext)
     const keys = Object.create(null)
     for (const key of arrayKeyCandidates(projection, operationContext, start, end)) {
-        const descriptor = projection instanceof ArrayView
+        const descriptor = isArrayView(projection, operationContext)
             ? projection.descriptor(key, operationContext)
             : errorUtils.runExternalAction(operationContext, () =>
                 Object.getOwnPropertyDescriptor(projection, key),
@@ -290,7 +289,7 @@ function* arrayKeyCandidates(
     end = undefined,
 ) {
     const projection = projectionOf(arrayOrView, operationContext)
-    const view = projection instanceof ArrayView ? projection : undefined
+    const view = isArrayView(projection, operationContext) ? projection : undefined
     const backing = view ? view._backing : projection
     const backingLength = physicalArrayLength(backing, operationContext)
     const offset = view ? view._start : 0
@@ -298,15 +297,15 @@ function* arrayKeyCandidates(
     start = offset + Math.max(0, start)
     end = offset + Math.min(extent, end ?? extent)
 
-    if (start === 0 && end === backingLength) {
+    if (extent === backingLength && offset === 0 && end - start >= backingLength / 2) {
         const ownKeys = errorUtils.runExternalAction(operationContext, () =>
             Reflect.ownKeys(backing),
         )
         // Proxies may list indexes out of order; logical Arrays use index order.
         const keys = Object.create(null)
         for (const key of ownKeys) {
-            if (!isArrayIndex(key) || Number(key) >= end) continue
-            keys[key] = true
+            if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
+            keys[String(Number(key) - offset)] = true
         }
         yield* Object.keys(keys)
     } else {

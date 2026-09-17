@@ -23,6 +23,9 @@ import {
     deletePath as deletePathCore,
 } from "./mutations.js"
 import { run as runCore } from "./run.js"
+import { repairPath as repairPathCore } from "./path-operation.js"
+import { selectEntryPath as selectEntryPathCore } from "./path-context.js"
+import { runInternalStep } from "./internal-step.js"
 import {
     externalState,
     managedState,
@@ -34,13 +37,13 @@ function importValue(value, operationContext) {
     return returnOperationResult(operationContext, result)
 }
 
-function lookupPath(chain, path, operationContext) {
-    const result = lookupPathCore(chain, path, operationContext)
+function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const result = lookupPathCore(chain, path, operationContext, firstDynamicSegment)
     return returnOperationResult(operationContext, result)
 }
 
-function lookupPathForExpression(chain, path, operationContext) {
-    const result = lookupPathForExpressionCore(chain, path, operationContext)
+function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const result = lookupPathForExpressionCore(chain, path, operationContext, firstDynamicSegment)
     return returnExpressionResult(operationContext, result)
 }
 
@@ -49,18 +52,18 @@ function importMethodResult(value, operationContext) {
     return returnOperationResult(operationContext, result)
 }
 
-function exportValue(chain, path, operationContext) {
-    const result = exportPath(chain, path, operationContext)
+function exportValue(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const result = exportPath(chain, path, operationContext, firstDynamicSegment)
     return returnOperationResult(operationContext, result)
 }
 
-function hasError(chain, path, operationContext) {
-    const result = hasErrorCore(chain, path, operationContext)
+function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const result = hasErrorCore(chain, path, operationContext, firstDynamicSegment)
     return returnOperationResult(operationContext, result)
 }
 
-function getErrors(chain, path, operationContext) {
-    const result = getErrorsCore(chain, path, operationContext)
+function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
+    const result = getErrorsCore(chain, path, operationContext, firstDynamicSegment)
     return returnOperationResult(operationContext, result)
 }
 
@@ -69,13 +72,14 @@ function run(chain, path, method, args, operationContext, facts) {
     return returnOperationResult(operationContext, result)
 }
 
-function enter(chain, path, operationContext, entryMutable, onEntered) {
+function enter(chain, path, operationContext, entryMutable, onEntered, firstDynamicSegment = path.length) {
     const result = enterCore(
         chain,
         path,
         operationContext,
         entryMutable,
         onEntered,
+        firstDynamicSegment,
     )
     return returnOperationResult(operationContext, result)
 }
@@ -86,6 +90,7 @@ function assignPath(
     value,
     operationContext,
     mutationScopeDepth = path.length,
+    firstDynamicSegment = path.length,
 ) {
     const result = assignPathCore(
         chain,
@@ -93,6 +98,7 @@ function assignPath(
         value,
         operationContext,
         mutationScopeDepth,
+        firstDynamicSegment,
     )
     return returnOperationResult(operationContext, result)
 }
@@ -102,14 +108,24 @@ function deletePath(
     path,
     operationContext,
     mutationScopeDepth = path.length,
+    firstDynamicSegment = path.length,
 ) {
     const result = deletePathCore(
         chain,
         path,
         operationContext,
         mutationScopeDepth,
+        firstDynamicSegment,
     )
     return returnOperationResult(operationContext, result)
+}
+
+function repairPath(chain, path, operationContext, firstDynamicSegment = path.length) {
+    return returnOperationResult(operationContext, repairPathCore(chain, path, operationContext, firstDynamicSegment))
+}
+
+function selectEntryPath(chain, path, operationContext, firstDynamicSegment = path.length) {
+    return runInternalStep(operationContext, () => selectEntryPathCore(chain, path, operationContext, firstDynamicSegment))
 }
 
 export {
@@ -136,6 +152,8 @@ export {
     managedStateClass,
     PoisonError,
     run,
+    repairPath,
+    selectEntryPath,
     returnOperationResult,
 }
 

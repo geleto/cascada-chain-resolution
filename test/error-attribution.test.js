@@ -30,7 +30,6 @@ describe("causal Error attribution", () => {
             "ExternalPropertyDeleteFailed",
             "ExternalPropertyReadFailed",
             "ExternalPropertyWriteFailed",
-            "ExternalRepairFailed",
             "ImportBindingMissing",
             "ImportReflectionFailed",
             "IncompatibleOperands",

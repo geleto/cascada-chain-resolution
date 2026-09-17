@@ -28,8 +28,8 @@ function getArrayMethodDescription(invocationContext) {
     }
     return {
         receiverToLease: mutation ? undefined : receiver,
-        leaseReceiverThroughResult: !mutation &&
-            methodDefinition.leaseReceiverThroughResult,
+        leaseInputsThroughResult: !mutation &&
+            methodDefinition.leaseInputsThroughResult,
         prepareArguments: () =>
             runArrayStep(invocationContext, () =>
                 prepareArrayMethodArguments(
@@ -126,15 +126,12 @@ function invokeArrayObservationMethod(
     if (methodDefinition.remap) {
         remap = methodDefinition.remap(preparedArgs, invocationContext)
     } else {
-        const thisValue = invocationContext.receiver
-        remap = arrayRemaps.createRemap(thisValue, invocationContext.operationContext)
-        const result = Reflect.apply(
-            methodDefinition.intrinsic,
-            remap,
-            preparedArgs,
-        )
-        // Mutators change the receiver remap; observations return one.
-        if (methodDefinition.methodResult === undefined) remap = result
+        const source = arrayRemaps.createRemap(invocationContext.receiver, invocationContext.operationContext)
+        const result = Reflect.apply(methodDefinition.intrinsic, source, preparedArgs)
+        // Dense observations retain only the placements selected by the native
+        // mapping. Overwritten and removed inputs create no presence dependency.
+        remap = methodDefinition.methodResult === undefined
+            ? arrayRemaps.settleDenseRemap(result, invocationContext) : source
     }
     return internalSteps.continueOperation(
         remap,
@@ -158,12 +155,7 @@ function invokeArrayMutationMethod(
     invocationContext,
 ) {
     const thisValue = invocationContext.receiver
-    const sourceSurvives = invocationContext.preserveReceiver ||
-        arrayViews.requiresArrayMaterialization(
-            thisValue,
-            invocationContext.operationContext,
-        )
-    if (sourceSurvives && methodDefinition.view) {
+    if (methodDefinition.view) {
         const view = methodDefinition.view(
             preparedArguments,
             invocationContext,
@@ -176,7 +168,6 @@ function invokeArrayMutationMethod(
                         view,
                         invocationContext,
                     ),
-                    sourceSurvives,
                     invocationContext,
                 ),
             }
@@ -190,21 +181,14 @@ function invokeArrayMutationMethod(
             remap =>
                 runArrayStep(invocationContext, () => {
                     if (errorUtils.isPoisonError(remap)) return remap
-                    return finishMutation(
-                        new arrayRemaps.ArrayMutation(
-                            thisValue,
-                            remap,
-                            invocationContext.operationContext,
-                        ),
-                        remap,
-                    )
+                    return finishMutation(remap, captureResult(remap))
                 }),
             undefined,
             invocationContext,
         )
     }
 
-    const mutation = arrayRemaps.ArrayMutation.trace(
+    const mutation = arrayRemaps.traceArrayMutation(
         thisValue,
         invocationContext.operationContext,
     )
@@ -215,35 +199,23 @@ function invokeArrayMutationMethod(
         mutation.working,
         preparedArguments,
     )
-    return finishMutation(mutation, nativeResult)
+    const result = captureResult(nativeResult)
+    return finishMutation(runArrayStep(invocationContext, () => mutation.materialize()), result)
 
-    function finishMutation(mutation, nativeResult) {
-        const representationCopy = sourceSurvives
-            ? false
-            : mutation.requiresCopy()
-        const copiesReceiver = sourceSurvives || representationCopy
-        if (copiesReceiver) mutation.materialize()
-        const returnsReceiver = methodDefinition.methodResult === RETURN_RECEIVER
+    function captureResult(nativeResult) {
         // Capture removed property versions before committing the receiver.
-        let result = returnsReceiver
+        return methodDefinition.methodResult === RETURN_RECEIVER
             ? undefined
             : methodDefinition.methodResult(
                 nativeResult,
-                sourceSurvives,
                 invocationContext,
             )
+    }
 
-        const mutatedValue = runArrayStep(invocationContext, () => {
-            if (copiesReceiver) return arrayRemaps.createArrayFromRemap(
-                mutation.remap,
-                invocationContext.operationContext,
-                undefined,
-                sourceSurvives,
-            )
-            mutation.apply()
-            return thisValue
-        })
-        if (returnsReceiver) result = mutatedValue
+    function finishMutation(remap, result) {
+        const mutatedValue = errorUtils.isPoisonError(remap) ? remap :
+            runArrayStep(invocationContext, () => arrayRemaps.createArrayFromRemap(remap, invocationContext.operationContext))
+        if (methodDefinition.methodResult === RETURN_RECEIVER) result = mutatedValue
         else if (errorUtils.isPoisonError(mutatedValue)) {
             // Publish receiver failure now; only the independent result waits.
             result = internalSteps.continueOperation(

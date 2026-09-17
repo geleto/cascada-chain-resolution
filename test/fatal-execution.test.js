@@ -436,14 +436,11 @@ describe("fatal execution", () => {
             pending.promise,
             context,
         )).to.be(undefined)
-        delete root.value
-        pending.resolve(1)
+        const failure = failedBy(operationContext(new runtime.Execution()), new Error("late source failure"))
+        pending.resolve(failure)
         await flushMicrotasks()
 
-        expect(execution.fatalError).to.be.a(runtime.FatalError)
-        expect(execution.fatalError.message).to.be(
-            "Cannot resolve missing Promise property",
-        )
+        expect(execution.fatalError).to.be(failure)
     })
 
     it("distinguishes a consumed poison outcome from a fatal-on-escape transition", async () => {

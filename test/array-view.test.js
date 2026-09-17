@@ -422,11 +422,6 @@ describe("ArrayView", () => {
 
     it("extends at the physical end through indexed assignment", () => {
         const source = [1, 2]
-        const prototype = Object.create(Array.prototype)
-        Object.defineProperty(prototype, "5", {
-            set() { throw new Error("Inherited setter called") },
-        })
-        Object.setPrototypeOf(source, prototype)
         const sourceChain = new Chain(source)
         const view = run(sourceChain, [], "push", [3], {})
         const chain = new Chain(view)

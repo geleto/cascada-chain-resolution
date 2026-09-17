@@ -5,7 +5,7 @@ import { expect } from "./support.js"
 const exportsByRole = {
     "execution operation": [
         "assignPath", "deletePath", "enter", "export", "getErrors",
-        "hasError", "import", "importMethodResult", "lookupPath", "lookupPathForExpression", "run",
+        "hasError", "import", "importMethodResult", "lookupPath", "lookupPathForExpression", "run", "repairPath", "selectEntryPath",
     ],
     construction: ["Chain", "ContextChain"],
     "contextless configuration": [

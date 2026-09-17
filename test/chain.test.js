@@ -9,6 +9,7 @@ import {
     hasError,
     lookupPath,
     readPath,
+    runtime,
     exportValue,
     importValue,
     deferred,
@@ -83,9 +84,7 @@ describe("Chain root state", () => {
         expect(chain._state.value).to.be(value)
         const outcome = assignPath(chain, ["key"], 1)
         expect(outcome).to.be.a(Error)
-        expect(outcome.message).to.be(
-            "Cannot access property through missing or primitive value",
-        )
+        expect(outcome.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
         expect(chain._state.value).to.be(outcome)
     })
 

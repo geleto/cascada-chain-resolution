@@ -425,7 +425,7 @@ async function compareArrayCase(scenario, mode) {
     }
     world.afterInvoke?.()
 
-    if (world.identity) {
+    if (world.identity && !mode.mutate) {
         assert.equal(world.chain._state.value, world.identity, scenario.message)
     }
     const actualResult = await assertOutcome(

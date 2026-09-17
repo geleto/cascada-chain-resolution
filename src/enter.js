@@ -1,222 +1,129 @@
-import { markPromiseHandled } from "./thenable-subscription.js"
 import { Chain } from "./chain.js"
-import { findBranch } from "./external-mutation-tree.js"
-import * as errorUtils from "./error.js"
-import * as internalSteps from "./internal-step.js"
-import * as languageProperties from "./language-properties.js"
-import * as languageValues from "./language-values.js"
+import * as tree from "./external-mutation-tree.js"
+import { captureOrigin } from "./path-context.js"
+import { PathOperation } from "./path-operation.js"
+import { createReservationView, pendingEffects, validateExternalAccess } from "./external-operation.js"
+import * as errors from "./error.js"
+import * as steps from "./internal-step.js"
+import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import {
-    setProperty,
-    walkMutationPath,
-} from "./mutations.js"
+import { transformProperty, walkMutationPath } from "./mutations.js"
 import { walkObservationPath } from "./observations.js"
-import * as propertyVersions from "./property-versions.js"
+import * as versions from "./property-versions.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 
-function enter(chain, path, operationContext, entryMutable, onEntered) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        path = [...path]
-        const externalMutationTree = findBranch(chain._externalMutationTree, path)
-        const enterOperation = entryMutable ? enterMutating : enterReadOnly
-        return enterOperation(
-            chain,
-            path,
-            operationContext,
-            onEntered,
-            externalMutationTree,
-        )
-    })
-}
-
-function runEnteredCallback(
-    onEntered,
-    enteredChain,
-    operationContext,
-    onFulfilled,
-) {
-    const result = onEntered(enteredChain)
-    const fatalError = operationContext.execution.fatalError
-    if (fatalError !== null) throw fatalError
-    return internalSteps.continueOperation(
-        result,
-        operationContext,
-        finish,
-        reason => {
-            if (!errorUtils.isPoisonError(reason)) throw reason
-            return finish(reason)
-        },
-    )
-
-    function finish(value) {
-        if (errorUtils.isFatalError(value)) {
-            throw value
+function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSegment = path.length) {
+    return steps.runInternalStep(operationContext, () => {
+        const operation = new PathOperation(chain, path, operationContext,
+            mutable ? path.length : undefined, false, firstDynamicSegment)
+        const route = operation.route
+        path = route.path
+        const { node } = route
+        if (mutable && operation.routeFailure) {
+            return operation.finishMutation(operation.mutate(() => operation.routeFailure))
         }
-        return onFulfilled(value)
-    }
-}
-
-function enterReadOnly(
-    chain,
-    path,
-    operationContext,
-    onEntered,
-    externalMutationTree,
-) {
-    return walkObservationPath(chain, path, operationContext, value => {
-        if (errorUtils.isPoisonError(value)) return value
-
-        const enteredChain = new Chain(
-            value,
-            operationContext,
-            false,
-            externalMutationTree,
-        )
-        const leased = metadata.incrementReadLease(
-            value,
-            operationContext,
-        )
-        const close = () => {
-            enteredChain._closeEntry()
-            if (leased) metadata.decrementReadLease(
-                value,
-                operationContext,
-            )
+        if (!mutable) operation.reserve(node)
+        let entered
+        let source
+        let gate
+        let selectedNode = node
+        let lease
+        const native = route.boundary
+        const fail = failure => {
+            if (lease) metadata.decrementReadLease(source.value, operationContext)
+            if (gate && entered) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
+            if (entered) entered._closed = true
+            return operation.finish(failure)
         }
-        return runEnteredCallback(
-            onEntered,
-            enteredChain,
-            operationContext,
-            result => {
-                close()
-                return result
-            },
-        )
-    })
-}
-
-function enterMutating(
-    chain,
-    path,
-    operationContext,
-    onEntered,
-    externalMutationTree,
-) {
-    let enteredChain
-    let resolveGate
-
-    return walkMutationPath(
-        chain,
-        path,
-        operationContext,
-        target => {
-            if (
-                target.propertyKind !==
-                languageProperties.ORDINARY_PROPERTY
-            ) {
-                const error = languageProperties.propertyValidationError(
-                    "Cannot enter length for mutation",
-                    operationContext,
-                )
-                target.replaceReceiver(error)
-                return error
-            }
-            const { parent, key, attachmentRoot } = target
-            const value = languageProperties.readLanguageProperty(
-                parent,
-                key,
-                operationContext,
-            )
-            enteredChain = new Chain(
-                undefined,
-                operationContext,
-                true,
-                externalMutationTree,
-            )
-            const sourceVersion = languageValues.isPending(value, operationContext)
-                ? propertyVersions.requirePromiseVersion(
-                    parent,
-                    key,
-                    operationContext,
-                )
-                : undefined
-
-            const gate = new Promise(resolve => {
-                resolveGate = resolve
-            })
-
-            // Capture the source before detaching it. The private Chain is
-            // initialized without consuming that source; its exact version
-            // transfers only after the entry gate excludes outside access.
-            setProperty(
-                parent,
-                key,
-                gate,
-                operationContext,
-                attachmentRoot,
-            )
-
-            if (sourceVersion) {
-                propertyVersions.forkPromiseVersion(
-                    sourceVersion,
-                    value,
-                    enteredChain._state,
-                    "value",
-                    operationContext,
-                    Boolean(attachmentRoot),
-                )
-            } else {
-                propertyVersions.assignProperty(enteredChain._state, "value", value, operationContext)
-                if (attachmentRoot) metadata.markShared(value, operationContext)
-            }
-        },
-        entryError => {
-            if (entryError) return entryError
-            const close = () => {
-                enteredChain._closeEntry()
-            }
-            return runEnteredCallback(
-                onEntered,
-                enteredChain,
-                operationContext,
-                result => {
-                    close()
-                    publishEnteredValue(
-                        enteredChain._state,
-                        resolveGate,
-                        operationContext,
-                    )
+        const start = () => {
+            return steps.continueOperation(operation.effect?.readiness, operationContext, () => {
+                const blocker = operation.blocker(false)
+                if (blocker) return fail(blocker)
+                entered._reservationView = node ? createReservationView(node) : chain._reservationView
+                return runCallback(entered, result => {
+                    if (lease) metadata.decrementReadLease(source.value, operationContext)
+                    if (gate) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
+                    const pending = node ? pendingEffects(entered._reservationView) : undefined
+                    markPromiseHandled(operation.finish(pending), operationContext)
                     return result
-                },
-            )
-        },
-    )
-}
-
-function publishEnteredValue(rootState, resolveGate, operationContext) {
-    const version = metadata.metaOf(rootState, operationContext).placementVersions?.value
-    const value = version ? version.value : rootState.value
-    if (!languageValues.isPending(value, operationContext)) {
-        resolveGate(value)
-        return
-    }
-
-    // Registration happens only after callback issuance has stopped. The root
-    // Promise version and all earlier private commands therefore update rootState.value
-    // first in the same FIFO delivery.
-    const publication = propertyVersions.continuePromiseVersion(
-        rootState,
-        "value",
-        value,
-        operationContext,
-        publishedValue => {
-            if (languageValues.isPending(publishedValue, operationContext)) {
-                throw new Error("Entered root remained pending at publication")
+                })
+            })
+        }
+        function initialize(placement, depth = path.length) {
+            source = placement
+            entered = new Chain(undefined, operationContext)
+            entered._readOnly = !mutable
+            entered._externalMutationTree = selectedNode
+            entered._contextOrigin = captureOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+            versions.transferPlacement(placement, entered._state, "value", operationContext)
+        }
+        function runCallback(privateChain, complete) {
+            const result = onEntered(privateChain)
+            if (operationContext.execution.fatalError) throw operationContext.execution.fatalError
+            return steps.continueOperation(result, operationContext, finish, reason => {
+                if (!errors.isPoisonError(reason)) throw reason
+                return finish(reason)
+            })
+            function finish(value) {
+                if (errors.isFatalError(value)) throw value
+                privateChain._closed = true
+                return complete(value)
             }
-            resolveGate(publishedValue)
-        },
-    )
-    markPromiseHandled(publication, operationContext)
+        }
+        if (native) {
+            return walkObservationPath(chain, path, operationContext, fail, fail,
+                errors.ERROR_KIND.LookupReflectionFailed, { owner: operation, externalDepth: native[tree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
+                    onExternal: identity => {
+                        const invalid = validateExternalAccess(identity, native, operationContext)
+                        if (invalid) return fail(invalid)
+                        operation.reachedExternal = true
+                        if (!node?.[tree.TREE_NODE].identity || route.dynamicDepth < node[tree.TREE_NODE].path.length) {
+                            const failure = properties.propertyValidationError("Entry must select a registered external scope through a static path", operationContext)
+                            if (!mutable) return fail(failure)
+                            return steps.continueOperation(operation.effect?.readiness, operationContext, () =>
+                                operation.finishMutation(operation.blocker() ?? failure))
+                        }
+                        initialize({ value: node[tree.TREE_NODE].identity, present: true })
+                        return start()
+                    } })
+        }
+        if (!mutable) {
+            return walkObservationPath(chain, path, operationContext, (value, present, depth, recovery) => {
+                if (errors.isPoisonError(value) && depth !== path.length) return fail(value)
+                initialize({ value, present, recovery })
+                lease = metadata.incrementReadLease(value, operationContext)
+                return start()
+            }, fail, errors.ERROR_KIND.LookupReflectionFailed, { owner: operation })
+        }
+        return walkMutationPath(chain, path, operationContext, target => {
+            if (target.propertyKind !== properties.ORDINARY_PROPERTY) {
+                const failure = properties.propertyValidationError("Cannot enter length for mutation", operationContext)
+                target.replaceReceiver(failure)
+                return failure
+            }
+            const depth = target.pathDepth ?? path.length
+            const suffix = path.slice(depth)
+            const captured = versions.capturePlacement(target.parent, target.key, operationContext, target.sourceVersion)
+            if (suffix.length) {
+                const kind = properties.classifyLanguageProperty(captured.value, suffix[0], operationContext)
+                if (kind !== properties.ORDINARY_PROPERTY || suffix.length > 1) {
+                    const failure = kind !== properties.ORDINARY_PROPERTY
+                        ? properties.propertyValidationError("Cannot enter length for mutation", operationContext)
+                        : errors.pathAccessError(undefined, operationContext)
+                    return steps.continueOperation(transformProperty(target, operationContext, () => failure), operationContext, outcome => outcome.result)
+                }
+            }
+            selectedNode = tree.findBranch(chain._externalMutationTree, path.slice(0, depth))
+            gate = versions.installPlacementGate(target.parent, target.key, operationContext, target.sourceVersion)
+            if (target.attachmentRoot) metadata.markShared(target.attachmentRoot, operationContext)
+            initialize(captured, depth)
+            // The reference denotes the element, but every command traverses
+            // its protected Array so structural effects happen at that turn.
+            if (suffix.length) entered._rootPath = suffix
+        }, result => steps.continueOperation(result, operationContext, failure => failure ? fail(failure) : start()), {
+            structuralOwner: true,
+        })
+    })
 }
 
 export { enter }
