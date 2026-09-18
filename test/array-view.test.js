@@ -117,7 +117,7 @@ describe("ArrayView", () => {
         const pending = deferred()
         const source = [pending.promise, 2]
         new Chain(source)
-        propertyVersions.getPropertyPlacement(source, "0").captureVersion()
+        propertyVersions.getPropertyPlacement(source, "0").ensureCaptured()
         const sourceVersion = propertyVersions.getPromiseVersion(source, "0")
         const pushed = run(new Chain(source), [], "push", [3], {})
         const grownChain = new Chain(pushed)

@@ -3,10 +3,103 @@ import * as runtime from "cascada-chain-resolution"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
+import { getPlacementVersion } from "../src/property-versions.js"
+import { metaOf } from "../src/meta.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    for (const array of [false, true]) {
+        for (const nested of [false, true]) {
+            it(`keeps failed ${nested ? "nested" : "direct"} entry deletion visible and repairable in ${array ? "Arrays" : "records"}`, async () => {
+                const ctx = context()
+                const pending = Promise.withResolvers()
+                const cause = new Error("deletion refused")
+                let refuse = true
+                const key = array ? 0 : "item"
+                const storage = array ? [1] : { item: 1 }
+                const chain = new runtime.Chain(new Proxy(storage, {
+                    deleteProperty(target, property) {
+                        if (refuse) throw cause
+                        return Reflect.deleteProperty(target, property)
+                    },
+                }), ctx)
+                let child
+                const remove = entered => pending.promise.then(() => runtime.deletePath(entered, [], ctx))
+                const entry = runtime.enter(chain, [key], ctx, true, nested
+                    ? entered => { child = runtime.enter(entered, [], ctx, true, remove) }
+                    : remove)
+                const captured = runtime.lookupPath(chain, [key], ctx)
+                pending.resolve()
+                await child
+                await entry
+                const poison = await captured
+                assert.equal(poison.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+                assert.equal(poison.cause, cause)
+                assert.equal(await runtime.export(chain, [], ctx), poison)
+                assert.equal(await runtime.getErrors(chain, [], ctx), poison)
+                assert.equal(await runtime.hasError(chain, [], ctx), true)
+                verifyRefCounts(ctx, chain._state)
+
+                // A failed restoration preserves the original poison and the
+                // completed deletion, which a later repair can still publish.
+                assert.equal((await runtime.repairPath(chain, [key], ctx)).cause, cause)
+                assert.equal(await runtime.getErrors(chain, [], ctx), poison)
+                refuse = false
+                await runtime.repairPath(chain, [key], ctx)
+                assert.equal(await runtime.getErrors(chain, [], ctx), null)
+                assert.equal(runtime.lookupPath(chain, [key], ctx), undefined)
+                assert.deepEqual(await runtime.export(chain, [], ctx), array ? new Array(1) : {})
+                assert.equal(Object.hasOwn(storage, key), false)
+                assert.equal(await captured, poison)
+                assert.equal(ctx.execution.fatalError, null)
+                verifyRefCounts(ctx, chain._state)
+            })
+        }
+    }
+
+    it("bounds dependency storage across capture, failure, repair, and replacement cycles", async () => {
+        const ctx = context(), untouched = Promise.withResolvers()
+        const chain = new runtime.Chain({ item: { n: 0 }, untouched: untouched.promise }, ctx)
+        const held = new runtime.Chain(runtime.lookupPath(chain, [], ctx), ctx)
+        let bounds
+        // Count reachable bookkeeping records, excluding admitted graph data.
+        // Compare identical live workloads, without prescribing field names,
+        // collecting garbage, or settling the unrelated retained frontier.
+        function size(value, visited = new Set()) {
+            if (!value || typeof value !== "object" || visited.has(value) || metaOf(value, ctx)) return 0
+            visited.add(value)
+            return 1 + Object.values(value).reduce((total, child) => total + size(child, visited), 0)
+        }
+        const count = () => size(getPlacementVersion(chain._state.value, "item", ctx))
+        for (let i = 0; i < 32; i++) {
+            const gate = Promise.withResolvers(), data = Promise.withResolvers()
+            const entry = runtime.enter(chain, ["item"], ctx, true, inside => {
+                runtime.assignPath(inside, ["n"], data.promise, ctx)
+                return gate.promise
+            })
+            const captured = runtime.lookupPath(chain, ["item"], ctx)
+            const activeSize = count()
+            gate.resolve()
+            data.resolve(i)
+            await entry
+            const snapshot = new runtime.Chain(await captured, ctx)
+            assert.deepEqual(await runtime.export(snapshot, [], ctx), { n: i })
+            const settledSize = count()
+            const failure = await runtime.run(chain, ["item"], "missing", [], ctx, { mutationScopeDepth: 1 })
+            assert.equal(failure.kind, runtime.ERROR_KIND.MissingFunction)
+            const failedSize = count()
+            await runtime.repairPath(chain, ["item"], ctx)
+            runtime.assignPath(chain, ["item", "n"], i + 1, ctx)
+            assert.deepEqual(await runtime.export(snapshot, [], ctx), { n: i })
+            assert.deepEqual(await runtime.export(held, ["item"], ctx), { n: 0 })
+            const counts = [activeSize, settledSize, failedSize, count()]
+            if (i < 4) bounds = counts.map((value, index) => Math.max(value, bounds?.[index] ?? 0))
+            else counts.forEach((value, index) => assert.ok(value <= bounds[index], `cycle ${i}, stage ${index}: ${value} > ${bounds[index]}`))
+            verifyRefCounts(ctx, chain._state, held._state, snapshot._state)
+        }
+    })
+
     for (const category of ["record", "class"]) {
         for (const delivery of ["ready", "synchronous", "pending"]) {
             for (const mutation of [false, true]) {

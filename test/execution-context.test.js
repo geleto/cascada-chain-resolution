@@ -3,7 +3,6 @@ import { ArrayView, projectionOf } from "../src/array-view.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as runtime from "../src/index.js"
-import { readPath } from "../src/observations.js"
 import { runInternalStep } from "../src/internal-step.js"
 import {
     expect,
@@ -25,7 +24,6 @@ describe("operation context", () => {
     for (const [name, operation] of [
         ["lookupPath", (chain, ctx) => runtime.lookupPath(chain, ["count"], ctx)],
         ["lookupPathForExpression", (chain, ctx) => runtime.lookupPathForExpression(chain, ["count"], ctx)],
-        ["readPath", (chain, ctx) => readPath(chain, ["count"], ctx)],
         ["export", (chain, ctx) => runtime.export(chain, [], ctx)],
         ["hasError", (chain, ctx) => runtime.hasError(chain, [], ctx)],
         ["getErrors", (chain, ctx) => runtime.getErrors(chain, [], ctx)],
@@ -259,9 +257,9 @@ describe("operation context", () => {
 
         expect(samples).to.be(3)
         expect(invocations).to.be(3)
-        expect(readPath(firstChain, [], firstOperationContext)).to.be(resolved)
-        expect(readPath(sibling, [], firstOperationContext)).to.be(resolved)
-        expect(readPath(secondChain, [], secondOperationContext)).to.be(resolved)
+        expect(runtime.lookupPath(firstChain, [], firstOperationContext)).to.be(resolved)
+        expect(runtime.lookupPath(sibling, [], firstOperationContext)).to.be(resolved)
+        expect(runtime.lookupPath(secondChain, [], secondOperationContext)).to.be(resolved)
     })
 
     it("attributes then access and invocation failures to their operation contexts", async () => {
@@ -279,7 +277,7 @@ describe("operation context", () => {
             acquisitionFailure,
             acquisitionOperationContext,
         )
-        const acquisitionError = await readPath(
+        const acquisitionError = await runtime.lookupPath(
             acquisitionChain,
             [],
             operationContext(acquisitionExecution, "later acquisition"),
@@ -301,7 +299,7 @@ describe("operation context", () => {
             invocationFailure,
             invocationOperationContext,
         )
-        const invocationError = await readPath(
+        const invocationError = await runtime.lookupPath(
             invocationChain,
             [],
             operationContext(invocationExecution, "later invocation"),

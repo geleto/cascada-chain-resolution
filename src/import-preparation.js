@@ -1,5 +1,4 @@
 import { continueOperation } from "./internal-step.js"
-import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { commitExternalLocations, prepareExternalMutationTree } from "./external-mutation-tree.js"
 import * as languageProperties from "./language-properties.js"
@@ -176,7 +175,7 @@ function prepareImportedData(
                 for (const [key, staged] of containers.get(value)?.placements ?? []) {
                     const source = inspect(() => readPlacement(value, key))
                     if (errorUtils.isPoisonError(source) || !source) continue
-                    staged.sourceVersion = source.sourceVersion
+                    staged.placement.sourceVersion = source.sourceVersion
                     if (languageValues.isPending(source.value, operationContext)) copyContainer(value)
                     else if (metadata.isObjectLike(source.value) && !Error.isError(source.value))
                         connectChild(value, walk(source.value))
@@ -211,9 +210,9 @@ function prepareImportedData(
                 const child = placement.value
                 const borrowed = retentions.has(value) && importPolicy.externalResult && languageValues.isPending(child, operationContext)
                 const sourceVersion = borrowed ? placement.sourceVersion : undefined
-                const version = { value: child, present: placement.present, recovery: placement.recovery,
-                    pendingPresence: sourceVersion?.pendingPresence }
-                const staged = { version, original: child, sourceVersion }
+                placement.sourceVersion = sourceVersion
+                const version = propertyVersions.createPlacementVersion(placement)
+                const staged = { version, original: child, placement }
                 container.placements.set(key, staged)
                 if (borrowed) copyContainer(value)
                 if (sourceVersion?.transition) {
@@ -223,60 +222,55 @@ function prepareImportedData(
                     const transition = version.transition = {}
                     transition.promise = propertyVersions.resolvePlacementTransition(placement, operationContext, published => {
                         if (state === "abandoned") return undefined
-                        staged.sourceVersion = published.sourceVersion
-                        version.present = published.present
-                        version.recovery = published.recovery
-                        subscribe(published.value)
+                        staged.placement = published
+                        subscribe()
                         delete version.pendingPresence
                         delete version.transition
-                        transition.placement = { value: version.value, present: version.present,
-                            recovery: version.recovery, sourceVersion: version }
+                        transition.placement = propertyVersions.captureVersion(version)
                     })
-                    if (languageValues.isPending(transition.promise, operationContext)) {
-                        version.promiseBacked = true
-                        version.publication ??= transition.promise
-                        markPromiseHandled(transition.promise, operationContext)
-                    }
-                } else subscribe(child)
+                    propertyVersions.trackVersionPublication(version, transition.promise, operationContext)
+                } else subscribe()
                 if (!version.promiseBacked && !resultErrors && version.value === child) container.placements.delete(key)
                 if (failure && !resultErrors) break
 
                 // Read the source's normalized version after its own settlement.
                 // Only the result copy applies this call's additional restrictions.
-                function subscribe(value) {
-                    const publication = continueOperation(value, operationContext, deliver, reason => {
+                function subscribe() {
+                    // Presence is fixed at publication even when its data stays
+                    // pending. Result validation still owns that later delivery.
+                    version.present = staged.placement.present
+                    version.recovery = staged.placement.recovery
+                    const publication = continueOperation(staged.placement.value, operationContext, deliver, reason => {
                         if (state === "abandoned") return undefined
-                        return deliver(staged.sourceVersion ? reason :
+                        return deliver(staged.placement.sourceVersion ? reason :
                             errorUtils.createPoisonError(reason, operationContext, importPolicy.kind))
                     })
-                    if (languageValues.isPending(publication, operationContext)) {
-                        version.promiseBacked = true
-                        version.publication = publication
-                        markPromiseHandled(publication, operationContext)
-                    }
+                    propertyVersions.trackVersionPublication(version, publication, operationContext)
                 }
 
                 function deliver(resolved) {
                     if (state === "abandoned") return undefined
-                    const sourceVersion = staged.sourceVersion
-                    if (sourceVersion) {
-                        if (languageValues.isPending(sourceVersion.value, operationContext))
-                            return propertyVersions.continueCapturedPromiseVersion(
-                                sourceVersion.value, sourceVersion, operationContext, deliver)
-                        resolved = sourceVersion.value
-                        version.present = sourceVersion.present
-                        version.recovery = sourceVersion.recovery
-                        delete version.pendingPresence
-                    }
+                    const source = staged.placement.sourceVersion
+                    return source
+                        ? propertyVersions.resolvePlacement(propertyVersions.captureVersion(source), operationContext, publish)
+                        : publish({ ...staged.placement, value: resolved })
+                }
+
+                function publish(placement) {
+                    if (state === "abandoned") return undefined
                     if (state === "staging") {
-                        version.value = walk(resolved)
+                        version.value = walk(placement.value)
+                        version.present = placement.present
+                        version.recovery = placement.recovery
+                        delete version.pendingPresence
+                        delete version.publication
                         connectChild(value, version.value)
                     } else {
-                        const imported = prepareImportedData(resolved, operationContext, importPolicy)
-                        if (version.recovery) propertyVersions.retainPlacement(version.recovery, operationContext)
-                        propertyVersions.commitPromiseVersion(container.target, key, version, imported,
+                        const imported = prepareImportedData(placement.value, operationContext, importPolicy)
+                        if (placement.recovery) propertyVersions.retainPlacement(placement.recovery, operationContext)
+                        propertyVersions.commitPromiseVersion(container.target, key, version,
+                            { value: imported, present: placement.present, recovery: placement.recovery },
                             operationContext, container.target !== value)
-                        delete version.publication
                     }
                 }
             }

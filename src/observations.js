@@ -126,14 +126,6 @@ function lookupPathForExpression(chain, path, operationContext, firstDynamicSegm
     })
 }
 
-// A temporary read or ownership transfer does not create another owner.
-function readPath(chain, path, operationContext) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        chain._assertOperationContext(operationContext)
-        return walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value)
-    })
-}
-
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path, operationContext, firstDynamicSegment = path.length) {
     return internalSteps.runInternalStep(operationContext, () => {
@@ -256,10 +248,9 @@ function collectFencedErrorWaits(value, queryContext) {
     }
 
     function collectPromiseErrors(parent, key, promise) {
-        const result = propertyVersions.continuePromiseVersion(
-            parent,
-            key,
+        const result = propertyVersions.observePromiseVersion(
             promise,
+            propertyVersions.requirePromiseVersion(parent, key, queryContext.operationContext),
             queryContext.operationContext,
             value => {
                 if (!queryContext.open) return undefined
@@ -329,7 +320,7 @@ function walkObservationPath(
     function readCaptured(value, version, index, present) {
         if (version) value = version.value
         if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present, version?.recovery)
-        return propertyVersions.continueCapturedPromiseVersion(
+        return propertyVersions.observePromiseVersion(
             value, version, operationContext,
             propertyValue => runTraversal(() => walkValue(propertyValue, index, version.present !== false, version.recovery)), owner,
         )
@@ -383,6 +374,5 @@ export {
     hasError,
     lookupPath,
     lookupPathForExpression,
-    readPath,
     walkObservationPath,
 }

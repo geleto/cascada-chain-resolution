@@ -293,7 +293,7 @@ function prepareConcatArguments(invocationContext) {
 
 function captureRemap(array, operationContext) {
     const remap = arrayRemaps.createRemap(array, operationContext)
-    remap.forEach(placement => placement?.captureVersion())
+    remap.forEach(placement => placement?.ensureCaptured())
     return remap
 }
 

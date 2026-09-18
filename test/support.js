@@ -9,7 +9,7 @@ import * as metadata from "../src/meta.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as sourceLanguageValues from "../src/language-values.js"
-import { readPath as readObservedPath } from "../src/observations.js"
+import { walkObservationPath } from "../src/observations.js"
 import { verifyRefCounts as verifyExecutionRefCounts } from "./verify-refcounts.js"
 
 let testExecution
@@ -83,8 +83,14 @@ function lookupPath(chain, path) {
     return runtime.lookupPath(chain, path, chainOperationContext(chain, "test lookup"))
 }
 
+// Inspect logical storage without the public lookup's final output sharing.
+// Pending transitions still use the walker's ordinary capture protection.
 function readPath(chain, path) {
-    return readObservedPath(chain, path, chainOperationContext(chain, "test read"))
+    const operationContext = chainOperationContext(chain, "test read")
+    return internalSteps.runInternalStep(operationContext, () => {
+        chain._assertOperationContext(operationContext)
+        return walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value)
+    })
 }
 
 function exportValue(chain, path) {
@@ -150,12 +156,12 @@ function getPromiseVersion(owner, key) {
     )
 }
 
-function publishPromiseVersion(owner, key, promiseVersion, value) {
+function publishPromiseVersion(owner, key, promiseVersion, placement) {
     return propertyVersions.publishPromiseVersion(
         owner,
         key,
         promiseVersion,
-        value,
+        placement,
         testOperationContext("test Promise advancement"),
     )
 }

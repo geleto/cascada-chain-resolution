@@ -557,42 +557,36 @@ function walkMutationPath(
         if (languageValues.isPending(child, operationContext)) {
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
-            const continueVersion = observeTarget ? propertyVersions.continuePromiseVersion
-                : propertyVersions.continueMutationVersion
-            const pending = continueVersion(
-                parent,
-                key,
-                child,
-                operationContext,
-                (propertyValue, promiseVersion) => walk(
-                    propertyValue,
-                    index + 1,
-                    (next, recovery) => {
-                        if (next !== propertyValue && next !== promiseVersion.value) {
-                            publicationValue = next
-                            // This version is runtime-owned: ordinary mutation
-                            // copies imported parents before descent; external
-                            // prefixes wait only at runtime scope gates because
-                            // initial authority paths are directly ready.
-                            promiseVersion.present = true
-                            promiseVersion.recovery = recovery
-                            propertyVersions.publishPromiseVersion(
-                                parent,
-                                key,
-                                promiseVersion,
-                                next,
-                                operationContext,
-                            )
-                            operationResult = includePublicationFailure(
-                                operationResult,
-                                promiseVersion.value,
-                                operationContext,
-                            )
-                        }
-                    },
-                    { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false },
-                ),
+            const source = propertyVersions.requirePromiseVersion(parent, key, operationContext)
+            const onValue = (propertyValue, promiseVersion) => walk(
+                propertyValue,
+                index + 1,
+                (next, recovery) => {
+                    if (next !== propertyValue && next !== promiseVersion.value) {
+                        publicationValue = next
+                        // This version is runtime-owned: ordinary mutation
+                        // copies imported parents before descent; external
+                        // prefixes wait only at runtime scope gates because
+                        // initial authority paths are directly ready.
+                        propertyVersions.publishPromiseVersion(
+                            parent,
+                            key,
+                            promiseVersion,
+                            { value: next, present: true, recovery },
+                            operationContext,
+                        )
+                        operationResult = includePublicationFailure(
+                            operationResult,
+                            promiseVersion.value,
+                            operationContext,
+                        )
+                    }
+                },
+                { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false },
             )
+            const pending = observeTarget
+                ? propertyVersions.continueCapturedPromiseVersion(child, source, operationContext, value => onValue(value, source))
+                : propertyVersions.continueMutationVersion(parent, key, source, operationContext, onValue)
             if (!pathSelectionComplete) writeBack(parent)
             if (onComplete === undefined && languageValues.isPending(pending, operationContext)) {
                 markPromiseHandled(pending, operationContext)

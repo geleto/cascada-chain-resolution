@@ -23,14 +23,15 @@ const shapes = [
 ]
 
 describe("ownership across unchanged and pending paths", () => {
-    for (const array of [false, true]) for (const admitted of [false, true]) {
+    for (const array of [false, true]) for (const admitted of [false, true]) for (const observed of [false, true]) {
         for (const action of ["repair", "scoped no-op", "entry"]) {
-            it(`retains reused children after ${action}, Array=${array}, admitted=${admitted}`, async () => {
+            it(`retains reused children after ${action}, Array=${array}, admitted=${admitted}, observed=${observed}`, async () => {
                 const ctx = { execution: new r.Execution(), errorContext: {} }
                 const initial = () => ({ item: array ? [{ n: 1 }] : { n: 1, inner: {} } })
                 const chain = new r.Chain(admitted ? r.import(initial(), ctx) : initial(), ctx)
                 const fork = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
-                // Do not inspect the fork first: that would admit its lazy child.
+                // Exercise both explicit child protection and a still-lazy fork.
+                if (observed) r.lookupPath(fork, ["item"], ctx)
                 if (action === "repair") r.repairPath(chain, ["item"], ctx)
                 else if (action === "scoped no-op") r.deletePath(chain, ["item", array ? 0 : "inner", "absent"], ctx, 1)
                 else r.enter(chain, ["item"], ctx, true, () => {})
@@ -42,12 +43,13 @@ describe("ownership across unchanged and pending paths", () => {
         }
     }
 
-    for (const array of [false, true]) for (const assigned of [false, true]) for (const nested of [false, true]) {
-        it(`isolates entered pending children, Array=${array}, assigned=${assigned}, nested=${nested}`, async () => {
+    for (const array of [false, true]) for (const assigned of [false, true]) for (const nested of [false, true]) for (const observed of [false, true]) {
+        it(`isolates entered pending children, Array=${array}, assigned=${assigned}, nested=${nested}, observed=${observed}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }, pending = Promise.withResolvers()
             const chain = new r.Chain(assigned ? {} : { item: pending.promise }, ctx)
             if (assigned) r.assignPath(chain, ["item"], pending.promise, ctx)
             const fork = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
+            if (observed) r.lookupPath(fork, ["item"], ctx)
             const change = inner => r.deletePath(inner, [array ? 0 : "n"], ctx)
             const entry = r.enter(chain, ["item"], ctx, true, inner => nested
                 ? r.enter(inner, [], ctx, true, change) : change(inner))
@@ -191,6 +193,18 @@ describe("observations across scope publication", () => {
 })
 
 describe("pending structural publication", () => {
+    it("matches a sequential model across seeded placement schedules", function () {
+        this.timeout(60000)
+        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=128",
+            fileURLToPath(new URL("./fixtures/placement-sequences.js", import.meta.url))],
+        { encoding: "utf8", timeout: 55000 })
+        assert.equal(result.error, undefined, result.error?.message)
+        assert.equal(result.status, 0, result.stderr)
+        const coverage = JSON.parse(result.stdout)
+        assert.equal(coverage.cases, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 4)
+        assert.equal(coverage.distinctTraces, coverage.cases)
+    })
+
     it("makes progress through repeated length assignments, copies, and entry", function () {
         this.timeout(15000)
         // A microtask livelock also prevents Mocha's timeout from firing.
@@ -832,16 +846,20 @@ describe("scope boundary regressions", () => {
         })
     }
 
-    for (const copied of [false, true]) for (const deleting of [false, true]) {
-        it(`replaces a gate's pending published data without waiting for it, copied=${copied}, deleting=${deleting}`, async () => {
+    for (const copied of [false, true]) for (const deleting of [false, true]) for (const nested of [false, true]) {
+        it(`replaces a gate's pending published data without waiting for it, copied=${copied}, deleting=${deleting}, nested=${nested}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const hold = Promise.withResolvers(), data = Promise.withResolvers()
             const source = { target: 1, sibling: 0 }
             const chain = new r.Chain(copied ? r.import(source, ctx) : source, ctx)
-            const entry = r.enter(chain, ["target"], ctx, true, inside => {
+            const publish = inside => {
                 r.assignPath(inside, [], data.promise, ctx)
                 return hold.promise
-            })
+            }
+            let child
+            const entry = r.enter(chain, ["target"], ctx, true, nested
+                ? inside => { child = r.enter(inside, [], ctx, true, publish) }
+                : publish)
             if (copied) r.assignPath(chain, ["sibling"], 7, ctx)
             const earlier = r.lookupPath(chain, ["target"], ctx)
             if (deleting) r.deletePath(chain, ["target"], ctx)
@@ -852,6 +870,7 @@ describe("scope boundary regressions", () => {
             assert.equal(finished, false)
             hold.resolve()
             await entry
+            await child
             await checkpoint()
             assert.equal(finished, true, "Publication must not wait for the old pending data")
             assert.equal(await observation, deleting ? undefined : 2)

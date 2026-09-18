@@ -27,8 +27,8 @@ function walkManagedProperties(value, owner, inspect, visit, beforePending) {
         let readiness
         if (values.isPending(child, operationContext)) {
             beforePending?.(key)
-            readiness = versions.continuePromiseVersion(
-                value, key, child, operationContext,
+            readiness = versions.observePromiseVersion(
+                child, versions.requirePromiseVersion(value, key, operationContext), operationContext,
                 (resolved, version) => visit(resolved, key, version.present !== false), owner)
         } else readiness = visit(child, key)
         if (values.isPending(readiness, operationContext)) waits.push(readiness)

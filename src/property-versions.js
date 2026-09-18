@@ -14,7 +14,7 @@ class PropertyPlacement {
         this.operationContext = operationContext
     }
 
-    captureVersion() {
+    ensureCaptured() {
         if (Object.hasOwn(this, "value")) return this
         const { owner, key, operationContext } = this
         languageProperties.readLanguageProperty(owner, key, operationContext)
@@ -23,7 +23,7 @@ class PropertyPlacement {
     }
 
     resolveValue() {
-        return resolvePlacement(this.captureVersion(), this.operationContext, placement => {
+        return resolvePlacement(this.ensureCaptured(), this.operationContext, placement => {
             Object.assign(this, placement)
             return this.value
         })
@@ -34,7 +34,7 @@ class PropertyPlacement {
             getPlacementVersion(this.owner, this.key, this.operationContext)
         if (!version?.pendingPresence && version?.present !== false) return this
         // Publication fixes presence even when the published value is pending.
-        return resolvePlacementTransition(this.captureVersion(), this.operationContext,
+        return resolvePlacementTransition(this.ensureCaptured(), this.operationContext,
             placement => Object.assign(this, placement))
     }
 }
@@ -44,13 +44,27 @@ class PropertyPlacement {
 // Deferred selection supplies its captured version, even if it is now detached.
 function capturePlacement(owner, key, operationContext, capturedVersion) {
     const version = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
-    if (version) return {
+    if (version) return captureVersion(version)
+    const descriptor = languageProperties.getLanguagePlacementDescriptor(owner, key, operationContext)
+    return { value: descriptor?.value, present: Boolean(descriptor) }
+}
+
+function captureVersion(version) {
+    return {
         value: version.value, present: version.present !== false,
         sourceVersion: version.promiseBacked ? version : undefined,
         recovery: version.recovery,
     }
-    const descriptor = languageProperties.getLanguagePlacementDescriptor(owner, key, operationContext)
-    return { value: descriptor?.value, present: Boolean(descriptor) }
+}
+
+// A destination has its own publication authority and capture obligations.
+// Only logical contents and unfinished source dependencies cross placements.
+function createPlacementVersion(placement) {
+    return {
+        value: placement.value, present: placement.present, recovery: placement.recovery,
+        pendingPresence: placement.sourceVersion?.pendingPresence,
+        transition: placement.sourceVersion?.transition,
+    }
 }
 
 // A pending capture follows its own version, never a later live placement.
@@ -62,6 +76,16 @@ function resolvePlacement(placement, operationContext, onReady) {
         errorUtils.ERROR_KIND.OperationInputFailed, value => onReady({ ...placement, value }))
     return continueCapturedPromiseVersion(placement.value, version, operationContext, value =>
         onReady({ value, present: version.present !== false, recovery: version.recovery, sourceVersion: undefined }))
+}
+
+// Call after subscription: synchronous delivery may already have advanced the
+// version or handed publication to a new producer. Keep that newer dependency.
+function trackVersionPublication(version, publication, operationContext) {
+    if (!languageValues.isPending(publication, operationContext)) return false
+    version.promiseBacked = true
+    version.publication ??= publication
+    markPromiseHandled(publication, operationContext)
+    return true
 }
 
 // Replacement waits for preceding work to publish, not for the data that work
@@ -93,28 +117,13 @@ function transferPlacement(placement, owner, key, operationContext, retained = f
     }
     if (!destinationVersion || isLivePromiseVersion(owner, key, destinationVersion, operationContext))
         languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-    const source = placement.sourceVersion && languageValues.isPending(placement.value, operationContext)
-        ? placement.sourceVersion : undefined
-    let version = { value: placement.value, present: placement.present, recovery: placement.recovery,
-        pendingPresence: source?.pendingPresence, transition: source?.transition }
-    const deliver = value => {
-        if (source) {
-            version.present = source.present
-            version.recovery = source.recovery
-            version.transition = source.transition
-            if (retained && source.recovery) retainPlacement(source.recovery, operationContext)
-        }
-        return publishPromiseVersion(owner, key, version, value, operationContext, retained)
-    }
-    const publication = source
-        ? continueCapturedPromiseVersion(placement.value, source, operationContext, deliver)
-        : internalSteps.consumeValue(placement.value, operationContext, kind, deliver)
-    const pending = languageValues.isPending(publication, operationContext)
-    if (pending) {
-        version.promiseBacked = true
-        version.publication = publication
-        markPromiseHandled(publication, operationContext)
-    }
+    let version = createPlacementVersion(placement)
+    const deliver = resolved => publishPromiseVersion(owner, key, version, resolved, operationContext, retained)
+    const publication = placement.sourceVersion
+        ? resolvePlacement(placement, operationContext, deliver)
+        : internalSteps.consumeValue(placement.value, operationContext, kind,
+            value => deliver({ ...placement, value }))
+    const pending = trackVersionPublication(version, publication, operationContext)
     if (destinationVersion) {
         commitPlacementVersion(owner, key, destinationVersion, version, operationContext)
         // Synchronous delivery stages above; later delivery advances the exact
@@ -134,8 +143,7 @@ function installPlacementGate(owner, key, operationContext, capturedVersion) {
         promise, owner, key,
         resolve() {
             const version = gate.version
-            transition.placement = { value: version.value, present: version.present !== false,
-                recovery: version.recovery, sourceVersion: version }
+            transition.placement = captureVersion(version)
             publication.resolve()
             // Replacement may proceed after publication. Value consumers still
             // wait for any pending data that was published through the gate.
@@ -156,18 +164,24 @@ function installPlacementGate(owner, key, operationContext, capturedVersion) {
 }
 
 function completePlacementGate(gate, placement, operationContext) {
-    const failure = errorUtils.catchExternalThrow(
-        () => transferPlacement(placement, gate.owner, gate.key, operationContext, false, gate.version),
-        operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
-    if (errorUtils.isPoisonError(failure)) {
-        const poison = errorUtils.isPoisonError(placement.value)
-            ? errorUtils.combineErrors([placement.value, failure], "Entry publication failed") : failure
-        retainPlacement(placement, operationContext)
-        commitPlacementVersion(gate.owner, gate.key, gate.version,
-            { value: poison, present: true, recovery: placement.recovery ?? placement }, operationContext, false)
-    }
-    gate.resolve()
-    return failure
+    // Completion is exposed through the gate; this helper owns pending publication.
+    // A nested command may still change presence or recovery. Finish that
+    // transition here so failed publication follows the same recovery path as
+    // ready completion. Pending data itself does not delay gate publication.
+    const publication = resolvePlacementTransition(placement, operationContext, resolved => {
+        const failure = errorUtils.catchExternalThrow(
+            () => transferPlacement(resolved, gate.owner, gate.key, operationContext, false, gate.version),
+            operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
+        if (errorUtils.isPoisonError(failure)) {
+            const poison = errorUtils.isPoisonError(resolved.value)
+                ? errorUtils.combineErrors([resolved.value, failure], "Entry publication failed") : failure
+            retainPlacement(resolved, operationContext)
+            commitPlacementVersion(gate.owner, gate.key, gate.version,
+                { value: poison, present: true, recovery: resolved.recovery ?? resolved }, operationContext, false)
+        }
+        gate.resolve()
+    })
+    markPromiseHandled(publication, operationContext)
 }
 
 // An operation publishes all placement facts atomically. Unlike shared Promise
@@ -243,10 +257,6 @@ function continueCapturedPromiseVersion(
     onValue,
     operation,
 ) {
-    // Ordinary data delivery shares one FIFO signal. A transition can hand off
-    // to another signal, so preserve its capture before those readers resume.
-    if (operation?.open && promiseVersion.transition)
-        retainPlacement({ value: promiseVersion.value, sourceVersion: promiseVersion }, operationContext)
     return internalSteps.continueOperation(
         promise,
         operationContext,
@@ -265,15 +275,18 @@ function continueCapturedPromiseVersion(
     }
 }
 
-function continuePromiseVersion(
-    owner,
-    key,
+function observePromiseVersion(
     promise,
+    promiseVersion,
     operationContext,
     onValue,
     operation,
 ) {
-    const promiseVersion = requirePromiseVersion(owner, key, operationContext)
+    if (operation && !operation.open) return undefined
+    // A transition can publish through another signal before this observer
+    // resumes. Its captured value needs protection at publication, independently
+    // of the lifetime owner used only to guard the observer's continuation.
+    if (promiseVersion.transition) retainPlacement(captureVersion(promiseVersion), operationContext)
     return continueCapturedPromiseVersion(
         promise,
         promiseVersion,
@@ -286,25 +299,23 @@ function continuePromiseVersion(
 // Each queued mutation owns its publication version. Keep the original source
 // as its availability signal so supported thenables can still deliver directly.
 // Later access cannot see ready state until this mutation has taken its turn.
-function continueMutationVersion(owner, key, promise, operationContext, onValue) {
-    const source = requirePromiseVersion(owner, key, operationContext)
+function continueMutationVersion(owner, key, source, operationContext, onValue) {
+    const captured = captureVersion(source)
     const transition = {}
-    const version = { value: promise, promiseBacked: true, present: source.present,
-        pendingPresence: source.pendingPresence, recovery: source.recovery, transition }
+    const version = createPlacementVersion(captured)
+    version.promiseBacked = true
+    version.transition = transition
     installPlacementVersion(owner, key, version, operationContext)
     let result
-    transition.promise = continueCapturedPromiseVersion(promise, source, operationContext, value => {
-        version.present = source.present
-        version.recovery = source.recovery
-        version.transition = source.transition
+    transition.promise = resolvePlacement(captured, operationContext, placement => {
         version.writing = true
-        publishPromiseVersion(owner, key, version, value, operationContext)
+        publishPromiseVersion(owner, key, version, placement, operationContext)
         result = onValue(version.value, version)
         delete version.writing
         detachAbsentVersion(owner, key, version, operationContext)
-        transition.placement = capturePlacement(owner, key, operationContext, version)
+        transition.placement = captureVersion(version)
     })
-    if (languageValues.isPending(transition.promise, operationContext)) version.publication = transition.promise
+    trackVersionPublication(version, transition.promise, operationContext)
     return internalSteps.continueOperation(transition.promise, operationContext, () => result)
 }
 
@@ -373,11 +384,8 @@ function normalizeRawPropertyValue(
     const version = { value }
     const publication = internalSteps.consumeValue(value, operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
-        resolved => publishPromiseVersion(owner, key, version, resolved, operationContext))
-    if (languageValues.isPending(publication, operationContext)) {
-        version.promiseBacked = true
-        version.publication = publication
-        markPromiseHandled(publication, operationContext)
+        resolved => publishPromiseVersion(owner, key, version, { value: resolved, present: true }, operationContext))
+    if (trackVersionPublication(version, publication, operationContext)) {
         const meta = metadata.metaOf(owner, operationContext)
         if (meta?.parents) throw new Error("Indexed promise property has no Promise version")
         if (meta?.imported) throw new Error("Imported promise property has no Promise version")
@@ -397,10 +405,11 @@ function publishPromiseVersion(
     owner,
     key,
     promiseVersion,
-    value,
+    placement,
     operationContext,
     retained = false,
 ) {
+    let { value } = placement
     let validationFailure
     if (languageValues.isPending(value, operationContext)) {
         throw new Error("A Promise requires a fresh property version")
@@ -412,10 +421,9 @@ function publishPromiseVersion(
         )
     }
     languageValues.admitReadyValue(value, operationContext)
-    if (retained) metadata.markShared(value, operationContext)
-    commitPromiseVersion(owner, key, promiseVersion, value, operationContext, true)
-    delete promiseVersion.pendingPresence
-    delete promiseVersion.publication
+    const ready = { value, present: placement.present, recovery: placement.recovery }
+    if (retained) retainPlacement(ready, operationContext)
+    commitPromiseVersion(owner, key, promiseVersion, ready, operationContext, true)
     return validationFailure
 }
 
@@ -423,10 +431,11 @@ function commitPromiseVersion(
     owner,
     key,
     promiseVersion,
-    value,
+    placement,
     operationContext,
     writeBack,
 ) {
+    let { value } = placement
     function recordFailure(failure) {
         // Publishing an already failed value can fail independently. Each retry
         // retains the accumulated diagnostic instead of replacing an earlier cause.
@@ -467,7 +476,7 @@ function commitPromiseVersion(
             }
         }
         return preparePlacementCommit(owner, key, promiseVersion,
-            { ...promiseVersion, value: nextValue }, operationContext, canWriteBack)
+            { ...placement, value: nextValue }, operationContext, canWriteBack)
     }
 }
 
@@ -593,6 +602,8 @@ export {
     installPlacementGate,
     completePlacementGate,
     capturePlacement,
+    captureVersion,
+    createPlacementVersion,
     resolvePlacement,
     resolvePlacementTransition,
     retainPlacement,
@@ -601,7 +612,7 @@ export {
     publishPromiseVersion,
     assignProperty,
     commitArrayLength,
-    continuePromiseVersion,
+    observePromiseVersion,
     continueMutationVersion,
     continueCapturedPromiseVersion,
     deleteProperty,
@@ -614,5 +625,6 @@ export {
     installPlacementVersion,
     normalizeRawPropertyValue,
     prepareRetainedArrayProperties,
+    trackVersionPublication,
     resolvePropertyValueAtKey,
 }

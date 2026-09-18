@@ -129,7 +129,7 @@ function placeRemap(
 
 function placeEntry(destination, key, entry, retained, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        propertyVersions.transferPlacement(entry.captureVersion(), destination, key, operationContext, retained)
+        propertyVersions.transferPlacement(entry.ensureCaptured(), destination, key, operationContext, retained)
         return
     }
     propertyVersions.assignProperty(

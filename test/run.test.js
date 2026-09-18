@@ -945,9 +945,9 @@ describe("run", () => {
         const pending = deferred()
         const chain = new Chain([pending.promise, pending.promise])
         const source = chain._state.value
-        propertyVersions.getPropertyPlacement(source, "0").captureVersion()
+        propertyVersions.getPropertyPlacement(source, "0").ensureCaptured()
         const source0 = propertyVersions.getPromiseVersion(source, "0")
-        propertyVersions.getPropertyPlacement(source, "1").captureVersion()
+        propertyVersions.getPropertyPlacement(source, "1").ensureCaptured()
         const source1 = propertyVersions.getPromiseVersion(source, "1")
 
         expect(source0 === source1).to.be(false)

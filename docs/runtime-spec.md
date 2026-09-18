@@ -171,10 +171,7 @@ Reusing or exposing an existing graph identity gives it another owner and
 marks it shared. Mutation through a shared branch performs copy-on-write before
 the first language write.
 
-`lookupPath` extracts its result and marks a returned graph identity shared.
-`readPath` adds no owner; use it only for a temporary read or when prior
-ownership is ceded. Imported values retain their existing import and sharing
-state in either case.
+`lookupPath` extracts its result and marks a returned graph identity shared. Temporary consumers use internal capture and lease mechanisms for their actual use interval; ownership transfer follows the existing placement-transfer rules. Imported values retain their existing import and sharing state.
 
 Non-extensible managed data must enter through import. Its imported ownership,
 rather than its physical shape, causes copy-on-write.
@@ -564,13 +561,6 @@ shared. The result is synchronous unless path resolution crosses a Promise.
 ### `lookupPathForExpression(chain, path, operationContext)`
 
 Define `ExpressionValue` as `string | number | boolean | bigint`. Reuse ordinary path observation and return `ExpressionValue | PoisonedValue | Promise<ExpressionValue>`. Accept String, Number, Boolean, and BigInt primitives. Preserve an existing Error and convert it at the outward expression boundary; otherwise null, undefined, a Symbol, or a non-primitive produces `InvalidExpressionValue` at this operation without coercion, deep export, descendant inspection, or source mutation. An absent final placement therefore produces InvalidExpressionValue; ordinary lookupPath still returns undefined. Pending failure rejects directly with an ordinary Error without creating a PoisonedValue, and ready failure returns its non-Error PoisonedValue container. Required processing precedes final settlement. The compiler selects this API for all graph results entering primitive expressions. BigInt stays exact. Cascada owns expression implementation and operator semantics. This is the only Chain operation returning a ready PoisonedValue.
-
-### `readPath(chain, path, operationContext)`
-
-Returns the value captured at the path without adding an owner. The caller must
-either use it temporarily or cede the prior ownership. A Promise-valued segment
-uses the containing operation's path protection and external-selection policy;
-`readPath` does not independently expose or claim an external capability.
 
 ### `run(chain, path, method, args, operationContext, { mutationScopeDepth, repair })`
 

@@ -237,7 +237,7 @@ describe("Promise versions and lookupPath", () => {
                 root,
                 "value",
                 promiseVersion,
-                Promise.resolve("replacement"),
+                { value: Promise.resolve("replacement"), present: true },
             )
         })
 
