@@ -1,6 +1,6 @@
 # Mutation and observation architecture
 
-Accepted architecture for property operations, method calls, and entry. The [data contract](data-limitations.md) is authoritative; [Phase 9F-A](first-principles-conformance-plan.md#phase-9f-a-scope-coordination-and-managed-rollback) tracks the pending implementation cutover.
+Accepted architecture for property operations, method calls, and entry. The [data contract](data-limitations.md) is authoritative. [Phase 9F-A](first-principles-conformance-plan.md#phase-9f-a-scope-coordination-and-managed-rollback) is implemented; [Phase 9F-B](first-principles-conformance-plan.md#phase-9f-b-consolidate-placement-transitions-and-capture-ownership) plans consolidation of the placement and ownership machinery while preserving these semantics.
 
 ## Lease: preserve a value temporarily
 
@@ -143,7 +143,7 @@ Repair uses the selected placement's ordinary managed ordering and any covered e
 
 ## Implementation boundary
 
-Keep existing managed leases, sharing, COW, property versions, and operation-result ownership. Replace external reader groups, binding-entry gates, and dependency-bypass indexes with the common hierarchical reservation design only when their integration behaviors pass. Mixed-entry coordination remains necessary; moving it into the tree is not evidence that its lifetime requirements disappeared.
+Use managed leases, sharing, COW, property versions, and operation-result ownership together with the common hierarchical external reservations. Mixed entry composes those mechanisms while preserving their distinct lifetime requirements.
 
 The end state uses one external ordering algorithm, owning-placement poison for managed state, and automatic rollback of each failed managed mutation. Hierarchical external scopes add direct/subtree completion frontiers, entry-local ordering state, nested discovery, and Error summaries. Keep borrowed method-result handling where source and result validation differ. Measure copying and retained state as well as code size; do not promise a net line reduction before implementation.
 
