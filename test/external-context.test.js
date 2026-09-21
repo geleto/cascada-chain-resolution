@@ -50,11 +50,11 @@ describe("context external foundations", () => {
             "apis",
             "selected",
             "name",
-        ]).boundary[TREE_NODE].entry)
+        ]).externalBoundary[TREE_NODE].entry)
             .to.be(chain._execution._externalIdentities.get(selected))
-        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "ignored"]).boundary)
+        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "ignored"]).externalBoundary)
             .to.be(undefined)
-        expect(externalTree.tracePath(chain._externalMutationTree, ["other"]).boundary)
+        expect(externalTree.tracePath(chain._externalMutationTree, ["other"]).externalBoundary)
             .to.be(undefined)
         expect(execution._externalIdentities.get(selected)).to.be.an(Object)
         expect(execution._externalIdentities.get(ignored)).to.be(undefined)
@@ -71,7 +71,7 @@ describe("context external foundations", () => {
             { nested: { target: {} } },
         )
 
-        expect(externalTree.tracePath(chain._externalMutationTree, ["oldTarget"]).boundary)
+        expect(externalTree.tracePath(chain._externalMutationTree, ["oldTarget"]).externalBoundary)
             .to.be(undefined)
         expect(externalTree.findBranch(chain._externalMutationTree, [
             "nested",
@@ -344,7 +344,7 @@ describe("context external foundations", () => {
         expect(enteredTree).to.be(undefined)
         expect(externalTree.findBranch(chain._externalMutationTree, ["apis", "service"]))
             .to.be(rootBoundary)
-        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "service", "client"]).boundary)
+        expect(externalTree.tracePath(chain._externalMutationTree, ["apis", "service", "client"]).externalBoundary)
             .to.be(rootBoundary)
         expect(descendants).to.eql([])
     })

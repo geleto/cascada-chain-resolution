@@ -9,9 +9,9 @@ import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
-import { collectPoison } from "./external-mutation-tree.js"
+import * as externalTree from "./external-mutation-tree.js"
 
-class ErrorQueryContext extends operationLifecycle.OperationOwner {
+class ErrorQueryWork extends operationLifecycle.OperationOwner {
     constructor(operationContext, collect = false) {
         super(operationContext)
         if (collect) this.errors = new Set()
@@ -26,19 +26,19 @@ class ErrorQueryContext extends operationLifecycle.OperationOwner {
     run(chain, path, onResolved, firstDynamicSegment = path.length) {
         return internalSteps.runInternalStep(this.operationContext, () => {
             const operation = new PathOperation(chain, path, this.operationContext, undefined, false, firstDynamicSegment)
-            const node = operation.route.node
-            operation.reserve(node)
+            const node = operation.route.externalTreeNode
+            operation.reserveExternal(node)
             const inspect = value => {
                 if (errorUtils.isPoisonError(value) || !node) return onResolved(value, this)
-                const effect = operation.effect
+                const effect = operation.externalEffect
                 // External metadata capture has its own last use. Managed
                 // Error collection may finish earlier, or continue much longer.
-                operation.effect = undefined
+                operation.externalEffect = undefined
                 const captured = internalSteps.continueOperation(effect.readiness, this.operationContext, () => {
                     if (this.open) {
-                        const blocker = operation.blocker(false)
+                        const blocker = operation.externalBlocker(false)
                         if (blocker) this.found(blocker)
-                        else for (const error of collectPoison(node)) this.found(error)
+                        else for (const error of externalTree.collectPoison(node)) this.found(error)
                     }
                     effect.complete()
                 })
@@ -139,109 +139,109 @@ function exportPath(chain, path, operationContext, firstDynamicSegment = path.le
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
-    const queryContext = new ErrorQueryContext(operationContext)
-    return queryContext.run(chain, path, hasErrorAtPathValue, firstDynamicSegment)
+    const queryWork = new ErrorQueryWork(operationContext)
+    return queryWork.run(chain, path, hasErrorAtPathValue, firstDynamicSegment)
 }
 
-function hasErrorAtPathValue(value, queryContext) {
-    if (errorUtils.isPoisonError(value)) return queryContext.finish(true)
-    if (!languageValues.isTraversable(value, queryContext.operationContext)) {
-        return queryContext.complete(undefined, () => false)
+function hasErrorAtPathValue(value, queryWork) {
+    if (errorUtils.isPoisonError(value)) return queryWork.finish(true)
+    if (!languageValues.isTraversable(value, queryWork.operationContext)) {
+        return queryWork.complete(undefined, () => false)
     }
-    return searchForFirstError(value, queryContext)
+    return searchForFirstError(value, queryWork)
 }
 
 // The first discovered Error becomes a synchronous true, an unfindable one
 // false, and a pending frontier a first-error-versus-completion race.
-function searchForFirstError(value, queryContext) {
-    return queryContext.complete(
-        collectFencedErrorWaits(value, queryContext),
+function searchForFirstError(value, queryWork) {
+    return queryWork.complete(
+        collectFencedErrorWaits(value, queryWork),
         () => false,
     )
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
-    const queryContext = new ErrorQueryContext(operationContext, true)
-    return queryContext.run(chain, path, getErrorsAtPathValue, firstDynamicSegment)
+    const queryWork = new ErrorQueryWork(operationContext, true)
+    return queryWork.run(chain, path, getErrorsAtPathValue, firstDynamicSegment)
 }
 
-function getErrorsAtPathValue(value, queryContext) {
-    if (errorUtils.isPoisonError(value)) return queryContext.finish(value)
+function getErrorsAtPathValue(value, queryWork) {
+    if (errorUtils.isPoisonError(value)) return queryWork.finish(value)
     let readiness
-    if (languageValues.isTraversable(value, queryContext.operationContext))
-        readiness = collectFencedErrorWaits(value, queryContext)
-    return queryContext.complete(readiness, () =>
-        queryContext.errors.size === 0
+    if (languageValues.isTraversable(value, queryWork.operationContext))
+        readiness = collectFencedErrorWaits(value, queryWork)
+    return queryWork.complete(readiness, () =>
+        queryWork.errors.size === 0
             ? null
-            : errorUtils.combineErrors(queryContext.errors, "Errors in queried value"),
+            : errorUtils.combineErrors(queryWork.errors, "Errors in queried value"),
     )
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
 // work. A cut blocks count propagation, but its indexed target resumes this
 // same walk through the operation-wide visited set.
-function collectFencedErrorWaits(value, queryContext) {
+function collectFencedErrorWaits(value, queryWork) {
     const waits = []
     errorUtils.catchExternalThrow(
         () => {
-            refcounts.buildRefIndex(value, queryContext.operationContext)
-            queryContext.visited ??= new WeakSet()
+            refcounts.buildRefIndex(value, queryWork.operationContext)
+            queryWork.visited ??= new WeakSet()
             walk(value)
         },
-        queryContext.operationContext,
+        queryWork.operationContext,
         errorUtils.ERROR_KIND.QueryReflectionFailed,
-        failure => queryContext.finish(failure),
+        failure => queryWork.finish(failure),
     )
     // A synchronous Error proof abandons observed waits, not an aggregate.
-    if (!queryContext.open) {
-        for (const wait of waits) markPromiseHandled(wait, queryContext.operationContext)
+    if (!queryWork.open) {
+        for (const wait of waits) markPromiseHandled(wait, queryWork.operationContext)
         return undefined
     }
     if (waits.length === 0) return undefined
     return internalSteps.continueOperation(
         Promise.all(waits),
-        queryContext.operationContext,
+        queryWork.operationContext,
         () => undefined,
         undefined,
-        queryContext,
+        queryWork,
     )
 
     function walk(node) {
-        if (!queryContext.open || queryContext.visited.has(node)) return
-        queryContext.visited.add(node)
+        if (!queryWork.open || queryWork.visited.has(node)) return
+        queryWork.visited.add(node)
 
-        const counter = refcounts.getRequiredRefCounter(node, queryContext.operationContext)
+        const counter = refcounts.getRequiredRefCounter(node, queryWork.operationContext)
         // hasError needs only this proof; getErrors needs Error identities.
-        if (queryContext.errors === undefined && counter.errorCount > 0) {
-            queryContext.found()
+        if (queryWork.errors === undefined && counter.errorCount > 0) {
+            queryWork.found()
             return
         }
-        if (!counterHasErrorSearchWork(counter)) return
+        if (!hasErrorSearchWork(counter)) return
 
         const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of languageProperties.enumerableLanguageKeys(
             node,
-            queryContext.operationContext,
+            queryWork.operationContext,
         )) {
-            if (!queryContext.open) break
+            if (!queryWork.open) break
             const child = languageProperties.readLanguageProperty(
                 node,
                 key,
-                queryContext.operationContext,
+                queryWork.operationContext,
             )
 
             if (
                 hasCycleCuts &&
-                refcounts.hasCycleCut(node, key, queryContext.operationContext)
+                refcounts.hasCycleCut(node, key, queryWork.operationContext)
             ) {
                 walk(child)
             } else if (errorUtils.isPoisonError(child)) {
-                queryContext.found(child)
-            } else if (languageValues.isPending(child, queryContext.operationContext)) {
+                queryWork.found(child)
+            } else if (languageValues.isPending(child, queryWork.operationContext)) {
                 const wait = collectPromiseErrors(node, key, child)
-                if (languageValues.isPending(wait, queryContext.operationContext)) waits.push(wait)
-            } else if (languageValues.isTraversable(child, queryContext.operationContext)) {
+                if (languageValues.isPending(wait, queryWork.operationContext)) waits.push(wait)
+            } else if (languageValues.isTraversable(child, queryWork.operationContext)) {
                 walk(child)
             }
         }
@@ -250,27 +250,27 @@ function collectFencedErrorWaits(value, queryContext) {
     function collectPromiseErrors(parent, key, promise) {
         const result = propertyVersions.observePromiseVersion(
             promise,
-            propertyVersions.requirePromiseVersion(parent, key, queryContext.operationContext),
-            queryContext.operationContext,
+            propertyVersions.requirePromiseVersion(parent, key, queryWork.operationContext),
+            queryWork.operationContext,
             value => {
-                if (!queryContext.open) return undefined
+                if (!queryWork.open) return undefined
                 if (errorUtils.isPoisonError(value)) {
-                    queryContext.found(value)
+                    queryWork.found(value)
                     return undefined
                 }
-                if (!languageValues.isTraversable(value, queryContext.operationContext)) {
+                if (!languageValues.isTraversable(value, queryWork.operationContext)) {
                     return undefined
                 }
 
-                return collectFencedErrorWaits(value, queryContext)
+                return collectFencedErrorWaits(value, queryWork)
             },
-            queryContext,
+            queryWork,
         )
         return result
     }
 }
 
-function counterHasErrorSearchWork(counter) {
+function hasErrorSearchWork(counter) {
     return counter.promiseCount > 0 ||
         counter.errorCount > 0 ||
         counter.cycleCutCount > 0

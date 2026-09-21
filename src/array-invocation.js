@@ -9,20 +9,20 @@ import {
     runArrayStep,
 } from "./array-methods.js"
 
-function getArrayMethodDescription(invocationContext) {
-    const { method, mutation, receiver } = invocationContext
+function selectArrayMethodDescription(invocationWork) {
+    const { method, mutation, receiver } = invocationWork
     const methodDefinition = ARRAY_METHODS[method]
     if (!methodDefinition) {
         return errorUtils.validationError(
             `Unsupported Array method: ${method}`,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.MissingFunction,
         )
     }
     if (mutation && methodDefinition.methodResult === undefined) {
         return errorUtils.validationError(
             `Array method ${method} cannot be used as a mutation`,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.InvalidArrayOperation,
         )
     }
@@ -31,39 +31,39 @@ function getArrayMethodDescription(invocationContext) {
         leaseInputsThroughResult: !mutation &&
             methodDefinition.leaseInputsThroughResult,
         prepareArguments: () =>
-            runArrayStep(invocationContext, () =>
+            runArrayStep(invocationWork, () =>
                 prepareArrayMethodArguments(
                     methodDefinition,
-                    invocationContext,
+                    invocationWork,
                 ),
             ),
         invoke(preparedArguments) {
-            return runArrayStep(invocationContext, () => {
+            return runArrayStep(invocationWork, () => {
                 const failure = validateArrayOperation(
                     preparedArguments,
-                    invocationContext,
+                    invocationWork,
                 )
                 if (failure) return failure
                 return mutation
                     ? invokeArrayMutationMethod(
                         methodDefinition,
                         preparedArguments,
-                        invocationContext,
+                        invocationWork,
                     )
                     : invokeArrayObservationMethod(
                         methodDefinition,
                         preparedArguments,
-                        invocationContext,
+                        invocationWork,
                     )
             })
         },
     }
 }
 
-function prepareArrayMethodArguments(methodDefinition, invocationContext) {
-    const { args } = invocationContext
+function prepareArrayMethodArguments(methodDefinition, invocationWork) {
+    const { args } = invocationWork
     if (methodDefinition.prepare) {
-        return methodDefinition.prepare(invocationContext)
+        return methodDefinition.prepare(invocationWork)
     }
 
     const inputs = methodDefinition.inputs ?? []
@@ -76,34 +76,34 @@ function prepareArrayMethodArguments(methodDefinition, invocationContext) {
     for (let index = 0; index < fixedCount; index++) {
         const input = inputs[index]
         if (input === PASS_AS_PAYLOAD) {
-            prepared[index] = invocationContext.retainArgument(args[index])
+            prepared[index] = invocationWork.leaseArgument(args[index])
             continue
         }
-        const result = input(args[index], invocationContext)
+        const result = input(args[index], invocationWork)
         readiness.push(
             internalSteps.continueOperation(
                 result,
-                invocationContext.operationContext,
+                invocationWork.operationContext,
                 value => {
                     if (errorUtils.isPoisonError(value)) return value
 
                     prepared[index] = value
                 },
                 undefined,
-                invocationContext,
+                invocationWork,
             ),
         )
     }
     if (methodDefinition.remainingArgsAsPayload) {
         for (let index = inputs.length; index < args.length; index++) {
-            prepared[index] = invocationContext.retainArgument(args[index])
+            prepared[index] = invocationWork.leaseArgument(args[index])
         }
     }
     return internalSteps.prepareInputs(
         readiness,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         () => prepared,
-        invocationContext,
+        invocationWork,
     )
 }
 
@@ -112,63 +112,63 @@ function prepareArrayMethodArguments(methodDefinition, invocationContext) {
 function invokeArrayObservationMethod(
     methodDefinition,
     preparedArgs,
-    invocationContext,
+    invocationWork,
 ) {
     if (methodDefinition.view) {
-        const view = methodDefinition.view(preparedArgs, invocationContext)
+        const view = methodDefinition.view(preparedArgs, invocationWork)
         if (view !== undefined) return view
     }
     if (methodDefinition.observe) {
-        return methodDefinition.observe(preparedArgs, invocationContext)
+        return methodDefinition.observe(preparedArgs, invocationWork)
     }
 
     let remap
     if (methodDefinition.remap) {
-        remap = methodDefinition.remap(preparedArgs, invocationContext)
+        remap = methodDefinition.remap(preparedArgs, invocationWork)
     } else {
-        const source = arrayRemaps.createRemap(invocationContext.receiver, invocationContext.operationContext)
+        const source = arrayRemaps.createRemap(invocationWork.receiver, invocationWork.operationContext)
         const result = Reflect.apply(methodDefinition.intrinsic, source, preparedArgs)
         // Dense observations retain only the placements selected by the native
         // mapping. Overwritten and removed inputs create no presence dependency.
         remap = methodDefinition.methodResult === undefined
-            ? arrayRemaps.settleDenseRemap(result, invocationContext) : source
+            ? arrayRemaps.resolveDenseRemapPresence(result, invocationWork) : source
     }
     return internalSteps.continueOperation(
         remap,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         remap =>
-            runArrayStep(invocationContext, () => {
+            runArrayStep(invocationWork, () => {
                 if (errorUtils.isPoisonError(remap)) return remap
                 return arrayRemaps.createArrayFromRemap(
                     remap,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 )
             }),
         undefined,
-        invocationContext,
+        invocationWork,
     )
 }
 
 function invokeArrayMutationMethod(
     methodDefinition,
     preparedArguments,
-    invocationContext,
+    invocationWork,
 ) {
-    const thisValue = invocationContext.receiver
+    const thisValue = invocationWork.receiver
     if (methodDefinition.view) {
         const view = methodDefinition.view(
             preparedArguments,
-            invocationContext,
+            invocationWork,
         )
         if (view !== undefined) {
             return {
                 mutatedValue: view,
                 result: methodDefinition.methodResult(
-                    methodDefinition.viewMethodResult(
+                    methodDefinition.viewNativeResult(
                         view,
-                        invocationContext,
+                        invocationWork,
                     ),
-                    invocationContext,
+                    invocationWork,
                 ),
             }
         }
@@ -176,21 +176,21 @@ function invokeArrayMutationMethod(
 
     if (methodDefinition.remap) {
         return internalSteps.continueOperation(
-            methodDefinition.remap(preparedArguments, invocationContext),
-            invocationContext.operationContext,
+            methodDefinition.remap(preparedArguments, invocationWork),
+            invocationWork.operationContext,
             remap =>
-                runArrayStep(invocationContext, () => {
+                runArrayStep(invocationWork, () => {
                     if (errorUtils.isPoisonError(remap)) return remap
                     return finishMutation(remap, captureResult(remap))
                 }),
             undefined,
-            invocationContext,
+            invocationWork,
         )
     }
 
     const mutation = arrayRemaps.traceArrayMutation(
         thisValue,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
     )
     // The intrinsic and its remap traps are trusted work on prepared inputs.
     // Exact external reflection escapes to the operation's marker consumer.
@@ -200,7 +200,7 @@ function invokeArrayMutationMethod(
         preparedArguments,
     )
     const result = captureResult(nativeResult)
-    return finishMutation(runArrayStep(invocationContext, () => mutation.materialize()), result)
+    return finishMutation(runArrayStep(invocationWork, () => mutation.materialize()), result)
 
     function captureResult(nativeResult) {
         // Capture removed property versions before committing the receiver.
@@ -208,24 +208,24 @@ function invokeArrayMutationMethod(
             ? undefined
             : methodDefinition.methodResult(
                 nativeResult,
-                invocationContext,
+                invocationWork,
             )
     }
 
     function finishMutation(remap, result) {
         const mutatedValue = errorUtils.isPoisonError(remap) ? remap :
-            runArrayStep(invocationContext, () => arrayRemaps.createArrayFromRemap(remap, invocationContext.operationContext))
+            runArrayStep(invocationWork, () => arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext))
         if (methodDefinition.methodResult === RETURN_RECEIVER) result = mutatedValue
         else if (errorUtils.isPoisonError(mutatedValue)) {
             // Publish receiver failure now; only the independent result waits.
             result = internalSteps.continueOperation(
                 result,
-                invocationContext.operationContext,
+                invocationWork.operationContext,
                 value => errorUtils.isPoisonError(value)
                     ? errorUtils.combineErrors([mutatedValue, value], "Array mutation failed")
                     : mutatedValue,
                 undefined,
-                invocationContext,
+                invocationWork,
             )
         }
         return { mutatedValue, result }
@@ -269,4 +269,4 @@ function validateArrayOperation(args, { receiver, method, operationContext }) {
     }
 }
 
-export { getArrayMethodDescription }
+export { selectArrayMethodDescription }

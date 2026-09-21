@@ -1,6 +1,6 @@
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
-import { capabilityError } from "./external-operation.js"
+import { externalCapabilityEscapeError } from "./external-operation.js"
 import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -90,7 +90,7 @@ function exportValues(values, owner, onResult) {
             return undefined
         }
         if (operationContext.execution._externalIdentities.has(value)) {
-            collect(capabilityError(operationContext))
+            collect(externalCapabilityEscapeError(operationContext))
             return undefined
         }
         if (

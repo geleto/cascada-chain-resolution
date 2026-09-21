@@ -11,7 +11,7 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import * as refcounts from "./refcounts.js"
 import { PathOperation } from "./path-operation.js"
-import { findBranch, truncatesLocations } from "./external-mutation-tree.js"
+import * as externalTree from "./external-mutation-tree.js"
 import { externalLocationError } from "./external-operation.js"
 
 function setProperty(
@@ -304,14 +304,14 @@ function assignManagedPath(
             operation.operationContext,
             length => {
                 if (errorUtils.isPoisonError(length)) return length
-                const branch = findBranch(chain._externalMutationTree, path.slice(0, -1))
-                if (truncatesLocations(branch, length))
+                const branch = externalTree.findBranch(chain._externalMutationTree, path.slice(0, -1))
+                if (externalTree.truncatesLocations(branch, length))
                     return languageProperties.propertyValidationError("Array length cannot remove a fixed external namespace", operationContext)
                 return errorUtils.catchExternalThrow(
                     () => {
                         let mutatedValue = array
                         const representationCopy =
-                            languageProperties.arrayLengthMutationRequiresCopy(
+                            languageProperties.requiresRepresentationCopyForArrayLengthMutation(
                                 array,
                                 length,
                                 operation.operationContext,
@@ -586,7 +586,7 @@ function walkMutationPath(
             )
             const pending = observeTarget
                 ? propertyVersions.continueCapturedPromiseVersion(child, source, operationContext, value => onValue(value, source))
-                : propertyVersions.continueMutationVersion(parent, key, source, operationContext, onValue)
+                : propertyVersions.installMutationVersion(parent, key, source, operationContext, onValue)
             if (!pathSelectionComplete) writeBack(parent)
             if (onComplete === undefined && languageValues.isPending(pending, operationContext)) {
                 markPromiseHandled(pending, operationContext)
@@ -620,7 +620,7 @@ function walkMutationPath(
         )
 
         function prepareParent() {
-            const representationCopy = languageProperties.propertyMutationRequiresCopy(
+            const representationCopy = languageProperties.requiresRepresentationCopyForPropertyMutation(
                 value, key, operationContext, atTarget && deletesTarget)
             const mustCopyParent = preserveParent ||
                 arrayViews.requiresArrayMaterialization(value, operationContext) || representationCopy
@@ -705,10 +705,10 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
         // A property write consumes its container, not the old final value.
         const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
         path = operation.route.path
-        const result = operation.externalScope
+        const result = operation.hasExternalScope
             ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() : access.write(value)))
             : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
-                if (findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
+                if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
                     "A mutable external namespace cannot be replaced or deleted", operationContext)
                 if (deleting && (path.length || chain._contextOrigin) && suffix.length === 0)
                     return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
@@ -720,7 +720,7 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                     return captureMutationResult(privateChain, result, operationContext)
                 })
             }, replaceScope, deleting))
-        if (!deleting && languageValues.isPending(result, operationContext)) operation.retain([value])
+        if (!deleting && languageValues.isPending(result, operationContext)) operation.leaseValues([value])
         if (!languageValues.isPending(result, operationContext)) return result
         markPromiseHandled(result, operationContext)
         return undefined

@@ -11,7 +11,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
-import { capabilityError } from "./external-operation.js"
+import { externalCapabilityEscapeError } from "./external-operation.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -22,7 +22,8 @@ const arraySort = Array.prototype.sort
 // Dispatch precedence is view, direct observation, remap producer, then the
 // captured intrinsic on a property remap. methodResult is absent for pure
 // observations, RETURN_RECEIVER for receiver-returning mutators, or a result
-// publisher. viewMethodResult reconstructs a view mutation's method result.
+// handler. viewNativeResult reconstructs the native result a view mutation
+// would have returned, which methodResult then consumes.
 // leaseInputsThroughResult protects receiver placements and retained payloads
 // until a delayed observation has captured its output.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
@@ -47,7 +48,7 @@ const ARRAY_METHODS = {
     flat: {
         inputs: [numericInput],
         leaseInputsThroughResult: true,
-        remap: flatRemap,
+        remap: prepareFlatRemap,
     },
     includes: { prepare: prepareSearchArguments, observe: includes },
     indexOf: {
@@ -65,14 +66,14 @@ const ARRAY_METHODS = {
         intrinsic: Array.prototype.pop,
         methodResult: retainElement,
         view: tryPopArrayView,
-        viewMethodResult: getLastElementPlacement,
+        viewNativeResult: getLastElementPlacement,
     },
     push: {
         intrinsic: Array.prototype.push,
         remainingArgsAsPayload: true,
-        methodResult: publishValue,
+        methodResult: plainResult,
         view: tryAppendArrayView,
-        viewMethodResult: getViewLength,
+        viewNativeResult: getViewLength,
     },
     reverse: {
         intrinsic: Array.prototype.reverse,
@@ -82,7 +83,7 @@ const ARRAY_METHODS = {
         intrinsic: Array.prototype.shift,
         methodResult: retainElement,
         view: tryShiftArrayView,
-        viewMethodResult: getFirstElementPlacement,
+        viewNativeResult: getFirstElementPlacement,
     },
     slice: { inputs: [numericInput, numericInput], observe: slice },
     sort: {
@@ -95,7 +96,7 @@ const ARRAY_METHODS = {
         inputs: [numericInput, numericInput],
         intrinsic: Array.prototype.splice,
         remainingArgsAsPayload: true,
-        methodResult: publishArray,
+        methodResult: retainArray,
     },
     toReversed: { intrinsic: Array.prototype.toReversed, leaseInputsThroughResult: true },
     toSorted: {
@@ -114,7 +115,7 @@ const ARRAY_METHODS = {
     unshift: {
         intrinsic: Array.prototype.unshift,
         remainingArgsAsPayload: true,
-        methodResult: publishValue,
+        methodResult: plainResult,
     },
     with: {
         inputs: [numericInput, PASS_AS_PAYLOAD],
@@ -123,25 +124,25 @@ const ARRAY_METHODS = {
     },
 }
 
-function observeAt([index = 0], invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+function observeAt([index = 0], invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
     index = index >= 0 ? index : length + index
     if (index < 0 || index >= length) return undefined
     return retainElement(
         propertyVersions.getPropertyPlacement(
             thisValue,
             String(index),
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         ),
-        invocationContext,
+        invocationWork,
     )
 }
 
-function numericInput(value, invocationContext) {
+function numericInput(value, invocationWork) {
     return internalSteps.consumeValue(
         value,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
@@ -149,84 +150,86 @@ function numericInput(value, invocationContext) {
             // Let each position apply its own undefined default.
             return resolved === undefined
                 ? undefined
-                : conversion.toIntegerOrInfinity(resolved, invocationContext)
+                : conversion.toIntegerOrInfinity(resolved, invocationWork)
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
-function stringInput(value, invocationContext) {
+function stringInput(value, invocationWork) {
     return internalSteps.consumeValue(
         value,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
             return resolved === undefined
                 ? undefined
-                : conversion.toStringValue(resolved, undefined, invocationContext)
+                : conversion.toStringValue(resolved, undefined, invocationWork)
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
-function slice(args, invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+function slice(args, invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
     const start = toRelativeIndex(args[0], length, 0)
     const end = Math.max(start, toRelativeIndex(args[1], length, length))
-    return deriveArrayView(start, end, invocationContext) ??
+    return tryDeriveArrayView(start, end, invocationWork) ??
         arrayRemaps.createArrayFromRemap(
-            arrayRemaps.createRemap(thisValue, invocationContext.operationContext, start, end),
-            invocationContext.operationContext,
+            arrayRemaps.createRemap(thisValue, invocationWork.operationContext, start, end),
+            invocationWork.operationContext,
         )
 }
 
-function publishValue(value) {
+function plainResult(value) {
     return value
 }
 
-function publishArray(remap, invocationContext) {
-    return arrayRemaps.createArrayFromRemap(remap, invocationContext.operationContext)
+function retainArray(remap, invocationWork) {
+    return arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext)
 }
 
-function retainElement(element, invocationContext) {
+// pop/shift/at hand this element to the caller: reject a registered mutable
+// identity leaving its context path, then retain what the caller keeps.
+function retainElement(element, invocationWork) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
     return internalSteps.continueOperation(
         result,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         value => {
-            if (invocationContext.operationContext.execution._externalIdentities.has(value))
-                return capabilityError(invocationContext.operationContext)
-            metadata.markShared(value, invocationContext.operationContext)
+            if (invocationWork.operationContext.execution._externalIdentities.has(value))
+                return externalCapabilityEscapeError(invocationWork.operationContext)
+            metadata.markShared(value, invocationWork.operationContext)
             return value
         },
         undefined,
-        invocationContext,
+        invocationWork,
     )
 }
 
-function getFirstElementPlacement(_view, invocationContext) {
-    const thisValue = invocationContext.receiver
+function getFirstElementPlacement(_view, invocationWork) {
+    const thisValue = invocationWork.receiver
     return propertyVersions.getPropertyPlacement(
         thisValue,
         "0",
-        invocationContext.operationContext,
+        invocationWork.operationContext,
     )
 }
 
-function getLastElementPlacement(_view, invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+function getLastElementPlacement(_view, invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
     return length === 0
         ? undefined
         : propertyVersions.getPropertyPlacement(
             thisValue,
             String(length - 1),
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         )
 }
 
@@ -236,10 +239,10 @@ function getViewLength(view) {
 
 // Every Array step consumes exact external escapes before its continuation returns
 // to the fatal envelope. The same rule applies to ready and resumed work.
-function runArrayStep(invocationContext, work) {
+function runArrayStep(invocationWork, work) {
     return errorUtils.catchExternalThrow(
         work,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.InvalidArrayOperation,
     )
 }
@@ -247,11 +250,11 @@ function runArrayStep(invocationContext, work) {
 // Complete preparation keeps an unreadable placement as an Error input instead
 // of abandoning known siblings. Fix presence before resolving any property value.
 // Structural remaps keep their ordinary all-or-nothing capture contract.
-function collectArrayPlacements(array, invocationContext) {
-    const operationContext = invocationContext.operationContext
+function collectArrayPlacements(array, invocationWork) {
+    const operationContext = invocationWork.operationContext
     const placements = new Array(arrayViews.logicalArrayLength(array, operationContext))
     for (const key of arrayViews.arrayKeyCandidates(array, operationContext)) {
-        const placement = runArrayStep(invocationContext, () =>
+        const placement = runArrayStep(invocationWork, () =>
             propertyVersions.getPropertyPlacement(array, key, operationContext),
         )
         if (placement !== undefined) {
@@ -266,28 +269,28 @@ function collectArrayPlacements(array, invocationContext) {
     return placements
 }
 
-function prepareConcatArguments(invocationContext) {
-    const parts = invocationContext.args.map(item =>
+function prepareConcatArguments(invocationWork) {
+    const parts = invocationWork.args.map(item =>
         internalSteps.consumeValue(
             item,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
             value =>
-                runArrayStep(invocationContext, () => {
+                runArrayStep(invocationWork, () => {
                     if (errorUtils.isPoisonError(value)) return value
-                    invocationContext.retainArgument(value)
-                    return arrayViews.isLogicalArray(value, invocationContext.operationContext)
-                        ? captureRemap(value, invocationContext.operationContext)
+                    invocationWork.leaseArgument(value)
+                    return arrayViews.isLogicalArray(value, invocationWork.operationContext)
+                        ? captureRemap(value, invocationWork.operationContext)
                         : [value]
                 }),
-            invocationContext,
+            invocationWork,
         ),
     )
     return internalSteps.prepareInputs(
         parts,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         values => values,
-        invocationContext,
+        invocationWork,
     )
 }
 
@@ -297,55 +300,55 @@ function captureRemap(array, operationContext) {
     return remap
 }
 
-function createConcatRemap(parts, invocationContext) {
+function createConcatRemap(parts, invocationWork) {
     return invocation.invokeFunction(
         arrayConcat,
         captureRemap(
-            invocationContext.receiver,
-            invocationContext.operationContext,
+            invocationWork.receiver,
+            invocationWork.operationContext,
         ),
         parts,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
     )
 }
 
-function flatRemap([depth = 1], invocationContext) {
+function prepareFlatRemap([depth = 1], invocationWork) {
     depth = Math.max(depth, 0)
     return internalSteps.continueOperation(
         prepareFlatArray(
-            invocationContext.receiver,
+            invocationWork.receiver,
             depth,
             undefined,
-            invocationContext,
+            invocationWork,
         ),
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         prepared => {
             if (errorUtils.isPoisonError(prepared)) return prepared
             return invocation.invokeFunction(
                 arrayFlat,
                 prepared,
                 [depth],
-                invocationContext.operationContext,
+                invocationWork.operationContext,
             )
         },
         undefined,
-        invocationContext,
+        invocationWork,
     )
 }
 
-function prepareFlatArray(array, depth, ancestry, invocationContext) {
-    return runArrayStep(invocationContext, () => {
+function prepareFlatArray(array, depth, ancestry, invocationWork) {
+    return runArrayStep(invocationWork, () => {
         if (
             depth === Infinity &&
             arrayViews.hasArrayAncestor(ancestry, array)
         ) {
             return errorUtils.validationError(
                 "Cannot flat an Array cycle to unlimited depth",
-                invocationContext.operationContext,
+                invocationWork.operationContext,
                 errorUtils.ERROR_KIND.InvalidArrayOperation,
             )
         }
-        const source = collectArrayPlacements(array, invocationContext)
+        const source = collectArrayPlacements(array, invocationWork)
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
             ? { array, parent: ancestry }
@@ -355,77 +358,77 @@ function prepareFlatArray(array, depth, ancestry, invocationContext) {
                 source[key],
                 depth,
                 nestedAncestry,
-                invocationContext,
+                invocationWork,
             ),
         )
         return internalSteps.prepareInputs(
             parts,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             values => {
                 const output = new Array(source.length)
                 for (let index = 0; index < keys.length; index++)
                     if (source[keys[index]].present !== false) output[keys[index]] = values[index]
                 return output
             },
-            invocationContext,
+            invocationWork,
         )
     })
 }
 
-function prepareFlatProperty(placement, depth, ancestry, invocationContext) {
-    return runArrayStep(invocationContext, () => {
+function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
+    return runArrayStep(invocationWork, () => {
         if (errorUtils.isPoisonError(placement)) return placement
         if (depth === 0) return placement.resolvePresence()
         return internalSteps.continueOperation(
             placement.resolveValue(),
-            invocationContext.operationContext,
-            value => arrayViews.isLogicalArray(value, invocationContext.operationContext)
-                ? prepareFlatArray(value, depth - 1, ancestry, invocationContext)
+            invocationWork.operationContext,
+            value => arrayViews.isLogicalArray(value, invocationWork.operationContext)
+                ? prepareFlatArray(value, depth - 1, ancestry, invocationWork)
                 : placement,
             undefined,
-            invocationContext,
+            invocationWork,
         )
     })
 }
 
-function prepareSearchArguments(invocationContext) {
-    const { args } = invocationContext
+function prepareSearchArguments(invocationWork) {
+    const { args } = invocationWork
     const searchResult = internalSteps.consumeValue(
         args[0],
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         value => value,
-        invocationContext,
+        invocationWork,
     )
     const fromResult = args.length > 1
-        ? conversion.toIntegerOrInfinity(args[1], invocationContext)
+        ? conversion.toIntegerOrInfinity(args[1], invocationWork)
         : undefined
     return internalSteps.prepareInputs(
         [searchResult, fromResult],
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         readyValues => {
             const [searchValue, fromIndex] = readyValues
             return { searchValue, fromIndex }
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
-function join([separator], invocationContext) {
+function join([separator], invocationWork) {
     return conversion.joinLogicalArray(
-        invocationContext.receiver,
+        invocationWork.receiver,
         separator,
         undefined,
-        invocationContext,
+        invocationWork,
     )
 }
 
-function prepareSortArguments(invocationContext) {
-    const { args } = invocationContext
+function prepareSortArguments(invocationWork) {
+    const { args } = invocationWork
     if (args[0] === undefined) return undefined
     return internalSteps.consumeValue(
         args[0],
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         value => {
             if (errorUtils.isPoisonError(value)) return value
@@ -433,21 +436,21 @@ function prepareSortArguments(invocationContext) {
             if (value === undefined || typeof value === "function") return value
             return errorUtils.validationError(
                 "Array sort comparator must be callable or undefined",
-                invocationContext.operationContext,
+                invocationWork.operationContext,
                 errorUtils.ERROR_KIND.NotAFunction,
             )
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
-function prepareToSortedRemap(comparator, invocationContext) {
-    return prepareSortedRemap(comparator, invocationContext, true)
+function prepareToSortedRemap(comparator, invocationWork) {
+    return prepareSortedRemap(comparator, invocationWork, true)
 }
 
-function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
-    const thisValue = invocationContext.receiver
-    const source = collectArrayPlacements(thisValue, invocationContext)
+function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
+    const thisValue = invocationWork.receiver
+    const source = collectArrayPlacements(thisValue, invocationWork)
     const records = []
     for (const key of Object.keys(source)) {
         const placement = source[key]
@@ -456,13 +459,13 @@ function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
             continue
         }
         records.push(
-            runArrayStep(invocationContext, () =>
+            runArrayStep(invocationWork, () =>
                 internalSteps.continueOperation(
                     placement.resolveValue(),
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                     value => ({ placement, value }),
                     undefined,
-                    invocationContext,
+                    invocationWork,
                 ),
             ),
         )
@@ -471,7 +474,7 @@ function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
     // resolved records. Only that complete preparation may decide to stop sorting.
     return internalSteps.collectInputs(
         records,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         ready => {
             const sortable = []
             const undefinedPlacements = []
@@ -486,33 +489,33 @@ function prepareSortedRemap(comparator, invocationContext, denseHoles = false) {
             if (sortable.length < 2) {
                 return errorUtils.isPoisonError(sortable[0]) ? sortable[0] : finish(sortable)
             }
-            return prepareAndSortRecords(sortable, comparator, invocationContext, finish)
+            return prepareAndSortRecords(sortable, comparator, invocationWork, finish)
 
             function finish(sorted) {
                 return finishSortedRemap(
                     sorted,
                     undefinedPlacements,
-                    denseHoles,
+                    denseOutput,
                     source.length,
                 )
             }
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
 function prepareAndSortRecords(
     sortable,
     comparator,
-    invocationContext,
+    invocationWork,
     finish,
 ) {
     if (comparator === undefined) {
         const records = sortable.map(record => {
             if (errorUtils.isPoisonError(record)) return record
             return internalSteps.continueOperation(
-                conversion.toStringValue(record.value, undefined, invocationContext),
-                invocationContext.operationContext,
+                conversion.toStringValue(record.value, undefined, invocationWork),
+                invocationWork.operationContext,
                 key => {
                     if (errorUtils.isPoisonError(key)) return key
 
@@ -520,21 +523,21 @@ function prepareAndSortRecords(
                     return record
                 },
                 undefined,
-                invocationContext,
+                invocationWork,
             )
         })
         return internalSteps.prepareInputs(
             records,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             ready => {
                 return sortRecords(
                     ready,
                     comparePreparedKeys,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                     finish,
                 )
             },
-            invocationContext,
+            invocationWork,
         )
     }
 
@@ -542,8 +545,8 @@ function prepareAndSortRecords(
         errorUtils.isPoisonError(record) ? record : record.value,
     )
     return internalSteps.continueOperation(
-        exportManyValues([snapshot], invocationContext),
-        invocationContext.operationContext,
+        exportManyValues([snapshot], invocationWork),
+        invocationWork.operationContext,
         readyValues => {
             if (errorUtils.isPoisonError(readyValues)) return readyValues
             const [exported] = readyValues
@@ -557,14 +560,14 @@ function prepareAndSortRecords(
                     comparator,
                     left.exported,
                     right.exported,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 ),
-                invocationContext.operationContext,
+                invocationWork.operationContext,
                 finish,
             )
         },
         undefined,
-        invocationContext,
+        invocationWork,
     )
 }
 
@@ -584,14 +587,14 @@ function sortRecords(sortable, compare, operationContext, finish) {
 function finishSortedRemap(
     sorted,
     undefinedPlacements,
-    denseHoles,
+    denseOutput,
     length,
 ) {
     const remap = new Array(length)
     let index = 0
     for (const record of sorted) remap[index++] = record.placement
     for (const placement of undefinedPlacements) remap[index++] = placement
-    if (denseHoles) {
+    if (denseOutput) {
         while (index < length) remap[index++] = undefined
     }
     return remap
@@ -642,24 +645,24 @@ function compareExported(comparator, left, right, operationContext) {
     return result
 }
 
-function includes({ searchValue, fromIndex = 0 }, invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+function includes({ searchValue, fromIndex = 0 }, invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
     if (length === 0) return false
     const start = normalizeForwardStart(fromIndex, length)
     if (start >= length) return false
     const pending = []
     for (let index = start; index < length; index++) {
         const branch = internalSteps.continueOperation(
-            propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationContext.operationContext),
-            invocationContext.operationContext,
+            propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationWork.operationContext),
+            invocationWork.operationContext,
             matches,
             undefined,
-            invocationContext,
+            invocationWork,
         )
-        if (languageValues.isPending(branch, invocationContext.operationContext)) pending.push(branch)
+        if (languageValues.isPending(branch, invocationWork.operationContext)) pending.push(branch)
         else if (branch) {
-            for (const wait of pending) markPromiseHandled(wait, invocationContext.operationContext)
+            for (const wait of pending) markPromiseHandled(wait, invocationWork.operationContext)
             return true
         }
     }
@@ -670,20 +673,20 @@ function includes({ searchValue, fromIndex = 0 }, invocationContext) {
     for (const wait of pending) {
         const branch = internalSteps.continueOperation(
             wait,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             found => {
                 if (found) return finish(true)
                 if (--remaining === 0) finish(false)
             },
             undefined,
-            invocationContext,
+            invocationWork,
         )
-        markPromiseHandled(branch, invocationContext.operationContext)
+        markPromiseHandled(branch, invocationWork.operationContext)
     }
     return result
 
     function finish(value) {
-        operationLifecycle.close(invocationContext)
+        operationLifecycle.close(invocationWork)
         resolveResult(value)
     }
 
@@ -692,22 +695,22 @@ function includes({ searchValue, fromIndex = 0 }, invocationContext) {
     }
 }
 
-function indexOf(prepared, invocationContext) {
-    return orderedIndexSearch(prepared, false, invocationContext)
+function indexOf(prepared, invocationWork) {
+    return orderedIndexSearch(prepared, false, invocationWork)
 }
 
-function lastIndexOf(prepared, invocationContext) {
-    return orderedIndexSearch(prepared, true, invocationContext)
+function lastIndexOf(prepared, invocationWork) {
+    return orderedIndexSearch(prepared, true, invocationWork)
 }
 
 function orderedIndexSearch(
     { searchValue, fromIndex },
     backwards,
-    invocationContext,
+    invocationWork,
 ) {
-    const thisValue = invocationContext.receiver
+    const thisValue = invocationWork.receiver
     fromIndex ??= backwards ? Infinity : 0
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
     if (length === 0) return -1
     let index = backwards
         ? normalizeBackwardStart(fromIndex, length)
@@ -715,7 +718,7 @@ function orderedIndexSearch(
     return next()
 
     function next() {
-        return runArrayStep(invocationContext, () => {
+        return runArrayStep(invocationWork, () => {
             while (index >= 0 && index < length) {
                 const current = index
                 index += backwards ? -1 : 1
@@ -723,29 +726,29 @@ function orderedIndexSearch(
                 if (!languageProperties.hasLanguageProperty(
                     thisValue,
                     key,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 )) {
                     continue
                 }
                 const value = languageProperties.readLanguageProperty(
                     thisValue,
                     key,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 )
                 if (
-                    languageValues.isPending(value, invocationContext.operationContext)
+                    languageValues.isPending(value, invocationWork.operationContext)
                 ) {
                     return internalSteps.continueOperation(
                         propertyVersions.resolvePropertyValueAtKey(
                             thisValue,
                             key,
-                            invocationContext.operationContext,
+                            invocationWork.operationContext,
                         ),
-                        invocationContext.operationContext,
-                        resolved => languageProperties.hasLanguageProperty(thisValue, key, invocationContext.operationContext) &&
+                        invocationWork.operationContext,
+                        resolved => languageProperties.hasLanguageProperty(thisValue, key, invocationWork.operationContext) &&
                             resolved === searchValue ? current : next(),
                         undefined,
-                        invocationContext,
+                        invocationWork,
                     )
                 }
                 if (value === searchValue) return current
@@ -774,28 +777,28 @@ function toRelativeIndex(value, length, defaultValue) {
         : Math.min(value, length)
 }
 
-function tryShiftArrayView(_args, invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
-    return deriveArrayView(
+function tryShiftArrayView(_args, invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
+    return tryDeriveArrayView(
         Math.min(1, length),
         length,
-        invocationContext,
+        invocationWork,
     )
 }
 
-function tryPopArrayView(_args, invocationContext) {
-    const thisValue = invocationContext.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationContext.operationContext)
-    return deriveArrayView(
+function tryPopArrayView(_args, invocationWork) {
+    const thisValue = invocationWork.receiver
+    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
+    return tryDeriveArrayView(
         0,
         Math.max(0, length - 1),
-        invocationContext,
+        invocationWork,
     )
 }
 
-function deriveArrayView(start, end, invocationContext) {
-    const { operationContext, receiver: thisValue } = invocationContext
+function tryDeriveArrayView(start, end, invocationWork) {
+    const { operationContext, receiver: thisValue } = invocationWork
     if (start === end) return arrayRemaps.createArrayFromRemap([], operationContext)
     const projection = arrayViews.ArrayView.tryAttachTo(thisValue, operationContext)
     if (!projection) return undefined
@@ -812,31 +815,31 @@ function deriveArrayView(start, end, invocationContext) {
     return view
 }
 
-function tryConcatArrayView(parts, invocationContext) {
+function tryConcatArrayView(parts, invocationWork) {
     const suffix = invocation.invokeFunction(
         arrayConcat,
         [],
         parts,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
     )
-    return tryAppendArrayView(suffix, invocationContext)
+    return tryAppendArrayView(suffix, invocationWork)
 }
 
-function tryAppendArrayView(suffix, invocationContext) {
-    const thisValue = invocationContext.receiver
+function tryAppendArrayView(suffix, invocationWork) {
+    const thisValue = invocationWork.receiver
     const view = arrayViews.ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,
         derived => propertyVersions.prepareRetainedArrayProperties(
             thisValue,
             derived,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         ),
-        invocationContext.operationContext,
+        invocationWork.operationContext,
     )
     if (!view) return undefined
     const start = view.length - suffix.length
-    arrayRemaps.placeRemap(view, suffix, invocationContext.operationContext, start)
+    arrayRemaps.placeRemap(view, suffix, invocationWork.operationContext, start)
     return view
 }
 

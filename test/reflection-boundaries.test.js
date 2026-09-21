@@ -33,6 +33,37 @@ function fixture(failAt, source = { x: 1, bump() { this.x++ } }) {
 }
 
 describe("supported reflection boundary sweeps", () => {
+    for (const method of ["flat", "join", "toSorted", "sort", "concat", "slice"]) {
+        it(`${method} keeps reflection failure recoverable across pending inputs`, async () => {
+            async function run(failAt) {
+                const hold = Promise.withResolvers()
+                const test = fixture(failAt, [hold.promise, 3])
+                const { ctx, chain } = test
+                const args = method === "concat" || method === "slice" ? [hold.promise] : []
+                test.arm()
+                const result = r.run(chain, ["item"], method, args, ctx, {})
+                hold.resolve([2, 1])
+                const value = await result
+                await new Promise(setImmediate)
+                test.disarm()
+                assert.equal(ctx.execution.fatalError, null)
+                verifyRefCounts(ctx, chain._state.value)
+                return { ...test, value }
+            }
+            const baseline = await run(Infinity)
+            const args = method === "concat" || method === "slice" ? [[2, 1]] : []
+            assert.deepStrictEqual(
+                await r.export(new r.Chain(baseline.value, baseline.ctx), [], baseline.ctx),
+                Reflect.apply(Array.prototype[method], [[2, 1], 3], args),
+            )
+            assert(baseline.calls.length > 0)
+            for (let failAt = 1; failAt <= baseline.calls.length; failAt++) {
+                const { calls } = await run(failAt)
+                assert(calls.length >= failAt, `${method}: fault site was not reached`)
+            }
+        })
+    }
+
     for (const entered of [false, true]) {
         it(`keeps deferred structural owner failures recoverable, entered=${entered}`, async () => {
             async function run(failAt) {

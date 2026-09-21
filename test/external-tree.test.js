@@ -105,8 +105,8 @@ describe("compiler-guided context tree", () => {
         const chain = new runtime.ContextChain({ api: owner }, ctx, { api: { db: {}, config: {} } })
         assert.deepEqual(paths(chain), [["api"], ["api", "db"], ["api", "config"]])
         assert.equal(reads, 2)
-        assert.equal(externalTree.tracePath(chain._externalMutationTree, ["api", "db"]).boundary,
-            externalTree.tracePath(chain._externalMutationTree, ["api", "config"]).boundary)
+        assert.equal(externalTree.tracePath(chain._externalMutationTree, ["api", "db"]).externalBoundary,
+            externalTree.tracePath(chain._externalMutationTree, ["api", "config"]).externalBoundary)
         assert.equal(externalTree.findBranch(chain._externalMutationTree, ["api", "db"]), chain._externalMutationTree.api.db)
     })
 

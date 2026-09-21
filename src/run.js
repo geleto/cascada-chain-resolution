@@ -25,13 +25,13 @@ function run(chain, path, method, args, operationContext, facts) {
             method,
             mutation,
             args,
-            context => getMethodDescription(context, externalAccess),
+            context => selectMethodDescription(context, externalAccess),
             invokeWithReceiver => {
                 const native = access => {
                     externalAccess = access
                     return invokeWithReceiver(access.identity, true)
                 }
-                if (!mutation || operation.externalScope) return operation.observe(invokeWithReceiver, native)
+                if (!mutation || operation.hasExternalScope) return operation.observe(invokeWithReceiver, native)
                 return operation.mutate((scope, state, privateChain, suffix) => {
                     if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
                     const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
@@ -70,63 +70,63 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
     )
 }
 
-function getMethodDescription(invocationContext, externalAccess) {
+function selectMethodDescription(invocationWork, externalAccess) {
     const {
         method,
         mutation,
         receiver,
         receiverPresent,
-    } = invocationContext
+    } = invocationWork
     if (errorUtils.isPoisonError(receiver)) return receiver
     if (!receiverPresent) {
         return errorUtils.validationError(
             "run receiver path does not exist",
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.NullLookup,
         )
     }
     if (method === "constructor") {
         return invocation.methodNotCallableError(
             method,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         )
     }
 
     if (externalAccess) {
         return {
-            prepareArguments: () => invocationContext.exportArguments(),
+            prepareArguments: () => invocationWork.exportArguments(),
             invoke: args => externalAccess.call(method, args),
         }
     }
 
-    const type = languageValues.typeOf(receiver, invocationContext.operationContext)
+    const type = languageValues.typeOf(receiver, invocationWork.operationContext)
     if (type === languageValues.TYPE.Array) {
-        return arrayInvocation.getArrayMethodDescription(invocationContext)
+        return arrayInvocation.selectArrayMethodDescription(invocationWork)
     }
     if (
         type === languageValues.TYPE.Record ||
         type === languageValues.TYPE.ManagedClass
     ) {
-        return managedInvocation.getManagedMethodDescription(invocationContext)
+        return managedInvocation.selectManagedMethodDescription(invocationWork)
     }
     if (mutation) {
         return errorUtils.validationError(
             "run receiver does not support mutation",
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.UnsupportedMutation,
         )
     }
     if (type === languageValues.TYPE.String) {
         const callable = getStringMethod(
             method,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         )
         if (errorUtils.isPoisonError(callable)) return callable
-        return invocation.getFunctionMethodDescription(callable, invocationContext)
+        return invocation.selectFunctionMethodDescription(callable, invocationWork)
     }
     return errorUtils.validationError(
         "run receiver does not support methods",
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.NotAFunction,
     )
 }

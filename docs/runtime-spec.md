@@ -1,6 +1,6 @@
 # Runtime contract
 
-This document defines the observable contract of the Cascada chain-resolution kernel. Implementation details live in [`import-preparation.md`](import-preparation.md), [`counters-implementation.md`](counters-implementation.md), and [`work-bounds.md`](work-bounds.md).
+This document defines the observable contract of the Cascada chain-resolution kernel. Implementation details live in [`import-processing.md`](import-processing.md), [`counters-implementation.md`](counters-implementation.md), and [`work-bounds.md`](work-bounds.md).
 
 `ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local registered external scope records, including requested nested native scopes, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
 

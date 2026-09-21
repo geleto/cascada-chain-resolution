@@ -1,11 +1,11 @@
-import * as tree from "./external-mutation-tree.js"
+import * as externalTree from "./external-mutation-tree.js"
 import * as errors from "./error.js"
 import * as imports from "./import.js"
 import * as steps from "./internal-step.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import { exportManyValues, exportValue } from "./export.js"
-import { capabilityError, validateExternalAccess } from "./external-operation.js"
+import { externalCapabilityEscapeError, validateExternalAccess } from "./external-operation.js"
 import { readManagedProperty, snapshotExternalValue } from "./external-snapshot.js"
 
 class ExternalAccess {
@@ -37,7 +37,7 @@ class ExternalAccess {
             ready => {
                 if (errors.isPoisonError(ready)) return ready
                 if (this.operationContext.execution._externalIdentities.has(ready))
-                    return capabilityError(this.operationContext)
+                    return externalCapabilityEscapeError(this.operationContext)
                 if (this.boundary) return snapshotExternalValue(ready, this.operationContext, !forExport)
                 const imported = imports.importExternalProperty(ready, this.operationContext)
                 return forExport ? exportValue(imported, this.operation) : imported
@@ -67,21 +67,21 @@ class ExternalAccess {
     write(value) {
         return steps.continueOperation(exportManyValues([value], this.operation), this.operationContext, prepared => {
             if (errors.isPoisonError(prepared)) return prepared
-            return this.change(false, prepared[0])
+            return this.changeProperty(false, prepared[0])
         })
     }
 
-    delete() { return this.change(true) }
+    delete() { return this.changeProperty(true) }
 
-    change(deleting, value) {
+    changeProperty(deleting, value) {
         const receiver = this.selectReceiver(this.path.length - 1, errors.ERROR_KIND.UnsupportedMutation)
         if (errors.isPoisonError(receiver)) return receiver
         const key = properties.normalizePathSegment(this.path.at(-1), this.operationContext)
         if (errors.isPoisonError(key)) return key
-        if (tree.findBranch(this.boundary, this.path)) return properties.propertyValidationError(
+        if (externalTree.findBranch(this.boundary, this.path)) return properties.propertyValidationError(
             "Registered external locations cannot be replaced or deleted", this.operationContext)
         const kind = deleting ? errors.ERROR_KIND.ExternalPropertyDeleteFailed : errors.ERROR_KIND.ExternalPropertyWriteFailed
-        const branch = !deleting && key === "length" && tree.findBranch(this.boundary, this.path.slice(0, -1))
+        const branch = !deleting && key === "length" && externalTree.findBranch(this.boundary, this.path.slice(0, -1))
         if (branch) {
             // Let the native intrinsic convert and validate once, before it can
             // remove bindings. Write the resulting length without re-coercion.
@@ -94,7 +94,7 @@ class ExternalAccess {
             })
             if (errors.isPoisonError(length)) return length
             if (length !== undefined) {
-                if (tree.truncatesLocations(branch, length)) return properties.propertyValidationError(
+                if (externalTree.truncatesLocations(branch, length)) return properties.propertyValidationError(
                     "Array length cannot remove a fixed external namespace", this.operationContext)
                 value = length
             }
@@ -107,13 +107,13 @@ class ExternalAccess {
             this.operationContext, kind)
     }
 
-    selectReceiver(length, kind) {
-        const blocker = this.operation.blocker()
+    selectReceiver(depth, kind) {
+        const blocker = this.operation.externalBlocker()
         if (blocker) return blocker
-        if (length < 0) return errors.validationError(
+        if (depth < 0) return errors.validationError(
             "A registered external binding cannot be replaced or deleted", this.operationContext,
             errors.ERROR_KIND.PropertyValidation)
-        const selected = this.walkPrefix(length, kind)
+        const selected = this.walkPrefix(depth, kind)
         if (errors.isPoisonError(selected)) return selected
         const receiver = selected.value
         if (metadata.isTraversableType(metadata.metaOf(receiver, this.operationContext)?.type))
@@ -122,15 +122,15 @@ class ExternalAccess {
         return this.requireReady(receiver) ?? receiver
     }
 
-    walkPrefix(length, receiverErrorKind) {
+    walkPrefix(depth, receiverErrorKind) {
         let value = this.identity
         let fromManagedProperty = false
         let node = this.boundary
-        for (let index = 0; index < length; index++) {
+        for (let index = 0; index < depth; index++) {
             if (errors.isPoisonError(value)) return value
             const known = this.operationContext.execution._externalIdentities.has(value)
-            if ((known || node?.[tree.TREE_NODE].identity) && value !== this.identity) {
-                const failure = validateExternalAccess(value, node?.[tree.TREE_NODE].identity ? node : undefined, this.operationContext)
+            if ((known || node?.[externalTree.TREE_NODE].identity) && value !== this.identity) {
+                const failure = validateExternalAccess(value, node?.[externalTree.TREE_NODE].identity ? node : undefined, this.operationContext)
                 if (failure) return failure
             }
             fromManagedProperty = metadata.isTraversableType(metadata.metaOf(value, this.operationContext)?.type)
@@ -151,8 +151,8 @@ class ExternalAccess {
             }
         }
         if (errors.isPoisonError(value)) return value
-        if (node?.[tree.TREE_NODE].identity || this.operationContext.execution._externalIdentities.has(value)) {
-            const failure = validateExternalAccess(value, node?.[tree.TREE_NODE].identity ? node : undefined, this.operationContext)
+        if (node?.[externalTree.TREE_NODE].identity || this.operationContext.execution._externalIdentities.has(value)) {
+            const failure = validateExternalAccess(value, node?.[externalTree.TREE_NODE].identity ? node : undefined, this.operationContext)
             if (failure) return failure
         }
         return { value, fromManagedProperty }
@@ -171,13 +171,13 @@ class ExternalAccess {
         if (value === null || typeof value !== "object" || Error.isError(value) || metadata.metaOf(value, this.operationContext)) return undefined
         const then = this.native(errors.ERROR_KIND.ExternalPropertyReadFailed, () => value.then)
         if (errors.isPoisonError(then)) return then
-        if (typeof then === "function") return managed ? this.invalidSnapshot() : this.pathPromiseError()
+        if (typeof then === "function") return managed ? this.invalidSnapshotError() : this.pathPromiseError()
     }
     pathPromiseError() {
         return errors.validationError("Native paths require ready intermediate values", this.operationContext,
             errors.ERROR_KIND.ExternalPropertyReadFailed)
     }
-    invalidSnapshot() {
+    invalidSnapshotError() {
         return errors.validationError("External snapshots require ready managed properties", this.operationContext,
             errors.ERROR_KIND.InvalidExternalSnapshot)
     }

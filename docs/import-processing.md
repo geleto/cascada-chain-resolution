@@ -75,7 +75,7 @@ Application code must not mutate managed data after passing it to Cascada. Exter
 ## Modules
 
 - `src/import.js` owns the public boundary and direct-Promise completion.
-- `src/import-preparation.js` owns the transactional admission walk and the processor reused for imported Promise fulfillments.
+- `src/import-processing.js` owns the transactional admission walk and the processor reused for imported Promise fulfillments.
 - `src/meta.js` owns declarations, admitted facts, and origin metadata.
 - `src/property-versions.js` owns placement overlays, fixed logical versions, and the atomic commit used by the import-owned delivery transition.
 

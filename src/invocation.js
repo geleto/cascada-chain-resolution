@@ -7,7 +7,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 
-class InvocationContext extends operationLifecycle.OperationOwner {
+class InvocationWork extends operationLifecycle.OperationOwner {
     receiverReached = false
     #argumentsAwaitingReceiverLeases
     #argumentLeases
@@ -21,10 +21,10 @@ class InvocationContext extends operationLifecycle.OperationOwner {
         this.#argumentsAwaitingReceiverLeases = createLeaseLedger(operationContext)
         this.#argumentLeases = createLeaseLedger(operationContext)
         this.#receiverLeases = createLeaseLedger(operationContext)
-        this.retainArgument = this.#argumentLeases.retain
-        this.retainReceiver = this.#receiverLeases.retain
-        this.releaseArguments = this.#argumentLeases.release
-        this.releaseReceivers = this.#receiverLeases.release
+        this.leaseArgument = this.#argumentLeases.acquire
+        this.leaseReceiver = this.#receiverLeases.acquire
+        this.releaseArgumentLeases = this.#argumentLeases.release
+        this.releaseReceiverLeases = this.#receiverLeases.release
     }
 
     setReceiver(receiver, present) {
@@ -37,7 +37,7 @@ class InvocationContext extends operationLifecycle.OperationOwner {
         return exportManyValues(this.args, this)
     }
 
-    retainArgumentsUntilReceiverReached() {
+    leaseArgumentsUntilReceiverReached() {
         for (const value of this.args) {
             const protection = internalSteps.continueOperation(
                 value,
@@ -45,7 +45,7 @@ class InvocationContext extends operationLifecycle.OperationOwner {
                 resolved => {
                     if (Error.isError(resolved)) return undefined
                     languageValues.admitReadyValue(resolved, this.operationContext)
-                    this.#argumentsAwaitingReceiverLeases.retain(resolved)
+                    this.#argumentsAwaitingReceiverLeases.acquire(resolved)
                 },
                 () => undefined,
                 this,
@@ -54,14 +54,14 @@ class InvocationContext extends operationLifecycle.OperationOwner {
         }
     }
 
-    releaseArgumentsAwaitingReceiver() {
+    releaseArgumentLeasesAwaitingReceiver() {
         this.#argumentsAwaitingReceiverLeases.release()
     }
 
     release() {
         this.#argumentsAwaitingReceiverLeases.release()
-        this.releaseArguments()
-        this.releaseReceivers()
+        this.releaseArgumentLeases()
+        this.releaseReceiverLeases()
         this.args = undefined
         this.receiver = undefined
     }
@@ -78,19 +78,19 @@ function invokeFunction(
     )
 }
 
-function getFunctionMethodDescription(callable, invocationContext) {
+function selectFunctionMethodDescription(callable, invocationWork) {
     return {
         admitMethodResult: value => imports.importMethodResult(
             value,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         ),
         invoke: args => invokeFunction(
             callable,
-            invocationContext.receiver,
+            invocationWork.receiver,
             args,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
         ),
-        prepareArguments: () => invocationContext.exportArguments(),
+        prepareArguments: () => invocationWork.exportArguments(),
     }
 }
 
@@ -111,10 +111,10 @@ function invokeMethod(
     method,
     mutation,
     args,
-    getMethodDescription,
+    selectMethodDescription,
     accessReceiver,
 ) {
-    const invocationContext = new InvocationContext(
+    const invocationWork = new InvocationWork(
         operationContext,
         method,
         mutation,
@@ -123,10 +123,10 @@ function invokeMethod(
     const result = accessReceiver(invokeWithReceiver)
 
     if (
-        !invocationContext.receiverReached &&
+        !invocationWork.receiverReached &&
         languageValues.isPending(result, operationContext)
     ) {
-        invocationContext.retainArgumentsUntilReceiverReached()
+        invocationWork.leaseArgumentsUntilReceiverReached()
     }
     return internalSteps.continueOperation(
         result,
@@ -150,27 +150,27 @@ function invokeMethod(
 
     function close(value) {
         // Call completion releases the same resources on success and language failure.
-        operationLifecycle.close(invocationContext)
+        operationLifecycle.close(invocationWork)
         return value
     }
 
     function invokeWithReceiver(receiver, present) {
-        invocationContext.setReceiver(receiver, present)
-        const methodDescription = getMethodDescription(invocationContext)
+        invocationWork.setReceiver(receiver, present)
+        const methodDescription = selectMethodDescription(invocationWork)
         if (errorUtils.isPoisonError(methodDescription)) {
-            invocationContext.releaseArgumentsAwaitingReceiver()
+            invocationWork.releaseArgumentLeasesAwaitingReceiver()
             return methodDescription
         }
         const preparedArguments = methodDescription.prepareArguments()
-        invocationContext.retainReceiver(methodDescription.receiverToLease)
-        invocationContext.releaseArgumentsAwaitingReceiver()
+        invocationWork.leaseReceiver(methodDescription.receiverToLease)
+        invocationWork.releaseArgumentLeasesAwaitingReceiver()
 
         return internalSteps.continueOperation(
             preparedArguments,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             invokePrepared,
             undefined,
-            invocationContext,
+            invocationWork,
         )
 
         function invokePrepared(readyArguments) {
@@ -184,8 +184,8 @@ function invokeMethod(
             const pendingInputUse = (methodDescription.leaseInputsThroughResult || methodDescription.admitMethodResult) &&
                 languageValues.isPending(result, operationContext)
             if (!pendingInputUse) {
-                invocationContext.releaseArguments()
-                invocationContext.releaseReceivers()
+                invocationWork.releaseArgumentLeases()
+                invocationWork.releaseReceiverLeases()
             }
             return result
         }
@@ -195,11 +195,11 @@ function invokeMethod(
 function createLeaseLedger(operationContext) {
     const values = new Set()
     let closed = false
-    return { retain, release }
+    return { acquire, release }
 
-    function retain(value) {
+    function acquire(value) {
         if (closed || values.has(value)) return value
-        const retained = internalSteps.consumeValue(
+        const leased = internalSteps.consumeValue(
             value,
             operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
@@ -208,8 +208,8 @@ function createLeaseLedger(operationContext) {
                 return ready
             },
         )
-        if (!languageValues.isPending(retained, operationContext)) return retained
-        markPromiseHandled(retained, operationContext)
+        if (!languageValues.isPending(leased, operationContext)) return leased
+        markPromiseHandled(leased, operationContext)
         return value
     }
 
@@ -225,7 +225,7 @@ function createLeaseLedger(operationContext) {
 
 export {
     createLeaseLedger,
-    getFunctionMethodDescription,
+    selectFunctionMethodDescription,
     invokeMethod,
     invokeFunction,
     methodNotCallableError,

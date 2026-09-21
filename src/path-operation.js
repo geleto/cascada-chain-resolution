@@ -1,13 +1,13 @@
 import { Chain } from "./chain.js"
 import * as errors from "./error.js"
-import * as tree from "./external-mutation-tree.js"
+import * as externalTree from "./external-mutation-tree.js"
 import * as steps from "./internal-step.js"
 import * as metadata from "./meta.js"
 import * as versions from "./property-versions.js"
 import * as properties from "./language-properties.js"
 import { createLeaseLedger } from "./invocation.js"
 import { OperationOwner } from "./operation-lifecycle.js"
-import { captureOrigin, capturePath } from "./path-context.js"
+import { capturePathOrigin, captureRoute } from "./path-context.js"
 import { walkObservationPath } from "./observations.js"
 import { captureMutationResult, transformProperty, walkMutationPath } from "./mutations.js"
 import { ExternalAccess } from "./external-access.js"
@@ -19,46 +19,46 @@ class PathOperation extends OperationOwner {
         chain._assertOperationContext(operationContext)
         this.chain = chain
         // Native failure ownership stops at the last statically selected scope.
-        this.route = capturePath(chain, path, firstDynamicSegment,
+        this.route = captureRoute(chain, path, firstDynamicSegment,
             Math.min(mutationScopeDepth ?? path.length, firstDynamicSegment, receiverDepth))
         if (mutationScopeDepth !== undefined) mutationScopeDepth += chain._rootPath?.length ?? 0
         this.mutation = mutationScopeDepth !== undefined
-        const crossed = this.route.crossed
-        if (crossed && this.route.dynamicDepth < crossed[tree.TREE_NODE].path.length) {
+        const crossed = this.route.deepestExternalScope
+        if (crossed && this.route.dynamicDepth < crossed[externalTree.TREE_NODE].path.length) {
             this.routeFailure = errors.validationError(
                 "Mutable external identities require a static context path", operationContext,
                 errors.ERROR_KIND.ExternalLocationConflict)
         }
         this.repair = repair && !this.routeFailure
         this.scopeDepth = this.routeFailure && this.mutation ? Math.min(mutationScopeDepth, this.route.firstDynamicSegment) : mutationScopeDepth
-        this.externalScope = Boolean(this.route.scope)
+        this.hasExternalScope = Boolean(this.route.externalScope)
         if (this.mutation && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
         // Claim external order before managed gates can suspend path capture.
         // Capture still proceeds now; waiting first could capture a later gate.
-        const node = this.route.scope ?? (this.mutation
-            ? tree.findBranch(chain._externalMutationTree, this.route.path.slice(0, this.scopeDepth))
+        const node = this.route.externalScope ?? (this.mutation
+            ? externalTree.findBranch(chain._externalMutationTree, this.route.path.slice(0, this.scopeDepth))
             : undefined)
-        this.reserve(node)
+        this.reserveExternal(node)
     }
 
     // Queries and readonly entries also consume external subtree metadata or
     // state. They call this at issuance, before starting managed path capture.
-    reserve(node) {
-        if (node && !this.effect && (this.mutation || !this.routeFailure)) {
-            this.selectedScope = node
-            this.effect = new ExternalEffect(node, this.mutation, this.chain._reservationView, this.operationContext)
+    reserveExternal(node) {
+        if (node && !this.externalEffect && (this.mutation || !this.routeFailure)) {
+            this.selectedExternalNode = node
+            this.externalEffect = new ExternalEffect(node, this.mutation, this.chain._externalReservationView, this.operationContext)
         }
     }
 
-    retain(values) {
+    leaseValues(values) {
         this.leases ??= createLeaseLedger(this.operationContext)
-        for (const value of values) this.leases.retain(value)
+        for (const value of values) this.leases.acquire(value)
     }
 
     observe(onValue, onExternal, onFailure, reflectionKind, owner = this) {
-        const boundary = this.route.boundary
-        const depth = boundary ? boundary[tree.TREE_NODE].path.length - (this.chain._contextOrigin?.depth ?? 0) : Infinity
-        if (this.mutation && this.externalScope) return walkMutationPath(
+        const boundary = this.route.externalBoundary
+        const depth = boundary ? boundary[externalTree.TREE_NODE].path.length - (this.chain._contextOrigin?.depth ?? 0) : Infinity
+        if (this.mutation && this.hasExternalScope) return walkMutationPath(
             this.chain, this.route.path.slice(0, depth), this.operationContext, target =>
                 steps.continueOperation(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
                     this.operationContext, value => errors.isPoisonError(value) ? onValue(value) :
@@ -70,38 +70,38 @@ class PathOperation extends OperationOwner {
     }
 
     reachExternal(identity, suffix, action, owner = this) {
-        const { operationContext, route: { boundary, scope } } = this
+        const { operationContext, route: { externalBoundary: boundary, externalScope: scope } } = this
         const failure = (this.mutation ? undefined : this.routeFailure) ?? validateExternalAccess(identity, boundary, operationContext)
         if (failure) return failure
         if (this.mutation && !scope) return externalLocationError(operationContext)
         this.reachedExternal = true
-        return steps.continueOperation(this.effect?.readiness, operationContext, () => {
+        return steps.continueOperation(this.externalEffect?.readiness, operationContext, () => {
             if (!owner.open) return undefined
-            const failure = this.blocker(!this.repair)
+            const failure = this.externalBlocker(!this.repair)
             if (failure) return failure
             if (this.routeFailure) return this.routeFailure
             const access = new ExternalAccess(identity, suffix, boundary, this)
             if (this.repair) {
                 const failure = access.validatePath()
                 if (failure) return failure
-                tree.clearPoison(scope)
+                externalTree.clearPoison(scope)
             }
             return action(access)
         })
     }
 
-    blocker(includeSubtree = true) {
-        return tree.scopeBlocker(this.selectedScope, includeSubtree)
+    externalBlocker(includeSubtree = true) {
+        return externalTree.scopeBlocker(this.selectedExternalNode, includeSubtree)
     }
 
     mutate(transform, replaceScope = false, deleting = false) {
         const { chain, route, operationContext } = this
-        if (this.routeFailure && this.externalScope) return this.observe(value => value, () => this.routeFailure)
+        if (this.routeFailure && this.hasExternalScope) return this.observe(value => value, () => this.routeFailure)
         const requestedDepth = this.scopeDepth
-        if (!route.boundary && route.firstDynamicSegment < requestedDepth) {
+        if (!route.externalBoundary && route.firstDynamicSegment < requestedDepth) {
             const depth = route.firstDynamicSegment
             return this.mutateSelected(chain, route, depth, (value, state, selected, suffix) =>
-                steps.continueOperation(this.mutateSelected(selected, capturePath(selected, suffix, 0),
+                steps.continueOperation(this.mutateSelected(selected, captureRoute(selected, suffix, 0),
                     requestedDepth - depth, transform, replaceScope, deleting), operationContext, outcome => {
                     if (this.routeFailure) return this.routeFailure
                     return captureMutationResult(selected,
@@ -120,13 +120,13 @@ class PathOperation extends OperationOwner {
                 return failure
             }
             const depth = target.pathDepth ?? requestedDepth
-            const node = tree.findBranch(chain._externalMutationTree, route.path.slice(0, depth))
+            const node = externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth))
             return transformProperty(target, operationContext, (value, state) => {
-                return steps.continueOperation(this.effect?.readiness, operationContext, () => {
-                    const blocker = this.blocker(false)
+                return steps.continueOperation(this.externalEffect?.readiness, operationContext, () => {
+                    const blocker = this.externalBlocker(false)
                     if (blocker) return blocker
                     if (this.routeFailure) return this.routeFailure
-                    if (this.repair) tree.clearPoison(node)
+                    if (this.repair) externalTree.clearPoison(node)
                     if (node && depth === requestedDepth && !replaceScope)
                         return properties.propertyValidationError("A managed mutation scope cannot contain mutable external locations", operationContext)
                     if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
@@ -134,8 +134,8 @@ class PathOperation extends OperationOwner {
                     const privateChain = new Chain(undefined, operationContext)
                     versions.transferPlacement(state.baseline, privateChain._state, "value", operationContext)
                     privateChain._externalMutationTree = node
-                    privateChain._contextOrigin = captureOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
-                    privateChain._reservationView = chain._reservationView
+                    privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+                    privateChain._externalReservationView = chain._externalReservationView
                     return transform(value, state, privateChain, route.path.slice(depth), node)
                 })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair })
@@ -147,30 +147,30 @@ class PathOperation extends OperationOwner {
     finishMutation(outcome) {
         return steps.continueOperation(outcome, this.operationContext, outcome => {
             const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.mutatedValue) ? outcome.mutatedValue : null
-            if (failure && this.reachedExternal && this.selectedScope?.[tree.TREE_NODE].identity && !this.blocker())
-                tree.poisonScope(this.selectedScope, failure)
+            if (failure && this.reachedExternal && this.selectedExternalNode?.[externalTree.TREE_NODE].identity && !this.externalBlocker())
+                externalTree.poisonScope(this.selectedExternalNode, failure)
             // Publication, not an independently pending result, ends authority.
-            this.completeEffect()
+            this.completeExternalEffect()
             return this.finish(errors.isPoisonError(outcome) ? outcome : outcome.result)
         })
     }
 
     finish(result) {
         return steps.continueOperation(result, this.operationContext, value => {
-            this.completeEffect()
+            this.completeExternalEffect()
             this.close()
             return value
         })
     }
 
-    completeEffect() {
-        this.effect?.complete()
-        this.effect = undefined
+    completeExternalEffect() {
+        this.externalEffect?.complete()
+        this.externalEffect = undefined
     }
 
     release() {
         this.leases?.release()
-        this.chain = this.route = this.effect = this.selectedScope = this.leases = undefined
+        this.chain = this.route = this.externalEffect = this.selectedExternalNode = this.leases = undefined
     }
 }
 
@@ -182,21 +182,21 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
             // prefix, not permission to repair the dynamically chosen scope.
             return operation.finishMutation(operation.mutate(() => operation.routeFailure))
         }
-        if (operation.externalScope) return operation.finish(operation.observe(value => value, () => undefined))
-        const node = operation.route.node
+        if (operation.hasExternalScope) return operation.finish(operation.observe(value => value, () => undefined))
+        const node = operation.route.externalTreeNode
         // Restoration selects exactly the requested placement. It neither
         // creates working state nor widens an absent Array index to its owner.
         const result = walkMutationPath(chain, operation.route.path, operationContext, target => {
             if (target.propertyKind !== properties.ORDINARY_PROPERTY)
                 return { mutatedValue: undefined, result: undefined }
             return transformProperty(target, operationContext, (value, state) =>
-                steps.continueOperation(operation.effect?.readiness, operationContext, () =>
-                    operation.blocker(false) ?? operation.routeFailure ??
+                steps.continueOperation(operation.externalEffect?.readiness, operationContext, () =>
+                    operation.externalBlocker(false) ?? operation.routeFailure ??
                     { mutatedValue: value, result: undefined, placement: state.baseline }),
             { repair: true })
         }, outcome => outcome, { preserveOnFailure: true })
         return operation.finishMutation(steps.continueOperation(result, operationContext, outcome => {
-            if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) tree.clearPoison(node)
+            if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) externalTree.clearPoison(node)
             return outcome
         }))
     })

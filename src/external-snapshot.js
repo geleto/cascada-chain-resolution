@@ -2,7 +2,7 @@ import * as arrays from "./array-view.js"
 import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import { capabilityError } from "./external-operation.js"
+import { externalCapabilityEscapeError } from "./external-operation.js"
 
 // External snapshots are ready-only transactions. Sources keep their admission
 // and logical storage; only a completely successful output graph is admitted.
@@ -49,7 +49,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             return source
         }
         if (operationContext.execution._externalIdentities.has(source))
-            return collect(capabilityError(operationContext))
+            return collect(externalCapabilityEscapeError(operationContext))
         if (visited.has(source)) return visited.get(source)
         visited.set(source, undefined)
         const meta = metadata.metaOf(source, operationContext)

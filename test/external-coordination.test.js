@@ -102,7 +102,7 @@ describe("external binding commit", () => {
             assert.equal(validateExternalAccess(identity, undefined, ctx), failure)
             for (const chain of [first, second]) {
                 assert.equal(externalLocations(chain._externalMutationTree, []).length, 1)
-                assert.equal(externalTree.tracePath(chain._externalMutationTree, ["identity", "opaque"]).scope[TREE_NODE].entry.binding, failure)
+                assert.equal(externalTree.tracePath(chain._externalMutationTree, ["identity", "opaque"]).externalScope[TREE_NODE].entry.binding, failure)
                 assert.equal(externalTree.findBranch(chain._externalMutationTree, ["identity"])[TREE_NODE].entry.binding, failure)
                 assert.equal(runtime.lookupPath(chain, ["identity"], ctx), failure)
             }

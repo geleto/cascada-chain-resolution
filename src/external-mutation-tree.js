@@ -16,7 +16,7 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
         // Original thenables never grant authority, even after synchronous
         // import delivery. Discovery subscribes to nothing.
         if (!facts) {
-            if (!native || !directlyAvailable(value, operationContext)) return undefined
+            if (!native || !isDirectlyAvailable(value, operationContext)) return undefined
             facts = admitExternal(value)
         }
         const external = facts.type === metadata.TYPE.External
@@ -46,7 +46,7 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
 
 // Discovery examines descriptors, never executes a getter or subscribes. An
 // accessor cannot establish a directly available mutable location.
-function directlyAvailable(value, operationContext) {
+function isDirectlyAvailable(value, operationContext) {
     for (let owner = value; owner; owner = errors.runExternalAction(operationContext, () => Object.getPrototypeOf(owner))) {
         const descriptor = errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(owner, "then"))
         if (descriptor) return "value" in descriptor && typeof descriptor.value !== "function"
@@ -93,7 +93,7 @@ function tracePath(node, path, scopeDepth = path.length) {
         const key = path[depth]
         node = typeof key === "string" || typeof key === "number" ? node[key] : undefined
     }
-    return { node, boundary, scope, crossed }
+    return { externalTreeNode: node, externalBoundary: boundary, externalScope: scope, deepestExternalScope: crossed }
 }
 
 function bindingError(node) {

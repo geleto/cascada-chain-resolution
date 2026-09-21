@@ -76,7 +76,7 @@ function getLanguagePlacementDescriptor(parent, key, operationContext) {
     return isDataPlacement(descriptor) ? descriptor : undefined
 }
 
-function propertyMutationRequiresCopy(
+function requiresRepresentationCopyForPropertyMutation(
     parent,
     key,
     operationContext,
@@ -104,7 +104,7 @@ function propertyMutationRequiresCopy(
         length?.writable !== true
 }
 
-function arrayLengthMutationRequiresCopy(array, length, operationContext) {
+function requiresRepresentationCopyForArrayLengthMutation(array, length, operationContext) {
     const projection = arrayViews.projectionOf(array, operationContext)
     const current = arrayViews.logicalArrayLength(projection, operationContext)
     if (length === current) return false
@@ -266,7 +266,6 @@ export {
     INVALID_ARRAY_KEY,
     ORDINARY_PROPERTY,
     STRING_LENGTH,
-    arrayLengthMutationRequiresCopy,
     assertCanDeleteLanguageProperty,
     assertCanSetLanguageProperty,
     classifyLanguageProperty,
@@ -278,8 +277,9 @@ export {
     isCallableThenPlacement,
     enumerableLanguageKeyCandidates,
     normalizePathSegment,
-    propertyMutationRequiresCopy,
     propertyValidationError,
     readLanguageProperty,
+    requiresRepresentationCopyForArrayLengthMutation,
+    requiresRepresentationCopyForPropertyMutation,
     writeLanguageProperty,
 }

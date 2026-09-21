@@ -44,12 +44,12 @@ class PropertyPlacement {
 // Deferred selection supplies its captured version, even if it is now detached.
 function capturePlacement(owner, key, operationContext, capturedVersion) {
     const version = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
-    if (version) return captureVersion(version)
+    if (version) return capturePlacementFromVersion(version)
     const descriptor = languageProperties.getLanguagePlacementDescriptor(owner, key, operationContext)
     return { value: descriptor?.value, present: Boolean(descriptor) }
 }
 
-function captureVersion(version) {
+function capturePlacementFromVersion(version) {
     return {
         value: version.value, present: version.present !== false,
         sourceVersion: version.promiseBacked ? version : undefined,
@@ -59,7 +59,7 @@ function captureVersion(version) {
 
 // A destination has its own publication authority and capture obligations.
 // Only logical contents and unfinished source dependencies cross placements.
-function createPlacementVersion(placement) {
+function createVersionFromPlacement(placement) {
     return {
         value: placement.value, present: placement.present, recovery: placement.recovery,
         pendingPresence: placement.sourceVersion?.pendingPresence,
@@ -117,7 +117,7 @@ function transferPlacement(placement, owner, key, operationContext, retained = f
     }
     if (!destinationVersion || isLivePromiseVersion(owner, key, destinationVersion, operationContext))
         languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-    let version = createPlacementVersion(placement)
+    let version = createVersionFromPlacement(placement)
     const deliver = resolved => publishPromiseVersion(owner, key, version, resolved, operationContext, retained)
     const publication = placement.sourceVersion
         ? resolvePlacement(placement, operationContext, deliver)
@@ -143,7 +143,7 @@ function installPlacementGate(owner, key, operationContext, capturedVersion) {
         promise, owner, key,
         resolve() {
             const version = gate.version
-            transition.placement = captureVersion(version)
+            transition.placement = capturePlacementFromVersion(version)
             publication.resolve()
             // Replacement may proceed after publication. Value consumers still
             // wait for any pending data that was published through the gate.
@@ -286,7 +286,7 @@ function observePromiseVersion(
     // A transition can publish through another signal before this observer
     // resumes. Its captured value needs protection at publication, independently
     // of the lifetime owner used only to guard the observer's continuation.
-    if (promiseVersion.transition) retainPlacement(captureVersion(promiseVersion), operationContext)
+    if (promiseVersion.transition) retainPlacement(capturePlacementFromVersion(promiseVersion), operationContext)
     return continueCapturedPromiseVersion(
         promise,
         promiseVersion,
@@ -299,10 +299,10 @@ function observePromiseVersion(
 // Each queued mutation owns its publication version. Keep the original source
 // as its availability signal so supported thenables can still deliver directly.
 // Later access cannot see ready state until this mutation has taken its turn.
-function continueMutationVersion(owner, key, source, operationContext, onValue) {
-    const captured = captureVersion(source)
+function installMutationVersion(owner, key, source, operationContext, onValue) {
+    const captured = capturePlacementFromVersion(source)
     const transition = {}
-    const version = createPlacementVersion(captured)
+    const version = createVersionFromPlacement(captured)
     version.promiseBacked = true
     version.transition = transition
     installPlacementVersion(owner, key, version, operationContext)
@@ -313,7 +313,7 @@ function continueMutationVersion(owner, key, source, operationContext, onValue) 
         result = onValue(version.value, version)
         delete version.writing
         detachAbsentVersion(owner, key, version, operationContext)
-        transition.placement = captureVersion(version)
+        transition.placement = capturePlacementFromVersion(version)
     })
     trackVersionPublication(version, transition.promise, operationContext)
     return internalSteps.continueOperation(transition.promise, operationContext, () => result)
@@ -602,8 +602,8 @@ export {
     installPlacementGate,
     completePlacementGate,
     capturePlacement,
-    captureVersion,
-    createPlacementVersion,
+    capturePlacementFromVersion,
+    createVersionFromPlacement,
     resolvePlacement,
     resolvePlacementTransition,
     retainPlacement,
@@ -613,7 +613,7 @@ export {
     assignProperty,
     commitArrayLength,
     observePromiseVersion,
-    continueMutationVersion,
+    installMutationVersion,
     continueCapturedPromiseVersion,
     deleteProperty,
     requirePromiseVersion,

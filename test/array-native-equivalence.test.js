@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import * as runtime from "../src/index.js"
 
 import { ARRAY_METHODS } from "../src/array-methods.js"
 import {
@@ -357,6 +358,45 @@ describe("Array native equivalence", () => {
                     message: `property sequence case=${caseIndex} step=${step}`,
                 })
                 verifyRefCounts(chain._state.value)
+            }
+        }
+    })
+
+    it("captures structural publication before later writes across observational methods", async () => {
+        const cases = [
+            ["flat", []], ["flat", [0]], ["sort", []], ["sort", [NUMERIC_COMPARATOR]],
+            ["toSorted", []], ["includes", [undefined]], ["indexOf", [undefined]],
+            ["lastIndexOf", [undefined]], ["at", [0]], ["slice", []], ["concat", []],
+            ["toReversed", []], ["toSpliced", [1, 1]], ["with", [1, 7]], ["join", []],
+        ]
+        for (const [method, args] of cases) {
+            for (const view of [false, true]) {
+                for (const overwrite of [false, true]) {
+                    for (let index = 0; index < 3; index++) {
+                        const ctx = testOperationContext()
+                        const source = new Chain([3, 2, 1])
+                        const chain = view ? new Chain(run(source, [], "slice", [], {})) : source
+                        const hold = deferred()
+                        const entry = runtime.enter(chain, [index], ctx, true, inside =>
+                            hold.promise.then(() => runtime.deletePath(inside, [], ctx)))
+                        const result = run(chain, [], method, args, {})
+                        if (overwrite) assignPath(chain, [index], 42)
+                        hold.resolve()
+                        await entry
+
+                        const expected = [3, 2, 1]
+                        delete expected[index]
+                        const message = `${method} view=${view} overwrite=${overwrite} index=${index}`
+                        assert.deepStrictEqual(
+                            await runtime.export(new Chain(result), [], ctx),
+                            Reflect.apply(Array.prototype[method], expected.slice(), args),
+                            message,
+                        )
+                        if (overwrite) expected[index] = 42
+                        assert.deepStrictEqual(await runtime.export(chain, [], ctx), expected, message)
+                        verifyRefCounts(chain._state.value, source._state.value)
+                    }
+                }
             }
         }
     })

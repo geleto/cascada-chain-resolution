@@ -3,7 +3,7 @@ import { TREE_NODE, bindingError } from "./external-mutation-tree.js"
 import { continueOperation } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
-function capabilityError(operationContext) {
+function externalCapabilityEscapeError(operationContext) {
     return errors.validationError("Mutable external identities cannot leave their context location",
         operationContext, errors.ERROR_KIND.ExternalCapabilityEscape)
 }
@@ -24,7 +24,7 @@ function validateExternalAccess(identity, node, operationContext) {
 
 // An entry's outside reservation covers this private view. The same conflict
 // algorithm runs inside it, without joining outside work waiting for the entry.
-function createReservationView(root) {
+function createExternalReservationView(root) {
     return { root, frontiers: new WeakMap(), effects: new Set() }
 }
 
@@ -96,9 +96,9 @@ class ExternalEffect {
     }
 }
 
-function pendingEffects(view) {
+function pendingExternalEffects(view) {
     if (view.effects.size === 1) return view.effects.values().next().value.promise
     if (view.effects.size) return Promise.all([...view.effects].map(work => work.promise))
 }
 
-export { capabilityError, createReservationView, externalLocationError, ExternalEffect, pendingEffects, validateExternalAccess }
+export { externalCapabilityEscapeError, createExternalReservationView, externalLocationError, ExternalEffect, pendingExternalEffects, validateExternalAccess }

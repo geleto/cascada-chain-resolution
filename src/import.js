@@ -1,10 +1,10 @@
 import * as errorUtils from "./error.js"
 import * as internalSteps from "./internal-step.js"
-import { prepareImportedData } from "./import-preparation.js"
+import { processImportSegment } from "./import-processing.js"
 
 const IMPORT_POLICY = {
     Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed },
-    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, externalResult: true },
+    MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, methodResult: true },
     ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, externalRoot: true },
 }
 
@@ -23,7 +23,7 @@ function importExternalProperty(value, operationContext) {
 function importReadyMethodResult(value, operationContext, failures, receiver) {
     // The direct result is ready. Expose this admission segment's diagnostics
     // to call completion; independently pending descendants have their own lifetime.
-    return prepareImportedData(value, operationContext, {
+    return processImportSegment(value, operationContext, {
         ...IMPORT_POLICY.MethodResult,
         receiver,
     }, undefined, failures)
@@ -49,7 +49,7 @@ function importData(
             return internalSteps.continueOperation(
                 value,
                 operationContext,
-                root => prepareImportedData(
+                root => processImportSegment(
                     root,
                     operationContext,
                     policy,

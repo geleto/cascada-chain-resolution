@@ -23,6 +23,35 @@ const shapes = [
 ]
 
 describe("ownership across unchanged and pending paths", () => {
+    for (const route of ["export", "getErrors", "hasError", "method"]) for (const failed of [false, true]) {
+        it(`${route} preserves an earlier frontier after a resolved child is replaced, failure=${failed}`, async () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const first = Promise.withResolvers(), last = Promise.withResolvers()
+            const cause = new Error("earlier child")
+            const read = function () { return this.a.n + this.b.n }
+            const chain = new r.Chain({ a: first.promise, b: last.promise, read }, ctx)
+            const result = route === "method" ? r.run(chain, [], "read", [], ctx, {}) : r[route](chain, [], ctx)
+            if (failed) first.reject(cause)
+            else first.resolve({ n: 1 })
+            await new Promise(setImmediate)
+            // Do not inspect the graph before replacement: an extra lookup could
+            // supply protection missing from the operation under test.
+            r.assignPath(chain, ["a"], { n: 99 }, ctx)
+            last.resolve({ n: 2 })
+            const value = await result
+            if (route === "hasError") assert.equal(value, failed)
+            else if (failed) {
+                assert(r.isPoisonError(value))
+                assert.equal(value.cause, cause)
+            } else if (route === "getErrors") assert.equal(value, null)
+            else if (route === "method") assert.equal(value, 3)
+            else assert.deepStrictEqual(value, { a: { n: 1 }, b: { n: 2 }, read })
+            assert.deepStrictEqual(await r.export(chain, [], ctx), { a: { n: 99 }, b: { n: 2 }, read })
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, chain._state.value)
+        })
+    }
+
     for (const array of [false, true]) for (const admitted of [false, true]) for (const observed of [false, true]) {
         for (const action of ["repair", "scoped no-op", "entry"]) {
             it(`retains reused children after ${action}, Array=${array}, admitted=${admitted}, observed=${observed}`, async () => {

@@ -143,7 +143,7 @@ function placeEntry(destination, key, entry, retained, operationContext) {
 
 // The intrinsic has already made every output position present. A source gate
 // that publishes absence therefore contributes explicit undefined, not a hole.
-function settleDenseRemap(remap, operation) {
+function resolveDenseRemapPresence(remap, operation) {
     const waits = []
     for (const key of Object.keys(remap)) {
         const placement = remap[key]
@@ -162,5 +162,5 @@ export {
     createArrayFromRemap,
     createRemap,
     placeRemap,
-    settleDenseRemap,
+    resolveDenseRemapPresence,
 }

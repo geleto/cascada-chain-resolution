@@ -5,10 +5,10 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
-import { capabilityError } from "./external-operation.js"
+import { externalCapabilityEscapeError } from "./external-operation.js"
 import { logicalArrayLength } from "./array-view.js"
 
-function prepareImportedData(
+function processImportSegment(
     root,
     operationContext,
     importPolicy,
@@ -26,7 +26,7 @@ function prepareImportedData(
 
     let state = "staging"
     let failure
-    let resultErrors = importPolicy.externalResult ? failures?.errors ?? new Set() : undefined
+    let resultErrors = importPolicy.methodResult ? failures?.errors ?? new Set() : undefined
     const admissions = new Map()
     const retentions = new Set()
     const containers = new Map()
@@ -116,7 +116,7 @@ function prepareImportedData(
         // admits lazy children, so their placements remain borrowed at any depth.
         // Raw Errors may have just been produced by native receiver mutation;
         // the result boundary, rather than an ordinary read, attributes them.
-        if (!placement.sourceVersion && importPolicy.externalResult && metadata.metaOf(owner, operationContext) &&
+        if (!placement.sourceVersion && importPolicy.methodResult && metadata.metaOf(owner, operationContext) &&
             metadata.isObjectLike(placement.value) && !Error.isError(placement.value)) {
             languageProperties.readLanguageProperty(owner, key, operationContext)
             placement = propertyVersions.capturePlacement(owner, key, operationContext)
@@ -156,9 +156,9 @@ function prepareImportedData(
             resultErrors?.add(value)
         }
         if (!metadata.isObjectLike(value)) return value
-        if (importPolicy.externalResult && !Error.isError(value) &&
+        if (importPolicy.methodResult && !Error.isError(value) &&
             (value === importPolicy.receiver || operationContext.execution._externalIdentities.has(value))) {
-            const error = capabilityError(operationContext)
+            const error = externalCapabilityEscapeError(operationContext)
             failure ??= error
             resultErrors.add(error)
             failures?.capabilityErrors?.add(error)
@@ -185,7 +185,7 @@ function prepareImportedData(
         }
         if (existing) {
             retentions.add(value)
-            if (!importPolicy.externalResult ||
+            if (!importPolicy.methodResult ||
                 !languageValues.isTraversableType(existing.type)) return value
         } else {
             const facts = importPolicy.externalRoot && value === root && typeof value !== "function" && !Error.isError(value)
@@ -208,10 +208,10 @@ function prepareImportedData(
                 if (errorUtils.isPoisonError(placement)) continue
                 if (!placement) continue
                 const child = placement.value
-                const borrowed = retentions.has(value) && importPolicy.externalResult && languageValues.isPending(child, operationContext)
+                const borrowed = retentions.has(value) && importPolicy.methodResult && languageValues.isPending(child, operationContext)
                 const sourceVersion = borrowed ? placement.sourceVersion : undefined
                 placement.sourceVersion = sourceVersion
-                const version = propertyVersions.createPlacementVersion(placement)
+                const version = propertyVersions.createVersionFromPlacement(placement)
                 const staged = { version, original: child, placement }
                 container.placements.set(key, staged)
                 if (borrowed) copyContainer(value)
@@ -226,7 +226,7 @@ function prepareImportedData(
                         subscribe()
                         delete version.pendingPresence
                         delete version.transition
-                        transition.placement = propertyVersions.captureVersion(version)
+                        transition.placement = propertyVersions.capturePlacementFromVersion(version)
                     })
                     propertyVersions.trackVersionPublication(version, transition.promise, operationContext)
                 } else subscribe()
@@ -252,7 +252,7 @@ function prepareImportedData(
                     if (state === "abandoned") return undefined
                     const source = staged.placement.sourceVersion
                     return source
-                        ? propertyVersions.resolvePlacement(propertyVersions.captureVersion(source), operationContext, publish)
+                        ? propertyVersions.resolvePlacement(propertyVersions.capturePlacementFromVersion(source), operationContext, publish)
                         : publish({ ...staged.placement, value: resolved })
                 }
 
@@ -266,7 +266,7 @@ function prepareImportedData(
                         delete version.publication
                         connectChild(value, version.value)
                     } else {
-                        const imported = prepareImportedData(placement.value, operationContext, importPolicy)
+                        const imported = processImportSegment(placement.value, operationContext, importPolicy)
                         if (placement.recovery) propertyVersions.retainPlacement(placement.recovery, operationContext)
                         propertyVersions.commitPromiseVersion(container.target, key, version,
                             { value: imported, present: placement.present, recovery: placement.recovery },
@@ -278,4 +278,4 @@ function prepareImportedData(
     }
 }
 
-export { prepareImportedData }
+export { processImportSegment }

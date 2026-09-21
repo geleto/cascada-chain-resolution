@@ -7,14 +7,14 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import { capabilityError } from "./external-operation.js"
+import { externalCapabilityEscapeError } from "./external-operation.js"
 import { createEmptyContainerCopy } from "./mutations.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 
-function getManagedMethodDescription(invocationContext) {
-    const { mutation, receiver } = invocationContext
-    const receiverType = languageValues.typeOf(receiver, invocationContext.operationContext)
+function selectManagedMethodDescription(invocationWork) {
+    const { mutation, receiver } = invocationWork
+    const receiverType = languageValues.typeOf(receiver, invocationWork.operationContext)
     // Preparation resolves receiver contents but never changes its admitted type.
     const selectMethod = receiverType === languageValues.TYPE.Record
         ? selectManagedRecordMethod
@@ -22,19 +22,19 @@ function getManagedMethodDescription(invocationContext) {
     return {
         leaseInputsThroughResult: !mutation,
         prepareArguments: () =>
-            prepareManagedReceiverAndArguments(invocationContext),
+            prepareManagedReceiverAndArguments(invocationWork),
         invoke(prepared) {
             // Selection follows complete preparation and precedes isolation.
             // A rejected selection already carries its required mutation effect.
             const callable = errorUtils.catchExternalThrow(
-                () => selectMethod(prepared.receiver, invocationContext),
-                invocationContext.operationContext,
+                () => selectMethod(prepared.receiver, invocationWork),
+                invocationWork.operationContext,
                 errorUtils.ERROR_KIND.LookupReflectionFailed,
             )
             if (typeof callable !== "function") return callable
             const workingReceiver = prepareMethodReceiver(
                 prepared.receiver,
-                invocationContext,
+                invocationWork,
             )
             if (errorUtils.isPoisonError(workingReceiver)) {
                 return workingReceiver
@@ -44,25 +44,25 @@ function getManagedMethodDescription(invocationContext) {
                     callable,
                     workingReceiver,
                     prepared.args,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 )
                 : invokeObservation(
                     callable,
                     workingReceiver,
                     prepared.args,
-                    invocationContext.operationContext,
+                    invocationWork.operationContext,
                 )
         },
     }
 }
 
-function prepareManagedReceiverAndArguments(invocationContext) {
+function prepareManagedReceiverAndArguments(invocationWork) {
     return internalSteps.prepareInputs(
         [
-            resolveAndLeaseReceiverGraph(invocationContext),
-            invocationContext.exportArguments(),
+            resolveAndLeaseReceiverGraph(invocationWork),
+            invocationWork.exportArguments(),
         ],
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         readyValues => {
             const [preparedReceiver, exportedArgs] = readyValues
             return {
@@ -70,12 +70,12 @@ function prepareManagedReceiverAndArguments(invocationContext) {
                 args: exportedArgs,
             }
         },
-        invocationContext,
+        invocationWork,
     )
 }
 
-function resolveAndLeaseReceiverGraph(invocationContext) {
-    const { receiver } = invocationContext
+function resolveAndLeaseReceiverGraph(invocationWork) {
+    const { receiver } = invocationWork
     const preparation = {
         errors: new Set(),
         receiver: undefined,
@@ -84,32 +84,32 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
     let unregisterRelease
     const readiness = internalSteps.consumeValue(
         receiver,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             preparation.receiver = resolved
             return visit(resolved)
         },
-        invocationContext,
+        invocationWork,
     )
-    if (languageValues.isPending(readiness, invocationContext.operationContext)) {
+    if (languageValues.isPending(readiness, invocationWork.operationContext)) {
         unregisterRelease = operationLifecycle.releaseOnClose(
-            invocationContext,
+            invocationWork,
             release,
         )
     }
     return internalSteps.continueOperation(
         readiness,
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         finish,
         undefined,
-        invocationContext,
+        invocationWork,
     )
 
     function visit(value) {
-        if (!invocationContext.open) return undefined
-        if (invocationContext.operationContext.execution._externalIdentities.has(value)) {
-            preparation.errors.add(capabilityError(invocationContext.operationContext))
+        if (!invocationWork.open) return undefined
+        if (invocationWork.operationContext.execution._externalIdentities.has(value)) {
+            preparation.errors.add(externalCapabilityEscapeError(invocationWork.operationContext))
             return undefined
         }
         if (errorUtils.isPoisonError(value)) {
@@ -117,24 +117,24 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
             return undefined
         }
         if (
-            !languageValues.isTraversable(value, invocationContext.operationContext) ||
+            !languageValues.isTraversable(value, invocationWork.operationContext) ||
             preparation.visited.has(value)
         ) {
             return undefined
         }
         preparation.visited.add(value)
-        invocationContext.retainReceiver(value)
+        invocationWork.leaseReceiver(value)
 
-        return walkManagedProperties(value, invocationContext, catchFailure, visit)
+        return walkManagedProperties(value, invocationWork, catchFailure, visit)
     }
 
     function catchFailure(step) {
         return errorUtils.catchExternalThrow(
             step,
-            invocationContext.operationContext,
+            invocationWork.operationContext,
             errorUtils.ERROR_KIND.InvalidManagedReceiver,
             failure => {
-                languageValues.admitReadyValue(failure, invocationContext.operationContext)
+                languageValues.admitReadyValue(failure, invocationWork.operationContext)
                 preparation.errors.add(failure)
                 return undefined
             },
@@ -162,28 +162,28 @@ function resolveAndLeaseReceiverGraph(invocationContext) {
 }
 
 // Common dispatch rejects `constructor` before either managed policy runs.
-function selectManagedRecordMethod(receiver, invocationContext) {
+function selectManagedRecordMethod(receiver, invocationWork) {
     const present = languageProperties.hasLanguageProperty(
         receiver,
-        invocationContext.method,
-        invocationContext.operationContext,
+        invocationWork.method,
+        invocationWork.operationContext,
     )
     const callable = languageProperties.readLanguageProperty(
         receiver,
-        invocationContext.method,
-        invocationContext.operationContext,
+        invocationWork.method,
+        invocationWork.operationContext,
     )
     return typeof callable === "function"
         ? callable
         : invocation.methodNotCallableError(
-            invocationContext.method,
-            invocationContext.operationContext,
+            invocationWork.method,
+            invocationWork.operationContext,
             present,
         )
 }
 
-function selectManagedClassMethod(receiver, invocationContext) {
-    const { method, operationContext } = invocationContext
+function selectManagedClassMethod(receiver, invocationWork) {
+    const { method, operationContext } = invocationWork
     if (languageProperties.hasLanguageProperty(receiver, method, operationContext)) {
         return errorUtils.validationError(
             `Cannot call ${method} because an own data property ` +
@@ -231,26 +231,26 @@ function selectManagedClassMethod(receiver, invocationContext) {
 
 // Observation materialization path-copies only required representation changes.
 // Mutation isolation copies complete protected subgraphs before arbitrary writes.
-function prepareMethodReceiver(receiver, invocationContext) {
+function prepareMethodReceiver(receiver, invocationWork) {
     return errorUtils.catchExternalThrow(
         () => {
-            if (!invocationContext.mutation) {
-                return materializeObservationReceiver(receiver, invocationContext)
+            if (!invocationWork.mutation) {
+                return materializeObservationReceiver(receiver, invocationWork)
             }
-            invocationContext.releaseReceivers()
-            return copyCompleteGraph(receiver, invocationContext.operationContext)
+            invocationWork.releaseReceiverLeases()
+            return copyCompleteGraph(receiver, invocationWork.operationContext)
         },
-        invocationContext.operationContext,
+        invocationWork.operationContext,
         errorUtils.ERROR_KIND.InvalidManagedReceiver,
         failure => {
-            languageValues.admitReadyValue(failure, invocationContext.operationContext)
+            languageValues.admitReadyValue(failure, invocationWork.operationContext)
             return failure
         },
     )
 }
 
-function materializeObservationReceiver(receiver, invocationContext) {
-    const { operationContext } = invocationContext
+function materializeObservationReceiver(receiver, invocationWork) {
+    const { operationContext } = invocationWork
     const parents = new Map()
     const reached = new Set()
     const needed = new Set()
@@ -471,7 +471,7 @@ function validateReceiver(receiver, operationContext) {
         if (!languageValues.isTraversable(value, operationContext)) return
         const keys = captureManagedKeys(value, operationContext, inspect)
         for (const key of keys) {
-            // Validation must inspect retained data without consuming it.
+            // Validation must inspect leased data without consuming it.
             const version = metadata.metaOf(value, operationContext).placementVersions?.[key]
             const child = version ? version.value : inspect(() =>
                 languageProperties.getLanguagePlacementDescriptor(
@@ -507,4 +507,4 @@ function validateReceiver(receiver, operationContext) {
     }
 }
 
-export { getManagedMethodDescription }
+export { selectManagedMethodDescription }

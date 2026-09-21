@@ -1,8 +1,8 @@
 import { Chain } from "./chain.js"
-import * as tree from "./external-mutation-tree.js"
-import { captureOrigin } from "./path-context.js"
+import * as externalTree from "./external-mutation-tree.js"
+import { capturePathOrigin } from "./path-context.js"
 import { PathOperation } from "./path-operation.js"
-import { createReservationView, pendingEffects, validateExternalAccess } from "./external-operation.js"
+import { createExternalReservationView, pendingExternalEffects, validateExternalAccess } from "./external-operation.js"
 import * as errors from "./error.js"
 import * as steps from "./internal-step.js"
 import * as properties from "./language-properties.js"
@@ -18,17 +18,17 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
             mutable ? path.length : undefined, false, firstDynamicSegment)
         const route = operation.route
         path = route.path
-        const { node } = route
+        const { externalTreeNode: node } = route
         if (mutable && operation.routeFailure) {
             return operation.finishMutation(operation.mutate(() => operation.routeFailure))
         }
-        if (!mutable) operation.reserve(node)
+        if (!mutable) operation.reserveExternal(node)
         let entered
         let source
         let gate
         let selectedNode = node
         let lease
-        const native = route.boundary
+        const native = route.externalBoundary
         const fail = failure => {
             if (lease) metadata.decrementReadLease(source.value, operationContext)
             if (gate && entered) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
@@ -36,14 +36,14 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
             return operation.finish(failure)
         }
         const start = () => {
-            return steps.continueOperation(operation.effect?.readiness, operationContext, () => {
-                const blocker = operation.blocker(false)
+            return steps.continueOperation(operation.externalEffect?.readiness, operationContext, () => {
+                const blocker = operation.externalBlocker(false)
                 if (blocker) return fail(blocker)
-                entered._reservationView = node ? createReservationView(node) : chain._reservationView
+                entered._externalReservationView = node ? createExternalReservationView(node) : chain._externalReservationView
                 return runCallback(entered, result => {
                     if (lease) metadata.decrementReadLease(source.value, operationContext)
                     if (gate) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
-                    const pending = node ? pendingEffects(entered._reservationView) : undefined
+                    const pending = node ? pendingExternalEffects(entered._externalReservationView) : undefined
                     markPromiseHandled(operation.finish(pending), operationContext)
                     return result
                 })
@@ -54,7 +54,7 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
             entered = new Chain(undefined, operationContext)
             entered._readOnly = !mutable
             entered._externalMutationTree = selectedNode
-            entered._contextOrigin = captureOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+            entered._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
             versions.transferPlacement(placement, entered._state, "value", operationContext)
         }
         function runCallback(privateChain, complete) {
@@ -72,18 +72,18 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
         }
         if (native) {
             return walkObservationPath(chain, path, operationContext, fail, fail,
-                errors.ERROR_KIND.LookupReflectionFailed, { owner: operation, externalDepth: native[tree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
+                errors.ERROR_KIND.LookupReflectionFailed, { owner: operation, externalDepth: native[externalTree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
                     onExternal: identity => {
                         const invalid = validateExternalAccess(identity, native, operationContext)
                         if (invalid) return fail(invalid)
                         operation.reachedExternal = true
-                        if (!node?.[tree.TREE_NODE].identity || route.dynamicDepth < node[tree.TREE_NODE].path.length) {
+                        if (!node?.[externalTree.TREE_NODE].identity || route.dynamicDepth < node[externalTree.TREE_NODE].path.length) {
                             const failure = properties.propertyValidationError("Entry must select a registered external scope through a static path", operationContext)
                             if (!mutable) return fail(failure)
-                            return steps.continueOperation(operation.effect?.readiness, operationContext, () =>
-                                operation.finishMutation(operation.blocker() ?? failure))
+                            return steps.continueOperation(operation.externalEffect?.readiness, operationContext, () =>
+                                operation.finishMutation(operation.externalBlocker() ?? failure))
                         }
-                        initialize({ value: node[tree.TREE_NODE].identity, present: true })
+                        initialize({ value: node[externalTree.TREE_NODE].identity, present: true })
                         return start()
                     } })
         }
@@ -113,7 +113,7 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
                     return steps.continueOperation(transformProperty(target, operationContext, () => failure), operationContext, outcome => outcome.result)
                 }
             }
-            selectedNode = tree.findBranch(chain._externalMutationTree, path.slice(0, depth))
+            selectedNode = externalTree.findBranch(chain._externalMutationTree, path.slice(0, depth))
             gate = versions.installPlacementGate(target.parent, target.key, operationContext, target.sourceVersion)
             if (target.attachmentRoot) metadata.markShared(target.attachmentRoot, operationContext)
             initialize(captured, depth)
