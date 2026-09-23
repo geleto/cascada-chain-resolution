@@ -33,15 +33,44 @@ Instructions below about tests and failure injection apply directly to existing 
 
 ## Procedure
 
-1. Set the scope and mode, and read the applicable contracts and support boundary.
-2. Enumerate relevant operation routes and data categories; map their rules, existing/proposed enforcement, implementation steps, and verification in one invariant matrix.
-3. Choose independent expectations and the appropriate evidence: transition reasoning, models, experiments, or tests. Reuse existing coverage where applicable.
-4. Check short sequences, relevant event orders, and supported failures within explicit bounds; execute them where a suitable implementation or model exists.
-5. Reduce failures, identify their underlying families, and trace sibling producers and consumers of the affected state.
-6. Evaluate structural simplifications and discuss requirement changes where they could improve the design.
-7. Report findings, evidence, clean coverage, remaining gaps, and decisions needed.
+1. Set the scope, mode, and audited snapshot, and read the applicable contracts and support boundary.
+2. Build the invariant matrix and trace critical state before choosing scenarios: creation/defaults → writers → capture/transfer → consumers → retirement. Include authoritative ownership, publication authority, and indirect routes.
+3. Choose independent expectations and evidence. Identify how the test harness or proposed observations could change execution; include the paired runs required below where inspection affects state or timing.
+4. Deliberately exercise short conflicting sequences before broader exploration. Cover relevant event orders and supported failures; retain a witness for each targeted interaction instead of assuming a generator reached it.
+5. Check results and ordering, retained state, and computation separately. A passing result or bounded subscription count does not establish bounded work.
+6. Reduce failures, identify their underlying families, and evaluate structural simplifications. Discuss requirement changes where they could improve the design.
+7. If fixes are authorized, recheck the affected state traces, consumers, and verification cases after each correction. Update the matrix; check whether solving one problem introduced another.
+8. Report findings and evidence by matrix row, including unresolved gaps, exclusions, and decisions needed. Limit confidence to the mechanisms and interactions actually checked.
 
-Scale each step to the scope. A focused audit can use a few table rows and worked transitions; it does not require a new model, generator, or framework. Retain useful executable coverage in the normal test suite and unresolved implementation obligations in the plan, not a growing collection of audit-specific scripts.
+Treat these steps as checkpoints: record evidence, a remaining gap, or why a check does not apply. Scale the record to the scope; a focused audit can use a few rows and worked transitions without a new framework. Before implementation, trace proposed transitions and work bounds, use worked counterexamples, and mark implementation-dependent claims as unverified. Retain executable coverage in the normal test suite and unresolved obligations in the plan.
+
+Pin the audited snapshot, such as a commit or exported index, so concurrent edits cannot mix evidence from different versions, and report it with the results. In a repeated audit, first re-run earlier reproductions and retained probes against it. Report each as fixed, still present, or superseded, and correct earlier claims that new evidence contradicts.
+
+## Build an invariant matrix
+
+First enumerate the relevant public entry points and internal boundary routes, then the supported target categories or execution modes. For each semantic rule, account for every applicable route/category combination: name its existing or proposed enforcement and verification, explain why it does not apply, or mark a gap. Do not treat an empty cell as evidence of coverage. Include equivalent paths that delegate to different helpers and internal producers that bypass public validation. Compare every caller of a shared fallible helper as well: guards, captured inputs, and failure effects can differ around each call.
+
+Capture that inventory in one compact working matrix; split a row only where enforcement or semantics differ:
+
+| Invariant | Authoritative contract | Routes and categories | State trace, enforcement, and implementation step/phase | Evidence/status and verification | Gaps or unresolved decisions |
+| --- | --- | --- | --- | --- | --- |
+
+For each changed or high-risk state fact, record its creation and defaults, every writer, capture/transfer route, consumer, and retirement point. Name the authoritative owner and who may still publish after a copy, replacement, handoff, or closure. Include side records, indirect helper calls, and routes that bypass common helpers. Attach compact traces to the relevant rows; one trace may serve several invariants. Before implementation, identify these responsibilities in the proposed transitions and mark unspecified handoffs as gaps.
+
+Mark evidence as executed (with result), reasoned, proposed/untested, or excluded by a named contract. Untraced routes remain gaps. Identify claims lacking execution evidence explicitly; passing tests through one helper do not cover every caller or bypass. For a proposal, keep its transition argument separate from the future verification obligation. Use code/test references or worked transitions to substantiate each row. Reconcile documentation disagreements before choosing an oracle: a passing regression can preserve obsolete behavior. Explain corrected expectations from the authoritative contract, never solely from implementation behavior.
+
+Select applicable invariants from the feature's contract, including:
+
+- Correct outputs, side effects, ordering, and intermediate observations.
+- Isolation, authority, immutability, and protection of caller-owned inputs.
+- Complete semantic state transfer, including destination rules, authority, absence, identity, version, and provenance where meaningful.
+- Atomicity, publication, recovery, and preservation of earlier successful effects.
+- Error classification, ownership, completeness, and attribution.
+- Resource acquisition, release, cancellation, and termination rules where supported.
+- Consistency across supported APIs, representations, and execution modes.
+- Work and memory bounds, including retained history and pending work.
+
+For a Cascada runtime audit, apply the relevant concrete invariants in the final section of this prompt. Do not import those semantics into unrelated features.
 
 ## Look for recurring failure families
 
@@ -53,7 +82,7 @@ Scale each step to the scope. A focused audit can use a few table rows and worke
 | Inconsistent enforcement across routes | One API validates a rule while an equivalent path bypasses it | Where else is this same semantic rule required, and which routes bypass its enforcement? |
 | Incorrect completion or lifetime | Success is exposed before required effects finish; resources are released too early or retained too long | Which distinct completion and last-access points does the contract require? |
 
-For every confirmed issue, audit the full invariant it violates. Trace every existing or proposed constructor, writer, transfer, default, and consumer of the affected record or fact, including indirect helper calls. Check the same assumption in other operations, data categories, representations, and timing paths. For example, a presence-transfer defect calls for checking every placement producer and consumer, not just other deletion functions. Strengthen the family's verification rather than addressing only the reported example.
+Use these families to challenge the initial state traces, before a failure is known. When an issue is confirmed, revisit the whole affected invariant across sibling operations, categories, representations, and timing paths. A presence-transfer defect, for example, calls for rechecking every placement producer and consumer. Extend the family's verification beyond the reported example.
 
 Check simple, synchronous cases as carefully as deferred or concurrent ones. A failure that occurs without concurrency is not explained by asynchronous complexity.
 
@@ -64,7 +93,7 @@ Evaluate whether each problem comes from:
 - Necessary complexity imposed by the feature's contracts, such as ordering, ownership, atomicity, compatibility, recovery, or external effects.
 - A representation that omits information and forces downstream code to reconstruct it with flags or special cases.
 - Duplicated enforcement or parallel execution paths that have drifted apart.
-- Requirements changed in one place but retained elsewhere in code, tests, or documentation.
+- Requirements or representation authority changed in one place but retained elsewhere in code, tests, or documentation, including consumers that still decide from a representation that is no longer authoritative.
 - Tests covering features independently without establishing that they compose correctly.
 - Unsupported misuse accidentally treated as a requirement.
 
@@ -75,6 +104,8 @@ For copying, rebasing, wrapping, lowering, or another representation change, ver
 Preserve load-bearing distinctions. Reversible state changes and irreversible external effects may need different handling; source processing and consumer-specific validation may have different owners; final state may not encode earlier observable effects. Universal rules do not require a universal execution engine.
 
 Use the actual support and trust boundary. Exercise invalid application inputs, supported external failures, isolation, resource lifetimes, and internal defects reached through valid operations. Do not add defenses or tests for behavior explicitly excluded by that boundary. Conversely, do not dismiss adversarial input when the feature is required to enforce a security boundary. In this runtime, trusted compiler records and deliberate corruption of runtime interfaces follow the exclusions in AGENTS.md.
+
+A candidate patch in an isolated copy can test a diagnosis even when fixes are not authorized. Re-run every reproduction and the independent oracles against it: reproductions that survive reveal an additional cause, and new failures reveal a displaced problem. Instrumenting the writers of the suspected fact in that copy shows the actual write sequence. Report such patches as experiments, not fixes.
 
 ## Discuss requirements that obstruct a better design
 
@@ -94,37 +125,15 @@ If the current requirement remains important and no simpler sound implementation
 
 Once a change is agreed, update the relevant architecture, plan, and tests to describe the final behavior. Remove superseded contradictory requirements; do not leave implementers to reconstruct decisions from review history.
 
-## Build an invariant matrix
-
-First enumerate the relevant public entry points and internal boundary routes, then the supported target categories or execution modes. For each semantic rule, account for every applicable route/category combination: name its existing or proposed enforcement and verification, explain why it does not apply, or mark a gap. Do not treat an empty cell as evidence of coverage. Include equivalent paths that delegate to different helpers and internal producers that bypass public validation.
-
-Capture that inventory in one compact working matrix; split a row only where enforcement or semantics differ:
-
-| Invariant | Authoritative contract | Routes and categories | Enforcement and implementation step/phase | Evidence/status and verification | Gaps or unresolved decisions |
-| --- | --- | --- | --- | --- | --- |
-
-Mark evidence as executed, reasoned, proposed, or missing; a planned test is not passing coverage. Use the implementation plan and test references for durable guidance. Avoid a separate sprawling review history. Reconcile documentation disagreements before choosing an oracle, and inspect relevant existing test assertions against that contract. A passing regression can preserve obsolete behavior. Explain any corrected expectation from the authoritative contract; never change it solely to accommodate the implementation.
-
-Select applicable invariants from the feature's contract, including:
-
-- Correct outputs, side effects, ordering, and intermediate observations.
-- Isolation, authority, immutability, and protection of caller-owned inputs.
-- Complete semantic state transfer, including destination rules, authority, absence, identity, version, and provenance where meaningful.
-- Atomicity, publication, recovery, and preservation of earlier successful effects.
-- Error classification, ownership, completeness, and attribution.
-- Resource acquisition, release, cancellation, and termination rules where supported.
-- Consistency across supported APIs, representations, and execution modes.
-- Work and memory bounds, including retained history and pending work.
-
-For a Cascada runtime audit, apply the relevant concrete invariants in the final section of this prompt. Do not import those semantics into unrelated features.
-
 ## Verify short operation sequences
 
 For an implemented feature, prefer integration tests through its public interface and extend existing behavioral-equivalence tests and independent consistency checks. For a proposal, walk the same sequences against its transition rules and record the expected intermediate and final states. Use an executable model only where it improves the evidence; do not reproduce a missing implementation inside a new test framework.
 
-When adding tests, retain confirmed reproductions as regressions and keep reusable sequence runners, generators, or checkers alongside the existing tests. In this repository, use `test/` and the normal `npm test` suite for bounded routine coverage. A later audit should extend that coverage. Larger optional exploration may use a separate reproducible command; state its bounds and cost. Disposable probes are useful during investigation, but preserve their valuable coverage or report their reproductions and proposed tests before removing them.
+When adding tests, retain confirmed reproductions as regressions and keep reusable sequence runners, generators, or checkers alongside the existing tests. In this repository, use `test/` and the normal `npm test` suite for bounded routine coverage; [test/README.md](../../test/README.md) describes the existing generated sequences, conflict matrix, verifiers, and scaling settings. A later audit should extend that coverage. Larger optional exploration may use a separate reproducible command; state its bounds and cost. Disposable probes are useful during investigation, but preserve their valuable coverage or report their reproductions and proposed tests before removing them.
 
-Start with small sequences whose expectations can be stated independently:
+Start with small sequences whose expectations can be stated independently. Where operations overlap or defer publication, deliberately hold a predecessor pending and queue two or more conflicting operations on the same logical target. Include failure followed by replacement or repair, and a predecessor that makes no change, where supported. Cover overlapping parent/child targets and independent siblings where their rules differ. A direct operation, an operation inside an entered scope, and several operations queued behind that scope can use different paths; establish their equivalence where promised. These targeted cases precede random exploration.
+
+Other useful sequences include:
 
 ```text
 capture → mutate → observe the earlier capture
@@ -146,10 +155,15 @@ Choose complementary oracles suited to the feature:
 - Equivalent-program checks: compare different operation sequences under explicit preconditions and identify which outputs, effects, and ordering must agree. Include failure ownership, attribution, and recovery, not only successful values or Error kinds. Direct assignment and entry-then-assignment may have equivalent completed state without identical intermediate availability. Ready/pending execution is another instance. Test intentional differences separately; similar-looking operations are not automatically equivalent.
 - An event-order checker for concurrent work, using the contract's dependency and conflict rules.
 - Independent consistency checks for maintained indexes, relationships, bindings, or resource ownership where public behavior alone cannot expose the invariant. Run them after relevant transitions, including failure and recovery, not only at the final state. Check in-flight state only against invariants that apply there.
+- The pre-change baseline for behavior the change should leave unaffected. Run the same programs on both versions and explain every difference as intended or a defect.
 
 Use native JavaScript only for semantics intended to match it. Runtime-specific poison, rollback, authority, and ordering need separate expectations; a full shadow runtime is not a prerequisite. Where rollback is promised, compare the repaired logical value with the baseline at the failed operation's ordered turn, preserve earlier successful effects, and check other owners remain unchanged. Do not apply rollback equality to irreversible external effects.
 
-Comparing two routes through the same implementation cannot detect a bug shared by both. Combine equivalence checks with independent expectations. For a new oracle or substantial extension, demonstrate that it rejects representative incorrect outcomes or event traces. Deliberately changing production code in an isolated copy is an optional additional sensitivity check, not a mandatory mutation-testing framework.
+Comparing two routes through the same implementation cannot detect a bug shared by both. Combine equivalence checks with independent expectations. For a new oracle or substantial extension, demonstrate that it rejects representative incorrect outcomes or event traces. Deliberately changing production code in an isolated copy is optional.
+
+Check the harness before relying on its evidence. Inspection may establish sharing or leases, admit lazy data, install dependencies, flush work, or wait for settlement. For affected sequences, use fresh equivalent inputs for paired runs: one with intermediate observations and one with only final observation. Do not await each command in the latter merely to assert its result. Compare the outcomes the contract requires to agree, and separately assert any intended differences in timing or ownership. Before implementation, account for these effects in the worked traces and verification plan; an unspecified observer effect is an open obligation.
+
+A harness can also produce wrong evidence without changing execution. Issue each observation synchronously at its program position and keep its result; an observation issued from a continuation, or after awaiting another result, observes a later position. Settle to quiescence, including inputs that callbacks create during settlement, before reporting a hang. Classify each run's outcome locally: global handlers must not absorb harness crashes, and a missing or empty report is a harness failure, not a clean result.
 
 ## Vary representations and timing deliberately
 
@@ -167,7 +181,7 @@ Choose relevant dimensions rather than blindly applying this list. Consider empt
 
 Do not take the full Cartesian product blindly. Cover meaningful pairs and the higher-order combinations implicated by failures. State which combinations were exercised, excluded by contract, or left untested, following the support boundary above.
 
-For generated exploration, use a reproducible generator and record seeds plus distinct command/schedule traces. Repeated runs or different seeds do not prove different coverage. Vary issuance between individual microtask turns after source settlement as well as before settlement and after complete draining; source readiness and queued publication may occur in different turns. Include several independently pending inputs with different settlement orders, not only many commands waiting on one source. Capture observations before a later mutation and verify their earlier state even when delivery occurs after that mutation; also verify protection after delivery.
+For generated exploration, record seeds and actual command/schedule traces. For each targeted interaction in the matrix, retain a concrete executed trace or a coverage assertion showing it occurred; a generator's available commands and large seed counts are insufficient. No new coverage framework is required. Vary issuance between individual microtask turns after source settlement as well as before settlement and after complete draining; source readiness and queued publication may occur in different turns. Include several independently pending inputs with different settlement orders. Capture observations before a later mutation and verify their earlier state on and after delivery, alongside the runs without intermediate observations required above.
 
 Compare specified values and effects, not interchangeable implementation representations. Test determinism only where promised. For Cascada, compare Error membership, kind, cause, and source attribution where required; do not require deterministic Error ordering or wrapper identity where the contract permits differences. Preserve the narrowly documented invalid-input detection exceptions without extending them to successful data or effect ordering.
 
@@ -186,11 +200,13 @@ Use never-settling inputs to check that completed or unrelated work does not ret
 
 When a failure could starve the event loop or allocate without bound, use a subprocess with time and memory limits: an in-process timeout cannot interrupt a microtask livelock. Check progress after each independent input settles while other inputs remain pending, not only after all inputs settle.
 
-Repeat operations that leave little or no final state, then check that retained bookkeeping is bounded by live data and unfinished dependencies, not historical operation count. Include no-op and create/remove cycles where relevant. Repeat with captured readers or queued writers still active to detect premature cleanup as well as leaks. Prefer deterministic bookkeeping checks to heap-size or garbage-collection timing assertions; avoid pinning an interchangeable representation.
+Repeat operations that leave little or no final state, then check that retained bookkeeping is bounded by live data and unfinished dependencies, not historical operation count. Include no-op and create/remove cycles where relevant. Repeat with captured readers or queued writers still active, and with copies or forks of the affected state made while its dependencies remain pending, to detect premature cleanup as well as leaks. Prefer deterministic bookkeeping checks to heap-size or garbage-collection timing assertions; avoid pinning an interchangeable representation.
+
+Check computation independently of retention. For mechanisms that repeatedly update or traverse maintained state, derive work per transition in terms of explicit inputs, produced output, and affected dependencies. Challenge rescans of unaffected state. Include the workloads the change exists to improve, and count representation churn, such as copies, materializations, identity changes, and forks per operation, alongside traversal steps: a correct result can hide a copy on every operation. Where scaling is a risk, count meaningful operations at several bounded input sizes and vary completion order, active/inactive consumers, and registration/removal patterns. Prefer counts to timing thresholds; legitimate dependency work need not be linear in input size. For proposals, record the cost argument and the experiment needed to verify it. A leak fix that trades retained history for repeated recomputation must satisfy both bounds.
 
 ## Inspect transitions and inject supported failures
 
-Check relevant intermediate observations and host effects, not only final exported data. A final snapshot can hide an illegal temporary mutation, an observation seeing a later value, or premature resource release. Account for the checks themselves: a lookup or export can admit lazy data, establish sharing, or wait for it. Include schedules without those extra operations so the harness does not accidentally protect unretained children or serialize all work.
+Check intermediate observations and host effects as well as final state, using the paired harness runs above. A final snapshot can hide an illegal temporary mutation, an observation seeing a later value, or premature resource release.
 
 Identify the feature's existing or proposed stages, such as validation, selection, acquisition, preparation, execution, conversion, publication, cleanup, and recovery. Exercise or trace supported failures at each fallible stage. For each case establish:
 
@@ -207,15 +223,15 @@ Derive failure injection from the actual contract of each fallible action. Do no
 
 For host-interaction code, use these concrete techniques where applicable:
 
-- Inventory calls that can execute host code or fail through reflection. Search for `Reflect.*`, descriptor and prototype operations, coercions, thenability probes, and reads or writes on native values; follow helpers and implicit language operations too. Classify each action by its boundary contract and required failure effect. Search results alone are not a complete inventory.
+- Inventory calls that can execute host code or fail through reflection. Search for `Reflect.*`, descriptor and prototype operations, coercions, thenability probes, and reads or writes on native values; follow helpers and implicit language operations too. Classify each action by its boundary contract and required failure effect. Search results alone are not a complete inventory. A repeated read of the same host fact within one operation is a separate fallible action that may observe a different value; prefer deriving the fact once from its guarded capture.
 - Record supported Proxy traps, getters, coercions, and `then` access in a host-action log. Check required order and forbidden calls, such as consuming unused input, inspecting excluded items, or probing an intermediate value where the contract forbids it. Test that exclusions apply before the prohibited host action. Do not pin incidental call counts unless they are observable guarantees.
-- Start each run from fresh equivalent input and throw at the k-th supported fallible host action within a bounded scenario. Log the action and trace, check its prescribed recoverable or fatal outcome, and run the applicable consistency checks. Keep injected behavior inside the storage and stability contract; a refused write must not secretly mutate storage. Failure paths can expose new actions, so extend those traces deliberately and report the sites covered rather than claiming the sweep finds every reflection defect.
+- Start each run from fresh equivalent input and throw at the k-th supported fallible host action within a bounded scenario, counting only actions in the phase under test; a failure injected during setup changes the scenario rather than testing it. Log the action and trace, check its prescribed recoverable or fatal outcome, and run the applicable consistency checks. Keep injected behavior inside the storage and stability contract; a refused write must not secretly mutate storage. Failure paths can expose new actions, so extend those traces deliberately and report the sites covered rather than claiming the sweep finds every reflection defect.
 
 ## Bound exploration and reduce failures
 
-Begin with the smallest state space that exercises the feature's invariants. For graph features, examples include a shared child, one cycle, a sparse Array, or a parent with two children. Explore short command sequences and small valid event-order combinations exhaustively where practical, then supplement them with reproducible seeded generation.
+Begin with the smallest state space exercising the targeted interactions: for graph features, a shared child, one cycle, a sparse Array, or two siblings may suffice. Explore short sequences and valid event orders exhaustively where practical, then supplement them with seeded generation. Record bounds, reduce failures to minimal sequences and topologies, retain useful regressions, and remove disposable probes. Expand exploration when a failure exposes a missing dimension. Sample subsets across every dimension; a prefix of a nested enumeration covers only its outer dimensions. When reducing, remove steps from the oracle as well as the program, and reduce against the specific failure signature rather than any failure.
 
-Record the bounds and seeds. Reduce each failure to a minimal sequence and topology. Retain useful regression coverage and remove disposable probes that no longer help. Expand exploration when a new failure exposes a missing dimension, rather than repeatedly running the same successful checks.
+Validate the generator's coverage too. Reuse a well-mixed seeded generator; taking small moduli of a simple linear congruential generator can correlate supposedly independent choices. Record the semantic combinations actually exercised, including relevant pairs of input shape, outcome, operation route, and readiness. Assert coverage of important combinations instead of trusting a large run count. Pairwise coverage is not proof of sequence coverage: retain explicit multi-step regressions for discovered triggers, and vary each step's readiness independently, including ready work queued behind pending work. A better generator does not replace these witnesses or the oracle's sensitivity checks.
 
 ## Evaluate structural simplifications
 
@@ -231,13 +247,13 @@ Consider a focused rewrite when incremental fixes preserve the wrong structure. 
 
 For every proposed simplification, identify the mechanisms it removes, the mechanisms it introduces, the invariants it centralizes, and its work/allocation costs. If implementation experiments are requested, compare before and after and revert experiments that merely move complexity, add indirect paths, or weaken required behavior.
 
-When fixes are included, recheck the affected state producers and consumers after each correction. Beyond the original reproduction, exercise the interacting invariants the change could disturb: earlier captures, later publication, queued work, recovery, and cleanup as applicable. Update the coverage matrix with that evidence. Removing retained state must preserve outstanding publication authority; unifying completion signals must preserve distinct progress guarantees. A newly failing test or consistency check requires explanation against the contract, not automatic relaxation of its assertion.
+After each authorized correction, repeat the applicable checkpoints for the changed state trace and affected consumers. Recheck earlier captures, later publication, queued work, recovery, cleanup, and work bounds. Prior evidence applies only while its assumptions still hold. Check for displaced problems: removing retention can add recomputation or lose publication authority; combining completion signals can erase distinct progress guarantees. Update the matrix. Explain newly failing tests against the contract; do not automatically relax their assertions.
 
 Use the requirements discussion process above when an otherwise promising simplification changes supported behavior. Do not stop investigating solely because the current requirement rules it out.
 
 ## Report evidence and completion criteria
 
-Distinguish implementation defects, design counterexamples or contradictions, missing specifications/proof obligations, and unmeasured simplification candidates. For each finding, state its impact and evidence: a reproduction, a precise code or transition argument, an incompatible pair of requirements, or the information that is missing. Name the violated invariant, affected routes, and simplest coherent correction. State whether it belongs in the current work or a named future phase, and whether it blocks a dependent step. Preserve important implementation guidance in the plan when updates are requested.
+Distinguish implementation defects, design counterexamples or contradictions, missing specifications/proof obligations, and unmeasured simplification candidates. For each finding, state its impact and evidence: a reproduction, a precise code or transition argument, an incompatible pair of requirements, or the information that is missing. Name the violated invariant, affected routes, and simplest coherent correction. For a change, classify each finding against the pre-change baseline as a regression, pre-existing, or improved, by re-running its reproduction or measurement there. State whether it belongs in the current work or a named future phase, and whether it blocks a dependent step. Preserve important implementation guidance in the plan when updates are requested.
 
 Do not present a conjectured failure as reproduced or an implementation detail as a semantic contradiction. Future behavior is not a current implementation defect unless already required in the audited scope; conversely, a planned fix does not make a required but missing behavior conformant. A model may validate a formula without validating scheduling, reclamation, or integration; state exactly which claim each experiment establishes. A passing current suite is not evidence that a proposed mechanism works.
 
@@ -245,8 +261,8 @@ Explain why the defects occurred and whether the fixes eliminate a class of fail
 
 Include these deliverables, scaled to the scope and combined where clearer:
 
-- The route and invariant coverage matrix, with gaps and exclusions.
-- Reproducible commands, exploration bounds, and seeds where generation was used.
+- The route and invariant matrix, with critical state traces, evidence status, gaps, and exclusions.
+- Reproducible commands, exploration bounds, seeds, and witnesses for targeted interactions; identify harness variants and retention/work measurements where applicable.
 - Findings with code/contract references and supporting traces, models, or regression tests; identify proposed or unretained tests explicitly.
 - What was checked without finding defects, including intermediate behavior and independent checks, and what remains only specified or untested.
 - Simplification recommendations, open decisions, and work deliberately deferred.
@@ -262,7 +278,7 @@ Across modes, confidence increases when:
 
 For implementation, additionally require executable coverage and applicable behavioral/consistency checks against the actual code. For architecture, require coherent mechanisms and verification obligations; where a plan exists, require complete requirement-to-step-to-verification mapping and sound dependencies. Distinguish readiness to implement settled work from readiness to integrate a mechanism awaiting experimental proof. Bounded implementation experiments may remain; material semantic decisions and unassigned proof obligations must not masquerade as completed design.
 
-State remaining gaps, conditions on readiness, and confidence limits. These criteria help judge diminishing returns; they neither prove that all bugs have been found nor turn planned tests into implementation assurance.
+Before describing the audit as clean or complete, reconcile every important matrix row with its evidence and disclose unresolved tracing, execution, or measurement gaps. Limit a clean result to the checked scope; suite size and generated-run totals cannot substitute for missing interaction coverage. For architecture, reasoned obligations and proposed tests remain distinct from implementation assurance. State readiness conditions and confidence limits; these criteria help judge diminishing returns without claiming that all bugs have been found.
 
 ## Cascada runtime applications
 
@@ -281,4 +297,4 @@ For route coverage, consider lookup and expression extraction, export, Error que
 
 Apply equivalence checks only within their contract. For example, index append and `push` can agree on successful Array contents while returning different values and selecting different mutation scopes. An Array-wide bang cannot cover registered mutable resources even when an ordinary index append is permitted. External repair clears repairable poison without rolling back completed native effects.
 
-Reuse existing native-equivalence helpers and refcount verification. Where needed, independently check external poison summaries against their owners and children, dependency frontiers after relevant work settles, and lease acquisition/release balance. Do not require all frontiers or leases to be empty while work that legitimately needs them remains pending.
+Reuse the native-equivalence helpers, generated sequences, conflict matrix, and consistency verifiers that [test/README.md](../../test/README.md) describes, and extend them where the audited feature adds operations or states. Where needed, independently check external poison summaries against their owners and children, dependency frontiers after relevant work settles, and lease acquisition/release balance. Do not require all frontiers or leases to be empty while work that legitimately needs them remains pending.
