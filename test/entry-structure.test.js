@@ -13,6 +13,25 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 const sync = value => ({ then(deliver) { return deliver(value) } })
 
 describe("entry structural publication", () => {
+    for (const siblingBefore of [false, true]) {
+        it(`keeps a queued mutation's predecessor creation before its sibling, sibling first=${siblingBefore}`, async () => {
+            const ctx = context(), hold = Promise.withResolvers()
+            const chain = new r.Chain({ first: 0 }, ctx)
+            const entry = r.enter(chain, ["created"], ctx, true, inside => hold.promise.then(() =>
+                r.assignPath(inside, [], { value: 1 }, ctx)))
+            if (siblingBefore) r.assignPath(chain, ["sibling"], 3, ctx)
+            const mutation = r.assignPath(chain, ["created", "value"], 2, ctx)
+            if (!siblingBefore) r.assignPath(chain, ["sibling"], 3, ctx)
+            assert.equal(r.lookupPath(chain, ["sibling"], ctx), 3)
+            hold.resolve()
+            await Promise.all([entry, mutation])
+            const output = await r.export(chain, [], ctx)
+            assert.deepEqual(Object.keys(output), ["first", "created", "sibling"])
+            assert.deepEqual(output.created, { value: 2 })
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     it("writes an owned Array in place while unrelated growth is pending", async () => {
         const count = 256, input = new Array(count).fill(0), ctx = context()
         const chain = new r.Chain(r.import(input, ctx), ctx), hold = Promise.withResolvers()

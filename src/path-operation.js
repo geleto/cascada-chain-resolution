@@ -67,7 +67,7 @@ class PathOperation extends OperationOwner {
                 steps.continueOperation(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
                     this.operationContext, value => errors.isPoisonError(value) ? onValue(value) :
                         this.reachExternal(value, this.route.path.slice(depth), onExternal, owner)),
-            result => result, { observeTarget: true })
+            { observeTarget: true })
         return walkObservationPath(this.chain, this.route.path, this.operationContext, onValue,
             onFailure, reflectionKind, { onExternal: (identity, suffix) =>
                 this.reachExternal(identity, suffix, onExternal, owner), externalDepth: depth, owner })
@@ -147,7 +147,7 @@ class PathOperation extends OperationOwner {
                     return transform(value, state, privateChain, route.path.slice(depth), node)
                 })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair })
-        }, outcome => outcome, { targetArrayStructure: true, deletesTarget: deleting,
+        }, { targetArrayStructure: true, deletesTarget: deleting,
             preserveOnFailure: this.repair,
             onExternalFailure: error => { this.routeFailure = error } })
     }
@@ -202,7 +202,7 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
                     operation.externalBlocker(false) ?? operation.routeFailure ??
                     { mutatedValue: value, result: undefined, placement: state.baseline }),
             { repair: true })
-        }, outcome => outcome, { preserveOnFailure: true })
+        }, { preserveOnFailure: true })
         return operation.finishMutation(steps.continueOperation(result, operationContext, outcome => {
             if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) externalTree.clearPoison(node)
             return outcome

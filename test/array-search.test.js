@@ -8,6 +8,30 @@ const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 describe("Array searches with unfinished growth", () => {
+    for (const method of ["indexOf", "lastIndexOf"]) {
+        it(`${method} uses captured absence after an entry deletes its element`, async () => {
+            const ctx = context(), hold = Promise.withResolvers()
+            let refuses = false
+            const chain = new r.Chain(new Proxy([0], {
+                getOwnPropertyDescriptor(target, key) {
+                    if (refuses && key === "0") throw new Error("Captured placement was read again")
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            }), ctx)
+            const entry = r.enter(chain, [0], ctx, true, inside => hold.promise.then(() => {
+                r.deletePath(inside, [], ctx)
+                refuses = true
+            }))
+            const result = r.run(chain, [], method, [undefined], ctx, {})
+            hold.resolve()
+            assert.equal(await result, -1)
+            await entry
+            assert.equal(ctx.execution.fatalError, null)
+            refuses = false
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     const prefixCases = [
         ["includes", [0]], ["includes", [2, 1]], ["includes", [undefined]],
         ["includes", [NaN]], ["includes", [0, -Infinity]],

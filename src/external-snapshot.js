@@ -2,6 +2,7 @@ import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
+import { capturePlacement } from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 
 // External snapshots are ready-only transactions. Sources keep their admission
@@ -91,13 +92,13 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             if (typeof key !== "string" || (array && !isArrayIndex(key))) continue
             let child
             if (managed) {
-                const present = inspect(() => properties.hasLanguageProperty(source, key, operationContext))
-                if (present !== true) continue
-                if (meta.placementVersions?.[key]?.pendingPresence) {
+                const placement = inspect(() => capturePlacement(source, key, operationContext))
+                if (placement.present !== true) continue
+                if (placement.sourceVersion?.pendingPresence) {
                     invalid("External snapshots require settled property presence")
                     continue
                 }
-                child = inspect(() => readManagedProperty(source, key, operationContext))
+                child = placement.value
             } else {
                 const descriptor = native(() => Object.getOwnPropertyDescriptor(source, key))
                 if (errors.isPoisonError(descriptor) || !descriptor?.enumerable) continue
@@ -133,8 +134,7 @@ function readManagedProperty(owner, key, operationContext) {
             "External snapshots require settled Array length", operationContext,
             errors.ERROR_KIND.InvalidExternalSnapshot) : length
     }
-    const version = metadata.metaOf(owner, operationContext)?.placementVersions?.[key]
-    return version ? version.value : properties.getLanguagePlacementDescriptor(owner, key, operationContext)?.value
+    return capturePlacement(owner, key, operationContext).value
 }
 
 export { readManagedProperty, snapshotExternalValue }

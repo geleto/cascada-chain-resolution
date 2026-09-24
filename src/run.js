@@ -66,7 +66,6 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
             return transformProperty(target, operationContext, (receiver, state) =>
                 invokeWithReceiver(receiver, state.present))
         },
-        result => result,
     )
 }
 

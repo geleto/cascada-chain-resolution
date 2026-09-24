@@ -23,6 +23,8 @@ Imported managed Arrays are never backing. Operations materialize them into runt
 
 `ArrayView` is not exported from the package.
 
+Controlled Array intrinsics operate on ordinary sparse Arrays of placement references. Capturing that remap does not resolve element values. The intrinsic moves or replaces the references, then common placement transfer publishes the resulting Array. Removed-element results retain their own captured placements independently of receiver publication; ArrayView derivation remains the backing-reuse path.
+
 ## Logical surface
 
 A view exposes the translated enumerable indexes inside its range and a virtual non-enumerable `length`. Canonical string indexes such as `"0"` are indexes exactly as in JavaScript; other string properties are not Array data. Holes remain holes. Runtime fields, backing indexes outside the range, symbols, non-enumerable properties, and metadata are outside the language surface.

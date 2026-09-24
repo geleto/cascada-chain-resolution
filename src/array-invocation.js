@@ -198,20 +198,20 @@ function invokeArrayMutationMethod(
         )
     }
 
-    const mutation = arrayRemaps.traceArrayMutation(
+    const remap = arrayRemaps.createRemap(
         thisValue,
         invocationWork.operationContext,
+        0,
         invocationWork.arrayLength,
     )
-    // The intrinsic and its remap traps are trusted work on prepared inputs.
-    // Exact external reflection escapes to the operation's marker consumer.
+    // The intrinsic moves placement references without consuming their values.
+    // Removed results and retained receiver placements keep separate lifetimes.
     const nativeResult = Reflect.apply(
         methodDefinition.intrinsic,
-        mutation.working,
+        remap,
         preparedArguments,
     )
-    const result = captureResult(nativeResult)
-    return finishMutation(runArrayStep(invocationWork, () => mutation.materialize()), result)
+    return finishMutation(remap, captureResult(nativeResult))
 
     function captureResult(nativeResult) {
         // Capture removed property versions before committing the receiver.
@@ -224,8 +224,8 @@ function invokeArrayMutationMethod(
     }
 
     function finishMutation(remap, result) {
-        const mutatedValue = errorUtils.isPoisonError(remap) ? remap :
-            runArrayStep(invocationWork, () => arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext))
+        const mutatedValue = runArrayStep(invocationWork, () =>
+            arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext))
         if (methodDefinition.methodResult === RETURN_RECEIVER) result = mutatedValue
         else if (errorUtils.isPoisonError(mutatedValue)) {
             // Publish receiver failure now; only the independent result waits.

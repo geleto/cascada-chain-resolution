@@ -98,8 +98,7 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
         source,
         operationContext,
     )) {
-        languageProperties.readLanguageProperty(source, key, operationContext)
-        const placement = propertyVersions.capturePlacement(source, key, operationContext)
+        const placement = languageProperties.readLanguagePlacement(source, key, operationContext)
         // Fresh records reserve physical key order even while presence is
         // undecided. Arrays must not grow merely to represent such a placement.
         if (placement.sourceVersion?.pendingPresence && !isLogicalArray(source, operationContext))
@@ -118,8 +117,9 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
 
 function transformProperty(target, operationContext, transform, { replace = false, repair = false } = {}) {
     const { parent, key, attachmentRoot } = target
-    if (!replace && !target.sourceVersion) languageProperties.readLanguageProperty(parent, key, operationContext)
-    let baseline = propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
+    let baseline = replace || target.sourceVersion
+        ? propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
+        : languageProperties.readLanguagePlacement(parent, key, operationContext)
     let originalPlacement
     let leased
     let gate
@@ -186,19 +186,17 @@ function transformProperty(target, operationContext, transform, { replace = fals
             }
         }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
         if (errorUtils.isPoisonError(failure)) {
-            const poison = errorUtils.isPoisonError(placement.value)
-                ? errorUtils.combineErrors([placement.value, failure], "Mutation publication failed") : failure
-            propertyVersions.retainPlacement(baseline, operationContext)
+            const poison = propertyVersions.combinePublicationErrors(placement.value, failure)
             const restoring = repair && placement === baseline
-            const failedPlacement = restoring ? originalPlacement : { value: poison, present: true, recovery: baseline, position: baseline.position }
             outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
-            // Storage failure cannot widen the selected poison scope. An
-            // existing version keeps its captured authority; a ready placement
-            // uses the same logical overlay without requiring physical storage.
-            if (destinationVersion) {
-                propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
-                    failedPlacement, operationContext, false, structure)
-            } else if (!restoring) target.publishFailure(failedPlacement, outcome)
+            if (restoring) {
+                // A failed repair leaves the original poison and recovery intact.
+                propertyVersions.retainPlacement(baseline, operationContext)
+                if (destinationVersion) propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
+                    originalPlacement, operationContext, false, structure)
+            } else if (destinationVersion) propertyVersions.publishPlacementFailure(parent, key, destinationVersion,
+                poison, baseline, operationContext, structure)
+            else target.publishFailure(poison, baseline, outcome)
         }
         return finish(outcome)
     }
@@ -216,9 +214,7 @@ function includePublicationFailure(result, publishedValue, operationContext) {
     return internalSteps.continueOperation(
         result,
         operationContext,
-        value => errorUtils.isPoisonError(value)
-            ? errorUtils.combineErrors([value, publishedValue], "Mutation publication failed")
-            : publishedValue,
+        value => propertyVersions.combinePublicationErrors(value, publishedValue),
     )
 }
 
@@ -284,7 +280,6 @@ function assignManagedPath(
                 target.replaceReceiver(internalSteps.continueOperation(outcome, operationContext, outcome => outcome.mutatedValue))
                 return internalSteps.continueOperation(outcome, operationContext, outcome => outcome.result)
             },
-            result => result,
         )
     })
 
@@ -365,7 +360,6 @@ function walkMutationPath(
     path,
     operationContext,
     onTarget,
-    onComplete = undefined,
     {
         deletesTarget = false,
         onExternalFailure = undefined,
@@ -393,9 +387,7 @@ function walkMutationPath(
     }
 
     function combinePathFailure(failure) {
-        return errorUtils.combineErrors(
-            [publicationValue, operationResult?.mutatedValue, failure].filter(errorUtils.isPoisonError),
-            "Mutation publication failed")
+        return propertyVersions.combinePublicationErrors(publicationValue, operationResult?.mutatedValue, failure)
     }
 
     // Completion follows synchronous reconstruction through every enclosing
@@ -411,7 +403,7 @@ function walkMutationPath(
         publicationValue = next
         operationResult = outcome
         writeBack(next, recovery)
-        return onComplete ? onComplete(operationResult) : operationResult
+        return operationResult
     }
 
     function completeTarget(target, writeBack) {
@@ -419,14 +411,14 @@ function walkMutationPath(
         const result = onTarget({
             ...target,
             replaceReceiver(next) { nextReceiver = next },
-            publishFailure(placement, outcome) {
+            publishFailure(failure, baseline, outcome) {
                 // Preserve both outcomes before fallible copying/reconstruction.
                 operationResult = outcome
                 // The holder is private. Other containers may have aliases:
                 // preserve them while replacing only this path's failed scope.
                 const owner = target.parent === rootState ? rootState :
                     shallowCopyPathContainer(target.parent, target.attachmentRoot, operationContext).value
-                propertyVersions.replaceLogicalPlacement(owner, target.key, placement, operationContext)
+                propertyVersions.publishPlacementFailure(owner, target.key, undefined, failure, baseline, operationContext)
                 nextReceiver = owner
             },
         })
@@ -570,9 +562,8 @@ function walkMutationPath(
                         if (errorUtils.isPoisonError(publicationFailure) || errorUtils.isPoisonError(promiseVersion.value)) {
                             const failure = combinePathFailure(publicationFailure ?? promiseVersion.value)
                             const baseline = recovery ?? { value: propertyValue, present }
-                            propertyVersions.retainPlacement(baseline, operationContext)
-                            propertyVersions.commitPlacementVersion(parent, key, promiseVersion,
-                                { value: failure, present: true, recovery: baseline }, operationContext, false, structure)
+                            propertyVersions.publishPlacementFailure(parent, key, promiseVersion,
+                                failure, baseline, operationContext, structure, promiseVersion.position)
                             operationResult = includePathFailure(failure)
                         }
                     }
@@ -583,10 +574,6 @@ function walkMutationPath(
                 ? propertyVersions.continueCapturedPromiseVersion(child, source, operationContext, value => onValue(value, source))
                 : propertyVersions.installMutationVersion(parent, key, source, operationContext, onValue)
             if (!pathSelectionComplete) writeBack(parent)
-            if (onComplete === undefined && languageValues.isPending(pending, operationContext)) {
-                markPromiseHandled(pending, operationContext)
-                return undefined
-            }
             return pending
         }
 
@@ -645,7 +632,6 @@ function deleteManagedPath(
     chain,
     path,
     operationContext,
-    completion = false,
 ) {
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
@@ -679,7 +665,6 @@ function deleteManagedPath(
                 )
                 return undefined
             },
-            completion ? result => result : undefined,
             deletesRoot ? undefined : { deletesTarget: true },
         )
     })
@@ -709,7 +694,7 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                 if (deleting && (path.length || chain._rootKey !== undefined) && suffix.length === 0)
                     return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
                 const action = deleting
-                    ? deleteManagedPath(privateChain, suffix, operationContext, true)
+                    ? deleteManagedPath(privateChain, suffix, operationContext)
                     : assignManagedPath(privateChain, suffix, placement, operationContext)
                 return internalSteps.continueOperation(action, operationContext, result => {
                     if (errorUtils.isPoisonError(result)) return result

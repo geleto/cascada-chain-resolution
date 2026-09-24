@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacementFromVersion, getPlacementVersion, normalizeRawPropertyValue } from "./property-versions.js"
+import { capturePlacementFromVersion, normalizeRawPropertyValue } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 
 const ORDINARY_PROPERTY = 0
@@ -178,15 +178,6 @@ function assertCanDeleteLanguageProperty(parent, key, operationContext) {
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
 function writeLanguageProperty(parent, key, value, operationContext) {
-    // Contained commands write through their captured reference. Protection
-    // itself is metadata-only; this path runs only for actual publication.
-    // A detached reference still advances privately but cannot change storage
-    // now governed by a later version.
-    const gate = metadata.metaOf(parent, operationContext)?.entryGate
-    if (gate && getPlacementVersion(gate.owner, gate.key, operationContext) === gate.version) {
-        writeLanguageProperty(gate.owner, gate.key, value, operationContext)
-        gate.version.storageAbsent = false
-    }
     parent = ArrayView.projectionOf(parent, operationContext)
     if (isArrayView(parent, operationContext)) {
         parent.set(String(key), value, operationContext)
@@ -249,11 +240,6 @@ function hasLanguageProperty(parent, key, operationContext) {
 }
 
 function deleteLanguageProperty(parent, key, operationContext) {
-    const gate = metadata.metaOf(parent, operationContext)?.entryGate
-    if (gate && getPlacementVersion(gate.owner, gate.key, operationContext) === gate.version) {
-        deleteLanguageProperty(gate.owner, gate.key, operationContext)
-        gate.version.storageAbsent = true
-    }
     parent = ArrayView.projectionOf(parent, operationContext)
     if (isArrayView(parent, operationContext))
         return parent.delete(String(key), operationContext)

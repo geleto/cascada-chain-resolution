@@ -10,6 +10,39 @@ const leaves = error => error.errors ?? [error]
 const causes = error => new Set(leaves(error).map(leaf => leaf.cause))
 
 describe("complete publication failures", () => {
+    for (const delayed of [false, true]) {
+        it(`keeps an assigned Error and failed entry write-through together, delayed=${delayed}`, async () => {
+            const ctx = context(), inputContext = context(ctx.execution)
+            const original = runtime.import(new Error("assigned failure"), inputContext)
+            const publication = new Error("refused entry write")
+            const physical = { value: 1 }, hold = Promise.withResolvers()
+            let refuses = true
+            const chain = new runtime.Chain(new Proxy(physical, {
+                set(target, key, value, receiver) {
+                    if (refuses && key === "value") throw publication
+                    return Reflect.set(target, key, value, receiver)
+                },
+            }), ctx)
+            const result = runtime.enter(chain, ["value"], ctx, true, inside => {
+                const assign = () => runtime.assignPath(inside, [], original, ctx)
+                return delayed ? hold.promise.then(assign) : assign()
+            })
+            hold.resolve()
+            const failure = await result
+            assert.equal(leaves(failure).length, 2)
+            assert(leaves(failure).includes(original))
+            const added = leaves(failure).find(error => error.cause === publication)
+            assert.equal(added.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+            assert.equal(added.errorContext, ctx.errorContext)
+            assert.equal(await runtime.lookupPath(chain, ["value"], ctx), failure)
+            assert.equal(physical.value, 1)
+            refuses = false
+            await runtime.repairPath(chain, ["value"], ctx)
+            assert.equal(runtime.lookupPath(chain, ["value"], ctx), 1)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     for (const array of [false, true]) {
         for (const entryDepth of [0, 1, 2]) {
             for (const action of ["assign", "create", "delete", "call ready", "call synchronous", "call pending"]) {

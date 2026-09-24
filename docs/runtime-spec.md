@@ -352,7 +352,7 @@ Managed storage may use a host-supplied Proxy under the
 Each primitive write, definition, or deletion implements the requested operation
 on success and leaves the represented graph unchanged on failure. Storage work
 precedes placement-version and refcount commit. This is a trusted restriction,
-without Proxy detection or inverse trap replay. The enclosing managed mutation protects its baseline and discards failed working changes; external mutation retains completed native effects. Internal Array remapping Proxies remain runtime control representations.
+without Proxy detection or inverse trap replay. The enclosing managed mutation protects its baseline and discards failed working changes; external mutation retains completed native effects.
 
 ## Placement versions
 

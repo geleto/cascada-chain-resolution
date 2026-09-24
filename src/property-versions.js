@@ -137,9 +137,9 @@ function transferPlacement(placement, owner, key, operationContext, retained = f
         // Synchronous delivery stages above; later delivery advances the exact
         // captured version only after its complete placement has committed.
         version = destinationVersion
-    } else if (!writeBack || version.pendingPresence) replaceLogicalPlacement(owner, key, version, operationContext)
+    } else if (!writeBack || version.pendingPresence) replacePlacement(owner, key, version, operationContext, false)
     else if (version.present === false) deleteProperty(owner, key, operationContext)
-    else replaceProperty(owner, key, version, operationContext)
+    else replacePlacement(owner, key, version, operationContext)
     return pending ? undefined : publication
 }
 
@@ -186,16 +186,28 @@ function completePlacementGate(gate, placement, operationContext) {
                 errorUtils.ERROR_KIND.AssignmentValueFailed, false, gate.structure),
             operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
         if (errorUtils.isPoisonError(failure)) {
-            const poison = errorUtils.isPoisonError(resolved.value)
-                ? errorUtils.combineErrors([resolved.value, failure], "Entry publication failed") : failure
-            retainPlacement(resolved, operationContext)
-            commitPlacementVersion(gate.owner, gate.key, gate.version,
-                { value: poison, present: true, recovery: resolved.recovery ?? resolved, position: resolved.position }, operationContext, false, gate.structure)
+            publishPlacementFailure(gate.owner, gate.key, gate.version,
+                combinePublicationErrors(resolved.value, failure), resolved.recovery ?? resolved,
+                operationContext, gate.structure, resolved.position)
         }
         gate.resolve()
     })
     markPromiseHandled(publication, operationContext)
     return publication
+}
+
+// The caller selects the recovery baseline: pre-mutation state for mutation,
+// completed contained state for entry publication. Failure writes no storage.
+// A retained baseline may have an older record position than the live placement.
+function publishPlacementFailure(owner, key, version, failure, baseline, operationContext, structure, position = baseline.position) {
+    retainPlacement(baseline, operationContext)
+    const placement = { value: failure, present: true, recovery: baseline, position }
+    if (version) commitPlacementVersion(owner, key, version, placement, operationContext, false, structure)
+    else replacePlacement(owner, key, placement, operationContext, false)
+}
+
+function combinePublicationErrors(...values) {
+    return errorUtils.combineErrors(values.filter(errorUtils.isPoisonError), "Property publication failed")
 }
 
 // An operation publishes all placement facts atomically. Unlike shared Promise
@@ -233,9 +245,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
     const commitEdge = preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack)
     return () => commitEdge(() => {
         if (writeBack) {
-            if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext)
-            else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext)
-            version.storageAbsent = absent
+            version.storageAbsent = writePlacementStorage(owner, key, placement, operationContext)
         }
         commit()
         if (absent) detachAbsentVersion(owner, key, version, operationContext)
@@ -422,7 +432,7 @@ function normalizeRawPropertyValue(
         if (writable && !metadata.metaOf(owner, operationContext)?.imported &&
             !isArrayView(owner, operationContext)) {
             const failure = errorUtils.catchExternalThrow(
-                () => languageProperties.writeLanguageProperty(owner, key, version.value, operationContext),
+                () => writePlacementStorage(owner, key, version, operationContext),
                 operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
             if (!failure) return version.value
         }
@@ -477,9 +487,7 @@ function commitPromiseVersion(
     function recordFailure(failure) {
         // Publishing an already failed value can fail independently. Each retry
         // retains the accumulated diagnostic instead of replacing an earlier cause.
-        value = errorUtils.isPoisonError(value)
-            ? errorUtils.combineErrors([value, failure], "Property publication failed")
-            : failure
+        value = combinePublicationErrors(value, failure)
         languageValues.admitReadyValue(value, operationContext)
         return value
     }
@@ -519,32 +527,35 @@ function commitPromiseVersion(
     }
 }
 
-function replaceProperty(owner, key, placement, operationContext) {
-    preparePropertyCommit(owner, key, placement, operationContext)(() => {
-        languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext)
+// View truncation supplies a bounds change instead of deleting shared storage.
+function replacePlacement(owner, key, placement, operationContext, writeBack = true, write) {
+    preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack)(() => {
+        if (writeBack) {
+            if (write) write()
+            else writePlacementStorage(owner, key, placement, operationContext)
+        }
         // Failed storage work must leave the old logical version available.
         detachPlacementVersion(owner, key, operationContext)
-        if (placement.promiseBacked || placement.recovery) installPlacementVersion(owner, key, placement, operationContext)
+        if (!writeBack || placement.promiseBacked || placement.recovery)
+            installPlacementVersion(owner, key, placement, operationContext)
     })
 }
 
-function replaceLogicalPlacement(owner, key, placement, operationContext) {
-    preparePropertyCommit(owner, key, placement, operationContext, undefined, false)(() =>
-        installPlacementVersion(owner, key, placement, operationContext))
-}
-
-// Callers validate deletion semantics before this atomic edge removal.
-function removeProperty(owner, key, operationContext, remove) {
-    preparePropertyCommit(owner, key, { value: undefined, present: false }, operationContext)(() => {
-        if (remove) remove()
-        else languageProperties.deleteLanguageProperty(owner, key, operationContext)
-        detachPlacementVersion(owner, key, operationContext)
-    })
+function writePlacementStorage(owner, key, placement, operationContext) {
+    // Entry holders write through their captured source authority. Detached
+    // references still advance privately without touching replacement storage.
+    const gate = metadata.metaOf(owner, operationContext)?.entryGate
+    if (gate && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext))
+        gate.version.storageAbsent = writePlacementStorage(gate.owner, gate.key, placement, operationContext)
+    const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
+    if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext)
+    else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext)
+    return absent
 }
 
 function deleteProperty(owner, key, operationContext) {
     languageProperties.assertCanDeleteLanguageProperty(owner, key, operationContext)
-    removeProperty(owner, key, operationContext)
+    replacePlacement(owner, key, { value: undefined, present: false }, operationContext)
 }
 
 function commitArrayLength(array, length, operationContext) {
@@ -575,10 +586,12 @@ function commitArrayLength(array, length, operationContext) {
         // Truncation revokes publication authority even for placements whose
         // pending values have never occupied physical storage.
         if (property?.enumerable || getPlacementVersion(array, key, operationContext)) {
-            removeProperty(
+            replacePlacement(
                 array,
                 key,
+                { value: undefined, present: false },
                 operationContext,
+                true,
                 view
                     ? () => view.set("length", index, operationContext)
                     : undefined,
@@ -661,6 +674,8 @@ function prepareRetainedArrayProperties(
 export {
     installPlacementGate,
     completePlacementGate,
+    publishPlacementFailure,
+    combinePublicationErrors,
     capturePlacement,
     capturePlacementFromVersion,
     createVersionFromPlacement,
@@ -687,5 +702,5 @@ export {
     prepareRetainedArrayProperties,
     trackVersionPublication,
     resolvePropertyValueAtKey,
-    replaceLogicalPlacement,
+    replacePlacement,
 }

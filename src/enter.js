@@ -40,7 +40,7 @@ function captureReference(chain, route, mutable, operationContext) {
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext, true))) {
                     const copy = shallowCopyPathContainer(value, undefined, operationContext).value
                     const copied = { ...placement, value: copy }
-                    versions.replaceLogicalPlacement(parent, key, copied, operationContext)
+                    versions.replacePlacement(parent, key, copied, operationContext, false)
                     placement = copied
                     value = copy
                     next = versions.capturePlacement(copy, nextKey, operationContext)

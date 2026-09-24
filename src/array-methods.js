@@ -777,35 +777,24 @@ function orderedIndexSearch(
                 const current = index
                 index += backwards ? -1 : 1
                 const key = String(current)
-                if (!languageProperties.hasLanguageProperty(
-                    thisValue,
-                    key,
-                    invocationWork.operationContext,
-                )) {
-                    continue
-                }
-                const value = languageProperties.readLanguageProperty(
+                const placement = propertyVersions.getPropertyPlacement(
                     thisValue,
                     key,
                     invocationWork.operationContext,
                 )
-                if (
-                    languageValues.isPending(value, invocationWork.operationContext)
-                ) {
+                if (!placement) continue
+                const value = placement.resolveValue()
+                if (languageValues.isPending(value, invocationWork.operationContext)) {
                     return internalSteps.continueOperation(
-                        propertyVersions.resolvePropertyValueAtKey(
-                            thisValue,
-                            key,
-                            invocationWork.operationContext,
-                        ),
+                        value,
                         invocationWork.operationContext,
-                        resolved => languageProperties.hasLanguageProperty(thisValue, key, invocationWork.operationContext) &&
+                        resolved => placement.present !== false &&
                             resolved === searchValue ? current : next(),
                         undefined,
                         invocationWork,
                     )
                 }
-                if (value === searchValue) return current
+                if (placement.present !== false && value === searchValue) return current
             }
             return backwards ? -1 : ArrayView.resolveInRange(thisValue, index, invocationWork,
                 present => present ? next() : -1)
