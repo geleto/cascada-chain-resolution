@@ -9,6 +9,50 @@ import { metaOf } from "../src/meta.js"
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    for (const initial of [1, undefined]) {
+        it(`captures lookup presence and value in one descriptor read, initial=${initial}`, () => {
+            const ctx = context()
+            let reads = 0
+            const owner = new Proxy({ item: initial }, {
+                getOwnPropertyDescriptor(target, key) {
+                    if (key === "item") reads++
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+            const chain = new runtime.Chain(owner, ctx)
+            const lookup = expected => {
+                reads = 0
+                assert.equal(runtime.lookupPath(chain, ["item"], ctx), expected)
+                assert.equal(reads, 1)
+            }
+            lookup(initial)
+            runtime.assignPath(chain, ["item"], 2, ctx)
+            lookup(2)
+            runtime.deletePath(chain, ["item"], ctx)
+            lookup(undefined)
+            const missing = runtime.run(chain, ["item"], "method", [], ctx, {})
+            assert.equal(missing.kind, runtime.ERROR_KIND.NullLookup)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
+    for (const delivery of ["synchronous", "pending"]) {
+        it(`captures the normalized ${delivery} version before a later replacement`, async () => {
+            const ctx = context()
+            const original = { n: 1 }
+            const source = delivery === "synchronous" ? ready(original) : new OrderedThenable()
+            // Leave the child lazy: ordinary Chain construction only admits its root.
+            const chain = new runtime.Chain({ item: source }, ctx)
+            const earlier = runtime.lookupPath(chain, ["item"], ctx)
+            assert.equal(earlier instanceof Promise, delivery === "pending")
+            runtime.assignPath(chain, ["item"], { n: 2 }, ctx)
+            if (delivery === "pending") source.resolve(original)
+            assert.deepEqual(runtime.export(new runtime.Chain(await earlier, ctx), [], ctx), { n: 1 })
+            assert.equal(runtime.lookupPath(chain, ["item", "n"], ctx), 2)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     it("retains committed Array growth without a physical element or trailing slot", async () => {
         const ctx = context()
         const owner = [0, 1, 2]

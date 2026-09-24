@@ -35,8 +35,7 @@ function captureReference(chain, route, mutable, operationContext) {
             const selected = errors.catchExternalThrow(() => {
                 const nextKey = String(segment)
                 if (properties.classifyLanguageProperty(value, nextKey, operationContext) !== properties.ORDINARY_PROPERTY) return
-                properties.readLanguageProperty(value, nextKey, operationContext)
-                let next = versions.capturePlacement(value, nextKey, operationContext)
+                let next = properties.readLanguagePlacement(value, nextKey, operationContext)
                 if (mutable && (metadata.requiresCopyOnWrite(value, operationContext) ||
                     requiresArrayMaterialization(value, operationContext) ||
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext) ||

@@ -163,12 +163,7 @@ function resolveAndLeaseReceiverGraph(invocationWork) {
 
 // Common dispatch rejects `constructor` before either managed policy runs.
 function selectManagedRecordMethod(receiver, invocationWork) {
-    const present = languageProperties.hasLanguageProperty(
-        receiver,
-        invocationWork.method,
-        invocationWork.operationContext,
-    )
-    const callable = languageProperties.readLanguageProperty(
+    const { value: callable, present } = languageProperties.readLanguagePlacement(
         receiver,
         invocationWork.method,
         invocationWork.operationContext,
@@ -289,7 +284,7 @@ function materializeObservationReceiver(receiver, invocationWork) {
             source,
             operationContext,
         )) {
-            const present = languageProperties.hasLanguageProperty(source, key, operationContext)
+            const { value: child, present } = languageProperties.readLanguagePlacement(source, key, operationContext)
             const version = propertyVersions.getPlacementVersion(source, key, operationContext)
             const descriptor = version
                 ? languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
@@ -298,11 +293,6 @@ function materializeObservationReceiver(receiver, invocationWork) {
                 if (descriptor) requireCopy(source)
                 continue
             }
-            const child = languageProperties.readLanguageProperty(
-                source,
-                key,
-                operationContext,
-            )
             if (version && (!descriptor || !Object.is(descriptor.value, child))) requireCopy(source)
             if (!languageValues.isTraversable(child, operationContext)) continue
             let childParents = parents.get(child)

@@ -18,8 +18,7 @@ class PropertyPlacement {
     ensureCaptured() {
         if (Object.hasOwn(this, "value")) return this
         const { owner, key, operationContext } = this
-        languageProperties.readLanguageProperty(owner, key, operationContext)
-        Object.assign(this, capturePlacement(owner, key, operationContext))
+        Object.assign(this, languageProperties.readLanguagePlacement(owner, key, operationContext))
         return this
     }
 
@@ -633,16 +632,11 @@ function prepareRetainedArrayProperties(
     for (const sourceKey of retainedKeys()) {
         // An absent overlay can hide a physical slot in the shared backing.
         // Retain it too; only a hole with no overlay needs no destination state.
-        if (!getPlacementVersion(source, sourceKey, operationContext) &&
-            !languageProperties.hasLanguageProperty(source, sourceKey, operationContext)) continue
+        const captured = languageProperties.readLanguagePlacement(source, sourceKey, operationContext)
+        if (!captured.present && !getPlacementVersion(source, sourceKey, operationContext)) continue
         const destinationKey = String(Number(sourceKey) + destinationOffset)
-        const value = languageProperties.readLanguageProperty(
-            source,
-            sourceKey,
-            operationContext,
-        )
+        const { value } = captured
         if (!languageValues.isPending(value, operationContext)) {
-            const captured = capturePlacement(source, sourceKey, operationContext)
             retainPlacement(captured, operationContext)
             // Views share physical backing, but every retained placement keeps
             // its logical value, including a fixed Error or custom-thenable outcome.
@@ -652,7 +646,7 @@ function prepareRetainedArrayProperties(
                 }, operationContext)
             continue
         }
-        transferPlacement(capturePlacement(source, sourceKey, operationContext),
+        transferPlacement(captured,
             destination, destinationKey, operationContext, true, undefined,
             errorUtils.ERROR_KIND.AssignmentValueFailed, false)
     }

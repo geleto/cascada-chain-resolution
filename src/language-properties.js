@@ -1,7 +1,7 @@
 import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
 import * as metadata from "./meta.js"
-import { getPlacementVersion, normalizeRawPropertyValue } from "./property-versions.js"
+import { capturePlacementFromVersion, getPlacementVersion, normalizeRawPropertyValue } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 
 const ORDINARY_PROPERTY = 0
@@ -206,23 +206,32 @@ function writeLanguageProperty(parent, key, value, operationContext) {
 }
 
 function readLanguageProperty(parent, key, operationContext) {
+    return readLanguagePlacement(parent, key, operationContext).value
+}
+
+// Consume once at the current program position, then capture any version
+// installed by normalization. Baseline capture deliberately does not consume.
+function readLanguagePlacement(parent, key, operationContext) {
     key = String(key)
     const logicalParent = parent
     parent = arrayViews.projectionOf(parent, operationContext)
     const propertyKind = classifyProjectedProperty(parent, key, operationContext)
-    if (propertyKind === INVALID_ARRAY_KEY) return undefined
+    if (propertyKind === INVALID_ARRAY_KEY) return { value: undefined, present: false }
     if (propertyKind === ARRAY_LENGTH) {
-        return arrayViews.publishedArrayLength(parent, operationContext)
+        return { value: arrayViews.publishedArrayLength(parent, operationContext), present: true }
     }
-    if (propertyKind === STRING_LENGTH) return parent.length
+    if (propertyKind === STRING_LENGTH) return { value: parent.length, present: true }
 
-    const version = metadata.metaOf(
-        logicalParent,
-        operationContext,
-    )?.placementVersions?.[key]
-    if (version) return version.value
+    const meta = metadata.metaOf(logicalParent, operationContext)
+    let version = meta?.placementVersions?.[key]
+    if (version) return capturePlacementFromVersion(version)
     const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
-    return normalizeRawPropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
+    const value = normalizeRawPropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
+    version = meta?.placementVersions?.[key]
+    return version ? capturePlacementFromVersion(version) : {
+        value, present: descriptor !== undefined,
+        position: meta?.recordOrder?.positions.get(key)?.position ?? (descriptor ? -1 : Infinity),
+    }
 }
 
 function hasLanguageProperty(parent, key, operationContext) {
@@ -299,6 +308,7 @@ export {
     normalizePathSegment,
     propertyValidationError,
     readLanguageProperty,
+    readLanguagePlacement,
     requiresRepresentationCopyForArrayLengthMutation,
     requiresRepresentationCopyForPropertyMutation,
     writeLanguageProperty,

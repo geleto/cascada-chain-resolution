@@ -123,8 +123,7 @@ function processImportSegment(
         // the result boundary, rather than an ordinary read, attributes them.
         if (!placement.sourceVersion && importPolicy.methodResult && metadata.metaOf(owner, operationContext) &&
             metadata.isObjectLike(placement.value) && !Error.isError(placement.value)) {
-            languageProperties.readLanguageProperty(owner, key, operationContext)
-            placement = propertyVersions.capturePlacement(owner, key, operationContext)
+            placement = languageProperties.readLanguagePlacement(owner, key, operationContext)
         }
         return placement
     }

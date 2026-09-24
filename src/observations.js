@@ -306,23 +306,9 @@ function walkObservationPath(
     function readPlacement(parent, key, index) {
         if (languageProperties.classifyLanguageProperty(parent, key, operationContext) === languageProperties.ARRAY_LENGTH)
             return resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
-        const present = languageProperties.hasLanguageProperty(
-            parent,
-            key,
-            operationContext,
-        )
-        const value = languageProperties.readLanguageProperty(
-            parent,
-            key,
-            operationContext,
-        )
-        const version = propertyVersions.getPlacementVersion(parent, key, operationContext)
-        return readCaptured(value, version, index, present)
-    }
-
-    function readCaptured(value, version, index, present) {
-        if (version) value = version.value
-        if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present, version?.recovery)
+        const { value, present, sourceVersion: version, recovery } =
+            languageProperties.readLanguagePlacement(parent, key, operationContext)
+        if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present, recovery)
         return propertyVersions.observePromiseVersion(
             value, version, operationContext,
             propertyValue => runTraversal(() => walkValue(propertyValue, index, version.present !== false, version.recovery)), owner,

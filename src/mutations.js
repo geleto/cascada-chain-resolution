@@ -546,14 +546,8 @@ function walkMutationPath(
             }, writeBack)
         }
 
-        const present = languageProperties.hasLanguageProperty(
-            parent,
-            key,
-            operationContext,
-        )
-        const child = present
-            ? languageProperties.readLanguageProperty(parent, key, operationContext)
-            : undefined
+        const { value: capturedValue, present } = languageProperties.readLanguagePlacement(parent, key, operationContext)
+        const child = present ? capturedValue : undefined
         if (languageValues.isPending(child, operationContext)) {
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
