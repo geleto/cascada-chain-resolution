@@ -24,7 +24,6 @@ import {
 } from "./mutations.js"
 import { run as runCore } from "./run.js"
 import { repairPath as repairPathCore } from "./path-operation.js"
-import { selectEntryPath as selectEntryPathCore } from "./path-context.js"
 import { runInternalStep } from "./internal-step.js"
 import {
     externalState,
@@ -124,10 +123,6 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
     return returnOperationResult(operationContext, repairPathCore(chain, path, operationContext, firstDynamicSegment))
 }
 
-function selectEntryPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runInternalStep(operationContext, () => selectEntryPathCore(chain, path, operationContext, firstDynamicSegment))
-}
-
 export {
     assignPath,
     Chain,
@@ -153,7 +148,6 @@ export {
     PoisonError,
     run,
     repairPath,
-    selectEntryPath,
     returnOperationResult,
 }
 

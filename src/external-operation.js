@@ -42,14 +42,14 @@ function frontier(node, view) {
 // One reservation at issuance orders required effects even when managed path
 // capture is pending. Its completion Promise is allocated only for a waiter.
 class ExternalEffect {
-    constructor(node, mutation, view, operationContext) {
+    constructor(node, mutation, view, operationContext, subtree = true) {
         this.view = view
         this.operationContext = operationContext
         view?.effects.add(this)
         this.node = node
         const predecessors = new Set()
         const selected = frontier(node, this.view)
-        for (const work of selected.subtreeWrites) predecessors.add(work)
+        for (const work of subtree ? selected.subtreeWrites : selected.writes) predecessors.add(work)
         if (mutation) for (const work of selected.subtreeReads) predecessors.add(work)
         for (let parent = node === this.view?.root ? undefined : node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
             const state = frontier(parent, this.view)
@@ -61,7 +61,11 @@ class ExternalEffect {
         // Removing frontier membership does not finish that work's lifetime.
         if (mutation) for (const work of predecessors)
             if (work.node[TREE_NODE].path.length >= node[TREE_NODE].path.length) work.removeMemberships()
-        const memberships = this.memberships = [mutation ? selected.writes : selected.reads]
+        const memberships = this.memberships = []
+        // Prefix validation consumes only this node's metadata. Its propagated
+        // membership orders mutations here and above; omitting the direct read
+        // membership leaves mutations below it independent.
+        if (subtree) memberships.push(mutation ? selected.writes : selected.reads)
         for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
             const state = frontier(ancestor, this.view)
             memberships.push(mutation ? state.subtreeWrites : state.subtreeReads)

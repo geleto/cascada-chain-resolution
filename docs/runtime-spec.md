@@ -4,7 +4,7 @@ This document defines the observable contract of the Cascada chain-resolution ke
 
 `ContextChain(initialValue, operationContext, mutationAccessTree = undefined)` accepts a compiler-owned tree of static access prefixes and `{}` endpoints. Omission means no requests; `{}` requests only the root. The kernel preserves the input and filters named original placements into context-local registered external scope records, including requested nested native scopes, pruning non-external endpoints without searching managed subtrees. The compiler contract is defined in [integration.md](integration.md#compiler-construction-of-the-mutation-access-tree).
 
-The accepted hierarchical external design orders conflicting ancestor/descendant scopes while siblings overlap. Mixed entry remains valid, while managed bang scopes exclude canonical registered mutable external locations. Inert aliases elsewhere do not forbid controlled managed writes; native managed receiver preparation still rejects registered mutable identities. Explicit unregistered native-property entry fails recoverably. These contracts are defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
+The accepted hierarchical external design orders conflicting ancestor/descendant scopes while siblings overlap. Mixed entry remains valid, while managed bang scopes exclude canonical registered mutable external locations. Inert aliases elsewhere do not forbid controlled managed writes; native managed receiver preparation still rejects registered mutable identities. Native-suffix entry captures its enclosing static scope without consuming the suffix; contained commands perform validation. These contracts are defined in [external-context-ordering.md](external-context-ordering.md). Mutable resource selection and entry use static source paths; actual operations retain their source-staticness facts independently of the constructor tree. Dynamic managed and observation-only external paths remain supported.
 
 ## Values
 
@@ -328,7 +328,7 @@ the root with `null`.
 
 Deleting an array index removes the own property and preserves array length.
 
-Failed mutation must not grow an Array merely to store poison at an out-of-range index. The owning Array is then the poison and rollback scope, unless an explicit broader scope already covers it. Preserve its complete length, holes, values, and captured versions for repair. In-range failure remains local when structure is unaffected. Select required structural ownership before publication; see [managed structural effects](error-handling.md#managed-structural-effects).
+Array index creation publishes its length growth together with the placement, including when the created value is poison or pending data. A failed prefix remains at its first failed placement; repair restores its absent baseline as a hole without undoing growth. An explicitly broader scope, intrinsic length write, or remapping still owns the complete Array transition and baseline. Logical length remains authoritative when physical storage cannot represent a committed placement; see [managed structural effects](error-handling.md#managed-structural-effects).
 
 ## Property writes
 

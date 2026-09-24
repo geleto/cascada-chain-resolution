@@ -3,7 +3,6 @@ import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
 import { OrderedThenable } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
-import { verifyStorage } from "../verify-storage.js"
 
 // Seeded programs on one Array: element entries, direct element commands,
 // failure and repair, length assignment, structural methods, and observations
@@ -11,7 +10,8 @@ import { verifyStorage } from "../verify-storage.js"
 // snapshots. Holds are released between commands, so issuance happens before,
 // during, and after earlier settlement. The model is an Array of slots that the
 // native methods move; observations apply native semantics to the slot values.
-// Each program also runs without intermediate reads, and both runs must agree.
+// Compare observed, verified-without-extra-reads, and uninstrumented runs.
+// The observation methods under test remain in all three modes.
 
 // Slots: { value } is data, { error } ordinary Error data, and { poison,
 // baseline, absent } a failed prefix retaining the slot it replaced.
@@ -150,13 +150,15 @@ async function describeOutcome(value, ctx) {
     return display(result)
 }
 
-async function runProgram({ initial, delivery, steps }, seed, observed, coverage) {
+async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
+    const observed = mode === "observed", instrumented = mode !== "bare"
+    coverage.add(`harness:${mode}`)
     const random = createRandom(seed ^ 0x5bd1e995)
     const slots = initial.map(value => ({ value }))
     for (let index = 0; index < initial.length; index++) if (!(index in initial)) delete slots[index]
     const ctx = { execution: new r.Execution(), errorContext: {} }
     const chain = new r.Chain({ a: structuredClone(initial) }, ctx)
-    r.hasError(chain, [], ctx) // Keep the live index maintained through every transition.
+    if (instrumented) r.hasError(chain, [], ctx)
     const holds = [], checks = [], snapshots = [], roots = [chain]
     let phase = "before-release"
     const hold = () => {
@@ -195,11 +197,9 @@ async function runProgram({ initial, delivery, steps }, seed, observed, coverage
         held.release()
         if (phase === "before-release") phase = "after-release"
     }
-    const verify = () => {
-        verifyRefCounts(ctx, ...roots.map(root => root._state))
-        verifyStorage(ctx, ...roots.map(root => root._state))
-    }
-    // Release every hold, verifying both indexes between turns, until no hold remains.
+    // verifyRefCounts also runs the storage oracle.
+    const verify = () => { if (instrumented) verifyRefCounts(ctx, ...roots.map(root => root._state)) }
+    // Release every hold, verifying consistency between turns, until no hold remains.
     const settle = async () => {
         do {
             while (holds.length) {
@@ -211,7 +211,10 @@ async function runProgram({ initial, delivery, steps }, seed, observed, coverage
                 await new Promise(setImmediate)
                 verify()
             }
-            for (let turn = 0; turn < 3; turn++) await new Promise(setImmediate)
+            for (let turn = 0; turn < 3; turn++) {
+                await new Promise(setImmediate)
+                verify()
+            }
         } while (holds.length)
     }
     for (const step of steps) {
@@ -271,8 +274,12 @@ async function runProgram({ initial, delivery, steps }, seed, observed, coverage
             keep(r.lookupPath(chain, ["a", "length"], ctx), String(want.length), "read length")
         }
         coverage.add(`step:${after}`)
+        verify()
         if (step.release && holds.length) await releaseOne()
-        for (let turn = 0; turn < step.turns; turn++) await Promise.resolve()
+        for (let turn = 0; turn < step.turns; turn++) {
+            await Promise.resolve()
+            verify()
+        }
     }
     // Snapshot observations run after every later command was issued; each still sees its fork.
     for (const { snapshot, step, expected, label } of snapshots) {
@@ -308,20 +315,20 @@ for (let index = start; index < programs; index++) {
     const seed = (0x2c1b3c6d + Math.imul(index, 0x9e3779b9)) >>> 0
     const program = generate(createRandom(seed))
     const finals = []
-    for (const observed of [true, false]) {
+    for (const mode of ["observed", "verified", "bare"]) {
         let result
         try {
-            result = await runProgram(program, seed, observed, coverage)
+            result = await runProgram(program, seed, mode, coverage)
         } catch (error) {
             result = { errors: [`threw ${error?.stack ?? error}`] }
         }
         runs++
         if (result.errors.length) {
-            throw new Error(`program ${index} (seed ${seed}, observed=${observed}) failed:\n  ${result.errors.join("\n  ")}\n` +
+            throw new Error(`program ${index} (seed ${seed}, harness=${mode}) failed:\n  ${result.errors.join("\n  ")}\n` +
                 `program: ${JSON.stringify(program, (key, value) => typeof value === "number" && !Number.isFinite(value) ? String(value) : value)}`)
         }
         finals.push(result.final)
     }
-    if (finals[0] !== finals[1]) throw new Error(`program ${index} (seed ${seed}): runs with and without reads disagree: ${finals[0]} vs ${finals[1]}`)
+    if (new Set(finals).size !== 1) throw new Error(`program ${index} (seed ${seed}): harness modes disagree: ${JSON.stringify(finals)}`)
 }
 console.log(JSON.stringify({ programs: programs - start, runs, coverage: [...coverage].sort() }))

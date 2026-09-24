@@ -453,11 +453,12 @@ describe("context external foundations", () => {
             { service: {} },
         )
         let entered = false
-        const invalidEntry = enter(context, [invalid], false, () => {
+        const invalidEntry = enter(context, [invalid], false, inside => {
             entered = true
+            return lookupPath(inside, [])
         })
         expect(invalidEntry).to.be.an(Error)
-        expect(entered).to.be(false)
+        expect(entered).to.be(true)
         expect(coercions).to.be(0)
     })
 

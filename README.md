@@ -66,7 +66,6 @@ import {
     managedStateClass,
     repairPath,
     run,
-    selectEntryPath,
 } from "cascada-chain-resolution"
 ```
 
@@ -271,10 +270,7 @@ The compiler supplies the index of the first computed key, even when that key
 already holds a string or number. Every selected registered resource path must precede that index; computed unregistered native suffixes and ordinary managed paths remain supported.
 Promise-valued path keys are separate work in Phase 10.
 
-`selectEntryPath(chain, path, operationContext, firstDynamicSegment = path.length)`
-returns `{ path, firstDynamicSegment, suffix }`. A native-property target selects its deepest enclosing registered external scope, leaving the suffix for contained commands. Managed and mixed targets stay unchanged. It uses
-only the runtime tree, invokes no native reflection, and does not widen explicit
-`enter` calls. See the [compiler handoff](docs/integration.md#entry-target-selection).
+Pass the original target to `enter`. It captures a selectable anchor and retains any unavailable, intrinsic, or native suffix as the reference path, without consuming unused data. See the [entry handoff](docs/integration.md#entry-target-selection).
 
 Inside mutable external state, assignment exports the RHS before writing native
 storage and orders the complete write against conflicting ancestor/descendant scope work.

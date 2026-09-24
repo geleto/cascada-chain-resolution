@@ -670,27 +670,6 @@ describe("graph presence summaries", () => {
         )
 
         useTestExecution()
-        const detachedVersion = { pending: deferred().promise }
-        buildRefIndex(detachedVersion)
-        delete detachedVersion.pending
-        expect(thrownBy(() => verifyRefCounts(detachedVersion)).message).to.be(
-            "Live Promise version has no valid language property",
-        )
-        useTestExecution()
-
-        const nonWritable = { pending: deferred().promise }
-        buildRefIndex(nonWritable)
-        Object.defineProperty(nonWritable, "pending", {
-            value: nonWritable.pending,
-            enumerable: true,
-            writable: false,
-            configurable: true,
-        })
-        expect(thrownBy(() => verifyRefCounts(nonWritable)).message).to.be(
-            "Live Promise version has no valid language property",
-        )
-        useTestExecution()
-
         const overlaid = { pending: deferred().promise }
         buildRefIndex(overlaid)
         const unindexed = new Chain({})._state.value

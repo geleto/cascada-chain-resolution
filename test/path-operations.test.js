@@ -1,4 +1,5 @@
 import {
+    logicalArrayValues,
     testOperationContext,
     Chain,
     expect,
@@ -447,7 +448,7 @@ describe("path assignment", () => {
             const result = mutate(chain)
 
             expect(result.message).to.be(message)
-            expect(chain._state.value).to.be(result)
+            expect(lookupPath(chain, ["value"])).to.be(result)
         }
     })
 
@@ -590,7 +591,7 @@ describe("path assignment", () => {
         const chain = new Chain([1, 2, 3])
 
         expect(assignPath(chain, ["length"], length.promise)).to.be(undefined)
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(readPath(chain, []) instanceof Promise).to.be(true)
         assignPath(chain, ["0"], 9)
 
         length.resolve(1)
@@ -665,7 +666,7 @@ describe("path assignment", () => {
             length.promise,
         )).to.be(undefined)
         expect(chain._state.value).not.to.be(source)
-        expect(chain._state.value.values instanceof Promise).to.be(true)
+        expect(readPath(chain, ["values"]) instanceof Promise).to.be(true)
         expect(source).to.eql({ values: [1, 2, 3] })
 
         length.resolve(1)
@@ -762,7 +763,7 @@ describe("path assignment", () => {
         expect(chain._state.value).not.to.be(view)
         expect(exportValue(chain, [])).to.eql([])
         expect(view.length).to.be(4)
-        expect([...view.values(testOperationContext())]).to.eql([0, 1, 2, 3])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([0, 1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([0, 1, 2])
         verifyRefCounts(view, source)
     })

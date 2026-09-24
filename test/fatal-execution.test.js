@@ -212,7 +212,7 @@ describe("fatal execution", () => {
                 ["pending"],
                 context,
                 false,
-                () => { entered = true },
+                inside => { entered = true; return runtime.lookupPath(inside, [], context) },
             ),
         ]
         for (const result of pendingResults) {
@@ -240,7 +240,7 @@ describe("fatal execution", () => {
 
         expect(outcomes).to.eql(outcomes.map(() => failure))
         expect(reports).to.eql([failure])
-        expect(entered).to.be(false)
+        expect(entered).to.be(true)
     })
 
     it("lets fatality win until outward result settlement runs", async () => {
@@ -359,7 +359,7 @@ describe("fatal execution", () => {
         )
 
         expect(failure).to.be(nestedFailure)
-        const gate = chain._state.value
+        const gate = context.execution._metadata.get(chain._state).placementVersions.value.value
         expect(gate).to.be.a(Promise)
         let settled = false
         gate.then(() => {

@@ -1,11 +1,13 @@
 // Test-only consistency oracle. It independently recounts projected
 // placements, verifies cycle-cut shape and both parent-edge directions, and
-// rejects cycles in the projected parent graph.
+// rejects cycles in the projected parent graph. It also runs the storage
+// oracle, so every consistency check covers the facts retirement relies on.
 import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
+import { verifyStorage } from "./verify-storage.js"
 
 function verifyRefCounts(operationContext, ...roots) {
     const seen = new Set()
@@ -13,6 +15,7 @@ function verifyRefCounts(operationContext, ...roots) {
 
     const parentStates = new Map()
     for (const node of seen) verifyParentGraph(node, parentStates, operationContext)
+    verifyStorage(operationContext, ...roots)
 }
 
 function verifyReachable(node, seen, operationContext) {
@@ -115,31 +118,13 @@ function verifyCycleCuts(node, operationContext) {
     }
 
     for (const key of Object.keys(meta?.placementVersions ?? {})) {
-        const promiseVersion = propertyVersions.getPromiseVersion(node, key, operationContext)
-        if (!promiseVersion) continue
-        const descriptor = languageProperties.getLanguagePropertyDescriptor(
-            node,
-            key,
-            operationContext,
-        )
-        const imported = metadata.isImported(
-            node,
-            operationContext,
-        )
-        const validShape = promiseVersion &&
-            Object.hasOwn(promiseVersion, "value") &&
-            descriptor?.enumerable &&
-            "value" in descriptor
-        // A settled version may overlay any previous physical value when
-        // writeback fails, including after an earlier successful settlement.
-        const validValue = !languageValues.isPending(
-            promiseVersion?.value,
-            operationContext,
-        ) || Object.is(descriptor?.value, promiseVersion?.value)
-        const validStorage = (imported || descriptor?.writable) &&
-            validValue
-        if (!validShape || !validStorage) {
-            fatal("Live Promise version has no valid language property", operationContext)
+        const version = propertyVersions.getPlacementVersion(node, key, operationContext)
+        // Installed versions are logical placements, even when absent or not
+        // mirrored in storage. Edge/count checks below use that same surface.
+        if (!Object.hasOwn(version, "value") ||
+            languageProperties.classifyLanguageProperty(node, key, operationContext) !== languageProperties.ORDINARY_PROPERTY ||
+            (languageValues.isPending(version.value, operationContext) && !version.promiseBacked)) {
+            fatal("Invalid logical placement version", operationContext)
         }
     }
 }

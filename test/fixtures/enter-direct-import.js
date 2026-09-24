@@ -1,5 +1,6 @@
 import { Chain } from "../../src/chain.js"
 import { enter } from "../../src/enter.js"
+import { getPlacementVersion } from "../../src/property-versions.js"
 import { Execution } from "../../src/execution.js"
 
 const root = { target: { value: 1 } }
@@ -8,7 +9,7 @@ let callbackCount = 0
 let gate
 const result = enter(new Chain(root, operationContext), ["target"], operationContext, true, () => {
     callbackCount++
-    gate = root.target
+    gate = getPlacementVersion(root, "target", operationContext).value
     return "done"
 })
 const published = await gate

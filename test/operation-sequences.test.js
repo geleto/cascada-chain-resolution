@@ -128,10 +128,10 @@ describe("publication between queued commands", () => {
             const chain = new r.Chain({ list: [] }, ctx)
             r.assignPath(chain, ["list"], pending.promise, ctx)
             const reversed = r.run(chain, ["list"], "reverse", [], ctx, { mutationScopeDepth: 1 })
-            r.assignPath(chain, ["list", 9, "x"], 1, ctx)
+            r.assignPath(chain, ["list", 9, "x"], 1, ctx, 1)
             pending.resolve([2])
             for (let i = 0; i < before; i++) await Promise.resolve()
-            const entry = r.enter(chain, ["list", 1], ctx, mutable, () => assert.fail("Poison must block entry"))
+            const entry = r.enter(chain, ["list", 1], ctx, mutable, entered => r.lookupPath(entered, [], ctx))
             for (let i = 0; i < after; i++) await Promise.resolve()
             const exported = await r.export(chain, ["list"], ctx)
             assert.equal(exported.kind, r.ERROR_KIND.NullLookup, `mutable=${mutable}, before=${before}, after=${after}`)
@@ -549,12 +549,46 @@ describe("mixed entry and native ordering", () => {
 })
 
 describe("structural Array command sequences", () => {
+    it("matches native Array methods queued behind indexed element entry", async () => {
+        const methods = [
+            ["push", [8], true], ["pop", [], true], ["shift", [], true],
+            ["unshift", [8], true], ["splice", [1, 1, 8], true], ["reverse", [], true],
+            ["slice", [1], false], ["at", [-1], false], ["join", [","], false],
+            ["toReversed", [], false],
+        ]
+        for (const [method, args, mutable] of methods) for (const captures of [false, true]) {
+            const ctx = { execution: new r.Execution(), errorContext: {} }, hold = Promise.withResolvers()
+            const chain = new r.Chain([2, , 1], ctx)
+            assert.equal(r.hasError(chain, [], ctx), false)
+            const expected = [2, , 1]
+            expected[4] = 7
+            const expectedResult = expected[method](...args)
+            const snapshot = Array.isArray(expectedResult) ? expectedResult.slice() : expectedResult
+            if (mutable) expected[0] = 9
+            const entry = r.enter(chain, [4], ctx, true, inside =>
+                hold.promise.then(() => r.assignPath(inside, [], 7, ctx)))
+            const earlier = captures ? r.export(chain, [], ctx) : undefined
+            const result = r.run(chain, [], method, args, ctx, mutable ? { mutationScopeDepth: 0 } : {})
+            const later = mutable ? r.assignPath(chain, [0], 9, ctx) : undefined
+            verifyRefCounts(ctx, chain._state)
+            hold.resolve()
+            await Promise.all([entry, later])
+            const actual = await r.export(new r.Chain(await result, ctx), [], ctx)
+            const label = `${method}, captures=${captures}`
+            assert.deepStrictEqual(actual, snapshot, label)
+            assert.deepStrictEqual(await r.export(chain, [], ctx), mutable ? expected : [2, , 1, , 7], label)
+            if (captures) assert.deepStrictEqual(await earlier, [2, , 1, , 7], label)
+            assert.equal(r.getErrors(chain, [], ctx), null)
+            verifyRefCounts(ctx, chain._state)
+        }
+    })
+
     const starts = ["length", "replacement", "entry"]
     const changes = ["append", "distant index", "length", "element entry", "broken prefix"]
     const endings = ["push", "pop", "repair", "replace", "delete", "entry", "read entry"]
-    for (const representation of ["private", "imported", "shared", "leased", "ArrayView", "Proxy"]) {
+    for (const representation of ["private", "indexed", "imported", "shared", "leased", "ArrayView", "Proxy"]) {
         for (const captures of [false, true]) {
-            it(`orders widened owners through later operations: ${representation}, captures=${captures}`, async () => {
+            it(`orders Array scopes through later operations: ${representation}, captures=${captures}`, async () => {
                 for (const start of starts) for (const change of changes) for (const end of endings) {
                     const ctx = { execution: new r.Execution(), errorContext: {} }
                     const hold = Promise.withResolvers(), lease = Promise.withResolvers()
@@ -564,6 +598,7 @@ describe("structural Array command sequences", () => {
                         : representation === "Proxy" ? new Proxy(source, {}) : source
                     const root = { list: initial }
                     const chain = new r.Chain(representation === "imported" ? r.import(root, ctx) : root, ctx)
+                    if (representation === "indexed") assert.equal(r.hasError(chain, [], ctx), false)
                     const waits = [], snapshots = []
                     const track = value => {
                         const result = Promise.resolve(value)
@@ -597,7 +632,7 @@ describe("structural Array command sequences", () => {
                     }
                     if (change === "length") { r.assignPath(chain, ["list", "length"], 4, ctx); expected.length = 4 }
                     if (change === "element entry") track(r.enter(chain, ["list", 5], ctx, true, () => {}))
-                    if (change === "broken prefix") { r.assignPath(chain, ["list", 5, "missing"], 9, ctx); poison = true }
+                    if (change === "broken prefix") { r.assignPath(chain, ["list", 5, "missing"], 9, ctx, 1); poison = true }
                     capture()
                     if (end === "push" || end === "pop") {
                         track(r.run(chain, ["list"], end, end === "push" ? [5] : [], ctx, { mutationScopeDepth: 1 }))
@@ -609,6 +644,7 @@ describe("structural Array command sequences", () => {
                     if (end === "entry") track(r.enter(chain, ["list"], ctx, true, () => {}))
                     if (end === "read entry") track(r.enter(chain, ["list"], ctx, false, () => {}))
                     capture()
+                    if (representation === "indexed") verifyRefCounts(ctx, chain._state)
                     const output = track(r.export(chain, [], ctx))
                     hold.resolve(start === "replacement" ? [1] : 1)
                     lease.resolve()
@@ -693,7 +729,8 @@ describe("structural Array command sequences", () => {
                 }
                 const expected = await execute("direct")
                 // Independent ownership rules supplement route equivalence.
-                if (index === 5 && ["broken", "fail"].includes(commands[0])) assert.equal(expected.listPoisoned, true)
+                assert.equal(expected.listPoisoned, false)
+                if (index === 5 && ["broken", "fail"].includes(commands[0])) assert.equal(expected.values[1], 6)
                 if (index === 5 && commands.join() === "put,fail") {
                     assert.equal(expected.listPoisoned, false)
                     assert.equal(expected.values[1], 6)
@@ -762,7 +799,6 @@ describe("structural Array command sequences", () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const chain = new r.Chain([1], ctx)
         await r.enter(chain, [5], ctx, true, async inner => {
-            assert.deepStrictEqual(r.selectEntryPath(inner, ["n"], ctx, 0), { path: ["n"], firstDynamicSegment: 0, suffix: [] })
             assert.equal(r.lookupPath(inner, [], ctx), undefined)
             assert.equal(r.hasError(inner, [], ctx), false)
             assert.equal(r.getErrors(inner, [], ctx), null)
@@ -791,7 +827,7 @@ describe("structural Array command sequences", () => {
         })
         const read = r.run(chain, ["list", 0], "read", [], ctx, {})
         await checkpoint()
-        assert.deepStrictEqual(calls, [])
+        assert.deepStrictEqual(calls, ["read"])
         assert.equal(r.lookupPath(chain, ["sibling"], ctx), 7)
         hold.resolve()
         await entry
@@ -934,11 +970,8 @@ describe("scope boundary regressions", () => {
     it("retains a gate's pending publication as the recovery baseline of a failed replacement", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const hold = Promise.withResolvers(), data = Promise.withResolvers()
-        const chain = new r.Chain({ then: 0 }, ctx)
-        const entry = r.enter(chain, ["then"], ctx, true, inside => {
-            r.assignPath(inside, [], data.promise, ctx)
-            return hold.promise
-        })
+        const chain = new r.Chain({ then: data.promise }, ctx)
+        const entry = r.enter(chain, ["then"], ctx, true, () => hold.promise)
         r.assignPath(chain, ["then"], () => {}, ctx)
         const replacement = r.lookupPath(chain, ["then"], ctx)
         hold.resolve()

@@ -1,127 +1,110 @@
 import { Chain } from "./chain.js"
 import * as externalTree from "./external-mutation-tree.js"
-import { capturePathOrigin } from "./path-context.js"
-import { PathOperation } from "./path-operation.js"
-import { createExternalReservationView, pendingExternalEffects, validateExternalAccess } from "./external-operation.js"
+import { capturePathOrigin, captureRoute } from "./path-context.js"
+import { createExternalReservationView, ExternalEffect, pendingExternalEffects } from "./external-operation.js"
 import * as errors from "./error.js"
 import * as steps from "./internal-step.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import { transformProperty, walkMutationPath } from "./mutations.js"
-import { walkObservationPath } from "./observations.js"
+import * as values from "./language-values.js"
+import { requiresArrayMaterialization } from "./array-view.js"
+import { shallowCopyPathContainer } from "./mutations.js"
 import * as versions from "./property-versions.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
+// Selection consumes no unavailable suffix. The same anchor/rebased reference
+// represents missing, poisoned, pending, intrinsic, and native destinations.
+function captureReference(chain, route, mutable, operationContext) {
+    const staticDepth = route.dynamicDepth - (chain._contextOrigin?.depth ?? 0)
+    return capture(chain._state, "value", versions.capturePlacement(chain._state, "value", operationContext), 0)
+
+    function capture(parent, key, placement, depth) {
+        let value = placement.value
+        if (metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External) {
+            const scope = externalTree.tracePath(chain._externalMutationTree, route.path, staticDepth).externalScope
+            if (scope) return {
+                placement: { value: scope[externalTree.TREE_NODE].identity, present: true },
+                depth: scope[externalTree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
+                node: scope,
+            }
+        }
+        const segment = route.path[depth]
+        if (!values.isPending(value, operationContext) && values.isTraversable(value, operationContext) &&
+            !(route.externalBoundary && depth >= staticDepth) && depth < route.path.length &&
+            (typeof segment === "string" || typeof segment === "number")) {
+            const selected = errors.catchExternalThrow(() => {
+                const nextKey = String(segment)
+                if (properties.classifyLanguageProperty(value, nextKey, operationContext) !== properties.ORDINARY_PROPERTY) return
+                properties.readLanguageProperty(value, nextKey, operationContext)
+                let next = versions.capturePlacement(value, nextKey, operationContext)
+                if (mutable && (metadata.requiresCopyOnWrite(value, operationContext) ||
+                    requiresArrayMaterialization(value, operationContext) ||
+                    properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext) ||
+                    properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext, true))) {
+                    const copy = shallowCopyPathContainer(value, undefined, operationContext).value
+                    const copied = { ...placement, value: copy }
+                    versions.replaceLogicalPlacement(parent, key, copied, operationContext)
+                    placement = copied
+                    value = copy
+                    next = versions.capturePlacement(copy, nextKey, operationContext)
+                }
+                // Keep child gate preparation inside discovery's guard too.
+                // A supported read failure leaves this enclosing reference usable.
+                return capture(value, nextKey, next, depth + 1)
+            }, operationContext, errors.ERROR_KIND.LookupReflectionFailed, () => undefined)
+            if (selected) return selected
+        }
+        const gate = mutable ? versions.installPlacementGate(parent, key, operationContext, placement) : undefined
+        return { key, placement, depth, gate,
+            node: externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth)) }
+    }
+}
+
 function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSegment = path.length) {
     return steps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext,
-            mutable ? path.length : undefined, false, firstDynamicSegment)
-        const route = operation.route
-        path = route.path
-        const { externalTreeNode: node } = route
-        if (mutable && operation.routeFailure) {
-            return operation.finishMutation(operation.mutate(() => operation.routeFailure))
-        }
-        if (!mutable) operation.reserveExternal(node)
-        let entered
-        let source
-        let gate
-        let selectedNode = node
-        let lease
-        const native = route.externalBoundary
-        const fail = failure => {
-            if (lease) metadata.decrementReadLease(source.value, operationContext)
-            if (gate && entered) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
-            if (entered) entered._closed = true
-            return operation.finish(failure)
-        }
-        const start = () => {
-            return steps.continueOperation(operation.externalEffect?.readiness, operationContext, () => {
-                const blocker = operation.externalBlocker(false)
-                if (blocker) return fail(blocker)
-                entered._externalReservationView = node ? createExternalReservationView(node) : chain._externalReservationView
-                return runCallback(entered, result => {
-                    if (lease) metadata.decrementReadLease(source.value, operationContext)
-                    if (gate) versions.completePlacementGate(gate, versions.capturePlacement(entered._state, "value", operationContext), operationContext)
-                    const pending = node ? pendingExternalEffects(entered._externalReservationView) : undefined
-                    markPromiseHandled(operation.finish(pending), operationContext)
-                    return result
+        chain._assertOperationContext(operationContext)
+        if (mutable && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
+        const route = captureRoute(chain, path, firstDynamicSegment)
+        const { key, placement, depth, node, gate } = captureReference(chain, route, mutable, operationContext)
+        const effect = node ? new ExternalEffect(node, mutable, chain._externalReservationView, operationContext) : undefined
+        if (!mutable && values.isPending(placement.value, operationContext)) versions.retainPlacement(placement, operationContext)
+        const entered = new Chain(undefined, operationContext)
+        entered._readOnly = !mutable
+        entered._rootKey = depth ? key ?? route.path[depth - 1] : chain._rootKey
+        entered._rootPath = route.path.slice(depth)
+        entered._externalMutationTree = node
+        entered._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+        entered._externalReservationView = node ? createExternalReservationView(node) : chain._externalReservationView
+        versions.transferPlacement(placement, entered._state, "value", operationContext)
+        let leased
+        return versions.resolvePlacementTransition(placement, operationContext, captured => {
+            // The private root holder has one placement, whose publication
+            // authority is already captured by the entry's gate.
+            if (gate) metadata.requireMeta(entered._state, operationContext).entryGate = gate
+            if (!mutable && !values.isPending(captured.value, operationContext))
+                leased = metadata.incrementReadLease(captured.value, operationContext)
+            return steps.continueOperation(effect?.readiness, operationContext, () => {
+                const result = onEntered(entered)
+                if (operationContext.execution.fatalError) throw operationContext.execution.fatalError
+                return steps.continueOperation(result, operationContext, complete, reason => {
+                    if (!errors.isPoisonError(reason)) throw reason
+                    return complete(reason)
                 })
             })
-        }
-        function initialize(placement, depth = path.length) {
-            source = placement
-            entered = new Chain(undefined, operationContext)
-            entered._readOnly = !mutable
-            entered._externalMutationTree = selectedNode
-            entered._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
-            versions.transferPlacement(placement, entered._state, "value", operationContext)
-        }
-        function runCallback(privateChain, complete) {
-            const result = onEntered(privateChain)
-            if (operationContext.execution.fatalError) throw operationContext.execution.fatalError
-            return steps.continueOperation(result, operationContext, finish, reason => {
-                if (!errors.isPoisonError(reason)) throw reason
-                return finish(reason)
-            })
-            function finish(value) {
-                if (errors.isFatalError(value)) throw value
-                privateChain._closed = true
-                return complete(value)
+
+            function complete(result) {
+                if (errors.isFatalError(result)) throw result
+                entered._closed = true
+                if (leased) metadata.decrementReadLease(captured.value, operationContext)
+                const publication = gate && versions.completePlacementGate(gate,
+                    versions.capturePlacement(entered._state, "value", operationContext), operationContext)
+                const external = node ? pendingExternalEffects(entered._externalReservationView) : undefined
+                markPromiseHandled(steps.collectInputs([publication, external], operationContext, () => {
+                    metadata.metaOf(entered._state, operationContext).entryGate = undefined
+                    effect?.complete()
+                }), operationContext)
+                return result
             }
-        }
-        if (native) {
-            return walkObservationPath(chain, path, operationContext, fail, fail,
-                errors.ERROR_KIND.LookupReflectionFailed, { owner: operation, externalDepth: native[externalTree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
-                    onExternal: identity => {
-                        const invalid = validateExternalAccess(identity, native, operationContext)
-                        if (invalid) return fail(invalid)
-                        operation.reachedExternal = true
-                        if (!node?.[externalTree.TREE_NODE].identity || route.dynamicDepth < node[externalTree.TREE_NODE].path.length) {
-                            const failure = properties.propertyValidationError("Entry must select a registered external scope through a static path", operationContext)
-                            if (!mutable) return fail(failure)
-                            return steps.continueOperation(operation.externalEffect?.readiness, operationContext, () =>
-                                operation.finishMutation(operation.externalBlocker() ?? failure))
-                        }
-                        initialize({ value: node[externalTree.TREE_NODE].identity, present: true })
-                        return start()
-                    } })
-        }
-        if (!mutable) {
-            return walkObservationPath(chain, path, operationContext, (value, present, depth, recovery) => {
-                if (errors.isPoisonError(value) && depth !== path.length) return fail(value)
-                initialize({ value, present, recovery })
-                lease = metadata.incrementReadLease(value, operationContext)
-                return start()
-            }, fail, errors.ERROR_KIND.LookupReflectionFailed, { owner: operation })
-        }
-        return walkMutationPath(chain, path, operationContext, target => {
-            if (target.propertyKind !== properties.ORDINARY_PROPERTY) {
-                const failure = properties.propertyValidationError("Cannot enter length for mutation", operationContext)
-                target.replaceReceiver(failure)
-                return failure
-            }
-            const depth = target.pathDepth ?? path.length
-            const suffix = path.slice(depth)
-            const captured = versions.capturePlacement(target.parent, target.key, operationContext, target.sourceVersion)
-            if (suffix.length) {
-                const kind = properties.classifyLanguageProperty(captured.value, suffix[0], operationContext)
-                if (kind !== properties.ORDINARY_PROPERTY || suffix.length > 1) {
-                    const failure = kind !== properties.ORDINARY_PROPERTY
-                        ? properties.propertyValidationError("Cannot enter length for mutation", operationContext)
-                        : errors.pathAccessError(undefined, operationContext)
-                    return steps.continueOperation(transformProperty(target, operationContext, () => failure), operationContext, outcome => outcome.result)
-                }
-            }
-            selectedNode = externalTree.findBranch(chain._externalMutationTree, path.slice(0, depth))
-            gate = versions.installPlacementGate(target.parent, target.key, operationContext, target.sourceVersion)
-            if (target.attachmentRoot) metadata.markShared(target.attachmentRoot, operationContext)
-            initialize(captured, depth)
-            // The reference denotes the element, but every command traverses
-            // its protected Array so structural effects happen at that turn.
-            if (suffix.length) entered._rootPath = suffix
-        }, result => steps.continueOperation(result, operationContext, failure => failure ? fail(failure) : start()), {
-            structuralOwner: true,
         })
     })
 }

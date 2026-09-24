@@ -5,6 +5,9 @@ import * as errorUtils from "../src/error.js"
 import * as internalSteps from "../src/internal-step.js"
 
 import {
+    logicalArrayValues,
+    logicalProperty,
+    logicalKeys,
     testOperationContext,
     Chain,
     arrayViews,
@@ -169,7 +172,7 @@ describe("run", () => {
             {},
         )
         expect(pushed instanceof Promise).to.be(false)
-        expect([...pushed.values(testOperationContext())]).to.eql([retained])
+        expect([...logicalArrayValues(pushed, testOperationContext())]).to.eql([retained])
         retainedReady.resolve(true)
     })
 
@@ -211,10 +214,10 @@ describe("run", () => {
         )
 
         expect(pushed instanceof Promise).to.be(false)
-        expect([...pushed.values(testOperationContext())]).to.eql([item])
-        expect([...pushed.values(testOperationContext())][0]).to.be(item)
+        expect([...logicalArrayValues(pushed, testOperationContext())]).to.eql([item])
+        expect([...logicalArrayValues(pushed, testOperationContext())][0]).to.be(item)
         assignPath(payloadSource, ["item", "answer"], 4)
-        expect([...pushed.values(testOperationContext())][0].answer).to.be(3)
+        expect([...logicalArrayValues(pushed, testOperationContext())][0].answer).to.be(3)
         expect(exportValue(payloadSource, [])).to.eql({
             item: { answer: 4 },
         })
@@ -646,8 +649,8 @@ describe("run", () => {
         const sliced = run(chain, [], "slice", [0], {})
         const reversed = run(chain, [], "toReversed", [], {})
 
-        expect(sliced.keys(testOperationContext())).to.eql(["0", "2"])
-        expect(sliced.get("0", testOperationContext())).to.be(child)
+        expect(logicalKeys(sliced, testOperationContext())).to.eql(["0", "2"])
+        expect(logicalProperty(sliced, "0", testOperationContext())).to.be(child)
         expect(Object.keys(reversed)).to.eql(["0", "1", "2"])
         expect(reversed).to.eql([3, undefined, child])
         expect(source).to.eql([child, , 3])
@@ -700,7 +703,7 @@ describe("run", () => {
         flatDepth.resolve(undefined)
         separator.resolve(undefined)
 
-        expect([...(await sliced).values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues((await sliced), testOperationContext())]).to.eql([
             1, 2, 3,
         ])
         expect(await copied).to.be(copiedChain._state.value)
@@ -717,7 +720,7 @@ describe("run", () => {
         const result = run(new Chain(source), [], "slice", [], {})
 
         expect(result instanceof Promise).to.be(false)
-        expect(result.get("0", testOperationContext())).to.be(pending.promise)
+        expect(logicalProperty(result, "0", testOperationContext())).to.be(pending.promise)
         pending.resolve(1)
     })
 
@@ -736,7 +739,7 @@ describe("run", () => {
 
         expect(arrayViews.isArrayView(sliced)).to.be(true)
         expect(arrayViews.backingOf(sliced)).to.be(source)
-        expect([...sliced.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(sliced, testOperationContext())]).to.eql([1, 2, 3])
 
         const changed = new Chain(sliced)
         run(changed, [], "push", [5], { mutationScopeDepth: 0 })
@@ -778,13 +781,13 @@ describe("run", () => {
         expect(arrayViews.backingOf(concatenated)).to.be(left)
         expect(arrayViews.projectionOf(left).length).to.be(3)
         expect(arrayViews.projectionOf(right)).to.be(right)
-        expect(concatenated.keys(testOperationContext())).to.eql([
+        expect(logicalKeys(concatenated, testOperationContext())).to.eql([
             "0",
             "2",
             "4",
             "5",
         ])
-        expect([...concatenated.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(concatenated, testOperationContext())]).to.eql([
             1,
             undefined,
             3,
@@ -803,13 +806,13 @@ describe("run", () => {
             [self],
             {},
         )
-        expect(selfConcat.keys(testOperationContext())).to.eql([
+        expect(logicalKeys(selfConcat, testOperationContext())).to.eql([
             "0",
             "2",
             "3",
             "5",
         ])
-        expect([...selfConcat.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(selfConcat, testOperationContext())]).to.eql([
             1,
             undefined,
             3,
@@ -840,7 +843,7 @@ describe("run", () => {
         )
 
         expect(arrayViews.isArrayView(result)).to.be(true)
-        expect(result.get("1", testOperationContext())).to.be(value)
+        expect(logicalProperty(result, "1", testOperationContext())).to.be(value)
     })
 
     it("gives concatenated Promise properties independent versions", async () => {
@@ -1212,7 +1215,7 @@ describe("run", () => {
             {},
         )
 
-        expect([...result.values(testOperationContext())]).to.eql([1])
+        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1])
         expect(registrations()).to.be(initial)
         ignored.resolve(2)
     })
@@ -1502,7 +1505,7 @@ describe("run", () => {
         const cleared = run(new Chain([1]), [], "fill", [], {})
         const spliced = run(new Chain([1, 2, 3]), [], "splice", [1, 1, 9], {})
 
-        expect([...result.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, 2, 3])
         expect(cleared).to.eql([undefined])
         expect(spliced).to.eql([1, 9, 3])
         expect(exportValue(chain, [])).to.eql([1, 2])
@@ -1516,8 +1519,8 @@ describe("run", () => {
         const result = run(chain, [], "push", [2], {})
         const original = exportValue(chain, [])
 
-        expect([...result.values(testOperationContext())]).to.eql([1, 2])
-        expect([...original.values(testOperationContext())]).to.eql([1])
+        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, 2])
+        expect(original).to.eql([1])
         expect(Object.hasOwn(original, "push")).to.be(false)
     })
 
@@ -1533,7 +1536,7 @@ describe("run", () => {
             [spread],
             {},
         )
-        expect([...result.values(testOperationContext())]).to.eql([1, spread])
+        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, spread])
     })
 
     it("keeps every earlier value stable across prepends", () => {
@@ -1541,8 +1544,8 @@ describe("run", () => {
         const first = run(sourceChain, [], "unshift", [1], {})
         const second = run(new Chain(first), [], "unshift", [0], {})
 
-        expect([...second.values(testOperationContext())]).to.eql([0, 1, 2, 3])
-        expect([...first.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(second, testOperationContext())]).to.eql([0, 1, 2, 3])
+        expect([...logicalArrayValues(first, testOperationContext())]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([2, 3])
     })
 
@@ -1553,7 +1556,7 @@ describe("run", () => {
 
         expect(Array.isArray(extended)).to.be(true)
         expect(extended).to.eql([1, 2, 4])
-        expect([...shorter.values(testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(shorter, testOperationContext())]).to.eql([1, 2])
         expect(exportValue(sourceChain, [])).to.eql([1, 2, 3])
     })
 
@@ -1585,7 +1588,7 @@ describe("run", () => {
             {},
         )
 
-        expect([...view.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([
             "inside",
             undefined,
         ])
@@ -1827,7 +1830,7 @@ describe("run", () => {
             { mutationScopeDepth: 0 },
         )
 
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(readPath(chain, []) instanceof Promise).to.be(true)
         expect(result instanceof Promise).to.be(true)
         start.resolve(1)
         expect(await result).to.eql([2])
@@ -1847,7 +1850,7 @@ describe("run", () => {
 
         expect(receiverCount()).to.be(initialReceiverCount + 1)
         expect(startCount() > initialStartCount).to.be(true)
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(readPath(chain, []) instanceof Promise).to.be(true)
 
         receiver.resolve([1, 2])
         await flushMicrotasks()
@@ -2011,7 +2014,7 @@ describe("run", () => {
         assignPath(itemChain, ["0"], 2)
         delayed.resolve("done")
 
-        expect([...(await result).values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues((await result), testOperationContext())]).to.eql([
             1,
             "done",
         ])
@@ -2037,7 +2040,7 @@ describe("run", () => {
         assignPath(itemChain, ["0", "value"], 2)
         delayed.resolve("done")
 
-        const output = [...(await result).values(testOperationContext())]
+        const output = [...logicalArrayValues((await result), testOperationContext())]
         expect(output).to.eql([child, "done"])
         expect(child.value).to.be(1)
         expect(itemChain._state.value[0].value).to.be(2)
@@ -2102,7 +2105,7 @@ describe("run", () => {
         const chain = new Chain([1])
 
         expect(run(chain, [], "push", [item.promise], { mutationScopeDepth: 0 })).to.be(2)
-        expect(chain._state.value instanceof Promise).to.be(false)
+        expect(readPath(chain, []) instanceof Promise).to.be(false)
         expect(readPath(chain, [1]) instanceof Promise).to.be(true)
 
         item.resolve({ value: 2 })
@@ -2118,7 +2121,7 @@ describe("run", () => {
         const chain = new Chain([1, removed.promise])
         const result = run(chain, [], "pop", [], { mutationScopeDepth: 0 })
 
-        expect(chain._state.value instanceof Promise).to.be(false)
+        expect(readPath(chain, []) instanceof Promise).to.be(false)
         expect(result instanceof Promise).to.be(true)
         expect(exportValue(chain, [])).to.eql([1])
         removed.resolve(7)
@@ -2273,7 +2276,7 @@ describe("run", () => {
             assignPath(chain, ["0", "value"], 2)
             delayed.resolve(ready)
 
-            const output = [...(await result).values(testOperationContext())]
+            const output = [...logicalArrayValues((await result), testOperationContext())]
             expect(output[0]).to.be(child)
             expect(child.value).to.be(1)
             expect(chain._state.value[0].value).to.be(2)
@@ -2285,14 +2288,14 @@ describe("run", () => {
         const sorted = run(new Chain(source), [], "sort", [], {})
         const copied = run(new Chain(source), [], "toSorted", [], {})
 
-        expect([...sorted.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(sorted, testOperationContext())]).to.eql([
             1,
             3,
             undefined,
             undefined,
         ])
         expect(Object.keys(sorted)).to.eql(["0", "1", "2"])
-        expect([...copied.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(copied, testOperationContext())]).to.eql([
             1,
             3,
             undefined,
@@ -2312,7 +2315,7 @@ describe("run", () => {
             { mutationScopeDepth: 0 },
         )
 
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(readPath(chain, []) instanceof Promise).to.be(true)
         comparator.resolve((left, right) => left - right)
         expect(await result).to.eql([1, 2, 3])
         expect(await exportValue(chain, [])).to.eql([1, 2, 3])
@@ -3244,7 +3247,7 @@ describe("run", () => {
         const result = run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
         expect(errorCause(result)).to.be(failure)
         expect(chain._state.value).to.be(result)
-        expect([...receiver.values(testOperationContext())]).to.eql([1, 2])
+        expect([...receiver]).to.eql([1, 2])
     })
 
     it("does not replay Array mutations into protected input storage", () => {
@@ -3354,50 +3357,22 @@ describe("run", () => {
         expect(bounded[3]).to.be(cyclic)
     })
 
-    it("does not invoke inherited numeric setters while building remaps", () => {
-        const descriptor = Object.getOwnPropertyDescriptor(
-            Array.prototype,
-            "5",
-        )
-        const observedSource = [0, 1, 2, 3, 4, 5, 6]
-        const mutatedSource = [0, 1, 2, 3, 4, 5, 6]
-        let observed
-        let mutationResult
-        try {
-            Object.defineProperty(Array.prototype, "5", {
-                configurable: true,
-                set() {
-                    throw new Error("Inherited numeric setter was invoked")
-                },
-            })
-            observed = run(
-                new Chain(observedSource),
-                [],
-                "reverse",
-                [],
-                {},
-            )
-            mutationResult = run(
-                new Chain(mutatedSource),
-                [],
-                "reverse",
-                [],
-                { mutationScopeDepth: 0 },
-            )
-        } finally {
-            if (descriptor) {
-                Object.defineProperty(Array.prototype, "5", descriptor)
-            } else {
-                delete Array.prototype[5]
-            }
-        }
+    it("ignores inherited numeric accessors when remapping Array data", () => {
+        const prototype = Object.create(Array.prototype, {
+            "1": {
+                get() { throw new Error("Inherited numeric getter was invoked") },
+                set() { throw new Error("Inherited numeric setter was invoked") },
+            },
+        })
+        for (const options of [{}, { mutationScopeDepth: 0 }]) {
+            const source = Object.setPrototypeOf([0, , 2, 3, 4, 5, 6], prototype)
+            const result = run(new Chain(source), [], "reverse", [], options)
 
-        expect(mutationResult instanceof Error).to.be(false)
-        expect([...observed.values(testOperationContext())]).to.eql([
-            6, 5, 4, 3, 2, 1, 0,
-        ])
-        expect(mutatedSource).to.eql([0, 1, 2, 3, 4, 5, 6])
-        expect(mutationResult).to.eql([6, 5, 4, 3, 2, 1, 0])
+            expect(exportValue(new Chain(result), [])).to.eql([6, 5, 4, 3, 2, , 0])
+            expect(Object.hasOwn(source, "1")).to.be(false)
+            expect(source[0]).to.be(0)
+            expect(source[6]).to.be(6)
+        }
     })
 
     it("materializes a view before an ordinary indexed write", () => {

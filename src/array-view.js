@@ -36,7 +36,8 @@ class ArrayView {
         const backing = backingOf(projection, operationContext)
         if (
             metadata.isImported(arrayOrArrayView, operationContext) ||
-            metadata.isImported(backing, operationContext)
+            metadata.isImported(backing, operationContext) ||
+            !hasPhysicalArrayLength(arrayOrArrayView, operationContext)
         ) return undefined
         if (isArrayView(projection, operationContext)) return projection
 
@@ -46,24 +47,8 @@ class ArrayView {
     }
 
     static canGrowEnd(source, count, operationContext) {
-        if (count === 0) return true
-        const projection = projectionOf(source, operationContext)
-        const backing = backingOf(projection, operationContext)
-        const backingLength = physicalArrayLength(backing, operationContext)
-        if (
-            isArrayView(projection, operationContext) &&
-            projection._end !== backingLength
-        ) return false
-        if (backingLength + count > 0xffffffff) return false
-        if (
-            !errorUtils.runExternalAction(operationContext, () =>
-                Object.isExtensible(backing),
-            )
-        )
-            return false
-        const descriptor = errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(backing, "length"),
-        )
-        return descriptor?.writable === true
+        if (!hasPhysicalArrayLength(source, operationContext)) return false
+        return canGrowBacking(projectionOf(source, operationContext), count, operationContext)
     }
 
     static tryExtendEnd(source, count, beforeWrite, operationContext) {
@@ -86,14 +71,6 @@ class ArrayView {
         const index = Number(key)
         if (index >= this.length) return undefined
         return String(this._start + index)
-    }
-
-    get(key, operationContext) {
-        if (key === "length") return this.length
-        const descriptor = this.descriptor(key, operationContext)
-        return isDataPlacement(descriptor)
-            ? descriptor.value
-            : undefined
     }
 
     descriptor(key, operationContext) {
@@ -153,45 +130,34 @@ class ArrayView {
         )
     }
 
-    keys(operationContext) {
-        return enumerableArrayKeys(this, operationContext)
-    }
-
     setLength(length, operationContext) {
         const growth = length - this.length
         if (growth > 0) {
             // The view itself is already the resolved internal projection.
-            if (!this.#canGrowEnd(growth, operationContext)) return false
+            if (!canGrowBacking(this, growth, operationContext)) return false
             extendPhysicalArray(this._backing, growth, operationContext)
         }
         this._end = this._start + length
+        const meta = metadata.requireMeta(this, operationContext)
+        meta.arrayLength = length
+        if (meta.retainedPrefixLength > length) meta.retainedPrefixLength = length
         return true
     }
+}
 
-    #canGrowEnd(count, operationContext) {
-        if (count === 0) return true
-        const backingLength = physicalArrayLength(
-            this._backing,
-            operationContext,
-        )
-        if (this._end !== backingLength) return false
-        if (backingLength + count > 0xffffffff) return false
-        if (
-            !errorUtils.runExternalAction(operationContext, () => Object.isExtensible(this._backing),
-            )
-        ) {
-            return false
-        }
-        const descriptor = errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(this._backing, "length"),
-        )
-        return descriptor?.writable === true
-    }
-
-    *values(operationContext) {
-        for (let index = 0; index < this.length; index++) {
-            yield this.get(String(index), operationContext)
-        }
-    }
+// Check physical capacity on an already resolved projection. Logical shape
+// and imported-data protection remain the responsibility of its caller.
+function canGrowBacking(projection, count, operationContext) {
+    if (count === 0) return true
+    const view = isArrayView(projection, operationContext) ? projection : undefined
+    const backing = view ? view._backing : projection
+    const length = physicalArrayLength(backing, operationContext)
+    if (view && view._end !== length) return false
+    if (length + count > 0xffffffff) return false
+    if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return false
+    const descriptor = errorUtils.runExternalAction(operationContext, () =>
+        Object.getOwnPropertyDescriptor(backing, "length"))
+    return descriptor?.writable === true
 }
 
 function isArrayView(value, operationContext) {
@@ -238,15 +204,32 @@ function extendPhysicalArray(array, count, operationContext) {
     })
 }
 
-function logicalArrayLength(value, operationContext) {
+function publishedArrayLength(value, operationContext) {
+    const length = metadata.metaOf(value, operationContext)?.arrayLength
+    return length?.minimum ?? length ?? storedArrayLength(value, operationContext)
+}
+
+function storedArrayLength(value, operationContext) {
     const projection = projectionOf(value, operationContext)
     return isArrayView(projection, operationContext)
         ? projection.length
         : physicalArrayLength(projection, operationContext)
 }
 
+function hasPhysicalArrayLength(value, operationContext) {
+    const length = metadata.metaOf(value, operationContext)?.arrayLength
+    return length === undefined || (length?.minimum ?? length) === storedArrayLength(value, operationContext) &&
+        (length?.maximum === undefined || length.maximum === length.minimum)
+}
+
 function requiresArrayMaterialization(value, operationContext) {
-    return isArrayView(projectionOf(value, operationContext), operationContext)
+    if (isArrayView(projectionOf(value, operationContext), operationContext)) return true
+    const length = metadata.metaOf(value, operationContext)?.arrayLength
+    if (length === undefined) return false
+    const minimum = length.minimum ?? length
+    // Pending growth lives in logical placements; it needs no storage copy.
+    // Resolved shape must match storage before native representation is reused.
+    return (length.maximum ?? minimum) === minimum && minimum !== storedArrayLength(value, operationContext)
 }
 
 function isArrayIndex(key) {
@@ -258,36 +241,9 @@ function isArrayIndex(key) {
         String(index) === key
 }
 
-// Broad ranges enumerate present backing keys; narrow ranges inspect selected
-// indexes. Removing an endpoint must not turn sparse traversal into a hole scan.
-function enumerableArrayKeys(
-    arrayOrView,
-    operationContext,
-    start = 0,
-    end = undefined,
-) {
-    const projection = projectionOf(arrayOrView, operationContext)
-    const keys = Object.create(null)
-    for (const key of arrayKeyCandidates(projection, operationContext, start, end)) {
-        const descriptor = isArrayView(projection, operationContext)
-            ? projection.descriptor(key, operationContext)
-            : errorUtils.runExternalAction(operationContext, () =>
-                Object.getOwnPropertyDescriptor(projection, key),
-            )
-        if (isDataPlacement(descriptor)) keys[key] = true
-    }
-    return Object.keys(keys)
-}
-
-// Candidate discovery performs no descriptor reads. A complete collector can
-// reject one unreadable placement while still visiting the other candidates.
-// Yield bounded-range holes lazily so sparse views need no dense key allocation.
-function* arrayKeyCandidates(
-    arrayOrView,
-    operationContext,
-    start = 0,
-    end = undefined,
-) {
+// Broad ranges enumerate stored indexes; bounded views inspect only their
+// selected indexes, yielding holes lazily without a dense key allocation.
+function* physicalArrayKeyCandidates(arrayOrView, operationContext, start = 0, end) {
     const projection = projectionOf(arrayOrView, operationContext)
     const view = isArrayView(projection, operationContext) ? projection : undefined
     const backing = view ? view._backing : projection
@@ -315,20 +271,15 @@ function* arrayKeyCandidates(
     }
 }
 
-function isDataPlacement(descriptor) {
-    return descriptor?.enumerable === true && "value" in descriptor
-}
-
 export {
     ArrayView,
-    arrayKeyCandidates,
+    physicalArrayKeyCandidates,
     backingOf,
-    enumerableArrayKeys,
     hasArrayAncestor,
     isArrayIndex,
     isArrayView,
     isLogicalArray,
-    logicalArrayLength,
+    publishedArrayLength,
     projectionOf,
     requiresArrayMaterialization,
 }

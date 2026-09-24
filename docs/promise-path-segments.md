@@ -8,7 +8,7 @@ A path segment is a String or Number operation input. Normalize it only after it
 
 The path carries each actual input value plus one trusted compiler fact: the first dynamic-segment position. A ready computed key is still dynamic. Preserve this fact through path capture, composition, and entered contexts; do not infer staticness from a String/Number value or thenable readiness.
 
-Public APIs carry this source fact as the final optional `firstDynamicSegment` argument, or within `run` facts; its default is `path.length`. `selectEntryPath` and entered Chains preserve it when splitting or rebasing paths. Computed mutation routing already captures its static failure prefix; Promise-valued key consumption remains Phase 10 work.
+Public APIs carry this source fact as the final optional `firstDynamicSegment` argument, or within `run` facts; its default is `path.length`. Runtime entry capture and entered Chains preserve it when rebasing paths, including an original dynamic segment inside a retained suffix. Computed mutation routing already captures its static failure prefix; Promise-valued key consumption remains Phase 10 work.
 
 The operation protects the longest resolved path prefix before a continuation remains pending. This is the narrowest scope that can preserve sequential behavior while the next key is unknown.
 

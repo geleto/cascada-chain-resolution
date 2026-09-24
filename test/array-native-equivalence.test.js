@@ -3,6 +3,8 @@ import * as runtime from "../src/index.js"
 
 import { ARRAY_METHODS } from "../src/array-methods.js"
 import {
+    logicalProperty,
+    logicalKeys,
     Chain,
     assignPath,
     deferred,
@@ -800,12 +802,12 @@ async function logicalSnapshot(value) {
     const array = arrayViews.projectionOf(value)
     const output = new Array(array.length)
     const keys = arrayViews.isArrayView(array)
-        ? array.keys(testOperationContext())
+        ? logicalKeys(array, testOperationContext())
         : Object.keys(array)
     for (const key of keys) {
         if (!arrayViews.isArrayIndex(key)) continue
         const element = arrayViews.isArrayView(array)
-            ? array.get(key, testOperationContext())
+            ? logicalProperty(array, key, testOperationContext())
             : array[key]
         output[key] = await logicalSnapshot(element)
     }

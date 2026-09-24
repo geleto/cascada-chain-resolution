@@ -12,6 +12,8 @@ import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
+import { resolveLength, resolveInRange, captureArrayLength } from "./array-length.js"
+import { finishContainerCopy } from "./placement-structure.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -29,9 +31,10 @@ const arraySort = Array.prototype.sort
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { inputs: [numericInput], observe: observeAt },
+    at: { prepare: prepareAtIndex, observe: observeAt },
     concat: {
         prepare: prepareConcatArguments,
+        leaseInputsThroughResult: true,
         remap: createConcatRemap,
         view: tryConcatArrayView,
     },
@@ -50,7 +53,11 @@ const ARRAY_METHODS = {
         leaseInputsThroughResult: true,
         remap: prepareFlatRemap,
     },
-    includes: { prepare: prepareSearchArguments, observe: includes },
+    includes: {
+        leaseInputsThroughResult: true,
+        prepare: prepareSearchArguments,
+        observe: includes,
+    },
     indexOf: {
         leaseInputsThroughResult: true,
         prepare: prepareSearchArguments,
@@ -85,7 +92,7 @@ const ARRAY_METHODS = {
         view: tryShiftArrayView,
         viewNativeResult: getFirstElementPlacement,
     },
-    slice: { inputs: [numericInput, numericInput], observe: slice },
+    slice: { prepare: prepareSliceBounds, observe: slice },
     sort: {
         leaseInputsThroughResult: true,
         prepare: prepareSortArguments,
@@ -118,17 +125,33 @@ const ARRAY_METHODS = {
         methodResult: plainResult,
     },
     with: {
-        inputs: [numericInput, PASS_AS_PAYLOAD],
+        prepare: prepareWithArguments,
         intrinsic: Array.prototype.with,
         leaseInputsThroughResult: true,
     },
 }
 
-function observeAt([index = 0], invocationWork) {
+function prepareAtIndex(work) {
+    return internalSteps.prepareInputs([numericInput(work.args[0], work)], work.operationContext,
+        ([index = 0]) => runArrayStep(work, () => index < 0
+            ? resolveInRange(work.receiver, -index - 1, work, present => present
+                ? resolveLength(work.receiver, work, length => length + index) : undefined)
+            : index), work)
+}
+
+function prepareWithArguments(work) {
+    const replacement = work.leaseArgument(work.args[1])
+    return internalSteps.prepareInputs([numericInput(work.args[0], work)], work.operationContext,
+        ([index = 0]) => runArrayStep(work, () => {
+            const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
+                "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
+            return resolveInRange(work.receiver, index < 0 ? -index - 1 : index, work, finish)
+        }), work)
+}
+
+function observeAt(index, invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
-    index = index >= 0 ? index : length + index
-    if (index < 0 || index >= length) return undefined
+    if (!arrayViews.isArrayIndex(String(index))) return undefined
     return retainElement(
         propertyVersions.getPropertyPlacement(
             thisValue,
@@ -172,11 +195,28 @@ function stringInput(value, invocationWork) {
     )
 }
 
-function slice(args, invocationWork) {
+function prepareSliceBounds(work) {
+    return internalSteps.prepareInputs(work.args.slice(0, 2).map(value => numericInput(value, work)),
+        work.operationContext, ([start = 0, end]) => runArrayStep(work, () => {
+            // Relative bounds with the same sign preserve their ordering at
+            // every length. These empty ranges consume no receiver placements.
+            if (start === Infinity || end === -Infinity ||
+                end !== undefined && (start < 0) === (end < 0) && start >= end) return [0, 0]
+            const exact = () => resolveLength(work.receiver, work, length => {
+                const first = toRelativeIndex(start, length, 0)
+                return [first, Math.max(first, toRelativeIndex(end, length, length))]
+            })
+            return start >= 0 ? resolveInRange(work.receiver, start, work, present => {
+                if (!present) return [0, 0]
+                return end >= 0 && Number.isFinite(end)
+                    ? resolveInRange(work.receiver, end - 1, work, covered => covered ? [start, end] : exact())
+                    : exact()
+            }) : exact()
+        }), work)
+}
+
+function slice([start, end], invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
-    const start = toRelativeIndex(args[0], length, 0)
-    const end = Math.max(start, toRelativeIndex(args[1], length, length))
     return tryDeriveArrayView(start, end, invocationWork) ??
         arrayRemaps.createArrayFromRemap(
             arrayRemaps.createRemap(thisValue, invocationWork.operationContext, start, end),
@@ -223,7 +263,7 @@ function getFirstElementPlacement(_view, invocationWork) {
 
 function getLastElementPlacement(_view, invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
+    const length = invocationWork.arrayLength
     return length === 0
         ? undefined
         : propertyVersions.getPropertyPlacement(
@@ -243,7 +283,7 @@ function runArrayStep(invocationWork, work) {
     return errorUtils.catchExternalThrow(
         work,
         invocationWork.operationContext,
-        errorUtils.ERROR_KIND.InvalidArrayOperation,
+        invocationWork.mutation ? errorUtils.ERROR_KIND.PropertyMutationFailed : errorUtils.ERROR_KIND.InvocationFailed,
     )
 }
 
@@ -252,8 +292,8 @@ function runArrayStep(invocationWork, work) {
 // Structural remaps keep their ordinary all-or-nothing capture contract.
 function collectArrayPlacements(array, invocationWork) {
     const operationContext = invocationWork.operationContext
-    const placements = new Array(arrayViews.logicalArrayLength(array, operationContext))
-    for (const key of arrayViews.arrayKeyCandidates(array, operationContext)) {
+    const placements = new Array(arrayViews.publishedArrayLength(array, operationContext))
+    for (const key of languageProperties.enumerableLanguageKeyCandidates(array, operationContext)) {
         const placement = runArrayStep(invocationWork, () =>
             propertyVersions.getPropertyPlacement(array, key, operationContext),
         )
@@ -280,7 +320,7 @@ function prepareConcatArguments(invocationWork) {
                     if (errorUtils.isPoisonError(value)) return value
                     invocationWork.leaseArgument(value)
                     return arrayViews.isLogicalArray(value, invocationWork.operationContext)
-                        ? captureRemap(value, invocationWork.operationContext)
+                        ? captureRemap(value, invocationWork)
                         : [value]
                 }),
             invocationWork,
@@ -294,21 +334,20 @@ function prepareConcatArguments(invocationWork) {
     )
 }
 
-function captureRemap(array, operationContext) {
+function captureRemap(array, work) {
+    const operationContext = work.operationContext
     const remap = arrayRemaps.createRemap(array, operationContext)
     remap.forEach(placement => placement?.ensureCaptured())
-    return remap
+    return resolveLength(array, work, length => { remap.length = length; return remap })
 }
 
 function createConcatRemap(parts, invocationWork) {
-    return invocation.invokeFunction(
-        arrayConcat,
-        captureRemap(
-            invocationWork.receiver,
-            invocationWork.operationContext,
-        ),
-        parts,
+    return internalSteps.continueOperation(
+        captureRemap(invocationWork.receiver, invocationWork),
         invocationWork.operationContext,
+        remap => invocation.invokeFunction(arrayConcat, remap, parts, invocationWork.operationContext),
+        undefined,
+        invocationWork,
     )
 }
 
@@ -349,6 +388,7 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
             )
         }
         const source = collectArrayPlacements(array, invocationWork)
+        const shape = { length: captureArrayLength(array, invocationWork.operationContext, invocationWork) }
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
             ? { array, parent: ancestry }
@@ -368,6 +408,7 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
                 const output = new Array(source.length)
                 for (let index = 0; index < keys.length; index++)
                     if (source[keys[index]].present !== false) output[keys[index]] = values[index]
+                finishContainerCopy(output, shape)
                 return output
             },
             invocationWork,
@@ -407,8 +448,22 @@ function prepareSearchArguments(invocationWork) {
         [searchResult, fromResult],
         invocationWork.operationContext,
         readyValues => {
-            const [searchValue, fromIndex] = readyValues
-            return { searchValue, fromIndex }
+            const backwards = invocationWork.method === "lastIndexOf"
+            const [searchValue, fromIndex = backwards ? Infinity : 0] = readyValues
+            const at = start => ({ searchValue, start })
+            const capture = () => resolveLength(invocationWork.receiver, invocationWork,
+                length => at(backwards ? normalizeBackwardStart(fromIndex, length) : normalizeForwardStart(fromIndex, length)))
+            return runArrayStep(invocationWork, () => {
+                // Absolute forward starts need no length. An absolute backward
+                // start needs only proof that the position is in range.
+                if (fromIndex >= 0) return backwards
+                    ? resolveInRange(invocationWork.receiver, fromIndex, invocationWork,
+                        present => present ? at(fromIndex) : capture())
+                    : at(fromIndex)
+                if (!backwards) return fromIndex === -Infinity ? at(0) : capture()
+                return resolveInRange(invocationWork.receiver, -fromIndex - 1, invocationWork,
+                    present => present ? capture() : at(-1))
+            })
         },
         invocationWork,
     )
@@ -451,6 +506,7 @@ function prepareToSortedRemap(comparator, invocationWork) {
 function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
     const thisValue = invocationWork.receiver
     const source = collectArrayPlacements(thisValue, invocationWork)
+    const shape = { length: captureArrayLength(thisValue, invocationWork.operationContext, invocationWork) }
     const records = []
     for (const key of Object.keys(source)) {
         const placement = source[key]
@@ -492,6 +548,7 @@ function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
             return prepareAndSortRecords(sortable, comparator, invocationWork, finish)
 
             function finish(sorted) {
+                finishContainerCopy(source, shape)
                 return finishSortedRemap(
                     sorted,
                     undefinedPlacements,
@@ -645,49 +702,51 @@ function compareExported(comparator, left, right, operationContext) {
     return result
 }
 
-function includes({ searchValue, fromIndex = 0 }, invocationWork) {
+function includes({ searchValue, start }, invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
-    if (length === 0) return false
-    const start = normalizeForwardStart(fromIndex, length)
-    if (start >= length) return false
-    const pending = []
-    for (let index = start; index < length; index++) {
-        const branch = internalSteps.continueOperation(
-            propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), invocationWork.operationContext),
-            invocationWork.operationContext,
-            matches,
-            undefined,
-            invocationWork,
-        )
-        if (languageValues.isPending(branch, invocationWork.operationContext)) pending.push(branch)
-        else if (branch) {
-            for (const wait of pending) markPromiseHandled(wait, invocationWork.operationContext)
-            return true
+    const operationContext = invocationWork.operationContext
+    // Scanning is one unfinished branch; each pending comparison adds another.
+    // Any match can finish while scanning still awaits growth or other values.
+    let remaining = 1, index = start, outcome, result
+    scan()
+    if (outcome !== undefined) return outcome
+    result = Promise.withResolvers()
+    return result.promise
+
+    function scan() {
+        const failure = runArrayStep(invocationWork, () => {
+            const end = arrayViews.publishedArrayLength(thisValue, operationContext)
+            for (; index < end; index++) {
+                const branch = internalSteps.continueOperation(
+                    propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), operationContext),
+                    operationContext, matches, undefined, invocationWork,
+                )
+                if (languageValues.isPending(branch, operationContext)) {
+                    remaining++
+                    const wait = internalSteps.continueOperation(branch, operationContext, finish, undefined, invocationWork)
+                    markPromiseHandled(wait, operationContext)
+                } else if (branch) return finish(true)
+            }
+            const wait = resolveInRange(thisValue, index, invocationWork, present => {
+                if (present) return scan()
+                // All property versions are captured. Their pending values no
+                // longer need the receiver, just as with an initially ready shape.
+                invocationWork.releaseReceiverLeases()
+                finish(false)
+            })
+            markPromiseHandled(wait, operationContext)
+        })
+        if (errorUtils.isPoisonError(failure)) finish(failure)
+    }
+
+    function finish(found) {
+        if (outcome !== undefined) return
+        if (!found && --remaining !== 0) return
+        outcome = found
+        if (result) {
+            operationLifecycle.close(invocationWork)
+            result.resolve(found)
         }
-    }
-    if (pending.length === 0) return false
-
-    let remaining = pending.length
-    const { promise: result, resolve: resolveResult } = Promise.withResolvers()
-    for (const wait of pending) {
-        const branch = internalSteps.continueOperation(
-            wait,
-            invocationWork.operationContext,
-            found => {
-                if (found) return finish(true)
-                if (--remaining === 0) finish(false)
-            },
-            undefined,
-            invocationWork,
-        )
-        markPromiseHandled(branch, invocationWork.operationContext)
-    }
-    return result
-
-    function finish(value) {
-        operationLifecycle.close(invocationWork)
-        resolveResult(value)
     }
 
     function matches(value) {
@@ -704,22 +763,18 @@ function lastIndexOf(prepared, invocationWork) {
 }
 
 function orderedIndexSearch(
-    { searchValue, fromIndex },
+    { searchValue, start },
     backwards,
     invocationWork,
 ) {
     const thisValue = invocationWork.receiver
-    fromIndex ??= backwards ? Infinity : 0
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
-    if (length === 0) return -1
-    let index = backwards
-        ? normalizeBackwardStart(fromIndex, length)
-        : normalizeForwardStart(fromIndex, length)
+    let index = start
     return next()
 
     function next() {
         return runArrayStep(invocationWork, () => {
-            while (index >= 0 && index < length) {
+            const end = backwards ? -1 : arrayViews.publishedArrayLength(thisValue, invocationWork.operationContext)
+            while (backwards ? index > end : index < end) {
                 const current = index
                 index += backwards ? -1 : 1
                 const key = String(current)
@@ -753,7 +808,8 @@ function orderedIndexSearch(
                 }
                 if (value === searchValue) return current
             }
-            return -1
+            return backwards ? -1 : resolveInRange(thisValue, index, invocationWork,
+                present => present ? next() : -1)
         })
     }
 }
@@ -779,7 +835,7 @@ function toRelativeIndex(value, length, defaultValue) {
 
 function tryShiftArrayView(_args, invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
+    const length = invocationWork.arrayLength
     return tryDeriveArrayView(
         Math.min(1, length),
         length,
@@ -789,7 +845,7 @@ function tryShiftArrayView(_args, invocationWork) {
 
 function tryPopArrayView(_args, invocationWork) {
     const thisValue = invocationWork.receiver
-    const length = arrayViews.logicalArrayLength(thisValue, invocationWork.operationContext)
+    const length = invocationWork.arrayLength
     return tryDeriveArrayView(
         0,
         Math.max(0, length - 1),

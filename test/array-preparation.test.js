@@ -25,6 +25,36 @@ function unreadableArray(cause) {
 }
 
 describe("Array copy placement capture", () => {
+    it("with rejects an impossible index before length settles but preserves exact output shape", async () => {
+        const ctx = context(), hold = Promise.withResolvers()
+        const chain = new runtime.Chain([1, 2], ctx)
+        const entry = runtime.enter(chain, [4], ctx, true, () => hold.promise)
+        const invalid = runtime.run(chain, [], "with", [5, 7], ctx, {})
+        assert.equal(invalid.kind, runtime.ERROR_KIND.InvalidArrayOperation)
+        const result = runtime.run(chain, [], "with", [0, 7], ctx, {})
+        assert(result instanceof Promise, "Valid index alone does not determine output length")
+        hold.resolve()
+        await entry
+        assert.deepEqual(runtime.export(new runtime.Chain(await result, ctx), [], ctx), [7, 2])
+    })
+
+    for (const pending of [false, true]) it(`reads a nonnegative at placement without consuming length, pending=${pending}`, async () => {
+        const ctx = context(), hold = Promise.withResolvers()
+        const source = new Proxy([pending ? hold.promise : 1, 2], {
+            get(target, key, receiver) {
+                if (key === "length") throw new Error("length is unavailable")
+                return Reflect.get(target, key, receiver)
+            },
+        })
+        const chain = new runtime.Chain(source, ctx)
+        const first = runtime.run(chain, [], "at", [0], ctx, {})
+        if (!pending) assert.equal(first, 1)
+        assert.equal(runtime.run(chain, [], "at", [7], ctx, {}), undefined)
+        assert.equal(runtime.run(chain, [], "at", [Infinity], ctx, {}), undefined)
+        hold.resolve(1)
+        assert.equal(await first, 1)
+    })
+
     const methods = [
         ["toReversed", []],
         ["with", [2, 7]],
@@ -175,7 +205,7 @@ describe("Array preparation boundaries", () => {
                 assert.equal(failure.errorContext, ctx.errorContext)
                 assert.equal(
                     failure.kind,
-                    runtime.ERROR_KIND.InvalidArrayOperation,
+                    runtime.ERROR_KIND.InvocationFailed,
                 )
                 assert.equal(ctx.execution.fatalError, null)
             })
@@ -294,7 +324,7 @@ describe("Array preparation boundaries", () => {
                 {},
             )
             assert.equal(failure.cause, cause)
-            assert.equal(failure.kind, runtime.ERROR_KIND.InvalidArrayOperation)
+            assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
             assert.equal(failure.errorContext, ctx.errorContext)
             assert.equal(ctx.execution.fatalError, null)
             fail = false

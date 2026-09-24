@@ -65,7 +65,7 @@ describe("getErrors", () => {
         })
     }
 
-    it("treats shared publication failures as graph Errors", async () => {
+    it("keeps optional storage synchronization failure out of Error queries", async () => {
         for (const query of [hasError, getErrors]) {
             const pending = deferred()
             const failure = new Error("Promise writeback failed")
@@ -86,11 +86,10 @@ describe("getErrors", () => {
             pending.resolve({ clean: true })
             const answer = await result
 
-            if (query === hasError) expect(answer).to.be(true)
-            else expectErrors(answer, [failure])
+            expect(answer).to.be(query === hasError ? false : null)
             expect(reported).to.be(undefined)
-            expect(errorCause(readPath(new Chain(value), ["pending"])))
-                .to.be(failure)
+            expect(readPath(new Chain(value), ["pending"]))
+                .to.eql({ clean: true })
             verifyRefCounts(value)
         }
     })

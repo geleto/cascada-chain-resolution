@@ -796,7 +796,7 @@ describe("managed invocation", () => {
             { mutationScopeDepth: 0 },
         )
         expect(result instanceof Promise).to.be(true)
-        expect(validChain._state.value instanceof Promise).to.be(true)
+        expect(readPath(validChain, []) instanceof Promise).to.be(true)
         expect(await result).to.be(2)
         expect(validChain._state.value).not.to.be(valid)
         expect(validChain._state.value.value).to.be(2)
@@ -879,7 +879,7 @@ describe("managed invocation", () => {
             [() => completion.promise],
             { mutationScopeDepth: 0 },
         )
-        expect(chain._state.value instanceof Promise).to.be(true)
+        expect(readPath(chain, []) instanceof Promise).to.be(true)
         completion.resolve(resultError)
 
         expect(errorCause(await result)).to.be(resultError)

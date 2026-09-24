@@ -36,9 +36,9 @@ Rank by structural risk, not by size or apparent importance. Raise priority for:
 
 Lower-ranked areas still need their contracts checked: pure synchronous helpers, dispatch tables, and error factories usually need reading and focused tests rather than exploration. State the ranking and its reasons before starting, and revise it when findings reveal a new risk family.
 
-## Run the cross-cutting sweeps first
+## Trace cross-cutting state within each slice
 
-Complete these static sweeps over the whole source before exploring behavior. They are cheap, reach code that no generator exercises, and target the most common failure families.
+Use the project map to locate these risk families across the source, then complete the relevant state traces before exploring each ranked slice. Follow shared mechanisms across feature boundaries, but do not require exhaustive project-wide sweeps before testing a high-risk hypothesis. Maintain one inventory of checked, suspicious, and unvisited sites so later slices cover the remaining source.
 
 1. **Fact writers.** Enumerate every persisted derived fact by searching field writes and metadata records. For each, list its source data and every writer of that data, direct or through helpers, and check that each writer updates or invalidates the fact. Check creation defaults, copies, forks, and handoffs: a fact copied at installation or transfer can describe a source that later changes independently.
 2. **Representation authority.** Enumerate every read and write of a secondary representation. A read is valid only where no authoritative overlay can cover it, or after proving that the representation matches the authoritative state. A write is valid only under the authority that owns that state; a write through a detached, superseded, or captured handle is a defect even when later work usually masks it.
@@ -46,14 +46,14 @@ Complete these static sweeps over the whole source before exploring behavior. Th
 4. **Equivalent routes.** For each semantic rule, list the routes that must enforce it and compare their guards, captured inputs, and failure effects, as [audit.md](audit.md) describes.
 5. **Host actions.** Build the project-wide inventory of actions that can run host code or fail through reflection, and classify each against its boundary contract.
 
-Record each sweep as a table of sites with a verdict and evidence. Turn every suspicious site into a reproduction before reporting it as a defect.
+Record each sweep as a table of sites with a verdict and evidence. Confirm defects with an executable reproduction or a conclusive code or transition proof. State any missing executable verification; distinguish a proved contradiction from a suspicion that still needs investigation. A reproduction is preferred for timing-dependent behavior, not a prerequisite for reporting an architectural contradiction.
 
 ## Explore behavior with executable oracles
 
 Then audit the ranked areas with the procedure in [audit.md](audit.md). At project scale:
 
 - Reuse and extend the tooling [test/README.md](../../test/README.md) describes: the seeded sequence models, the conflict matrix, the native-equivalence helpers, and the consistency verifiers. Add an independent verifier for any persisted fact or secondary representation that public behavior can mask.
-- Run verifiers after each step of generated programs, not only at the end; a masked inconsistency may surface only through a later operation.
+- In instrumented runs, check after commands and relevant settlement turns, not only at the end; a masked inconsistency may surface only through a later operation. Also run bounded controls without initial indexing or intermediate verifiers: those inspections can consume lazy data or change dependencies. Keep observations required by the scenario distinct from optional diagnostic reads.
 - Enumerate short conflicting sequences exhaustively before random generation. Include a predecessor held pending, two or more queued commands on one target, a command that changes nothing, and removal or repair after creation.
 - Validate generator quality and combination coverage as [audit.md](audit.md) describes; `createRandom` in the native-equivalence helpers is a suitable seeded generator.
 - Compose features deliberately. Combine each high-risk area with entry, pending data, failure and repair, structural Array changes, copies, and external scopes wherever they are supported together.
@@ -66,7 +66,7 @@ Treat exploration as evidence only after checking the harness, as [audit.md](aud
 
 Audit one ranked area or one sweep per slice. Each slice reports its scope, snapshot, evidence, findings, and remaining gaps. Carry the project-wide state between slices: the map, the ranking, the sweep tables, the retained explorers, and the open findings. End a slice when its targeted matrices and sweep rows are complete and further exploration stops revealing untested dimensions; record what remains.
 
-When a finding is confirmed, run its family across the whole project before continuing: search every other area for the same fact, representation, or ordering pattern. A family found in one feature is the strongest predictor of defects elsewhere.
+When a finding is confirmed, search the project for the same fact, representation, or ordering pattern, then prioritize its affected sites in the remaining slices. Validate adjacent uses of the same mechanism in the current slice; record other sites as open obligations rather than indefinitely expanding that slice. A family found in one feature is a strong predictor of defects elsewhere.
 
 Coordinate with concurrent fixes. When a fix is staged, re-run its reproductions and the affected explorers, and check neighboring areas for displaced problems.
 

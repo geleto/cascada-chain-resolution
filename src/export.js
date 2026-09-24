@@ -6,6 +6,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import { walkManagedProperties } from "./managed-traversal.js"
+import { captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -24,6 +25,7 @@ function exportValues(values, owner, onResult) {
     const errors = new Set()
     let copies = new WeakMap()
     let outputs = new Array(values.length)
+    const shapes = new Set()
     let unregister
     const readiness = values.map((value, position) =>
         internalSteps.consumeValue(
@@ -59,12 +61,16 @@ function exportValues(values, owner, onResult) {
     return result
 
     function release() {
+        for (const shape of shapes) shape.length?.release?.()
+        shapes.clear()
         copies = outputs = undefined
         errors.clear()
     }
 
     function collect(error) {
         errors.add(error)
+        for (const shape of shapes) shape.length?.release?.()
+        shapes.clear()
         copies = outputs = undefined
     }
 
@@ -118,6 +124,15 @@ function exportValues(values, owner, onResult) {
             key => {
                 // Fix output key order at capture, before any settlement.
                 if (copies) writeOutputProperty(copies.get(value), key, undefined)
+            }, keys => {
+                if (!copies) return
+                const shape = step(() => captureContainerStructure(value, keys, operationContext))
+                if (!copies) return
+                shapes.add(shape)
+                return () => {
+                    if (copies) finishContainerCopy(copies.get(value), shape)
+                    shapes.delete(shape)
+                }
             })
     }
 }
@@ -125,7 +140,7 @@ function exportValues(values, owner, onResult) {
 function createOutputContainer(value, operationContext) {
     const meta = metadata.requireMeta(value, operationContext)
     return meta.type === metadata.TYPE.Array
-        ? new Array(arrayViews.logicalArrayLength(value, operationContext))
+        ? new Array(arrayViews.publishedArrayLength(value, operationContext))
         : Object.create(meta.admittedPrototype)
 }
 

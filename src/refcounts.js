@@ -181,6 +181,7 @@ function prepareLiveEdge(
     key,
     value,
     operationContext,
+    previousPlacement,
 ) {
     const counter = getRefCounter(owner, operationContext)
     if (!counter) return COMMIT_UNINDEXED_EDGE
@@ -192,7 +193,7 @@ function prepareLiveEdge(
         operationContext,
     )
     const previousState = getValueRefState(
-        languageProperties.readLanguageProperty(owner, key, operationContext),
+        previousPlacement ? previousPlacement.value : languageProperties.readLanguageProperty(owner, key, operationContext),
         operationContext,
         counter.cycleCuts?.has(key) === true,
     )

@@ -1,3 +1,5 @@
+import { captureArrayLength } from "./array-length.js"
+import { finishContainerCopy } from "./placement-structure.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
@@ -114,66 +116,34 @@ function conversionError(operationContext) {
     )
 }
 
-function joinLogicalArray(
-    array,
-    separator = ",",
-    ancestry = undefined,
-    operation,
-) {
+function joinLogicalArray(array, separator = ",", ancestry = undefined, operation) {
     ancestry ??= { array, parent: undefined }
     const operationContext = operation.operationContext
-    const length = errorUtils.catchExternalThrow(
-        () => arrayViews.logicalArrayLength(array, operationContext),
-        operationContext,
-        errorUtils.ERROR_KIND.ScalarConversionFailed,
-    )
-    if (errorUtils.isPoisonError(length)) return length
-    const conversions = new Array(length)
-    for (let index = 0; index < length; index++) {
-        conversions[index] = errorUtils.catchExternalThrow(
-            () => {
-                const key = String(index)
-                if (
-                    !languageProperties.hasLanguageProperty(
-                        array,
-                        key,
-                        operationContext,
-                    )
-                )
-                    return ""
-                return internalSteps.continueOperation(
-                    propertyVersions.resolvePropertyValueAtKey(
-                        array,
-                        key,
-                        operationContext,
-                    ),
-                    operationContext,
-                    value => {
-                        if (errorUtils.isPoisonError(value)) return value
-                        return value === undefined || value === null
-                            ? ""
-                            : toStringValue(value, ancestry, operation)
-                    },
-                    undefined,
-                    operation,
-                )
-            },
-            operationContext,
-            errorUtils.ERROR_KIND.ScalarConversionFailed,
-        )
-    }
-    return internalSteps.prepareInputs(
-        conversions,
-        operationContext,
-        values =>
-            invocation.invokeFunction(
-                arrayJoin,
-                values,
-                [separator],
-                operationContext,
-            ),
-        operation,
-    )
+    const shape = errorUtils.catchExternalThrow(
+        () => ({ length: captureArrayLength(array, operationContext, operation) }),
+        operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed)
+    if (errorUtils.isPoisonError(shape)) return shape
+    const keys = [], conversions = []
+    errorUtils.catchExternalThrow(() => {
+        for (const key of languageProperties.enumerableLanguageKeyCandidates(array, operationContext)) {
+            const conversion = errorUtils.catchExternalThrow(() => {
+                const placement = propertyVersions.getPropertyPlacement(array, key, operationContext)
+                if (!placement) return undefined
+                return internalSteps.continueOperation(placement.resolveValue(), operationContext, value => {
+                    if (errorUtils.isPoisonError(value)) return value
+                    return value === undefined || value === null ? "" : toStringValue(value, ancestry, operation)
+                }, undefined, operation)
+            }, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed)
+            keys.push(key)
+            conversions.push(conversion)
+        }
+    }, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed, failure => conversions.push(failure))
+    return internalSteps.prepareInputs(conversions, operationContext, values => {
+        const joined = []
+        for (let index = 0; index < keys.length; index++) joined[keys[index]] = values[index]
+        finishContainerCopy(joined, shape)
+        return invocation.invokeFunction(arrayJoin, joined, [separator], operationContext)
+    }, operation)
 }
 
 export {

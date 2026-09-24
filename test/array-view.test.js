@@ -1,4 +1,7 @@
 import {
+    logicalArrayValues,
+    logicalProperty,
+    logicalKeys,
     Chain,
     assignPath,
     buildRefIndex,
@@ -17,9 +20,70 @@ import {
     testOperationContext,
     propertyVersions,
     hasCycleCut,
+    lookupPath,
+    enter,
 } from "./support.js"
 
 describe("ArrayView", () => {
+    for (const method of ["push", "pop"]) for (const protection of ["shared", "leased"]) {
+        it(`bounds repeated ${method} storage work with ${protection} backing`, async () => {
+            const measurements = []
+            for (const size of [10, 1000]) {
+                const counts = { keys: 0, descriptors: 0 }
+                const values = Array.from({ length: size }, (_, i) => i)
+                const backing = new Proxy(values, {
+                    ownKeys(target) { counts.keys++; return Reflect.ownKeys(target) },
+                    getOwnPropertyDescriptor(target, key) {
+                        counts.descriptors++
+                        return Reflect.getOwnPropertyDescriptor(target, key)
+                    },
+                })
+                const chain = new Chain(backing)
+                // The first derivation establishes backing ownership once.
+                run(chain, [], "push", [], { mutationScopeDepth: 0 })
+                const before = chain._state.value
+                const hold = deferred()
+                const reader = protection === "leased"
+                    ? enter(chain, [], false, () => hold.promise)
+                    : lookupPath(chain, [])
+                counts.keys = counts.descriptors = 0
+                for (let i = 0; i < 3; i++) {
+                    const result = run(chain, [], method, method === "push" ? [i] : [], { mutationScopeDepth: 0 })
+                    expect(result).to.be(method === "push" ? size + i + 1 : size - i - 1)
+                    expect(arrayViews.backingOf(chain._state.value)).to.be(backing)
+                }
+                measurements.push({ ...counts })
+                hold.resolve()
+                await reader
+                expect(exportValue(new Chain(before), [])).to.eql(Array.from({ length: size }, (_, i) => i))
+                expect(exportValue(chain, [])).to.eql(method === "push"
+                    ? [...Array.from({ length: size }, (_, i) => i), 0, 1, 2]
+                    : Array.from({ length: size - 3 }, (_, i) => i))
+                verifyRefCounts(before, chain._state.value)
+            }
+            expect(measurements[0]).to.eql(measurements[1])
+            expect(measurements[0].keys).to.be(0)
+        })
+    }
+
+    it("retains newly assigned suffix children through offset derivations", () => {
+        const view = run(new Chain([0, 1]), [], "push", [], {})
+        const chain = new Chain(view)
+        const child = { n: 1 }
+        assignPath(chain, ["3"], child)
+        expect(metaOf(child).shared).not.to.be(true)
+        const tail = run(chain, [], "slice", [2], {})
+        const next = run(new Chain(tail), [], "push", [4], {})
+        const changed = new Chain(child)
+        assignPath(changed, ["n"], 2)
+
+        expect(exportValue(chain, [])).to.eql([0, 1, , { n: 1 }])
+        expect(exportValue(new Chain(tail), [])).to.eql([, { n: 1 }])
+        expect(exportValue(new Chain(next), [])).to.eql([, { n: 1 }, 4])
+        expect(exportValue(changed, [])).to.eql({ n: 2 })
+        verifyRefCounts(chain._state.value, tail, next, changed._state.value)
+    })
+
     it("recognizes only canonical JavaScript Array indexes", () => {
         for (const key of ["0", "1", "4294967294"]) {
             expect(arrayViews.isArrayIndex(key)).to.be(true)
@@ -48,7 +112,7 @@ describe("ArrayView", () => {
 
         expect(arrayViews.isArrayView(view)).to.be(true)
         expect(Object.keys(view)).to.eql([])
-        expect(view.keys(testOperationContext())).to.eql([
+        expect(logicalKeys(view, testOperationContext())).to.eql([
             "0",
             "1",
             "2",
@@ -56,7 +120,7 @@ describe("ArrayView", () => {
         expect(view.descriptor("hidden", testOperationContext())).to.be(
             undefined,
         )
-        expect([...view.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([1, 2, 3])
     })
 
     it("recognizes views by identity without reflecting on wrappers", () => {
@@ -79,9 +143,9 @@ describe("ArrayView", () => {
             arrayViews.projectionOf(source),
         )).to.be(true)
         expect([
-            ...arrayViews.projectionOf(source).values(testOperationContext()),
+            ...logicalArrayValues(source, testOperationContext()),
         ]).to.eql([1, undefined, 3])
-        expect([...view.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([
             1,
             undefined,
             3,
@@ -98,17 +162,17 @@ describe("ArrayView", () => {
         const throughAttachment = new arrayViews.ArrayView(source, 1, 3)
         const extended = run(new Chain(original), [], "unshift", [0], {})
 
-        expect([...tail.values(testOperationContext())]).to.eql([2, 3])
-        expect([...last.values(testOperationContext())]).to.eql([3])
-        expect([...throughAttachment.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(tail, testOperationContext())]).to.eql([2, 3])
+        expect([...logicalArrayValues(last, testOperationContext())]).to.eql([3])
+        expect([...logicalArrayValues(throughAttachment, testOperationContext())]).to.eql([
             2, 3,
         ])
-        expect([...extended.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(extended, testOperationContext())]).to.eql([
             0, 1, 2, 3,
         ])
-        expect([...original.values(testOperationContext())]).to.eql([1, 2, 3])
-        expect([...tail.values(testOperationContext())]).to.eql([2, 3])
-        expect([...throughAttachment.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(original, testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(tail, testOperationContext())]).to.eql([2, 3])
+        expect([...logicalArrayValues(throughAttachment, testOperationContext())]).to.eql([
             2, 3,
         ])
     })
@@ -166,9 +230,48 @@ describe("ArrayView", () => {
         await flushMicrotasks()
 
         expect(hasCycleCut(view, "0")).to.be(true)
-        expect(view.get("0", testOperationContext())).to.be(view)
+        expect(logicalProperty(view, "0", testOperationContext())).to.be(view)
         verifyRefCounts(view)
     })
+
+    for (const rejected of [false, true]) {
+        it(`retains pending view placements without writing shared slots, rejected=${rejected}`, async () => {
+            const pending = deferred()
+            let writes = 0
+            const source = new Proxy([1, pending.promise, , 3], {
+                set(target, key, value) {
+                    if (key === "1") writes++
+                    return Reflect.set(target, key, value)
+                },
+            })
+            const chain = new Chain(source)
+            const sliced = run(chain, [], "slice", [1, 4], {})
+            const extended = run(new Chain(sliced), [], "concat", [[4]], {})
+            expect(arrayViews.isArrayView(sliced)).to.be(true)
+            expect(arrayViews.isArrayView(extended)).to.be(true)
+            expect(writes).to.be(0)
+            for (const value of [source, sliced, extended]) buildRefIndex(value)
+
+            const cause = new Error("retained rejection")
+            if (rejected) pending.reject(cause)
+            else pending.resolve(2)
+            await flushMicrotasks()
+
+            // Only the source may publish into its physical slot. Views retain
+            // independent logical versions, including through shifted bounds.
+            expect(writes <= 1).to.be(true)
+            const context = testOperationContext()
+            const value = propertyVersions.getPlacementVersion(source, "1", context).value
+            if (rejected) expect(errorCause(value)).to.be(cause)
+            else expect(value).to.be(2)
+            expect(logicalProperty(sliced, "0", context)).to.be(value)
+            expect([...logicalArrayValues(sliced, context)]).to.eql([value, undefined, 3])
+            expect([...logicalArrayValues(extended, context)]).to.eql([value, undefined, 3, 4])
+            expect(logicalKeys(sliced, context)).to.eql(["0", "2"])
+            expect(logicalKeys(extended, context)).to.eql(["0", "2", "3"])
+            verifyRefCounts(source, sliced, extended)
+        })
+    }
 
     it("forks versions when endpoint extension adds no values", async () => {
         const pending = deferred()
@@ -200,8 +303,8 @@ describe("ArrayView", () => {
         const changed = new Chain(retained)
         assignPath(changed, ["value"], 3)
         expect(changed._state.value).not.to.be(retained)
-        expect(extended.get("1", testOperationContext())).to.be(retained)
-        expect(second.get("1", testOperationContext())).to.be(retained)
+        expect(logicalProperty(extended, "1", testOperationContext())).to.be(retained)
+        expect(logicalProperty(second, "1", testOperationContext())).to.be(retained)
         expect(retained.value).to.be(1)
     })
 
@@ -288,7 +391,7 @@ describe("ArrayView", () => {
         )
 
         expect(arrayViews.isArrayView(extended)).to.be(true)
-        expect([...contracted.values(testOperationContext())]).to.eql([1])
+        expect([...logicalArrayValues(contracted, testOperationContext())]).to.eql([1])
         pending.resolve(2)
         expect(await exportValue(new Chain(extended), [])).to.eql([1, 2])
         expect(exportValue(new Chain(contracted), [])).to.eql([1])
@@ -379,7 +482,7 @@ describe("ArrayView", () => {
         const result = run(new Chain(view), [], "push", [], {})
 
         expect(arrayViews.isArrayView(result)).to.be(true)
-        expect([...result.values(testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, 2])
     })
 
     it("returns an Error when observational endpoint growth fails", () => {
@@ -416,7 +519,7 @@ describe("ArrayView", () => {
 
         expect(errorCause(result)).to.be(failure)
         expect(chain._state.value).to.be(result)
-        expect([...view.values(testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([1, 2])
         expect(exportValue(source, [])).to.eql([1])
     })
 
@@ -431,7 +534,7 @@ describe("ArrayView", () => {
 
         expect(arrayViews.isArrayView(grown)).to.be(true)
         expect(grown.length).to.be(6)
-        expect([...grown.values(testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(grown, testOperationContext())]).to.eql([
             1,
             2,
             3,
@@ -439,8 +542,8 @@ describe("ArrayView", () => {
             undefined,
             6,
         ])
-        expect(grown.keys(testOperationContext())).to.eql(["0", "1", "2", "5"])
-        expect([...view.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect(logicalKeys(grown, testOperationContext())).to.eql(["0", "1", "2", "5"])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })
 
@@ -454,7 +557,7 @@ describe("ArrayView", () => {
 
         expect(Array.isArray(changed._state.value)).to.be(true)
         expect(changed._state.value).to.eql([1, 2, 9])
-        expect([...extended.values(testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(extended, testOperationContext())]).to.eql([1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([1, 2])
     })
 
@@ -468,7 +571,7 @@ describe("ArrayView", () => {
 
         pending.resolve(3)
         expect(await exportValue(chain, [])).to.eql([1, 2, 3])
-        expect([...view.values(testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([1, 2])
         verifyRefCounts(chain._state.value)
     })
 
@@ -483,7 +586,7 @@ describe("ArrayView", () => {
         await flushMicrotasks()
 
         expect(exportValue(chain, ["list"])).to.eql([9, 2, 3])
-        expect([...view.values(testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([1, 2])
         verifyRefCounts(chain._state.value)
     })
 })

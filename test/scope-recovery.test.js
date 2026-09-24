@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
+import { verifyRefCounts } from "./verify-refcounts.js"
 import * as r from "../src/index.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import { ExternalEffect } from "../src/external-operation.js"
+import { ready } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
@@ -16,6 +18,77 @@ function fixture() {
 }
 
 describe("hierarchical scopes and placement recovery", () => {
+    for (const route of ["direct", "entered", "nested"]) {
+        for (const delivery of ["ready", "synchronous", "pending"]) {
+            for (const broad of [false, true]) {
+                it(`retains destination validation and rollback: ${route}, ${delivery}, broad=${broad}`, async () => {
+                    const ctx = context()
+                    const command = { execution: ctx.execution, errorContext: { operation: "assignment" } }
+                    const input = Promise.withResolvers()
+                    const candidate = () => 3
+                    const value = delivery === "pending" ? input.promise
+                        : delivery === "synchronous" ? ready(candidate) : candidate
+                    const chain = new r.ContextChain({ then: 1, sibling: 2 }, ctx)
+                    const scope = broad ? [] : ["then"]
+                    const assign = (owner, path) => r.assignPath(owner, path, value, command, 0)
+                    let entry
+                    if (route === "direct") r.assignPath(chain, ["then"], value, command, broad ? 0 : 1)
+                    else entry = r.enter(chain, scope, ctx, true, inside => {
+                        const path = broad ? ["then"] : []
+                        if (route === "nested") r.enter(inside, [], ctx, true, nested => assign(nested, path))
+                        else assign(inside, path)
+                    })
+                    const captured = r.lookupPath(chain, scope, ctx)
+                    input.resolve(candidate)
+                    await entry
+                    const failure = await captured
+                    assert.equal(failure.kind, r.ERROR_KIND.PropertyValidation)
+                    assert.equal(failure.errorContext, command.errorContext)
+                    await r.repairPath(chain, scope, ctx)
+                    assert.deepEqual(await r.export(chain, [], ctx), { then: 1, sibling: 2 })
+                    assert.equal(ctx.execution.fatalError, null)
+                })
+            }
+        }
+    }
+
+    for (const property of [false, true]) {
+        it(`preserves nested entry deletion's original destination, property=${property}`, async () => {
+            const ctx = context()
+            const chain = new r.Chain(property ? { item: 1 } : 1, ctx)
+            await r.enter(chain, property ? ["item"] : [], ctx, true, inside =>
+                r.enter(inside, [], ctx, true, nested => r.deletePath(nested, [], ctx)))
+            assert.deepEqual(await r.export(chain, [], ctx), property ? {} : null)
+        })
+    }
+
+    it("keeps a rejected then assignment as data instead of inventing rollback", async () => {
+        const ctx = context(), input = Promise.withResolvers(), cause = new Error("input")
+        const chain = new r.Chain({ then: 1 }, ctx)
+        r.assignPath(chain, ["then"], input.promise, ctx)
+        const observed = r.lookupPath(chain, ["then"], ctx)
+        input.reject(cause)
+        const failure = await observed
+        assert.equal(failure.kind, r.ERROR_KIND.AssignmentValueFailed)
+        assert.equal(failure.cause, cause)
+        await r.repairPath(chain, ["then"], ctx)
+        assert.equal(await r.lookupPath(chain, ["then"], ctx), failure)
+    })
+
+    it("orders replacement after required assignment validation without delaying ready siblings", async () => {
+        const ctx = context(), input = Promise.withResolvers()
+        const chain = new r.Chain({ then: 1, other: 2 }, ctx)
+        r.assignPath(chain, ["then"], input.promise, ctx)
+        const earlier = r.lookupPath(chain, ["then"], ctx)
+        r.assignPath(chain, ["then"], 3, ctx)
+        const later = r.lookupPath(chain, ["then"], ctx)
+        assert(later instanceof Promise)
+        assert.equal(r.lookupPath(chain, ["other"], ctx), 2)
+        input.resolve(() => {})
+        assert.equal((await earlier).kind, r.ERROR_KIND.PropertyValidation)
+        assert.equal(await later, 3)
+    })
+
     for (const conflictDuringArguments of [false, true]) {
         it(`keeps descendant binding conflicts authoritative after repair, deferred=${conflictDuringArguments}`, async () => {
             const { api, ctx, chain, events } = fixture(), hold = Promise.withResolvers()
@@ -61,7 +134,7 @@ describe("hierarchical scopes and placement recovery", () => {
                 { mutationScopeDepth: action === "call-parent" ? 1 : 2, firstDynamicSegment: 1 })
             if (action === "assign") failure = r.assignPath(chain, ["api", "db", "count"], 5, ctx, 2, 1)
             if (action === "delete") failure = r.deletePath(chain, ["api", "db", "count"], ctx, 2, 1)
-            if (action === "enter") failure = r.enter(chain, ["api", "db"], ctx, true, () => assert.fail("callback"), 1)
+            if (action === "enter") failure = r.enter(chain, ["api", "db"], ctx, true, inside => r.assignPath(inside, ["count"], 5, ctx), 1)
             if (action === "repair") failure = r.repairPath(chain, ["api", "db"], ctx, 1)
             failure = await failure
             assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
@@ -93,7 +166,7 @@ describe("hierarchical scopes and placement recovery", () => {
     })
 
     for (const pending of [false, true]) {
-        it(`keeps failed Array entry mutation recoverable, pending=${pending}`, async () => {
+        it(`does not recopy an Array after selecting its element, pending=${pending}`, async () => {
             const ctx = context(), hold = Promise.withResolvers(), cause = new Error("copy failed")
             let fail = false
             const source = new Proxy([], { ownKeys(target) {
@@ -107,12 +180,9 @@ describe("hierarchical scopes and placement recovery", () => {
             })
             fail = false
             hold.resolve(4)
-            const failure = await r.lookupPath(chain, [], ctx)
-            assert.equal(failure.kind, r.ERROR_KIND.PropertyMutationFailed)
-            assert.equal(failure.cause, cause)
+            assert.equal(await r.lookupPath(chain, [3], ctx), 4)
             assert.equal(ctx.execution.fatalError, null)
-            await r.repairPath(chain, [], ctx)
-            assert.deepEqual(await r.export(chain, [], ctx), [])
+            assert.deepEqual(await r.export(chain, [], ctx), [,,,4])
             assert.equal(source.length, 0)
         })
     }
@@ -395,13 +465,45 @@ describe("hierarchical scopes and placement recovery", () => {
         delay.resolve(); await entry
         assert.deepEqual(await output, [1])
     })
-    it("keeps failed structural writes recoverable at the Array", () => {
+    it("publishes a distant assignment's growth before its data without blocking other indexes", async () => {
+        const ctx = context(), pending = Promise.withResolvers()
+        const storage = [1], writes = []
+        const chain = new r.Chain(new Proxy(storage, {
+            defineProperty(target, key, descriptor) {
+                writes.push(key)
+                return Reflect.defineProperty(target, key, descriptor)
+            },
+        }), ctx)
+        assert.equal(r.assignPath(chain, [5], pending.promise, ctx), undefined)
+        assert.equal(r.lookupPath(chain, ["length"], ctx), 6)
+        assert.equal(r.lookupPath(chain, [0], ctx), 1)
+        assert.deepEqual(writes, ["5"])
+        const captured = r.lookupPath(chain, [5], ctx)
+        r.assignPath(chain, [6], 7, ctx)
+        assert.equal(r.lookupPath(chain, [6], ctx), 7)
+        assert.equal(r.lookupPath(chain, ["length"], ctx), 7)
+        const cause = new Error("assigned data")
+        pending.reject(cause)
+        const poison = await captured
+        assert.equal(poison.cause, cause)
+        assert.equal(r.lookupPath(chain, [5], ctx), poison)
+        r.deletePath(chain, [5], ctx)
+        assert.equal(r.lookupPath(chain, ["length"], ctx), 7)
+        assert.equal(r.lookupPath(chain, [5], ctx), undefined)
+        verifyRefCounts(ctx, chain._state)
+    })
+    for (const broad of [false, true]) it(`repairs failed Array writes at their selected scope, broad=${broad}`, () => {
         const ctx = context(), chain = new r.Chain({ list: [1], other: 2 }, ctx)
-        const failure = r.assignPath(chain, ["list", 4, "missing"], 3, ctx)
-        assert.equal(r.lookupPath(chain, ["list"], ctx), failure)
+        const failure = r.assignPath(chain, ["list", 4, "missing"], 3, ctx, broad ? 1 : 3)
+        const scope = broad ? ["list"] : ["list", 4]
+        assert.equal(r.lookupPath(chain, scope, ctx), failure)
         assert.equal(r.lookupPath(chain, ["other"], ctx), 2)
-        r.repairPath(chain, ["list"], ctx)
-        assert.deepEqual(r.lookupPath(chain, ["list"], ctx), [1])
+        if (!broad) assert.equal(r.lookupPath(chain, ["list", 0], ctx), 1)
+        r.repairPath(chain, scope, ctx)
+        const expected = [1]
+        if (!broad) expected.length = 5
+        assert.deepEqual(r.export(chain, ["list"], ctx), expected)
+        verifyRefCounts(ctx, chain._state)
     })
     it("waits for outside predecessors before activating an entry's private view", async () => {
         const { chain, ctx, events } = fixture()
@@ -466,13 +568,16 @@ describe("hierarchical scopes and placement recovery", () => {
         })
     }
 
-    it("preserves Array shape when an out-of-range entered mutation fails and is repaired", async () => {
+    it("keeps committed growth when an out-of-range entered mutation fails and is repaired", async () => {
         const ctx = context()
         const chain = new r.Chain([1, , 3], ctx)
         const failure = await r.enter(chain, [8], ctx, true, inner => mutate(inner, [], "push", ctx))
-        assert.equal(await r.lookupPath(chain, [], ctx), failure)
-        assert.equal(await r.repairPath(chain, [], ctx), undefined)
-        assert.deepEqual(r.export(chain, [], ctx), [1, , 3])
+        assert.equal(await r.lookupPath(chain, [8], ctx), failure)
+        assert.equal(r.lookupPath(chain, [0], ctx), 1)
+        assert.equal(await r.repairPath(chain, [8], ctx), undefined)
+        const expected = [1, , 3]
+        expected.length = 9
+        assert.deepEqual(r.export(chain, [], ctx), expected)
     })
 
     for (const nested of [false, true]) for (const pending of [false, true]) {
@@ -597,7 +702,7 @@ describe("hierarchical scopes and placement recovery", () => {
 
     it("publishes invalid dynamic mutating entry at the known managed prefix", () => {
         const { chain, ctx } = fixture()
-        const failure = r.enter(chain, ["api", "db"], ctx, true, () => assert.fail("entry callback"), 0)
+        const failure = r.enter(chain, ["api", "db"], ctx, true, inside => r.assignPath(inside, ["count"], 5, ctx), 0)
         assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
         assert.equal(r.lookupPath(chain, [], ctx), failure)
         assert.equal(r.repairPath(chain, [], ctx), undefined)

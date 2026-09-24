@@ -18,9 +18,10 @@ function captureManagedKeys(value, operationContext, inspect) {
 
 // Consume placements in source order and finish all available work before
 // joining pending children. Callers own identity tracking and Error collection.
-function walkManagedProperties(value, owner, inspect, visit, beforePending) {
+function walkManagedProperties(value, owner, inspect, visit, beforePending, onCapture) {
     const operationContext = owner.operationContext
     const keys = captureManagedKeys(value, operationContext, inspect)
+    const complete = onCapture?.(keys)
     const waits = []
     for (const key of keys) {
         const child = inspect(() => properties.readLanguageProperty(value, key, operationContext))
@@ -33,10 +34,9 @@ function walkManagedProperties(value, owner, inspect, visit, beforePending) {
         } else readiness = visit(child, key)
         if (values.isPending(readiness, operationContext)) waits.push(readiness)
     }
-    if (waits.length === 0) return undefined
-    if (waits.length === 1) return waits[0]
-    return steps.continueOperation(Promise.all(waits), operationContext,
-        () => undefined, undefined, owner)
+    if (waits.length === 0) return complete?.()
+    return steps.continueOperation(waits.length === 1 ? waits[0] : Promise.all(waits), operationContext,
+        () => complete?.(), undefined, owner)
 }
 
 export { captureManagedKeys, walkManagedProperties }

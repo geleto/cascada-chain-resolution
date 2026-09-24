@@ -9,10 +9,20 @@ import * as metadata from "../src/meta.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as sourceLanguageValues from "../src/language-values.js"
+import { readLanguageProperty } from "../src/language-properties.js"
+import { OperationOwner } from "../src/operation-lifecycle.js"
 import { walkObservationPath } from "../src/observations.js"
 import { verifyRefCounts as verifyExecutionRefCounts } from "./verify-refcounts.js"
 
 let testExecution
+
+// Tests inspect the same logical owner surface as runtime consumers. ArrayView
+// is only a storage projection and has no separate semantic read interface.
+export { readLanguageProperty as logicalProperty, enumerableLanguageKeys as logicalKeys } from "../src/language-properties.js"
+export function* logicalArrayValues(array, operationContext) {
+    const length = sourceArrayViews.publishedArrayLength(array, operationContext)
+    for (let index = 0; index < length; index++) yield readLanguageProperty(array, String(index), operationContext)
+}
 
 function resetTestExecution() {
     testExecution = undefined
@@ -89,7 +99,9 @@ function readPath(chain, path) {
     const operationContext = chainOperationContext(chain, "test read")
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
-        return walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value)
+        const owner = new OperationOwner(operationContext)
+        const result = walkObservationPath(chain, [...(chain._rootPath ?? []), ...path], operationContext, value => value, undefined, undefined, { owner })
+        return internalSteps.continueOperation(result, operationContext, value => { owner.close(); return value })
     })
 }
 

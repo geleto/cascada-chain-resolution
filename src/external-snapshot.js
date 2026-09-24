@@ -72,8 +72,10 @@ function snapshotExternalValue(value, operationContext, admit = true) {
         if (!array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
 
         const length = array ? (managed
-            ? inspect(() => arrays.logicalArrayLength(source, operationContext))
+            ? inspect(() => arrays.publishedArrayLength(source, operationContext))
             : native(() => source.length)) : undefined
+        if (array && managed && meta.arrayLength?.maximum !== undefined && meta.arrayLength.maximum !== meta.arrayLength.minimum)
+            invalid("External snapshots require settled Array length")
         if (array && !errors.isPoisonError(length) && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
             invalid("External snapshot Array has an invalid length")
         const plain = !array && !errors.isPoisonError(prototype) &&
@@ -92,6 +94,10 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             if (managed) {
                 const present = inspect(() => properties.hasLanguageProperty(source, key, operationContext))
                 if (present !== true) continue
+                if (meta.placementVersions?.[key]?.pendingPresence) {
+                    invalid("External snapshots require settled property presence")
+                    continue
+                }
                 child = inspect(() => readManagedProperty(source, key, operationContext))
             } else {
                 const descriptor = native(() => Object.getOwnPropertyDescriptor(source, key))
@@ -123,7 +129,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
 // Snapshot reads must not normalize source storage or subscribe to a gate.
 function readManagedProperty(owner, key, operationContext) {
     if (key === "length" && arrays.isLogicalArray(owner, operationContext))
-        return arrays.logicalArrayLength(owner, operationContext)
+        return arrays.publishedArrayLength(owner, operationContext)
     const version = metadata.metaOf(owner, operationContext)?.placementVersions?.[key]
     return version ? version.value : properties.getLanguagePlacementDescriptor(owner, key, operationContext)?.value
 }

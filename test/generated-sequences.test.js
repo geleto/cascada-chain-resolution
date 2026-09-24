@@ -22,6 +22,7 @@ function runFixture(name, timeout) {
 
 const product = (...lists) => lists.reduce((combinations, list) =>
     combinations.flatMap(prefix => list.map(item => prefix ? `${prefix}:${item}` : item)), [""])
+const harnessModes = ["harness:observed", "harness:verified", "harness:bare"]
 
 describe("generated operation sequences", () => {
     it("matches a sequential model for conflicting commands on one placement", function () {
@@ -33,15 +34,17 @@ describe("generated operation sequences", () => {
         assert(coverage.paired > 0, "compare runs with and without intermediate reads")
         for (const dimension of product(["container"], ["array", "record"])
             .concat(product(["target"], ["absent", "present"]), product(["sibling"], [1, 2, 3]),
-                product(["release"], ["predecessor-first", "predecessor-last"]), product(["observed"], [false, true])))
+                product(["release"], ["predecessor-first", "predecessor-last"]), product(["observed"], [false, true]), harnessModes))
             assert(coverage.dimensions.includes(dimension), `missing ${dimension}`)
     })
 
     it("matches an Array slot model across entries, failures, structure, and observation routes", function () {
         this.timeout(120000)
-        const { programs, coverage } = runFixture("array-sequences.js", 110000)
+        const { programs, runs, coverage } = runFixture("array-sequences.js", 110000)
         assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6)
+        assert.equal(runs, programs * 3)
         const required = [
+            ...harnessModes,
             ...product(["entry"], ["set", "delete", "noop", "pending", "prefix", "repair", "reject"], ["delayed", "ready"]),
             ...product(["direct"], ["set", "pending", "delete", "prefix", "repair", "reject"]),
             ...product(["structural"], ["reverse", "shift", "pop", "push", "unshift", "splice-remove", "splice-insert"], ["direct", "entry"]),
@@ -55,5 +58,57 @@ describe("generated operation sequences", () => {
         const conflicts = coverage.filter(key => key.startsWith("conflict:")).map(key => key.split(":"))
         for (const [position, values] of [[1, ["noop", "set", "delete", "prefix", "reject"]], [2, ["delete", "repair", "set", "prefix"]], [3, ["nested", "ready"]]])
             for (const value of values) assert(conflicts.some(parts => parts[position] === value), `missing conflict ${value}`)
+    })
+
+    it("matches native semantics and record key order for nested paths and entries", function () {
+        this.timeout(120000)
+        const { programs, runs, coverage } = runFixture("nested-sequences.js", 110000)
+        assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6)
+        assert.equal(runs, programs * 3)
+        const required = [
+            ...harnessModes,
+            ...product(["set", "delete", "replace", "push", "pop", "length"], ["direct", "entry", "nested"]),
+            ...product(["noop-entry"], ["mutable", "readonly"], ["delayed", "ready"]),
+            ...product(["lookup"], ["before-release", "after-release"]),
+            ...product(["payload"], ["ready", "promise", "thenable"]),
+            ...product(["container"], ["plain", "imported", "view"]),
+            ...product(["conflict"], ["set", "delete"], ["set", "delete"], ["ready", "nested"]),
+        ]
+        for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
+    })
+
+    it("orders external calls, writes, poison, repair, bindings, and entries like a sequential model", function () {
+        this.timeout(120000)
+        const { programs, runs, coverage } = runFixture("external-sequences.js", 110000)
+        assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6)
+        assert.equal(runs, programs * 3)
+        const required = [
+            ...harnessModes,
+            ...product(["call:api"], ["reset", "fail", "snapshot", "snapshot:rejected"]),
+            ...product(["call"], ["db", "config"], ["add", "add:pending", "add:rejected", "add:pending:rejected", "fail", "read", "read:rejected"]),
+            ...product(["set-value"], ["direct", "widened", "dynamic-suffix"], ["ready", "pending", "rejected"]),
+            ...product(["set-value"], ["direct", "widened"], ["ready:throws", "pending:throws"]),
+            "set-value:dynamic-prefix:ready",
+            ...product(["get-value", "peek"], ["db", "config"]),
+            ...product(["dynamic-peek"], ["0", "1", "2"]),
+            ...product(["dynamic-peek:1:prefix-poisoned"], ["after-pending-failure", "after-ready-failure"]),
+            ...product(["dynamic-mutate"], ["0", "1"]),
+            ...product(["entry"], ["api", "db", "config"], ["mutable", "readonly"], ["delayed", "ready"]),
+            ...product(["entry:root:mutable"], ["delayed", "ready"]),
+            ...product(["contained"], ["call:add", "call:fail", "call:read", "call:reset", "call:snapshot", "entry",
+                "errors", "get-value", "peek", "repair", "set-value", "managed-set", "managed-get"]),
+            ...product(["repair", "errors"], ["root", "api", "db", "config"]),
+            "alias-peek", "alias-call", "alias-mutate", "alias-assign", "alias-repair",
+            "ext-call", "ext-peek", "ext-mutate", "ext-repair", "competing-call",
+            ...product(["variant"], ["alias", "observationOnly", "second", "competing:db", "competing:api"]),
+            ...product(["context"], ["A", "B"]),
+            ...product(["blocked-or-failed"], ["call", "errors", "peek", "repair", "set-value", "dynamic-mutate",
+                "alias-mutate", "alias-peek", "ext-mutate", "competing-call", "managed-set", "managed-get"]),
+            ...product(["under-root-poison"], ["call", "entry", "errors", "repair", "set-value", "managed-set", "dynamic-mutate"]),
+            ...product(["delivery"], ["native", "ordered"]),
+            ...product(["phase"], ["before-release", "after-release"]),
+            "managed-set:data", "managed-get:data",
+        ]
+        for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
     })
 })

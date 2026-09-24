@@ -52,10 +52,10 @@ describe("public external paths", () => {
         const native = r.externalState({})
         const canonical = new r.ContextChain({ api: native }, ctx, { api: {} })
         const hold = Promise.withResolvers(), data = Promise.withResolvers()
-        const source = new r.Chain({ then: 0 }, ctx)
-        const entry = r.enter(source, ["then"], ctx, true, inner => hold.promise.then(() => {
-            r.assignPath(inner, [], data.promise, ctx)
-        }))
+        // The old data is already pending. A new assignment to `then` would
+        // instead keep validation in the entry's unfinished transition.
+        const source = new r.Chain({ then: data.promise }, ctx)
+        const entry = r.enter(source, ["then"], ctx, true, () => hold.promise)
         const output = new r.Chain(r.importMethodResult(r.lookupPath(source, [], ctx), ctx), ctx)
         r.assignPath(output, ["then"], () => {}, ctx)
         let failure
@@ -542,14 +542,144 @@ describe("public external paths", () => {
         assert.equal(await r.lookupPath(chain, ["api", "value"], ctx), 2)
     })
 
-    it("selects compiler entry targets without inspecting native children", () => {
+    it("captures native entry targets without inspecting unused children", () => {
         const native = { get child() { assert.fail("selection must not inspect native state") } }
         const { ctx, chain } = setup(native)
-        assert.deepEqual(r.selectEntryPath(chain, ["api", "child", "value"], ctx, 2), {
-            path: ["api"], firstDynamicSegment: 1, suffix: ["child", "value"],
+        assert.equal(r.enter(chain, ["api", "child", "value"], ctx, true, () => "done", 2), "done")
+        assert.equal(r.enter(chain, ["ordinary", "child"], ctx, false, () => "done"), "done")
+    })
+
+    describe("invalid dynamic external observations", () => {
+        function scopes() {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const calls = []
+            const child = () => r.externalState({
+                items: [],
+                read() { calls.push("read"); return this.items.length },
+                fail() { throw new Error("child failed") },
+            })
+            const api = r.externalState({ db: child(), config: child(), fail() { throw new Error("api failed") } })
+            const chain = new r.ContextChain({ api }, ctx, { api: { db: {}, config: {} } })
+            return { ctx, chain, api, calls }
+        }
+        const observations = {
+            lookup: (c, p, ctx, d) => r.lookupPath(c, [...p, "db", "items", "length"], ctx, d),
+            expression: (c, p, ctx, d) => r.lookupPathForExpression(c, [...p, "db", "items", "length"], ctx, d),
+            export: (c, p, ctx, d) => r.export(c, [...p, "db", "items", "length"], ctx, d),
+            getErrors: (c, p, ctx, d) => r.getErrors(c, [...p, "db"], ctx, d),
+            run: (c, p, ctx, d) => r.run(c, [...p, "db"], "read", [], ctx, { firstDynamicSegment: d }),
+        }
+        const readyError = result => r.isPoisonedValue(result) ? result.error : result
+        const outcome = result => Promise.resolve(result).catch(error => {
+            assert(r.isPoisonError(error))
+            return error
         })
-        assert.deepEqual(r.selectEntryPath(chain, ["ordinary", "child"], ctx), {
-            path: ["ordinary", "child"], firstDynamicSegment: 2, suffix: [],
+
+        for (const [name, observe] of Object.entries(observations)) {
+            for (const state of ["own poison", "binding conflict", "child poison", "child conflict", "healthy"]) {
+                it(`${name} checks only the reached prefix with ${state}`, () => {
+                    const { ctx, chain, api, calls } = scopes()
+                    let expected
+                    if (state === "own poison") expected = r.run(chain, ["api"], "fail", [], ctx, { mutationScopeDepth: 1 })
+                    if (state === "binding conflict") {
+                        new r.ContextChain({ api }, ctx, { api: {} })
+                        expected = r.getErrors(chain, ["api"], ctx)
+                    }
+                    if (state === "child poison") r.run(chain, ["api", "db"], "fail", [], ctx, { mutationScopeDepth: 2 })
+                    if (state === "child conflict") new r.ContextChain({ db: api.db }, ctx, { db: {} })
+                    const before = r.getErrors(chain, ["api"], ctx)
+                    const result = readyError(observe(chain, ["api"], ctx, 1))
+                    assert(!(result instanceof Promise))
+                    if (expected) assert.equal(result, expected)
+                    else {
+                        assert.equal(result.kind, r.ERROR_KIND.ExternalLocationConflict)
+                        assert.notEqual(result, before)
+                        assert.equal(result.errorContext, ctx.errorContext)
+                    }
+                    // A dynamic first crossing reaches no registered prefix.
+                    const first = readyError(observe(chain, ["api"], ctx, 0))
+                    assert.equal(first.kind, r.ERROR_KIND.ExternalLocationConflict)
+                    assert.notEqual(first, before)
+                    assert.equal(r.hasError(chain, ["api", "db"], ctx, 1), true)
+                    assert.equal(r.getErrors(chain, ["api"], ctx), before)
+                    assert.deepEqual(calls, [])
+                    verifyRefCounts(ctx, chain._state)
+                })
+            }
+
+            for (const entered of [false, true]) {
+                it(`${name} waits for prefix failure and captures it before later repair, entered=${entered}`, async () => {
+                    const { ctx, chain, calls } = scopes()
+                    async function check(owner, prefix) {
+                        const hold = Promise.withResolvers()
+                        const entry = r.enter(owner, prefix, ctx, true, () => hold.promise)
+                        const failed = r.run(owner, prefix, "fail", [], ctx, { mutationScopeDepth: prefix.length })
+                        const result = observe(owner, prefix, ctx, prefix.length)
+                        const captured = outcome(result)
+                        const repair = r.repairPath(owner, prefix, ctx)
+                        const after = outcome(observe(owner, prefix, ctx, prefix.length))
+                        hold.resolve()
+                        const error = await failed
+                        await Promise.all([entry, repair])
+                        return { pending: result instanceof Promise, captured: await captured, error, later: await after }
+                    }
+                    const result = entered ? await r.enter(chain, ["api"], ctx, true, inner => check(inner, []))
+                        : await check(chain, ["api"])
+                    assert(result.pending)
+                    assert.equal(result.captured, result.error)
+                    assert.equal(result.later.kind, r.ERROR_KIND.ExternalLocationConflict)
+                    assert.notEqual(result.later, result.error)
+                    assert.equal(await r.getErrors(chain, ["api"], ctx), null)
+                    assert.deepEqual(calls, [])
+                    verifyRefCounts(ctx, chain._state)
+                })
+            }
+
+            it(`${name} does not wait for an unreached child mutation`, async () => {
+                const { ctx, chain } = scopes()
+                const hold = Promise.withResolvers()
+                const entry = r.enter(chain, ["api", "db"], ctx, true, () => hold.promise)
+                const result = readyError(observe(chain, ["api"], ctx, 1))
+                assert.equal(result.kind, r.ERROR_KIND.ExternalLocationConflict)
+                assert.equal(r.run(chain, ["api", "config"], "read", [], ctx, { mutationScopeDepth: 2 }), 0)
+                hold.resolve()
+                await entry
+                assert.equal(await r.getErrors(chain, ["api"], ctx), null)
+                verifyRefCounts(ctx, chain._state)
+            })
+        }
+
+        for (const poisoned of [false, true]) {
+            it(`keeps dynamic provenance after entry rebases the reference, poisoned=${poisoned}`, async () => {
+                const { ctx, chain } = scopes()
+                const expected = poisoned ? r.run(chain, ["api"], "fail", [], ctx, { mutationScopeDepth: 1 }) : undefined
+                const results = await r.enter(chain, ["api", "db"], ctx, false, inside => [
+                    r.lookupPath(inside, ["items", "length"], ctx),
+                    r.getErrors(inside, [], ctx),
+                ], 1)
+                for (const result of results) {
+                    if (poisoned) assert.equal(result, expected)
+                    else assert.equal(result.kind, r.ERROR_KIND.ExternalLocationConflict)
+                }
+                verifyRefCounts(ctx, chain._state)
+            })
+        }
+
+        it("orders prefix validation behind strict-ancestor mutations", async () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const api = r.externalState({ db: { leaf: { value: 1 } }, fail() { throw new Error("ancestor failed") } })
+            const chain = new r.ContextChain({ api }, ctx, { api: { db: { leaf: {} } } })
+            const hold = Promise.withResolvers()
+            const entry = r.enter(chain, ["api"], ctx, true, () => hold.promise)
+            const failure = r.run(chain, ["api"], "fail", [], ctx, { mutationScopeDepth: 1 })
+            const observed = r.lookupPath(chain, ["api", "db", "leaf", "value"], ctx, 2)
+            const repair = r.repairPath(chain, ["api"], ctx)
+            assert(observed instanceof Promise)
+            hold.resolve()
+            assert.equal(await observed, await failure)
+            await Promise.all([entry, repair])
+            assert.equal(r.getErrors(chain, ["api"], ctx), null)
+            verifyRefCounts(ctx, chain._state)
         })
     })
 
@@ -594,13 +724,11 @@ describe("public external paths", () => {
     }
 
     for (const mutable of [false, true]) {
-        it(`rejects native property entry before reflection, mutable=${mutable}`, async () => {
+        it(`protects an unused native property reference without reflection, mutable=${mutable}`, async () => {
             const { ctx, chain } = setup({ get child() { assert.fail("native reflection") } })
-            const failure = await r.enter(chain, ["api", "child"], ctx, mutable,
-                () => assert.fail("callback"))
-            assert.equal(failure.kind, r.ERROR_KIND.PropertyValidation)
-            assert.equal(await r.hasError(chain, ["api"], ctx), mutable)
-            if (mutable) assert.equal(await r.getErrors(chain, [], ctx), failure)
+            const result = await r.enter(chain, ["api", "child"], ctx, mutable, () => "done")
+            assert.equal(result, "done")
+            assert.equal(await r.hasError(chain, ["api"], ctx), false)
             await r.repairPath(chain, ["api"], ctx)
             assert.equal(await r.hasError(chain, [], ctx), false)
         })

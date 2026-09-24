@@ -263,31 +263,11 @@ function materializeObservationReceiver(receiver, invocationWork) {
     }
     if (!needed.has(receiver)) return receiver
 
+    // Both modes use one graph copier. An observation seeds unchanged nodes
+    // with their own identity; mutation starts with an empty identity map.
     const copies = new Map()
-    for (const source of needed) {
-        copies.set(source, createEmptyContainerCopy(source, operationContext))
-    }
-    for (const source of needed) {
-        const destination = copies.get(source)
-        for (const key of languageProperties.enumerableLanguageKeys(
-            source,
-            operationContext,
-        )) {
-            const value = languageProperties.readLanguageProperty(
-                source,
-                key,
-                operationContext,
-            )
-            const copied = copies.get(value) ?? value
-            languageProperties.writeLanguageProperty(
-                destination,
-                key,
-                copied,
-                operationContext,
-            )
-        }
-    }
-    return copies.get(receiver)
+    for (const source of reached) if (!needed.has(source)) copies.set(source, source)
+    return copyCompleteGraph(receiver, operationContext, copies)
 
     function visit(source) {
         if (
@@ -298,23 +278,32 @@ function materializeObservationReceiver(receiver, invocationWork) {
         if (arrayViews.requiresArrayMaterialization(source, operationContext)) {
             requireCopy(source)
         }
-        for (const key of languageProperties.enumerableLanguageKeys(
+        if (metadata.metaOf(source, operationContext)?.recordOrder) {
+            const logical = languageProperties.enumerableLanguageKeys(source, operationContext)
+            const keys = new Set(logical)
+            const physical = errorUtils.runExternalAction(operationContext, () => Object.keys(source))
+                .filter(key => keys.has(key))
+            if (physical.length !== logical.length || physical.some((key, index) => key !== logical[index])) requireCopy(source)
+        }
+        for (const key of languageProperties.enumerableLanguageKeyCandidates(
             source,
             operationContext,
         )) {
+            const present = languageProperties.hasLanguageProperty(source, key, operationContext)
+            const version = propertyVersions.getPlacementVersion(source, key, operationContext)
+            const descriptor = version
+                ? languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
+                : undefined
+            if (!present) {
+                if (descriptor) requireCopy(source)
+                continue
+            }
             const child = languageProperties.readLanguageProperty(
                 source,
                 key,
                 operationContext,
             )
-            if (
-                propertyVersions.getPlacementVersion(source, key, operationContext) !==
-                undefined
-            ) {
-                const descriptor = languageProperties
-                    .getLanguagePropertyDescriptor(source, key, operationContext)
-                if (!Object.is(descriptor?.value, child)) requireCopy(source)
-            }
+            if (version && (!descriptor || !Object.is(descriptor.value, child))) requireCopy(source)
             if (!languageValues.isTraversable(child, operationContext)) continue
             let childParents = parents.get(child)
             if (!childParents) {

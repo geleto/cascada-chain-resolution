@@ -1,7 +1,7 @@
 import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
-import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
+import { resolveLength } from "./array-length.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
@@ -30,13 +30,11 @@ function selectArrayMethodDescription(invocationWork) {
         receiverToLease: mutation ? undefined : receiver,
         leaseInputsThroughResult: !mutation &&
             methodDefinition.leaseInputsThroughResult,
-        prepareArguments: () =>
-            runArrayStep(invocationWork, () =>
-                prepareArrayMethodArguments(
-                    methodDefinition,
-                    invocationWork,
-                ),
-            ),
+        prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueOperation(
+            prepareArrayMethodArguments(methodDefinition, invocationWork),
+            invocationWork.operationContext, args => errorUtils.isPoisonError(args) || !methodDefinition.intrinsic
+                ? args : runArrayStep(invocationWork, () => prepareIntrinsicArrayShape(args, invocationWork)),
+            undefined, invocationWork)),
         invoke(preparedArguments) {
             return runArrayStep(invocationWork, () => {
                 const failure = validateArrayOperation(
@@ -58,6 +56,15 @@ function selectArrayMethodDescription(invocationWork) {
             })
         },
     }
+}
+
+// Intrinsics require an exact remap length. Controlled algorithms prepare
+// their own bounds or capture shape alongside their required placements.
+function prepareIntrinsicArrayShape(args, work) {
+    return resolveLength(work.receiver, work, length => {
+        work.arrayLength = length
+        return args
+    })
 }
 
 function prepareArrayMethodArguments(methodDefinition, invocationWork) {
@@ -126,7 +133,7 @@ function invokeArrayObservationMethod(
     if (methodDefinition.remap) {
         remap = methodDefinition.remap(preparedArgs, invocationWork)
     } else {
-        const source = arrayRemaps.createRemap(invocationWork.receiver, invocationWork.operationContext)
+        const source = arrayRemaps.createRemap(invocationWork.receiver, invocationWork.operationContext, 0, invocationWork.arrayLength)
         const result = Reflect.apply(methodDefinition.intrinsic, source, preparedArgs)
         // Dense observations retain only the placements selected by the native
         // mapping. Overwritten and removed inputs create no presence dependency.
@@ -154,6 +161,9 @@ function invokeArrayMutationMethod(
     preparedArguments,
     invocationWork,
 ) {
+    // Remaps and derived views publish independent placements. Retained entries
+    // carry their captured transitions; removed entries cannot write into the
+    // new receiver. Only consumed shape or values require waiting.
     const thisValue = invocationWork.receiver
     if (methodDefinition.view) {
         const view = methodDefinition.view(
@@ -191,6 +201,7 @@ function invokeArrayMutationMethod(
     const mutation = arrayRemaps.traceArrayMutation(
         thisValue,
         invocationWork.operationContext,
+        invocationWork.arrayLength,
     )
     // The intrinsic and its remap traps are trusted work on prepared inputs.
     // Exact external reflection escapes to the operation's marker consumer.
@@ -232,21 +243,13 @@ function invokeArrayMutationMethod(
     }
 }
 
-function validateArrayOperation(args, { receiver, method, operationContext }) {
-    const length = arrayViews.logicalArrayLength(receiver, operationContext)
-    if (method === "with") {
-        const index = args[0] ?? 0
-        if (index < -length || index >= length) {
-            return errorUtils.validationError(
-                "Array index is out of range",
-                operationContext,
-                errorUtils.ERROR_KIND.InvalidArrayOperation,
-            )
-        }
-    }
+function validateArrayOperation(args, { arrayLength: length, method, operationContext }) {
+    const appends = method === "push" || method === "unshift"
+    const splices = method === "splice" || method === "toSpliced"
+    if (!appends && !splices) return
     let nextLength = length
-    if (method === "push" || method === "unshift") nextLength += args.length
-    else if (method === "splice" || method === "toSpliced") {
+    if (appends) nextLength += args.length
+    else if (splices) {
         const relativeStart = args[0] ?? 0
         const start =
             relativeStart < 0

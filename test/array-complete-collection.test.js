@@ -59,7 +59,8 @@ describe("complete Array preparation", () => {
                         assert.equal(error.errorContext, error.cause === reflection
                             ? ctx.errorContext : introduced.errorContext)
                         assert.equal(error.kind, error.cause === reflection
-                            ? runtime.ERROR_KIND.InvalidArrayOperation : runtime.ERROR_KIND.ContextValueFailed)
+                            ? route === "sort mutation" ? runtime.ERROR_KIND.PropertyMutationFailed : runtime.ERROR_KIND.InvocationFailed
+                            : runtime.ERROR_KIND.ContextValueFailed)
                     }
                     assert.equal(calls, 0)
                     assert.equal(ctx.execution.fatalError, null)

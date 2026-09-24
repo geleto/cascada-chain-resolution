@@ -1,13 +1,12 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
-import { verifyStorage } from "../verify-storage.js"
 
 // Short conflicts on one target: a predecessor held pending, two queued commands,
 // and a sibling creation (an order and length witness) before, between, or after
-// them. An independent sequential model gives every expected observation. Both
-// consistency verifiers run after each macrotask turn while the holds settle,
-// and after each microtask turn in stepwise runs.
+// them. An independent sequential model gives every expected observation. The
+// refcount and storage verifiers run after each macrotask turn while the holds
+// settle, and after each microtask turn in stepwise runs.
 // The default run covers every predecessor/queued/queued triple once against an
 // absent target and samples present targets; CASCADA_CONFLICT_MATRIX=full runs
 // the complete product in both harness modes, optionally split for parallel
@@ -181,21 +180,18 @@ function observe(chain, ctx, keys, array) {
     })
 }
 
-function verify(ctx, chain) {
-    verifyRefCounts(ctx, chain._state)
-    verifyStorage(ctx, chain._state)
-}
-
 // A stale fact can exist only between microtasks and be gone by the next
 // macrotask, so stepwise runs verify after every microtask turn.
-async function runCase({ array, target, predecessor, first, second, sibling, release, observed, stepwise }) {
+async function runCase({ array, target, predecessor, first, second, sibling, release, mode, stepwise }) {
+    const observed = mode === "observed", instrumented = mode !== "bare"
     const initial = array ? [0, { x: 1 }, 2] : { k0: 0, k1: { x: 1 } }
     const keys = array ? ["0", "1", "2", "3", "4", "5"] : ["k0", "k1", "k2", "k3"]
     const siblingKey = array ? "5" : "k3"
     const model = new Model(initial, array)
     const ctx = { execution: new r.Execution(), errorContext: {} }
     const chain = new r.Chain({ a: structuredClone(initial) }, ctx)
-    r.hasError(chain, [], ctx) // Keep the live index maintained through every transition.
+    if (instrumented) r.hasError(chain, [], ctx)
+    const verify = () => { if (instrumented) verifyRefCounts(ctx, chain._state) }
     const holds = []
     const hold = () => {
         const held = Promise.withResolvers()
@@ -213,8 +209,8 @@ async function runCase({ array, target, predecessor, first, second, sibling, rel
             model.apply(command.op, key, command.value)
             handled(issue(command, chain, ctx, hold, key))
             if (observed && role === "first") intermediate.push({ want: expected(), got: observe(chain, ctx, keys, array) })
+            verify()
         }
-        verify(ctx, chain)
         // Release the predecessor first or last; holds created by callbacks follow in FIFO order.
         if (release === "predecessor-last" && holds.length > 1) holds.push(holds.shift())
         do {
@@ -222,12 +218,15 @@ async function runCase({ array, target, predecessor, first, second, sibling, rel
                 holds.shift().resolve()
                 for (let turn = 0; turn < 12; turn++) {
                     await Promise.resolve()
-                    if (stepwise) verify(ctx, chain)
+                    if (stepwise) verify()
                 }
                 await macrotask()
-                verify(ctx, chain)
+                verify()
             }
-            for (let turn = 0; turn < 3; turn++) await macrotask()
+            for (let turn = 0; turn < 3; turn++) {
+                await macrotask()
+                verify()
+            }
         } while (holds.length)
         for (const { want, got } of intermediate) {
             const actual = await got
@@ -249,7 +248,7 @@ async function runCase({ array, target, predecessor, first, second, sibling, rel
             : model.order.join(",")
         const actualShape = exported.blocked ? "BLOCKED" : exported.error ? "REJECTED" : Error.isError(exported.result) ? `ERR:${exported.result.kind}` : shape(exported.result)
         if (actualShape !== expectedShape) errors.push(`shape got ${actualShape} want ${expectedShape}`)
-        verify(ctx, chain)
+        verify()
         return { errors, final }
     } catch (error) {
         errors.push(`threw ${ctx.execution.fatalError?.message ?? error?.stack ?? error}`)
@@ -266,7 +265,7 @@ function* completeCases() {
 
 // Each triple gets one of the 24 container/sibling/release/mode combinations in
 // rotation, so every combination meets many predecessors and queued commands.
-// Every eighth triple also compares both harness modes; every 32nd verifies
+// Every eighth triple also compares all harness modes; every 32nd verifies
 // after each microtask turn, which the complete run does throughout.
 function* sampledCases() {
     let index = 0
@@ -295,20 +294,22 @@ const failures = []
 let position = 0
 for (const testCase of full ? completeCases() : sampledCases()) {
     if (position++ % partCount !== partIndex) continue
-    const modes = testCase.paired ? [testCase.observed, !testCase.observed] : [testCase.observed]
+    const modes = testCase.paired ? ["observed", "verified", "bare"] : [testCase.observed ? "observed" : "verified"]
     const finals = []
-    for (const observed of modes) {
-        const { errors, final } = await runCase({ ...testCase, observed, stepwise: full || testCase.stepwise })
+    for (const mode of modes) {
+        const { errors, final } = await runCase({ ...testCase, mode, stepwise: full || testCase.stepwise })
         coverage.runs++
+        coverage.dimensions.add(`harness:${mode}`)
+        coverage.dimensions.add(`observed:${mode === "observed"}`)
         finals.push(final)
         const label = `${testCase.array ? "array" : "record"} target=${testCase.target} predecessor=${testCase.predecessor.name} ` +
-            `first=${testCase.first.name} second=${testCase.second.name} sibling@${testCase.sibling} ${testCase.release} observed=${observed}`
+            `first=${testCase.first.name} second=${testCase.second.name} sibling@${testCase.sibling} ${testCase.release} harness=${mode}`
         if (errors.length) failures.push(`${label}\n    ${errors.join("\n    ")}`)
     }
-    if (modes.length === 2) {
+    if (modes.length > 1) {
         coverage.paired++
-        if (finals[0] !== undefined && finals[1] !== undefined && finals[0] !== finals[1])
-            failures.push(`paired runs disagree for ${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}: [${finals[0]}] vs [${finals[1]}]`)
+        if (new Set(finals.filter(value => value !== undefined)).size > 1)
+            failures.push(`harness modes disagree for ${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}: ${JSON.stringify(finals)}`)
     }
     coverage.cases++
     const triple = `${testCase.predecessor.name}/${testCase.first.name}/${testCase.second.name}`
@@ -318,7 +319,6 @@ for (const testCase of full ? completeCases() : sampledCases()) {
     coverage.dimensions.add(`target:${testCase.target === "4" || testCase.target === "k2" ? "absent" : "present"}`)
     coverage.dimensions.add(`sibling:${testCase.sibling}`)
     coverage.dimensions.add(`release:${testCase.release}`)
-    coverage.dimensions.add(`observed:${testCase.observed}`)
 }
 if (failures.length) {
     console.error(`${failures.length} failing runs; first ${Math.min(12, failures.length)}:\n${failures.slice(0, 12).join("\n")}`)

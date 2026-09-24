@@ -204,6 +204,7 @@ When implementation exists:
 - Check that helper names reveal whether they prepare receivers, arguments, boundaries, results, or lifecycle state.
 - Prefer integration tests that exercise public behavior and real scheduling. Add focused unit tests only for isolated invariants that integration tests cannot diagnose clearly.
 - Include adversarial tests derived from the lifecycle, semantic matrix, and concurrency traces above.
+- Check that new operations, placement states, representations, and routes extend the generated sequence models, conflict matrix, and consistency verifiers that [test/README.md](../test/README.md) describes, and that those ran at the larger scale.
 - Run the complete relevant suite, static checks, bookkeeping/oracle checks, and diff checks.
 
 When implementation does not yet exist:

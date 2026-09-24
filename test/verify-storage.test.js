@@ -1,9 +1,20 @@
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
-import { verifyStorage } from "./verify-storage.js"
+import { verifyRefCounts } from "./verify-refcounts.js"
 
+// Tests reach the storage oracle through verifyRefCounts, the suite's common
+// consistency check, so this also guards that it keeps running there.
 describe("storage verifier", () => {
+    it("rejects an unprotected child in a retained backing prefix", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        const child = { n: 1 }
+        const view = r.run(new r.Chain([child], ctx), [], "push", [], ctx, {})
+        verifyRefCounts(ctx, view)
+        metaOf(child, ctx).shared = false
+        assert.throws(() => verifyRefCounts(ctx, view), /Retained backing prefix contains an unprotected child/)
+    })
+
     it("accepts storage masked by an absent overlay and rejects a false absence fact", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }, hold = Promise.withResolvers()
         const chain = new r.Chain({ data: [3, 7, 1] }, ctx)
@@ -18,8 +29,8 @@ describe("storage verifier", () => {
         const version = metaOf(array, ctx).placementVersions["0"]
         assert.equal(version.present, false)
         assert(Object.hasOwn(array, "0"))
-        verifyStorage(ctx, chain._state)
+        verifyRefCounts(ctx, chain._state)
         version.storageAbsent = true
-        assert.throws(() => verifyStorage(ctx, chain._state), /Absent storage fact hides a physical placement/)
+        assert.throws(() => verifyRefCounts(ctx, chain._state), /Absent storage fact hides a physical placement/)
     })
 })

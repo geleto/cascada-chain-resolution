@@ -41,12 +41,16 @@ class PathOperation extends OperationOwner {
         this.reserveExternal(node)
     }
 
-    // Queries and readonly entries also consume external subtree metadata or
-    // state. They call this at issuance, before starting managed path capture.
+    // Error queries also select external subtree metadata. Reserve that
+    // coverage at issuance, before starting managed path capture.
     reserveExternal(node) {
-        if (node && !this.externalEffect && (this.mutation || !this.routeFailure)) {
+        const subtree = this.mutation || !this.routeFailure
+        // A forbidden selection reaches only its static prefix. A query's
+        // fallback node cannot grant coverage of the dynamically chosen child.
+        if (!subtree) node = this.route.externalScope
+        if (node && !this.externalEffect) {
             this.selectedExternalNode = node
-            this.externalEffect = new ExternalEffect(node, this.mutation, this.chain._externalReservationView, this.operationContext)
+            this.externalEffect = new ExternalEffect(node, this.mutation, this.chain._externalReservationView, this.operationContext, subtree)
         }
     }
 
@@ -71,15 +75,18 @@ class PathOperation extends OperationOwner {
 
     reachExternal(identity, suffix, action, owner = this) {
         const { operationContext, route: { externalBoundary: boundary, externalScope: scope } } = this
-        const failure = (this.mutation ? undefined : this.routeFailure) ?? validateExternalAccess(identity, boundary, operationContext)
+        if (this.routeFailure && !this.mutation && !scope) return this.routeFailure
+        const failure = validateExternalAccess(identity, boundary, operationContext)
         if (failure) return failure
         if (this.mutation && !scope) return externalLocationError(operationContext)
         this.reachedExternal = true
         return steps.continueOperation(this.externalEffect?.readiness, operationContext, () => {
             if (!owner.open) return undefined
-            const failure = this.externalBlocker(!this.repair)
+            const failure = this.externalBlocker(!this.repair && (this.mutation || !this.routeFailure))
             if (failure) return failure
-            if (this.routeFailure) return this.routeFailure
+            // Invalid observations stop before the child: preserve the reached
+            // prefix's own poison, without collecting any descendant Errors.
+            if (this.routeFailure) return scope?.[externalTree.TREE_NODE].ownPoison ?? this.routeFailure
             const access = new ExternalAccess(identity, suffix, boundary, this)
             if (this.repair) {
                 const failure = access.validatePath()
@@ -135,11 +142,12 @@ class PathOperation extends OperationOwner {
                     versions.transferPlacement(state.baseline, privateChain._state, "value", operationContext)
                     privateChain._externalMutationTree = node
                     privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+                    privateChain._rootKey = depth ? target.key : chain._rootKey
                     privateChain._externalReservationView = chain._externalReservationView
                     return transform(value, state, privateChain, route.path.slice(depth), node)
                 })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair })
-        }, outcome => outcome, { structuralOwner: true, deletesTarget: deleting,
+        }, outcome => outcome, { targetArrayStructure: true, deletesTarget: deleting,
             preserveOnFailure: this.repair,
             onExternalFailure: error => { this.routeFailure = error } })
     }

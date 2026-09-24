@@ -3,12 +3,121 @@ import * as runtime from "cascada-chain-resolution"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
-import { getPlacementVersion } from "../src/property-versions.js"
+import { capturePlacement, commitPlacementVersion, createVersionFromPlacement, getPlacementVersion, installMutationVersion, installPlacementVersion } from "../src/property-versions.js"
 import { metaOf } from "../src/meta.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    it("retains committed Array growth without a physical element or trailing slot", async () => {
+        const ctx = context()
+        const owner = [0, 1, 2]
+        const chain = new runtime.Chain(owner, ctx)
+        buildRefIndex(owner, ctx)
+        const absent = capturePlacement(owner, "5", ctx)
+        const version = createVersionFromPlacement(absent)
+        installPlacementVersion(owner, "5", version, ctx)
+        const poison = runtime.createPoisonError(new Error("publication failed"), ctx,
+            runtime.ERROR_KIND.PropertyMutationFailed)
+        commitPlacementVersion(owner, "5", version, { value: poison, present: true, recovery: absent }, ctx, false)
+        assert.equal(owner.length, 3)
+        assert.equal(runtime.lookupPath(chain, ["length"], ctx), 6)
+        assert.equal(runtime.getErrors(chain, [], ctx), poison)
+        verifyRefCounts(ctx, chain._state)
+
+        // Logical deletion does not undo the already committed growth. Test
+        // consumers before any physical representation has caught up.
+        commitPlacementVersion(owner, "5", version, absent, ctx, false)
+        const expected = [0, 1, 2]
+        expected.length = 6
+        assert.deepEqual(runtime.export(chain, [], ctx), expected)
+        const receiver = new runtime.Chain({ child: owner, length() { return this.child.length } }, ctx)
+        assert.equal(runtime.run(receiver, [], "length", [], ctx, {}), 6)
+        const api = { data: owner }
+        runtime.externalState(api)
+        const external = new runtime.ContextChain({ api }, ctx, { api: {} })
+        const snapshot = new runtime.Chain(runtime.lookupPath(external, ["api", "data"], ctx), ctx)
+        assert.deepEqual(runtime.export(snapshot, [], ctx), expected)
+        for (const [method, args] of [["slice", []], ["concat", []]]) {
+            const copy = new runtime.Chain(runtime.run(chain, [], method, args, ctx, {}), ctx)
+            assert.deepEqual(await runtime.export(copy, [], ctx), expected)
+        }
+        runtime.assignPath(chain, [0], 7, ctx)
+        expected[0] = 7
+        assert.deepEqual(runtime.export(chain, [], ctx), expected)
+        assert.deepEqual(owner, [0, 1, 2])
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("updates indexed edges when an installed fixed version publishes without writeback", () => {
+        const ctx = context()
+        const chain = new runtime.Chain({ item: 1 }, ctx)
+        const owner = chain._state.value
+        buildRefIndex(owner, ctx)
+        const version = createVersionFromPlacement(capturePlacement(owner, "item", ctx))
+        installPlacementVersion(owner, "item", version, ctx)
+        const poison = runtime.createPoisonError(new Error("logical failure"), ctx,
+            runtime.ERROR_KIND.AssignmentValueFailed)
+        commitPlacementVersion(owner, "item", version, { value: poison, present: true }, ctx, false)
+        assert.equal(owner.item, 1)
+        assert.equal(runtime.hasError(chain, [], ctx), true)
+        assert.equal(runtime.getErrors(chain, [], ctx), poison)
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("retains an absent overlay when a completed writer has not removed physical storage", async () => {
+        const ctx = context(), pending = Promise.withResolvers()
+        const chain = new runtime.Chain({ item: pending.promise }, ctx)
+        const owner = chain._state.value
+        buildRefIndex(owner, ctx)
+        const source = getPlacementVersion(owner, "item", ctx)
+        const transition = installMutationVersion(owner, "item", source, ctx, (value, version) => {
+            commitPlacementVersion(owner, "item", version, { value: undefined, present: false }, ctx, false)
+        })
+        pending.resolve(1)
+        await transition
+        assert.equal(owner.item, 1)
+        assert.equal(runtime.lookupPath(chain, ["item"], ctx), undefined)
+        assert.deepEqual(runtime.export(chain, [], ctx), {})
+        verifyRefCounts(ctx, chain._state)
+        runtime.assignPath(chain, ["item"], 2, ctx)
+        assert.deepEqual(runtime.export(chain, [], ctx), { item: 2 })
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    // Exercise the logical-placement primitive independently of which producer
+    // chooses physical writeback. All observations below use the public API.
+    for (const array of [false, true]) for (const poisoned of [false, true]) {
+        it(`consumes a fixed placement without physical storage, Array=${array}, Error=${poisoned}`, async () => {
+            const ctx = context()
+            const value = poisoned ? runtime.createPoisonError(new Error("logical failure"), ctx,
+                runtime.ERROR_KIND.AssignmentValueFailed) : undefined
+            const source = new runtime.Chain(value, ctx)
+            const owner = array ? new Array(3) : {}
+            const key = array ? "1" : "item"
+            const chain = new runtime.Chain(owner, ctx)
+            const version = createVersionFromPlacement(capturePlacement(source._state, "value", ctx))
+            installPlacementVersion(owner, key, version, ctx)
+            assert.equal(Object.hasOwn(owner, key), false)
+            assert.equal(runtime.lookupPath(chain, [key], ctx), value)
+            assert.equal(runtime.hasError(chain, [], ctx), poisoned)
+            assert.equal(runtime.getErrors(chain, [], ctx), poisoned ? value : null)
+            if (poisoned) assert.equal(runtime.export(chain, [], ctx), value)
+            else {
+                const exported = runtime.export(chain, [], ctx)
+                assert.equal(Object.hasOwn(exported, key), true)
+                if (array) assert.equal(runtime.run(chain, [], "indexOf", [undefined], ctx, {}), 1)
+                const receiver = new runtime.Chain({ child: owner, present() { return Object.hasOwn(this.child, key) } }, ctx)
+                assert.equal(runtime.run(receiver, [], "present", [], ctx, {}), true)
+            }
+            const retained = new runtime.Chain(runtime.lookupPath(chain, [], ctx), ctx)
+            runtime.assignPath(chain, [array ? 0 : "other"], 7, ctx)
+            assert.equal(runtime.lookupPath(chain, [key], ctx), value)
+            assert.equal(runtime.lookupPath(retained, [key], ctx), value)
+            verifyRefCounts(ctx, chain._state, retained._state)
+        })
+    }
+
     for (const array of [false, true]) {
         for (const nested of [false, true]) {
             it(`keeps failed ${nested ? "nested" : "direct"} entry deletion visible and repairable in ${array ? "Arrays" : "records"}`, async () => {
@@ -41,14 +150,13 @@ describe("placement versions across representation boundaries", () => {
                 assert.equal(await runtime.hasError(chain, [], ctx), true)
                 verifyRefCounts(ctx, chain._state)
 
-                // A failed restoration preserves the original poison and the
-                // completed deletion, which a later repair can still publish.
-                assert.equal((await runtime.repairPath(chain, [key], ctx)).cause, cause)
-                assert.equal(await runtime.getErrors(chain, [], ctx), poison)
-                refuse = false
+                // The contained deletion failed before committing. Repair
+                // restores its original value; entry completion does no write.
                 await runtime.repairPath(chain, [key], ctx)
                 assert.equal(await runtime.getErrors(chain, [], ctx), null)
-                assert.equal(runtime.lookupPath(chain, [key], ctx), undefined)
+                assert.equal(runtime.lookupPath(chain, [key], ctx), 1)
+                refuse = false
+                runtime.deletePath(chain, [key], ctx)
                 assert.deepEqual(await runtime.export(chain, [], ctx), array ? new Array(1) : {})
                 assert.equal(Object.hasOwn(storage, key), false)
                 assert.equal(await captured, poison)

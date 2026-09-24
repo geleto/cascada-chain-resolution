@@ -6,7 +6,8 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { logicalArrayLength } from "./array-view.js"
+import { isLogicalArray, publishedArrayLength } from "./array-view.js"
+import { copyContainerStructure } from "./placement-structure.js"
 
 function processImportSegment(
     root,
@@ -60,13 +61,17 @@ function processImportSegment(
             if (target !== source) {
                 const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
                 metadata.getOrCreateMeta(target, operationContext, type, admittedPrototype)
+                copyContainerStructure(source, target, operationContext)
                 metadata.markShared(target, operationContext)
             }
             for (const [key, { version, original }] of placements) {
                 version.value = containers.get(version.value)?.target ?? version.value
                 if (target !== source && version.recovery)
                     propertyVersions.retainPlacement(version.recovery, operationContext)
-                if (target !== source && version.present !== false) Object.defineProperty(target, key, {
+                // Record slots preserve key order beneath pending overlays;
+                // Array slots would incorrectly commit speculative growth.
+                if (target !== source && version.present !== false &&
+                    (!version.pendingPresence || !isLogicalArray(target, operationContext))) Object.defineProperty(target, key, {
                     value: version.value, enumerable: true, writable: true, configurable: true,
                 })
                 if (version.promiseBacked || (target !== source && version.recovery) || (target === source && version.value !== original))
@@ -132,7 +137,7 @@ function processImportSegment(
         if (container.target !== source) return
         const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
         container.target = type === metadata.TYPE.Array
-            ? new Array(logicalArrayLength(source, operationContext)) : Object.create(admittedPrototype)
+            ? new Array(publishedArrayLength(source, operationContext)) : Object.create(admittedPrototype)
         for (const parent of container.parents ?? []) {
             if (retentions.has(parent)) copyContainer(parent)
         }
@@ -240,6 +245,7 @@ function processImportSegment(
                     // pending. Result validation still owns that later delivery.
                     version.present = staged.placement.present
                     version.recovery = staged.placement.recovery
+                    version.position = staged.placement.position
                     const publication = continueOperation(staged.placement.value, operationContext, deliver, reason => {
                         if (state === "abandoned") return undefined
                         return deliver(staged.placement.sourceVersion ? reason :
@@ -262,6 +268,7 @@ function processImportSegment(
                         version.value = walk(placement.value)
                         version.present = placement.present
                         version.recovery = placement.recovery
+                        version.position = placement.position
                         delete version.pendingPresence
                         delete version.publication
                         connectChild(value, version.value)
@@ -269,7 +276,7 @@ function processImportSegment(
                         const imported = processImportSegment(placement.value, operationContext, importPolicy)
                         if (placement.recovery) propertyVersions.retainPlacement(placement.recovery, operationContext)
                         propertyVersions.commitPromiseVersion(container.target, key, version,
-                            { value: imported, present: placement.present, recovery: placement.recovery },
+                            { ...placement, value: imported },
                             operationContext, container.target !== value)
                     }
                 }

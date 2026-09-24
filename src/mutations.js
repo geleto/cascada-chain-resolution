@@ -13,6 +13,7 @@ import * as refcounts from "./refcounts.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
 import { externalLocationError } from "./external-operation.js"
+import { copyContainerStructure } from "./placement-structure.js"
 
 function setProperty(
     parent,
@@ -67,7 +68,7 @@ function createEmptyContainerCopy(source, operationContext) {
     const type = sourceMeta.type
     let destination
     if (type === languageValues.TYPE.Array) {
-        destination = new Array(arrayViews.logicalArrayLength(source, operationContext))
+        destination = new Array(arrayViews.publishedArrayLength(source, operationContext))
     } else if (
         type === languageValues.TYPE.Record ||
         type === languageValues.TYPE.ManagedClass
@@ -89,8 +90,8 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
     const destination = createEmptyContainerCopy(source, operationContext)
     attachmentRoot ??= destination
 
-    // Copy only language-visible own enumerable string keys. Metadata lives
-    // outside that surface, so the source alone keeps its metadata.
+    // Copy only language-visible own enumerable string keys. Identity metadata
+    // stays with the source; captured structural state is transferred below.
     // Both containers retain every copied child until replacement, including
     // when a path operation does nothing or its child is still pending.
     for (const key of languageProperties.enumerableLanguageKeys(
@@ -99,8 +100,15 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
     )) {
         languageProperties.readLanguageProperty(source, key, operationContext)
         const placement = propertyVersions.capturePlacement(source, key, operationContext)
+        // Fresh records reserve physical key order even while presence is
+        // undecided. Arrays must not grow merely to represent such a placement.
+        if (placement.sourceVersion?.pendingPresence && !arrayViews.isLogicalArray(source, operationContext))
+            Object.defineProperty(destination, key, { value: undefined, enumerable: true, writable: true, configurable: true })
         propertyVersions.transferPlacement(placement, destination, key, operationContext, true)
     }
+    // Initial population copies existing structure; it is not a new sequence
+    // of insertions. Install captured order only after those physical writes.
+    copyContainerStructure(source, destination, operationContext)
     refcounts.indexValueIfSourceIndexed(source, destination, operationContext)
     return {
         value: destination,
@@ -138,7 +146,8 @@ function transformProperty(target, operationContext, transform, { replace = fals
     }
     if (!languageValues.isPending(readiness, operationContext)) return publish(readiness)
     const failure = errorUtils.catchExternalThrow(() => {
-        gate = propertyVersions.installPlacementGate(parent, key, operationContext, target.sourceVersion)
+        const captured = propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
+        gate = propertyVersions.installPlacementGate(parent, key, operationContext, captured, target.sourceVersion)
         if (attachmentRoot) metadata.markShared(attachmentRoot, operationContext)
     }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
     if (errorUtils.isPoisonError(failure)) {
@@ -162,12 +171,15 @@ function transformProperty(target, operationContext, transform, { replace = fals
     }
     function publish(outcome) {
         const placement = outcome.placement ?? { value: outcome.mutatedValue, present: true }
+        // Result holders and assigned inputs are different placements. Only
+        // this destination's preceding presence determines its insertion order.
+        const publication = { ...placement, position: originalPlacement.present ? originalPlacement.position : Infinity }
         const destinationVersion = gate?.version ?? target.sourceVersion
-        let published = false
+        const structure = gate?.structure ?? target.structure
         const failure = errorUtils.catchExternalThrow(() => {
             if (gate || placement !== originalPlacement) {
-                const failure = propertyVersions.transferPlacement(placement, parent, key, operationContext, false, destinationVersion)
-                published = true
+                const failure = propertyVersions.transferPlacement(publication, parent, key, operationContext, false, destinationVersion,
+                    errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure)
                 if (!destinationVersion && attachmentRoot && containsPromise(placement.value, operationContext))
                     metadata.markShared(attachmentRoot, operationContext)
                 return failure
@@ -178,18 +190,15 @@ function transformProperty(target, operationContext, transform, { replace = fals
                 ? errorUtils.combineErrors([placement.value, failure], "Mutation publication failed") : failure
             propertyVersions.retainPlacement(baseline, operationContext)
             const restoring = repair && placement === baseline
+            const failedPlacement = restoring ? originalPlacement : { value: poison, present: true, recovery: baseline, position: baseline.position }
+            outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
+            // Storage failure cannot widen the selected poison scope. An
+            // existing version keeps its captured authority; a ready placement
+            // uses the same logical overlay without requiring physical storage.
             if (destinationVersion) {
                 propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
-                    restoring ? originalPlacement : { value: poison, present: true, recovery: baseline }, operationContext, false)
-            }
-            // A failed physical write leaves this container unchanged. Publish
-            // at its owning placement, preserving aliases of the container.
-            else if (published) {
-                const version = propertyVersions.getPlacementVersion(parent, key, operationContext) ?? { value: poison }
-                version.recovery = baseline
-                propertyVersions.installPlacementVersion(parent, key, version, operationContext)
-            } else if (!restoring) target.replaceReceiver(poison)
-            outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
+                    failedPlacement, operationContext, false, structure)
+            } else if (!restoring) target.publishFailure(failedPlacement, outcome)
         }
         return finish(outcome)
     }
@@ -239,13 +248,21 @@ function assignManagedPath(
                     target.propertyKind ===
                     languageProperties.ORDINARY_PROPERTY
                 ) {
-                    return setPlacement(
-                        target.parent,
-                        target.key,
-                        placement,
-                        operationContext,
-                        target.attachmentRoot,
-                    )
+                    const logicalKey = path.length ? target.key : chain._rootKey
+                    const publish = resolved => {
+                        if (languageProperties.isCallableThenPlacement(logicalKey, resolved.value))
+                            return languageProperties.propertyValidationError(
+                                "Language data cannot contain a callable then property", operationContext)
+                        return setPlacement(target.parent, target.key, resolved,
+                            operationContext, target.attachmentRoot)
+                    }
+                    // This destination needs its value to prove assignment is
+                    // valid. Keep that work inside the mutation's rollback and
+                    // publication lifetime; other pending data publishes now.
+                    return logicalKey === "then"
+                        ? propertyVersions.resolvePlacement(placement, operationContext, publish,
+                            errorUtils.ERROR_KIND.AssignmentValueFailed)
+                        : publish(placement)
                 }
                 if (
                     target.propertyKind ===
@@ -268,79 +285,53 @@ function assignManagedPath(
                 return internalSteps.continueOperation(outcome, operationContext, outcome => outcome.result)
             },
             result => result,
-            { tryTargetMutation: tryArrayViewAssignment },
         )
     })
 
-    function tryArrayViewAssignment(
-        array,
-        key,
-        attachmentRoot,
-    ) {
-        const projection = arrayViews.projectionOf(array, operationContext)
-        if (!arrayViews.isArrayView(projection, operationContext)) return undefined
-        const end = Number(key) + 1
-        const growth = end - projection.length
-        if (growth <= 0) return undefined
-
-        const extended = arrayViews.ArrayView.tryExtendEnd(
-            projection,
-            growth,
-            view => propertyVersions.prepareRetainedArrayProperties(
-                array,
-                view,
-                operationContext,
-            ),
-            operationContext,
-        )
-        if (!extended) return undefined
-        setPlacement(extended, key, placement, operationContext, attachmentRoot)
-        return extended
-    }
-
     function transformArrayLength(array, operation) {
-        return internalSteps.continueOperation(
-            toArrayLength(value, operation),
-            operation.operationContext,
+        return internalSteps.continueOperation(toArrayLength(value, operation), operationContext,
             length => {
                 if (errorUtils.isPoisonError(length)) return length
-                const branch = externalTree.findBranch(chain._externalMutationTree, path.slice(0, -1))
-                if (externalTree.truncatesLocations(branch, length))
-                    return languageProperties.propertyValidationError("Array length cannot remove a fixed external namespace", operationContext)
-                return errorUtils.catchExternalThrow(
-                    () => {
-                        let mutatedValue = array
-                        const representationCopy =
-                            languageProperties.requiresRepresentationCopyForArrayLengthMutation(
-                                array,
-                                length,
-                                operation.operationContext,
-                            )
-                        if (operation.mustPreserveValue || representationCopy) {
-                            mutatedValue = arrayRemaps.createArrayFromRemap(
-                                arrayRemaps.createRemap(array, operation.operationContext),
-                                operation.operationContext,
-                                array,
-                                operation.mustPreserveValue,
-                            )
-                        }
-                        return {
-                            mutatedValue,
-                            result: propertyVersions.commitArrayLength(
-                                mutatedValue,
-                                length,
-                                operation.operationContext,
-                            ),
-                        }
-                    },
-                    operationContext,
-                    errorUtils.ERROR_KIND.PropertyMutationFailed,
-                    failure => ({ mutatedValue: failure, result: failure }),
-                )
+                return internalSteps.continueOperation(arrayRemaps.resolveTruncatedArrayTransitions(array, operation, length),
+                    operationContext, () => commitLength(length), undefined, operation)
             },
-            undefined,
-            operation,
-        )
+            undefined, operation)
+
+        function commitLength(length) {
+            const branch = externalTree.findBranch(chain._externalMutationTree, path.slice(0, -1))
+            if (externalTree.truncatesLocations(branch, length))
+                return languageProperties.propertyValidationError("Array length cannot remove a fixed external namespace", operationContext)
+            return errorUtils.catchExternalThrow(
+                () => {
+                    let mutatedValue = array
+                    const representationCopy =
+                        languageProperties.requiresRepresentationCopyForArrayLengthMutation(
+                            array,
+                            length,
+                            operation.operationContext,
+                        )
+                    if (operation.mustPreserveValue || representationCopy) {
+                        mutatedValue = arrayRemaps.createArrayFromRemap(
+                            arrayRemaps.createRemap(array, operation.operationContext),
+                            operation.operationContext,
+                            array,
+                            operation.mustPreserveValue,
+                        )
+                    }
+                    return {
+                        mutatedValue,
+                        result: propertyVersions.commitArrayLength(
+                            mutatedValue,
+                            length,
+                            operation.operationContext,
+                        ),
+                    }
+                },
+                operationContext,
+                errorUtils.ERROR_KIND.PropertyMutationFailed,
+                failure => ({ mutatedValue: failure, result: failure }),
+            )
+        }
     }
 }
 
@@ -376,11 +367,10 @@ function walkMutationPath(
     onTarget,
     onComplete = undefined,
     {
-        tryTargetMutation = undefined,
         deletesTarget = false,
         onExternalFailure = undefined,
         observeTarget = false,
-        structuralOwner = false,
+        targetArrayStructure = false,
         preserveOnFailure = false,
     } = {},
 ) {
@@ -391,6 +381,22 @@ function walkMutationPath(
     let operationResult
     let publicationValue
     return walk(rootState, 0, () => {})
+
+    // Target callbacks return a mutation outcome, poison, or no result. Keep
+    // an independent result inside its outcome when reconstruction also fails;
+    // publishing the graph failure must not wait for that result.
+    function includePathFailure(failure) {
+        return internalSteps.continueOperation(operationResult, operationContext, outcome =>
+            outcome && !errorUtils.isPoisonError(outcome)
+                ? { mutatedValue: failure, result: includePublicationFailure(outcome.result, failure, operationContext) }
+                : includePublicationFailure(outcome, failure, operationContext))
+    }
+
+    function combinePathFailure(failure) {
+        return errorUtils.combineErrors(
+            [publicationValue, operationResult?.mutatedValue, failure].filter(errorUtils.isPoisonError),
+            "Mutation publication failed")
+    }
 
     // Completion follows synchronous reconstruction through every enclosing
     // write-back continuation. Keeping this outside walk avoids allocating it
@@ -413,6 +419,16 @@ function walkMutationPath(
         const result = onTarget({
             ...target,
             replaceReceiver(next) { nextReceiver = next },
+            publishFailure(placement, outcome) {
+                // Preserve both outcomes before fallible copying/reconstruction.
+                operationResult = outcome
+                // The holder is private. Other containers may have aliases:
+                // preserve them while replacing only this path's failed scope.
+                const owner = target.parent === rootState ? rootState :
+                    shallowCopyPathContainer(target.parent, target.attachmentRoot, operationContext).value
+                propertyVersions.replaceLogicalPlacement(owner, target.key, placement, operationContext)
+                nextReceiver = owner
+            },
         })
         // Reconstruct the path once. Pending work publishes through its captured
         // placement; replaying this writeback would restore obsolete COW parents.
@@ -436,12 +452,9 @@ function walkMutationPath(
             operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed,
             failure => {
-                const failedValue = errorUtils.isPoisonError(publicationValue)
-                    ? errorUtils.combineErrors([publicationValue, failure], "Mutation publication failed")
-                    : failure
+                const failedValue = combinePathFailure(failure)
                 if (preserveOnFailure) return failedValue
-                return complete(writeBack, failedValue,
-                    includePublicationFailure(operationResult, failedValue, operationContext))
+                return complete(writeBack, failedValue, includePathFailure(failedValue))
             },
         )
     }
@@ -469,8 +482,8 @@ function walkMutationPath(
             key,
             operationContext,
         )
-        if (structuralOwner && index > 0 && arrayViews.isLogicalArray(value, operationContext) &&
-            (propertyKind !== languageProperties.ORDINARY_PROPERTY || Number(key) >= arrayViews.logicalArrayLength(value, operationContext))) {
+        if (targetArrayStructure && index > 0 && arrayViews.isLogicalArray(value, operationContext) &&
+            propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             return completeTarget({ ...placement, attachmentRoot, receiver: placement.parent,
                 propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: index - 1 }, () => {
                     writeBack(propertyVersions.capturePlacement(placement.parent, placement.key, operationContext, placement.sourceVersion).value)
@@ -517,19 +530,6 @@ function walkMutationPath(
             )
         }
 
-        const mutatedValue = atTarget
-            ? tryTargetMutation?.(
-                value,
-                key,
-                attachmentRoot,
-            )
-            : undefined
-        if (errorUtils.isPoisonError(mutatedValue)) {
-            return complete(writeBack, mutatedValue, mutatedValue)
-        }
-        if (mutatedValue !== undefined) {
-            return complete(writeBack, mutatedValue)
-        }
         let parent = value
         // Capture inherited protection before descent: failure-only copying
         // reconstructs upward and must not make the private holder look shared.
@@ -558,7 +558,7 @@ function walkMutationPath(
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
             const source = propertyVersions.requirePromiseVersion(parent, key, operationContext)
-            const onValue = (propertyValue, promiseVersion) => walk(
+            const onValue = (propertyValue, promiseVersion, structure) => walk(
                 propertyValue,
                 index + 1,
                 (next, recovery) => {
@@ -568,21 +568,22 @@ function walkMutationPath(
                         // copies imported parents before descent; external
                         // prefixes wait only at runtime scope gates because
                         // initial authority paths are directly ready.
-                        propertyVersions.publishPromiseVersion(
-                            parent,
-                            key,
-                            promiseVersion,
-                            { value: next, present: true, recovery },
-                            operationContext,
-                        )
-                        operationResult = includePublicationFailure(
-                            operationResult,
-                            promiseVersion.value,
-                            operationContext,
-                        )
+                        const publicationFailure = errorUtils.catchExternalThrow(
+                            () => propertyVersions.transferPlacement({ value: next, present: true, recovery },
+                                parent, key, operationContext, false, promiseVersion,
+                                errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure),
+                            operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
+                        if (errorUtils.isPoisonError(publicationFailure) || errorUtils.isPoisonError(promiseVersion.value)) {
+                            const failure = combinePathFailure(publicationFailure ?? promiseVersion.value)
+                            const baseline = recovery ?? { value: propertyValue, present }
+                            propertyVersions.retainPlacement(baseline, operationContext)
+                            propertyVersions.commitPlacementVersion(parent, key, promiseVersion,
+                                { value: failure, present: true, recovery: baseline }, operationContext, false, structure)
+                            operationResult = includePathFailure(failure)
+                        }
                     }
                 },
-                { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false },
+                { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false, structure },
             )
             const pending = observeTarget
                 ? propertyVersions.continueCapturedPromiseVersion(child, source, operationContext, value => onValue(value, source))
@@ -620,6 +621,19 @@ function walkMutationPath(
         )
 
         function prepareParent() {
+            const projection = arrayViews.projectionOf(value, operationContext)
+            if (atTarget && !deletesTarget && !preserveOnFailure &&
+                arrayViews.isArrayView(projection, operationContext) && arrayViews.isArrayIndex(key)) {
+                const growth = Number(key) + 1 - arrayViews.publishedArrayLength(value, operationContext)
+                const extended = growth > 0 && arrayViews.ArrayView.tryExtendEnd(value, growth,
+                    view => propertyVersions.prepareRetainedArrayProperties(value, view, operationContext), operationContext)
+                if (extended) {
+                    parent = extended
+                    attachmentRoot ??= parent
+                    refcounts.indexValueIfSourceIndexed(value, parent, operationContext)
+                    return
+                }
+            }
             const representationCopy = languageProperties.requiresRepresentationCopyForPropertyMutation(
                 value, key, operationContext, atTarget && deletesTarget)
             const mustCopyParent = preserveParent ||
@@ -673,18 +687,7 @@ function deleteManagedPath(
                 return undefined
             },
             completion ? result => result : undefined,
-            deletesRoot ? undefined : {
-                deletesTarget: true,
-                tryTargetMutation(parent, key) {
-                    return languageProperties.hasLanguageProperty(
-                        parent,
-                        key,
-                        operationContext,
-                    )
-                        ? undefined
-                        : parent
-                },
-            },
+            deletesRoot ? undefined : { deletesTarget: true },
         )
     })
 }
@@ -710,7 +713,7 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
             : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
                 if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
                     "A mutable external namespace cannot be replaced or deleted", operationContext)
-                if (deleting && (path.length || chain._contextOrigin) && suffix.length === 0)
+                if (deleting && (path.length || chain._rootKey !== undefined) && suffix.length === 0)
                     return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
                 const action = deleting
                     ? deleteManagedPath(privateChain, suffix, operationContext, true)
@@ -735,4 +738,5 @@ export {
     setProperty,
     transformProperty,
     walkMutationPath,
+    shallowCopyPathContainer,
 }

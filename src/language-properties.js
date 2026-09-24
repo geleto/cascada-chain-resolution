@@ -1,7 +1,8 @@
 import * as errorUtils from "./error.js"
 import * as arrayViews from "./array-view.js"
 import * as metadata from "./meta.js"
-import { normalizeRawPropertyValue } from "./property-versions.js"
+import { getPlacementVersion, normalizeRawPropertyValue } from "./property-versions.js"
+import { orderRecordKeys } from "./placement-structure.js"
 
 const ORDINARY_PROPERTY = 0
 const ARRAY_LENGTH = 1
@@ -100,13 +101,13 @@ function requiresRepresentationCopyForPropertyMutation(
         return false
     }
     const length = getLanguagePropertyDescriptor(projected, "length", operationContext)
-    return Number(key) >= arrayViews.logicalArrayLength(projected, operationContext) &&
+    return Number(key) >= arrayViews.publishedArrayLength(projected, operationContext) &&
         length?.writable !== true
 }
 
 function requiresRepresentationCopyForArrayLengthMutation(array, length, operationContext) {
     const projection = arrayViews.projectionOf(array, operationContext)
-    const current = arrayViews.logicalArrayLength(projection, operationContext)
+    const current = arrayViews.publishedArrayLength(projection, operationContext)
     if (length === current) return false
     if (
         arrayViews.isArrayView(projection, operationContext) &&
@@ -124,7 +125,7 @@ function requiresRepresentationCopyForArrayLengthMutation(array, length, operati
         if (descriptor?.writable !== true) return true
     }
 
-    for (const key of arrayViews.arrayKeyCandidates(array, operationContext, length, current)) {
+    for (const key of enumerableLanguageKeyCandidates(array, operationContext, length, current)) {
         const descriptor = getLanguagePropertyDescriptor(
             array,
             key,
@@ -176,6 +177,15 @@ function assertCanDeleteLanguageProperty(parent, key, operationContext) {
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
 function writeLanguageProperty(parent, key, value, operationContext) {
+    // Contained commands write through their captured reference. Protection
+    // itself is metadata-only; this path runs only for actual publication.
+    // A detached reference still advances privately but cannot change storage
+    // now governed by a later version.
+    const gate = metadata.metaOf(parent, operationContext)?.entryGate
+    if (gate && getPlacementVersion(gate.owner, gate.key, operationContext) === gate.version) {
+        writeLanguageProperty(gate.owner, gate.key, value, operationContext)
+        gate.version.storageAbsent = false
+    }
     parent = arrayViews.projectionOf(parent, operationContext)
     if (arrayViews.isArrayView(parent, operationContext)) {
         parent.set(String(key), value, operationContext)
@@ -202,7 +212,7 @@ function readLanguageProperty(parent, key, operationContext) {
     const propertyKind = classifyProjectedProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return undefined
     if (propertyKind === ARRAY_LENGTH) {
-        return arrayViews.logicalArrayLength(parent, operationContext)
+        return arrayViews.publishedArrayLength(parent, operationContext)
     }
     if (propertyKind === STRING_LENGTH) return parent.length
 
@@ -217,16 +227,23 @@ function readLanguageProperty(parent, key, operationContext) {
 
 function hasLanguageProperty(parent, key, operationContext) {
     key = String(key)
-    if (metadata.metaOf(parent, operationContext)?.placementVersions?.[key]?.present === false) return false
-    parent = arrayViews.projectionOf(parent, operationContext)
-    const propertyKind = classifyProjectedProperty(parent, key, operationContext)
+    const propertyKind = classifyLanguageProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return false
     if (propertyKind !== ORDINARY_PROPERTY) return true
+    const version = metadata.metaOf(parent, operationContext)?.placementVersions?.[key]
+    // An undecided placement is a candidate, even without physical storage.
+    // Its consumer resolves presence through the captured transition.
+    if (version) return version.present !== false
     const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
     return descriptor !== undefined
 }
 
 function deleteLanguageProperty(parent, key, operationContext) {
+    const gate = metadata.metaOf(parent, operationContext)?.entryGate
+    if (gate && getPlacementVersion(gate.owner, gate.key, operationContext) === gate.version) {
+        deleteLanguageProperty(gate.owner, gate.key, operationContext)
+        gate.version.storageAbsent = true
+    }
     parent = arrayViews.projectionOf(parent, operationContext)
     if (arrayViews.isArrayView(parent, operationContext))
         return parent.delete(String(key), operationContext)
@@ -235,28 +252,31 @@ function deleteLanguageProperty(parent, key, operationContext) {
 
 // Capture candidates before descriptor checks so one failing Proxy descriptor
 // cannot hide later siblings from complete Error collection.
-function* enumerableLanguageKeyCandidates(value, operationContext) {
-    if (arrayViews.isLogicalArray(value, operationContext)) {
-        yield* arrayViews.arrayKeyCandidates(value, operationContext)
+function* enumerableLanguageKeyCandidates(value, operationContext, start = 0, end) {
+    const array = arrayViews.isLogicalArray(value, operationContext)
+    const keys = array
+        ? arrayViews.physicalArrayKeyCandidates(value, operationContext, start, end)
+        : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
+    const meta = metadata.metaOf(value, operationContext)
+    const versions = meta?.placementVersions
+    if (!versions) {
+        for (const key of keys) if (typeof key === "string") yield key
         return
     }
-    const keys = errorUtils.runExternalAction(operationContext, () =>
-        Reflect.ownKeys(value),
-    )
-
-    for (const key of keys) {
-        if (typeof key === "string") yield key
+    const candidates = Object.create(null)
+    for (const key of keys) if (typeof key === "string") candidates[key] = true
+    for (const key of Object.keys(versions)) {
+        if (!array || Number(key) >= start && (end === undefined || Number(key) < end)) {
+            candidates[key] = true
+        }
     }
+    yield* orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
 }
 
-function enumerableLanguageKeys(value, operationContext) {
-    if (arrayViews.isLogicalArray(value, operationContext)) {
-        return arrayViews.enumerableArrayKeys(value, operationContext)
-    }
+function enumerableLanguageKeys(value, operationContext, start = 0, end) {
     const placements = []
-    for (const key of enumerableLanguageKeyCandidates(value, operationContext)) {
-        const descriptor = getLanguagePlacementDescriptor(value, key, operationContext)
-        if (descriptor) placements.push(key)
+    for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
+        if (hasLanguageProperty(value, key, operationContext)) placements.push(key)
     }
     return placements
 }

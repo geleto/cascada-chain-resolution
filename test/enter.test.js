@@ -93,7 +93,7 @@ describe("enter", () => {
 
         const result = enter(chain, ["position"], true, privateChain => {
             entered = privateChain
-            expect(root.position instanceof Promise).to.be(true)
+            expect(readPath(chain, ["position"]) instanceof Promise).to.be(true)
             assignPath(privateChain, ["x"], 2)
             return "updated"
         })
@@ -189,7 +189,7 @@ describe("enter", () => {
         expect(pendingCalls).to.be(1)
     })
 
-    it("starts a Promise-target mutation immediately at its FIFO position", async () => {
+    it("waits for the preceding target transition before activating entry", async () => {
         const target = deferred()
         const root = { target: target.promise }
         const chain = new Chain(root)
@@ -200,19 +200,20 @@ describe("enter", () => {
         const result = enter(chain, ["target"], true, entered => {
             callbackStarted = true
             expect(root.target instanceof Promise).to.be(true)
-            expect(root.target).not.to.be(target.promise)
+            expect(readPath(chain, ["target"])).not.to.be(target.promise)
             assignPath(entered, ["inside"], 2)
             return "issued"
         })
 
-        expect(result).to.be("issued")
-        expect(callbackStarted).to.be(true)
+        expect(result).to.be.a(Promise)
+        expect(callbackStarted).to.be(false)
         expect(root.target instanceof Promise).to.be(true)
         verifyRefCounts(root)
 
         target.resolve({})
+        expect(await result).to.be("issued")
         await flushMicrotasks()
-        expect(root.target).to.eql({ before: 1, inside: 2 })
+        expect(readPath(chain, ["target"])).to.eql({ before: 1, inside: 2 })
         verifyRefCounts(root)
     })
 
@@ -253,7 +254,7 @@ describe("enter", () => {
         expect(root.target).to.eql({ next: true })
     })
 
-    it("reconstructs a pending ancestor before invoking the callback", async () => {
+    it("rebases at a pending ancestor without delaying the callback", async () => {
         const outer = deferred()
         const root = { outer: outer.promise }
         const chain = new Chain(root)
@@ -266,8 +267,8 @@ describe("enter", () => {
         })
         assignPath(chain, ["outer", "target", "later"], 2)
 
-        expect(result instanceof Promise).to.be(true)
-        expect(callbackStarted).to.be(false)
+        expect(result).to.be("ready")
+        expect(callbackStarted).to.be(true)
 
         outer.resolve({ target: {} })
         expect(await result).to.be("ready")
@@ -276,7 +277,7 @@ describe("enter", () => {
         expect(root.outer.target).to.eql({ entered: 1, later: 2 })
     })
 
-    it("composes several pending ancestor frames before entry", async () => {
+    it("retains an unavailable suffix through several pending ancestors", async () => {
         const outer = deferred()
         const inner = deferred()
         const root = { outer: outer.promise }
@@ -296,7 +297,7 @@ describe("enter", () => {
 
         outer.resolve({ inner: inner.promise })
         await flushMicrotasks()
-        expect(calls).to.be(0)
+        expect(calls).to.be(1)
 
         inner.resolve({ target: {} })
         expect(await result).to.be("entered")
@@ -393,7 +394,7 @@ describe("enter", () => {
         expect(mutationFailure).to.be(undefined)
     })
 
-    it("starts a successor mutation before its predecessor publishes", async () => {
+    it("activates a successor after its predecessor publishes", async () => {
         const firstCompletion = deferred()
         const root = { target: {} }
         const chain = new Chain(root)
@@ -409,10 +410,11 @@ describe("enter", () => {
             return "second"
         })
 
-        expect(secondResult).to.be("second")
-        expect(secondStarted).to.be(true)
+        expect(secondResult).to.be.a(Promise)
+        expect(secondStarted).to.be(false)
         firstCompletion.resolve("first")
         expect(await firstResult).to.be("first")
+        expect(await secondResult).to.be("second")
         await flushMicrotasks()
         expect(root.target).to.eql({ first: 1, second: 2 })
     })
@@ -440,7 +442,7 @@ describe("enter", () => {
         expect(readChain._state.value.value).to.be(1)
         expect(root.target).not.to.be(resolved)
         expect(root.target.value).to.be(2)
-        expect(metaOf(resolved).readLeaseCount).to.be(1)
+        expect(metaOf(resolved).shared).to.be(true)
 
         readCompletion.resolve("read")
         expect(await readResult).to.be("read")
@@ -472,9 +474,9 @@ describe("enter", () => {
         expect(readChain._state.value).to.be(ancestor)
         expect(readChain._state.value.target).to.be(target)
         expect(readChain._state.value.target.value).to.be(1)
-        expect(root.ancestor).not.to.be(ancestor)
-        expect(root.ancestor.target).not.to.be(target)
-        expect(root.ancestor.target.value).to.be(2)
+        expect(readPath(chain, ["ancestor"])).not.to.be(ancestor)
+        expect(readPath(chain, ["ancestor", "target"])).not.to.be(target)
+        expect(readPath(chain, ["ancestor", "target", "value"])).to.be(2)
         expect(metaOf(ancestor).readLeaseCount).to.be(1)
 
         completion.resolve("read")
@@ -546,9 +548,9 @@ describe("enter", () => {
 
         expect(originalRoot.target).to.be(target)
         expect(originalRoot.target.value).to.be(1)
-        expect(chain._state.value).not.to.be(originalRoot)
-        expect(chain._state.value.target).not.to.be(target)
-        expect(chain._state.value.target.value).to.be(2)
+        expect(readPath(chain, [])).not.to.be(originalRoot)
+        expect(readPath(chain, ["target"])).not.to.be(target)
+        expect(readPath(chain, ["target"]).value).to.be(2)
     })
 
     it("keeps an imported Promise target isolated through transfer", async () => {
@@ -566,9 +568,9 @@ describe("enter", () => {
         expect(external.target).to.be(pending.promise)
         expect(readPath(new Chain(external), ["target"])).to.be(resolved)
         expect(resolved.value).to.be(1)
-        expect(chain._state.value).not.to.be(external)
-        expect(chain._state.value.target).not.to.be(resolved)
-        expect(chain._state.value.target.value).to.be(2)
+        expect(readPath(chain, [])).not.to.be(external)
+        expect(readPath(chain, ["target"])).not.to.be(resolved)
+        expect(readPath(chain, ["target"]).value).to.be(2)
         verifyRefCounts(chain._state.value, external)
     })
 
@@ -639,7 +641,7 @@ describe("enter", () => {
         pending.resolve(cycle)
         await flushMicrotasks()
 
-        const published = chain._state.value.target
+        const published = readPath(chain, ["target"])
         expect(external.target).to.be(pending.promise)
         expect(readPath(new Chain(external), ["target"])).to.be(cycle)
         expect(cycle.changed).to.be(undefined)
@@ -774,7 +776,7 @@ describe("enter", () => {
         verifyRefCounts(root)
     })
 
-    it("returns entry-setup Errors without invoking the callback", () => {
+    it("leaves an unused missing suffix unchanged", () => {
         const root = {}
         let calls = 0
         const result = enter(
@@ -786,12 +788,12 @@ describe("enter", () => {
             },
         )
 
-        expect(result instanceof Error).to.be(true)
-        expect(root.missing).to.be(result)
-        expect(calls).to.be(0)
+        expect(result).to.be(undefined)
+        expect(Object.hasOwn(root, "missing")).to.be(false)
+        expect(calls).to.be(1)
     })
 
-    it("rejects mutating entry into intrinsic length", () => {
+    it("does not consume an unused intrinsic length reference", () => {
         for (const receiver of [[1, 2], "ab"]) {
             const chain = new Chain(receiver)
             let calls = 0
@@ -800,14 +802,13 @@ describe("enter", () => {
                 calls++
             })
 
-            expect(result).to.be.an(Error)
-            expect(result.message).to.be("Cannot enter length for mutation")
-            expect(chain._state.value).to.be(result)
-            expect(calls).to.be(0)
+            expect(result).to.be(undefined)
+            expect(readPath(chain, [])).to.be(receiver)
+            expect(calls).to.be(1)
         }
     })
 
-    it("rejects delayed mutating entry into intrinsic length", async () => {
+    it("does not await an unused pending intrinsic length reference", async () => {
         for (const value of [[1, 2], "ab"]) {
             const receiver = deferred()
             const root = { target: receiver.promise }
@@ -825,14 +826,13 @@ describe("enter", () => {
             receiver.resolve(value)
             const error = await result
 
-            expect(error).to.be.an(Error)
-            expect(error.message).to.be("Cannot enter length for mutation")
-            expect(root.target).to.be(error)
-            expect(calls).to.be(0)
+            expect(error).to.be(undefined)
+            expect(calls).to.be(1)
+            expect(await lookupPath(chain, ["target"])).to.be(value)
         }
     })
 
-    it("returns a delayed entry-setup Error without invoking the callback", async () => {
+    it("does not validate a missing suffix after a no-op callback closes", async () => {
         const outer = deferred()
         const root = { outer: outer.promise }
         let calls = 0
@@ -848,9 +848,9 @@ describe("enter", () => {
         outer.resolve({})
         const error = await result
 
-        expect(error).to.be.an(Error)
-        expect(root.outer.missing).to.be(error)
-        expect(calls).to.be(0)
+        expect(error).to.be(undefined)
+        expect(root.outer.missing).to.be(undefined)
+        expect(calls).to.be(1)
     })
 
     it("handles root, primitive, missing, and Error targets uniformly", async () => {
@@ -922,7 +922,7 @@ describe("enter", () => {
             outer => {
                 outerChain = outer
                 const innerResult = enter(outer, [], true, inner => {
-                    expect(outer._state.value instanceof Promise).to.be(true)
+                    expect(readPath(outer, []) instanceof Promise).to.be(true)
                     assignPath(inner, ["value"], 2)
                     return "nested root"
                 })
@@ -989,7 +989,7 @@ describe("enter", () => {
             assignPath(entered, ["second"], 2)
         })
 
-        expect(secondStarted).to.be(true)
+        expect(secondStarted).to.be(false)
         expect(readChain).to.be(undefined)
 
         firstCompletion.resolve("first")
@@ -1047,8 +1047,8 @@ describe("enter", () => {
             true,
             privateChain => {
                 entered = privateChain
-                gate = root.ancestor.target
-                throw failure
+                gate = metaOf(root).placementVersions.ancestor.value
+                return ancestor.promise.then(() => { throw failure })
             },
         )
         ancestor.resolve({ target: { value: 1 } })
@@ -1071,7 +1071,7 @@ describe("enter", () => {
         })
         await flushMicrotasks()
         expect(gateSettled).to.be(false)
-        expect(root.ancestor.target).to.be(gate)
+        expect(metaOf(root).placementVersions.ancestor.value).to.be(gate)
     })
 
     it("does not clean up a read entry after fatal callback rejection", async () => {
@@ -1250,11 +1250,11 @@ describe("enter", () => {
         ))
         expect(errorCause(failureResult)).to.be(failure)
 
-        const gate = root.target
+        const gate = metaOf(root).placementVersions.target.value
         expect(gate instanceof Promise).to.be(true)
         expect(entered._closed).not.to.be(true)
         await flushMicrotasks()
-        expect(root.target).to.be(gate)
+        expect(metaOf(root).placementVersions.target.value).to.be(gate)
     })
 
     it("abandons a rejected asynchronous mutation without publication", async () => {

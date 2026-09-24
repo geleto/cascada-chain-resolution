@@ -10,6 +10,7 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
+import { resolveLength } from "./array-length.js"
 
 class ErrorQueryWork extends operationLifecycle.OperationOwner {
     constructor(operationContext, collect = false) {
@@ -303,6 +304,8 @@ function walkObservationPath(
     }
 
     function readPlacement(parent, key, index) {
+        if (languageProperties.classifyLanguageProperty(parent, key, operationContext) === languageProperties.ARRAY_LENGTH)
+            return resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
         const present = languageProperties.hasLanguageProperty(
             parent,
             key,

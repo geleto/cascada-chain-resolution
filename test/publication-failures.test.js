@@ -10,6 +10,65 @@ const leaves = error => error.errors ?? [error]
 const causes = error => new Set(leaves(error).map(leaf => leaf.cause))
 
 describe("complete publication failures", () => {
+    for (const array of [false, true]) {
+        for (const entryDepth of [0, 1, 2]) {
+            for (const action of ["assign", "create", "delete", "call ready", "call synchronous", "call pending"]) {
+                it(`keeps refused ${action} local and repairable, array=${array}, entry depth=${entryDepth}`, async () => {
+                    const ctx = context(), pending = Promise.withResolvers()
+                    const failure = new Error("refused publication")
+                    const creates = action === "create"
+                    const key = array ? creates ? "5" : "1" : "value"
+                    const original = action.startsWith("call") ? {
+                        count: 0,
+                        change() {
+                            this.count++
+                            return action === "call pending" ? pending.promise
+                                : action === "call synchronous" ? ready(7) : 7
+                        },
+                    } : 1
+                    const physical = array ? [10] : { sibling: 10 }
+                    if (!creates) physical[key] = original
+                    let refuses = true
+                    const source = new Proxy(physical, Object.fromEntries(
+                        ["set", "defineProperty", "deleteProperty"].map(trap => [trap, (...args) => {
+                            if (refuses && args[1] === key) throw failure
+                            return Reflect[trap](...args)
+                        }])))
+                    const chain = new runtime.Chain(source, ctx)
+                    const mutate = (chain, path) => action.startsWith("call")
+                        ? runtime.run(chain, path, "change", [], ctx, { mutationScopeDepth: path.length })
+                        : action === "delete" ? runtime.deletePath(chain, path, ctx)
+                            : runtime.assignPath(chain, path, 2, ctx)
+                    const execute = (chain, path, depth) => depth === 0 ? mutate(chain, path)
+                        : runtime.enter(chain, path, ctx, true, inside => execute(inside, [], depth - 1))
+                    const work = execute(chain, [key], entryDepth)
+                    pending.resolve(7)
+                    const result = await work
+                    assert.equal(result.cause, failure)
+                    assert.equal(result.errorContext, ctx.errorContext)
+                    assert.equal(result.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+                    assert.equal(await runtime.lookupPath(chain, [key], ctx), result)
+                    assert.equal(runtime.lookupPath(chain, [array ? 0 : "sibling"], ctx), 10)
+                    assert.equal(Object.hasOwn(physical, key), !creates)
+                    assert.equal(physical[key], creates ? undefined : original)
+                    if (array) assert.equal(runtime.lookupPath(chain, ["length"], ctx), creates ? 6 : 2)
+                    verifyRefCounts(ctx, chain._state)
+
+                    refuses = false
+                    assert.equal(await runtime.repairPath(chain, [key], ctx), undefined)
+                    const restored = await runtime.lookupPath(chain, [key], ctx)
+                    assert.equal(restored, creates ? undefined : original)
+                    const output = await runtime.export(chain, [], ctx)
+                    assert.equal(Object.hasOwn(output, key), !creates)
+                    if (array) assert.equal(output.length, creates ? 6 : 2)
+                    if (action.startsWith("call")) assert.equal(original.count, 0)
+                    assert.equal(ctx.execution.fatalError, null)
+                    verifyRefCounts(ctx, chain._state)
+                })
+            }
+        }
+    }
+
     it("completes a captured gate before a later operation advances its logical version", async () => {
         const ctx = context()
         const later = context(ctx.execution)
@@ -83,15 +142,21 @@ describe("complete publication failures", () => {
             const ctx = context()
             const expected = ["host", "target publication", "ancestor publication"].map(message => new Error(message))
             const pending = Promise.withResolvers()
+            let targetFailed = false
             const parent = new Proxy({ receiver: { fail() { return expected[0] } } }, {
                 set(target, key, value, receiver) {
-                    if (runtime.isPoisonError(value)) throw expected[1]
+                    if (runtime.isPoisonError(value)) {
+                        targetFailed = true
+                        throw expected[1]
+                    }
                     return Reflect.set(target, key, value, receiver)
                 },
             })
             const root = new Proxy({ parent: pendingAncestor ? pending.promise : parent }, {
                 set(target, key, value, receiver) {
-                    if (runtime.isPoisonError(value)) throw expected[2]
+                    // Fail the actual ancestor replacement, including the
+                    // copied parent carrying its property's logical poison.
+                    if (targetFailed && key === "parent" && value !== parent && !(value instanceof Promise)) throw expected[2]
                     return Reflect.set(target, key, value, receiver)
                 },
             })
@@ -109,10 +174,38 @@ describe("complete publication failures", () => {
         })
     }
 
-    it("retains the required managed result after gate installation fails", async () => {
+    it("retains selected failures when copying their containing node also fails", () => {
+        const ctx = context()
+        const expected = ["host", "publication", "copy"].map(message => new Error(message))
+        let copying = false
+        const source = new Proxy({ receiver: { fail() { return expected[0] } } }, {
+            set(target, key, value, receiver) {
+                if (runtime.isPoisonError(value)) {
+                    copying = true
+                    throw expected[1]
+                }
+                return Reflect.set(target, key, value, receiver)
+            },
+            ownKeys(target) {
+                if (copying) {
+                    copying = false
+                    throw expected[2]
+                }
+                return Reflect.ownKeys(target)
+            },
+        })
+        const chain = new runtime.Chain(source, ctx)
+        const result = runtime.run(chain, ["receiver"], "fail", [], ctx, { mutationScopeDepth: 1 })
+        assert.deepEqual(causes(result), new Set(expected))
+        assert.deepEqual(causes(runtime.lookupPath(chain, [], ctx)), new Set(expected))
+        assert.equal(ctx.execution.fatalError, null)
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("retains the required managed result when final publication fails", async () => {
         const ctx = context()
         const hostFailure = new Error("later host rejection")
-        const publicationFailure = new Error("gate installation")
+        const publicationFailure = new Error("final publication")
         const pending = Promise.withResolvers()
         const receiver = { change() { return pending.promise } }
         const chain = new runtime.Chain(new Proxy({ receiver }, {
@@ -120,7 +213,7 @@ describe("complete publication failures", () => {
         }), ctx)
         const work = runtime.run(chain, ["receiver"], "change", [], ctx, { mutationScopeDepth: 1 })
         assert(work instanceof Promise)
-        assert.equal(runtime.lookupPath(chain, [], ctx).cause, publicationFailure)
+        assert(runtime.lookupPath(chain, ["receiver"], ctx) instanceof Promise)
         pending.reject(hostFailure)
         assert.deepEqual(causes(await work), new Set([hostFailure, publicationFailure]))
         assert.equal(metadata.hasReadLease(receiver, ctx), false)
@@ -144,7 +237,7 @@ describe("complete publication failures", () => {
             runtime.lookupPath(chain, ["items"], ctx) // Mutation needs a replacement.
             const work = runtime.run(chain, ["items"], method, [], ctx, { mutationScopeDepth: 1 })
             assert(work instanceof Promise)
-            const graphFailure = runtime.lookupPath(chain, [], ctx)
+            const graphFailure = runtime.lookupPath(chain, ["items"], ctx)
             assert.equal(graphFailure.cause, publicationFailure)
             assert.equal(metadata.hasReadLease(items, ctx), false)
             runtime.assignPath(chain, [], { healthy: 1 }, ctx)
@@ -161,7 +254,7 @@ describe("complete publication failures", () => {
     for (const stage of ["descriptor", "write"]) {
         for (const indexed of [false, true]) {
             for (const repeated of [false, true]) {
-                it(`retains rejected input through ${stage} failure, indexed=${indexed}, repeated=${repeated}`, async () => {
+                it(`preserves rejected input through optional ${stage} failure, indexed=${indexed}, repeated=${repeated}`, async () => {
                     const ctx = context()
                     const introduced = context(ctx.execution)
                     const cause = new Error("input rejection")
@@ -190,14 +283,7 @@ describe("complete publication failures", () => {
                     later.reject(original)
                     const result = await work
                     fail = false
-                    if (repeated) assert.equal(result, original)
-                    else {
-                        assert.equal(leaves(result).length, 2)
-                        assert(leaves(result).includes(original))
-                        const failedPublication = leaves(result).find(error => error.cause === publication)
-                        assert.equal(failedPublication.errorContext, ctx.errorContext)
-                        assert.equal(failedPublication.kind, runtime.ERROR_KIND.PropertyMutationFailed)
-                    }
+                    assert.equal(result, original)
                     assert.equal(original.errorContext, introduced.errorContext)
                     assert.equal(physical.value, later.promise)
                     assert.equal(runtime.lookupPath(chain, ["value"], ctx), result)
@@ -209,7 +295,7 @@ describe("complete publication failures", () => {
         }
     }
 
-    it("retains every failure across synchronous settlement and publication retries", async () => {
+    it("retains required index failure when optional settlement writeback also fails", async () => {
         const ctx = context()
         const causes = ["index preparation", "write"].map(message => new Error(message))
         const later = new OrderedThenable()
@@ -229,8 +315,8 @@ describe("complete publication failures", () => {
         later.flush()
         const result = await work
         fail = false
-        assert.equal(leaves(result).length, 2)
-        for (const cause of causes) assert(leaves(result).some(error => error.cause === cause))
+        assert.equal(result.cause, causes[0])
+        assert.equal(result.kind, runtime.ERROR_KIND.PropertyMutationFailed)
         assert.equal(physical.value, later)
         assert.equal(runtime.lookupPath(chain, ["value"], ctx), result)
         assert.equal(ctx.execution.fatalError, null)
@@ -255,7 +341,7 @@ describe("complete publication failures", () => {
                 const chain = new runtime.Chain(new Proxy({ items: source }, { set() { throw publication } }), ctx)
                 buildRefIndex(source, ctx)
                 const work = runtime.run(chain, ["items"], method, [], ctx, { mutationScopeDepth: 1 })
-                const receiverFailure = runtime.lookupPath(chain, [], ctx)
+                const receiverFailure = runtime.lookupPath(chain, ["items"], ctx)
                 assert.equal(receiverFailure.cause, publication)
                 assert.equal(receiverFailure.kind, runtime.ERROR_KIND.PropertyMutationFailed)
                 if (pending) {

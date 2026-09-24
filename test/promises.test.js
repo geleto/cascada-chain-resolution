@@ -319,7 +319,7 @@ describe("Promise versions and lookupPath", () => {
         verifyRefCounts(root)
     })
 
-    it("keeps publication reflection failures in the Promise version", async () => {
+    it("keeps the settled value when optional writeback preflight fails", async () => {
         const pending = deferred()
         const failure = new Error("publication reflection failed")
         let failReflection = false
@@ -338,13 +338,13 @@ describe("Promise versions and lookupPath", () => {
 
         const outcome = await observed
         failReflection = false
-        expect(errorCause(outcome)).to.be(failure)
+        expect(outcome).to.be("resolved")
         expect(physical.value).to.be(pending.promise)
-        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
+        expect(readPath(chain, ["value"])).to.be("resolved")
         verifyRefCounts(root)
     })
 
-    it("keeps Promise writeback failures in the Promise version", async () => {
+    it("keeps the settled value when optional writeback fails", async () => {
         const pending = deferred()
         const failure = new Error("Promise writeback failed")
         const physical = { value: pending.promise }
@@ -359,9 +359,9 @@ describe("Promise versions and lookupPath", () => {
 
         pending.resolve("resolved")
 
-        expect(errorCause(await observed)).to.be(failure)
+        expect(await observed).to.be("resolved")
         expect(physical.value).to.be(pending.promise)
-        expect(errorCause(readPath(chain, ["value"]))).to.be(failure)
+        expect(readPath(chain, ["value"])).to.be("resolved")
         verifyRefCounts(root)
     })
 
