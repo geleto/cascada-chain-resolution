@@ -38,7 +38,7 @@ function captureReference(chain, route, mutable, operationContext) {
                 if (mutable && (metadata.requiresCopyOnWrite(value, operationContext) ||
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext) ||
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext, true))) {
-                    const copy = shallowCopyPathContainer(value, undefined, operationContext).value
+                    const copy = shallowCopyPathContainer(value, operationContext)
                     const copied = { ...placement, value: copy }
                     versions.replacePlacement(parent, key, copied, operationContext, false)
                     placement = copied

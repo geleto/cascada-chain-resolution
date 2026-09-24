@@ -116,6 +116,6 @@ function finishContainerCopy(copy, shape) {
     }
 }
 
-export { beginPlacementStructure, captureRecordOrder, preparePlacementStructure,
+export { beginPlacementStructure, preparePlacementStructure,
     captureContainerStructure, finishContainerCopy,
     copyContainerStructure, orderRecordKeys }

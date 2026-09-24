@@ -98,15 +98,9 @@ describe("export", () => {
             { pending: pending.promise },
             "abandoned nested export",
         )
-        const operation = {
-            operationContext: testOperationContext("abandoned nested export"),
-            open: true,
-            close() {
-                this.open = false
-            },
-        }
+        const operation = new operationLifecycle.OperationOwner(testOperationContext("abandoned nested export"))
         const result = exportManyValues([source], operation)
-        operationLifecycle.close(operation)
+        operation.close()
         pending.resolve(late)
 
         expect(await result).to.be(undefined)

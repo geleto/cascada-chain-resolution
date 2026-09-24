@@ -61,14 +61,16 @@ function exportValues(values, owner, onResult) {
     return result
 
     function release() {
-        for (const shape of shapes) shape.length?.release?.()
-        shapes.clear()
-        copies = outputs = undefined
+        discardOutput()
         errors.clear()
     }
 
     function collect(error) {
         errors.add(error)
+        discardOutput()
+    }
+
+    function discardOutput() {
         for (const shape of shapes) shape.length?.release?.()
         shapes.clear()
         copies = outputs = undefined

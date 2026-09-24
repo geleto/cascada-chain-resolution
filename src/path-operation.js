@@ -59,21 +59,21 @@ class PathOperation extends OperationOwner {
         for (const value of values) this.leases.acquire(value)
     }
 
-    observe(onValue, onExternal, onFailure, reflectionKind, owner = this) {
+    observe(onValue, onExternal, onFailure, reflectionKind) {
         const boundary = this.route.externalBoundary
         const depth = boundary ? boundary[externalTree.TREE_NODE].path.length - (this.chain._contextOrigin?.depth ?? 0) : Infinity
         if (this.mutation && this.hasExternalScope) return walkMutationPath(
             this.chain, this.route.path.slice(0, depth), this.operationContext, target =>
                 steps.continueOperation(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
                     this.operationContext, value => errors.isPoisonError(value) ? onValue(value) :
-                        this.reachExternal(value, this.route.path.slice(depth), onExternal, owner)),
+                        this.reachExternal(value, this.route.path.slice(depth), onExternal)),
             { observeTarget: true })
         return walkObservationPath(this.chain, this.route.path, this.operationContext, onValue,
             onFailure, reflectionKind, { onExternal: (identity, suffix) =>
-                this.reachExternal(identity, suffix, onExternal, owner), externalDepth: depth, owner })
+                this.reachExternal(identity, suffix, onExternal), externalDepth: depth, owner: this })
     }
 
-    reachExternal(identity, suffix, action, owner = this) {
+    reachExternal(identity, suffix, action) {
         const { operationContext, route: { externalBoundary: boundary, externalScope: scope } } = this
         if (this.routeFailure && !this.mutation && !scope) return this.routeFailure
         const failure = validateExternalAccess(identity, boundary, operationContext)
@@ -81,7 +81,7 @@ class PathOperation extends OperationOwner {
         if (this.mutation && !scope) return externalLocationError(operationContext)
         this.reachedExternal = true
         return steps.continueOperation(this.externalEffect?.readiness, operationContext, () => {
-            if (!owner.open) return undefined
+            if (!this.open) return undefined
             const failure = this.externalBlocker(!this.repair && (this.mutation || !this.routeFailure))
             if (failure) return failure
             // Invalid observations stop before the child: preserve the reached

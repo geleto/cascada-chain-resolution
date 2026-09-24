@@ -80,14 +80,9 @@ function invokeFunction(
 
 function selectFunctionMethodDescription(callable, invocationWork) {
     return {
-        admitMethodResult: value => imports.importMethodResult(
-            value,
-            invocationWork.operationContext,
-        ),
-        invoke: args => invokeFunction(
-            callable,
-            invocationWork.receiver,
-            args,
+        leaseInputsThroughResult: true,
+        invoke: args => imports.importMethodResult(
+            invokeFunction(callable, invocationWork.receiver, args, invocationWork.operationContext),
             invocationWork.operationContext,
         ),
         prepareArguments: () => invocationWork.exportArguments(),
@@ -150,7 +145,7 @@ function invokeMethod(
 
     function close(value) {
         // Call completion releases the same resources on success and language failure.
-        operationLifecycle.close(invocationWork)
+        invocationWork.close()
         return value
     }
 
@@ -177,11 +172,8 @@ function invokeMethod(
             let result = readyArguments
             if (!errorUtils.isPoisonError(readyArguments)) {
                 result = methodDescription.invoke(readyArguments)
-                if (methodDescription.admitMethodResult) {
-                    result = methodDescription.admitMethodResult(result)
-                }
             }
-            const pendingInputUse = (methodDescription.leaseInputsThroughResult || methodDescription.admitMethodResult) &&
+            const pendingInputUse = methodDescription.leaseInputsThroughResult &&
                 languageValues.isPending(result, operationContext)
             if (!pendingInputUse) {
                 invocationWork.releaseArgumentLeases()

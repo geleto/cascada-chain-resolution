@@ -6,6 +6,14 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 // Tests reach the storage oracle through verifyRefCounts, the suite's common
 // consistency check, so this also guards that it keeps running there.
 describe("storage verifier", () => {
+    it("rejects a retained backing prefix beyond the logical view length", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        const view = r.run(new r.Chain([1], ctx), [], "push", [], ctx, {})
+        verifyRefCounts(ctx, view)
+        metaOf(view, ctx).retainedPrefixLength = 2
+        assert.throws(() => verifyRefCounts(ctx, view), /Retained backing prefix exceeds its view/)
+    })
+
     it("rejects an unprotected child in a retained backing prefix", () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const child = { n: 1 }

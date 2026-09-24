@@ -7,7 +7,7 @@ import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
-import { isArrayView } from "../src/array-view.js"
+import { ArrayView, isArrayView } from "../src/array-view.js"
 
 function verifyStorage(operationContext, ...roots) {
     const seen = new Set()
@@ -19,7 +19,7 @@ function verifyStorage(operationContext, ...roots) {
         const meta = metadata.metaOf(node, operationContext)
         const versions = meta.placementVersions ?? {}
         if (meta.retainedPrefixLength !== undefined &&
-            (!isArrayView(node, operationContext) || meta.retainedPrefixLength > node.length)) {
+            (!isArrayView(node, operationContext) || meta.retainedPrefixLength > ArrayView.minimumLength(node, operationContext))) {
             fatal("Retained backing prefix exceeds its view", operationContext)
         }
         for (const key of Object.keys(versions)) {

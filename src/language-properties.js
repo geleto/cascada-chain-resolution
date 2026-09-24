@@ -254,7 +254,6 @@ export {
     classifyLanguageProperty,
     deleteLanguageProperty,
     enumerableLanguageKeys,
-    getLanguagePropertyDescriptor,
     getLanguagePlacementDescriptor,
     hasLanguageProperty,
     isCallableThenPlacement,

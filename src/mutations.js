@@ -15,24 +15,6 @@ import * as externalTree from "./external-mutation-tree.js"
 import { externalLocationError } from "./external-operation.js"
 import { copyContainerStructure } from "./placement-structure.js"
 
-function setProperty(
-    parent,
-    key,
-    value,
-    operationContext,
-    attachmentRoot = undefined,
-) {
-    return setPlacement(parent, key, { value, present: true }, operationContext, attachmentRoot)
-}
-
-function setPlacement(parent, key, placement, operationContext, attachmentRoot) {
-    const result = propertyVersions.transferPlacement(placement, parent, key, operationContext)
-    if (attachmentRoot && containsPromise(
-        languageProperties.readLanguageProperty(parent, key, operationContext), operationContext,
-    )) metadata.markShared(attachmentRoot, operationContext)
-    return result
-}
-
 function containsPromise(value, operationContext, visited = new Set()) {
     if (languageValues.isPending(value, operationContext)) return true
     if (
@@ -86,9 +68,8 @@ function createEmptyContainerCopy(source, operationContext) {
     return destination
 }
 
-function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
+function shallowCopyPathContainer(source, operationContext) {
     const destination = createEmptyContainerCopy(source, operationContext)
-    attachmentRoot ??= destination
 
     // Copy only language-visible own enumerable string keys. Identity metadata
     // stays with the source; captured structural state is transferred below.
@@ -109,10 +90,7 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
     // of insertions. Install captured order only after those physical writes.
     copyContainerStructure(source, destination, operationContext)
     refcounts.indexValueIfSourceIndexed(source, destination, operationContext)
-    return {
-        value: destination,
-        attachmentRoot,
-    }
+    return destination
 }
 
 function transformProperty(target, operationContext, transform, { replace = false, repair = false } = {}) {
@@ -249,8 +227,11 @@ function assignManagedPath(
                         if (languageProperties.isCallableThenPlacement(logicalKey, resolved.value))
                             return languageProperties.propertyValidationError(
                                 "Language data cannot contain a callable then property", operationContext)
-                        return setPlacement(target.parent, target.key, resolved,
-                            operationContext, target.attachmentRoot)
+                        const result = propertyVersions.transferPlacement(resolved, target.parent, target.key, operationContext)
+                        if (target.attachmentRoot && containsPromise(
+                            languageProperties.readLanguageProperty(target.parent, target.key, operationContext), operationContext,
+                        )) metadata.markShared(target.attachmentRoot, operationContext)
+                        return result
                     }
                     // This destination needs its value to prove assignment is
                     // valid. Keep that work inside the mutation's rollback and
@@ -400,7 +381,7 @@ function walkMutationPath(
                 // The holder is private. Other containers may have aliases:
                 // preserve them while replacing only this path's failed scope.
                 const owner = target.parent === rootState ? rootState :
-                    shallowCopyPathContainer(target.parent, target.attachmentRoot, operationContext).value
+                    shallowCopyPathContainer(target.parent, operationContext)
                 propertyVersions.publishPlacementFailure(owner, target.key, undefined, failure, baseline, operationContext)
                 nextReceiver = owner
             },
@@ -579,7 +560,7 @@ function walkMutationPath(
                 publicationValue = next
                 if (observeTarget) prepareParent()
                 if (recovery) propertyVersions.transferPlacement({ value: next, present: true, recovery }, parent, key, operationContext)
-                else setProperty(parent, key, next, operationContext)
+                else propertyVersions.assignProperty(parent, key, next, operationContext)
                 writeBack(parent)
             },
             { parent, key, present },
@@ -603,9 +584,8 @@ function walkMutationPath(
                 value, key, operationContext, atTarget && deletesTarget)
             const mustCopyParent = preserveParent || representationCopy
             if (mustCopyParent) {
-                const copied = shallowCopyPathContainer(parent, attachmentRoot, operationContext)
-                parent = copied.value
-                attachmentRoot = copied.attachmentRoot
+                parent = shallowCopyPathContainer(parent, operationContext)
+                attachmentRoot ??= parent
             }
         }
     }
@@ -627,7 +607,7 @@ function deleteManagedPath(
             operationContext,
             target => {
                 if (deletesRoot) {
-                    setProperty(target.parent, target.key, null, operationContext)
+                    propertyVersions.assignProperty(target.parent, target.key, null, operationContext)
                     return undefined
                 }
                 if (
@@ -697,7 +677,6 @@ export {
     captureMutationResult,
     createEmptyContainerCopy,
     deletePath,
-    setProperty,
     transformProperty,
     walkMutationPath,
     shallowCopyPathContainer,

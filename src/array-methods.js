@@ -9,7 +9,6 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { finishContainerCopy } from "./placement-structure.js"
@@ -743,7 +742,7 @@ function includes({ searchValue, start }, invocationWork) {
         if (!found && --remaining !== 0) return
         outcome = found
         if (result) {
-            operationLifecycle.close(invocationWork)
+            invocationWork.close()
             result.resolve(found)
         }
     }

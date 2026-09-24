@@ -32,7 +32,6 @@ function createArrayFromRemap(
     remap,
     operationContext,
     refIndexSource = undefined,
-    retained = true,
 ) {
     const output = new Array(remap.length)
     languageValues.admitReadyValue(
@@ -40,7 +39,7 @@ function createArrayFromRemap(
         operationContext,
         languageValues.TYPE.Array,
     )
-    placeRemap(output, remap, operationContext, 0, retained)
+    placeRemap(output, remap, operationContext)
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(
             refIndexSource,
@@ -56,15 +55,14 @@ function placeRemap(
     remap,
     operationContext,
     offset = 0,
-    retained = true,
 ) {
     for (const index of Object.keys(remap))
-        placeEntry(destination, String(offset + Number(index)), remap[index], retained, operationContext)
+        placeEntry(destination, String(offset + Number(index)), remap[index], operationContext)
 }
 
-function placeEntry(destination, key, entry, retained, operationContext) {
+function placeEntry(destination, key, entry, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        propertyVersions.transferPlacement(entry.ensureCaptured(), destination, key, operationContext, retained)
+        propertyVersions.transferPlacement(entry.ensureCaptured(), destination, key, operationContext, true)
         return
     }
     propertyVersions.assignProperty(
@@ -72,7 +70,7 @@ function placeEntry(destination, key, entry, retained, operationContext) {
         key,
         entry,
         operationContext,
-        retained,
+        true,
     )
 }
 

@@ -8,23 +8,19 @@ class OperationOwner {
         this.operationContext = operationContext
     }
     close() {
-        close(this)
-    }
-}
-
-function close(operation) {
-    if (!operation.open) return
-    operation.open = false
-    try {
-        operation.release?.()
-    } finally {
-        const releases = operation.releases
-        operation.releases = undefined
-        if (releases) {
-            try {
-                for (const release of releases) release()
-            } finally {
-                releases.clear()
+        if (!this.open) return
+        this.open = false
+        try {
+            this.release?.()
+        } finally {
+            const releases = this.releases
+            this.releases = undefined
+            if (releases) {
+                try {
+                    for (const release of releases) release()
+                } finally {
+                    releases.clear()
+                }
             }
         }
     }
@@ -43,4 +39,4 @@ function releaseOnClose(operation, release) {
     }
 }
 
-export { OperationOwner, close, releaseOnClose }
+export { OperationOwner, releaseOnClose }

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import {
     OperationOwner,
-    close,
     releaseOnClose,
 } from "../src/operation-lifecycle.js"
 import {
@@ -23,7 +22,7 @@ describe("operation lifecycle", () => {
         source.reject(error)
         await assert.rejects(result, failure => isFatalError(failure) && failure.cause === error)
     })
-    it("closes operation resources and registered releases through either entry once", () => {
+    it("closes operation resources and registered releases once", () => {
         const released = []
         class Owner extends OperationOwner {
             release() {
@@ -35,7 +34,7 @@ describe("operation lifecycle", () => {
         releaseOnClose(owner, () => released.push("registered"))
         unregister()
         owner.close()
-        close(owner)
+        owner.close()
         releaseOnClose(owner, () => released.push("late"))
         assert.deepEqual(released, ["resources", "registered", "late"])
         assert.equal(owner.open, false)

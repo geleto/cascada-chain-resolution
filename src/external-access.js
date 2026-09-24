@@ -26,13 +26,8 @@ class ExternalAccess {
     }
 
     read(forExport = false) {
-        const selected = this.walkPrefix(this.path.length)
-        if (errors.isPoisonError(selected)) return selected
-        const { value, fromManagedProperty } = selected
-        if (fromManagedProperty) {
-            const failure = this.requireReady(value, true)
-            if (failure) return failure
-        }
+        const value = this.walkPrefix(this.path.length)
+        if (errors.isPoisonError(value)) return value
         return this.consumeResult(value, errors.ERROR_KIND.ExternalPropertyReadFailed,
             ready => {
                 if (errors.isPoisonError(ready)) return ready
@@ -113,9 +108,8 @@ class ExternalAccess {
         if (depth < 0) return errors.validationError(
             "A registered external binding cannot be replaced or deleted", this.operationContext,
             errors.ERROR_KIND.PropertyValidation)
-        const selected = this.walkPrefix(depth, kind)
-        if (errors.isPoisonError(selected)) return selected
-        const receiver = selected.value
+        const receiver = this.walkPrefix(depth, kind)
+        if (errors.isPoisonError(receiver)) return receiver
         if (metadata.isTraversableType(metadata.metaOf(receiver, this.operationContext)?.type))
             return errors.validationError(
                 "External operations cannot use an admitted managed receiver", this.operationContext, kind)
@@ -124,7 +118,6 @@ class ExternalAccess {
 
     walkPrefix(depth, receiverErrorKind) {
         let value = this.identity
-        let fromManagedProperty = false
         let node = this.boundary
         for (let index = 0; index < depth; index++) {
             if (errors.isPoisonError(value)) return value
@@ -133,7 +126,7 @@ class ExternalAccess {
                 const failure = validateExternalAccess(value, node?.[externalTree.TREE_NODE].identity ? node : undefined, this.operationContext)
                 if (failure) return failure
             }
-            fromManagedProperty = metadata.isTraversableType(metadata.metaOf(value, this.operationContext)?.type)
+            const fromManagedProperty = metadata.isTraversableType(metadata.metaOf(value, this.operationContext)?.type)
             if (fromManagedProperty && this.operation.mutation) return errors.validationError(
                 "External mutation cannot cross managed storage", this.operationContext, receiverErrorKind)
             const failure = this.requireReady(value, fromManagedProperty)
@@ -155,7 +148,7 @@ class ExternalAccess {
             const failure = validateExternalAccess(value, node?.[externalTree.TREE_NODE].identity ? node : undefined, this.operationContext)
             if (failure) return failure
         }
-        return { value, fromManagedProperty }
+        return value
     }
 
     native(kind, action) { return errors.runExternalBoundary(this.operationContext, kind, action) }

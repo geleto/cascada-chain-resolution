@@ -42,17 +42,7 @@ function selectArrayMethodDescription(invocationWork) {
                     invocationWork,
                 )
                 if (failure) return failure
-                return mutation
-                    ? invokeArrayMutationMethod(
-                        methodDefinition,
-                        preparedArguments,
-                        invocationWork,
-                    )
-                    : invokeArrayObservationMethod(
-                        methodDefinition,
-                        preparedArguments,
-                        invocationWork,
-                    )
+                return invokeArrayMethod(methodDefinition, preparedArguments, invocationWork)
             })
         },
     }
@@ -114,133 +104,52 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     )
 }
 
-// view, observe, remap, and intrinsic fallback are distinct because each avoids
-// progressively more representation work.
-function invokeArrayObservationMethod(
-    methodDefinition,
-    preparedArgs,
-    invocationWork,
-) {
+// Views and direct observations avoid remap materialization. All remaining
+// methods produce one remap; mutation additionally captures the native result
+// before publishing the new receiver.
+function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) {
+    const { mutation, operationContext } = invocationWork
     if (methodDefinition.view) {
-        const view = methodDefinition.view(preparedArgs, invocationWork)
-        if (view !== undefined) return view
+        const view = methodDefinition.view(preparedArguments, invocationWork)
+        if (view !== undefined) return mutation ? {
+            mutatedValue: view,
+            result: methodDefinition.methodResult(
+                methodDefinition.viewNativeResult(view, invocationWork), invocationWork),
+        } : view
     }
-    if (methodDefinition.observe) {
-        return methodDefinition.observe(preparedArgs, invocationWork)
-    }
+    if (methodDefinition.observe) return methodDefinition.observe(preparedArguments, invocationWork)
 
-    let remap
+    let remap, nativeResult
     if (methodDefinition.remap) {
-        remap = methodDefinition.remap(preparedArgs, invocationWork)
+        remap = methodDefinition.remap(preparedArguments, invocationWork)
     } else {
-        const source = arrayRemaps.createRemap(invocationWork.receiver, invocationWork.operationContext, 0, invocationWork.arrayLength)
-        const result = Reflect.apply(methodDefinition.intrinsic, source, preparedArgs)
-        // Dense observations retain only the placements selected by the native
+        remap = arrayRemaps.createRemap(invocationWork.receiver, operationContext, 0, invocationWork.arrayLength)
+        nativeResult = Reflect.apply(methodDefinition.intrinsic, remap, preparedArguments)
+        // Dense observations consume only the placements selected by the native
         // mapping. Overwritten and removed inputs create no presence dependency.
-        remap = methodDefinition.methodResult === undefined
-            ? arrayRemaps.resolveDenseRemapPresence(result, invocationWork) : source
+        if (methodDefinition.methodResult === undefined)
+            remap = arrayRemaps.resolveDenseRemapPresence(nativeResult, invocationWork)
     }
-    return internalSteps.continueOperation(
-        remap,
-        invocationWork.operationContext,
-        remap =>
-            runArrayStep(invocationWork, () => {
-                if (errorUtils.isPoisonError(remap)) return remap
-                return arrayRemaps.createArrayFromRemap(
-                    remap,
-                    invocationWork.operationContext,
-                )
-            }),
-        undefined,
-        invocationWork,
-    )
-}
-
-function invokeArrayMutationMethod(
-    methodDefinition,
-    preparedArguments,
-    invocationWork,
-) {
-    // Remaps and derived views publish independent placements. Retained entries
-    // carry their captured transitions; removed entries cannot write into the
-    // new receiver. Only consumed shape or values require waiting.
-    const thisValue = invocationWork.receiver
-    if (methodDefinition.view) {
-        const view = methodDefinition.view(
-            preparedArguments,
-            invocationWork,
-        )
-        if (view !== undefined) {
-            return {
-                mutatedValue: view,
-                result: methodDefinition.methodResult(
-                    methodDefinition.viewNativeResult(
-                        view,
-                        invocationWork,
-                    ),
-                    invocationWork,
-                ),
+    return internalSteps.continueOperation(remap, operationContext,
+        remap => runArrayStep(invocationWork, () => {
+            if (errorUtils.isPoisonError(remap)) return remap
+            // Only intrinsic mutators have a separate native result. Capture
+            // removed placements before materializing the new receiver.
+            let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
+                ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
+            const output = runArrayStep(invocationWork, () =>
+                arrayRemaps.createArrayFromRemap(remap, operationContext))
+            if (!mutation) return output
+            if (methodDefinition.methodResult === RETURN_RECEIVER) result = output
+            else if (errorUtils.isPoisonError(output)) {
+                // Publish receiver failure now; only the independent result waits.
+                result = internalSteps.continueOperation(result, operationContext,
+                    value => errorUtils.isPoisonError(value)
+                        ? errorUtils.combineErrors([output, value], "Array mutation failed") : output,
+                    undefined, invocationWork)
             }
-        }
-    }
-
-    if (methodDefinition.remap) {
-        return internalSteps.continueOperation(
-            methodDefinition.remap(preparedArguments, invocationWork),
-            invocationWork.operationContext,
-            remap =>
-                runArrayStep(invocationWork, () => {
-                    if (errorUtils.isPoisonError(remap)) return remap
-                    return finishMutation(remap, captureResult(remap))
-                }),
-            undefined,
-            invocationWork,
-        )
-    }
-
-    const remap = arrayRemaps.createRemap(
-        thisValue,
-        invocationWork.operationContext,
-        0,
-        invocationWork.arrayLength,
-    )
-    // The intrinsic moves placement references without consuming their values.
-    // Removed results and retained receiver placements keep separate lifetimes.
-    const nativeResult = Reflect.apply(
-        methodDefinition.intrinsic,
-        remap,
-        preparedArguments,
-    )
-    return finishMutation(remap, captureResult(nativeResult))
-
-    function captureResult(nativeResult) {
-        // Capture removed property versions before committing the receiver.
-        return methodDefinition.methodResult === RETURN_RECEIVER
-            ? undefined
-            : methodDefinition.methodResult(
-                nativeResult,
-                invocationWork,
-            )
-    }
-
-    function finishMutation(remap, result) {
-        const mutatedValue = runArrayStep(invocationWork, () =>
-            arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext))
-        if (methodDefinition.methodResult === RETURN_RECEIVER) result = mutatedValue
-        else if (errorUtils.isPoisonError(mutatedValue)) {
-            // Publish receiver failure now; only the independent result waits.
-            result = internalSteps.continueOperation(
-                result,
-                invocationWork.operationContext,
-                value => errorUtils.isPoisonError(value)
-                    ? errorUtils.combineErrors([mutatedValue, value], "Array mutation failed")
-                    : mutatedValue,
-                undefined,
-                invocationWork,
-            )
-        }
-        return { mutatedValue, result }
-    }
+            return { mutatedValue: output, result }
+        }), undefined, invocationWork)
 }
 
 function validateArrayOperation(args, { arrayLength: length, method, operationContext }) {
