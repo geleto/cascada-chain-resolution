@@ -1,4 +1,4 @@
-import { externalLocations } from "./support.js"
+import { externalLocations, externalLocationPaths } from "./support.js"
 import * as externalTree from "../src/external-mutation-tree.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import assert from "node:assert/strict"
@@ -116,8 +116,8 @@ describe("context external foundations", () => {
             { left: { child: {}, other: {} } },
         )
 
-        const boundaryPaths = externalLocations(chain._externalMutationTree, [])
-            .map(boundary => boundary[TREE_NODE].path.join("."))
+        const boundaryPaths = externalLocationPaths(chain._externalMutationTree)
+            .map(path => path.join("."))
             .sort()
         expect(boundaryPaths).to.eql(["left"])
         const left = externalTree.findBranch(chain._externalMutationTree, ["left"])
@@ -296,7 +296,6 @@ describe("context external foundations", () => {
 
         expect(boundary[TREE_NODE].entry).to.be(chain._execution._externalIdentities.get(service))
         expect(boundary).to.be(rootLocation)
-        expect(boundary[TREE_NODE].path).to.eql(["apis", "group", "service"])
         expect(enteredExecution).to.be(execution)
     })
 
@@ -317,7 +316,6 @@ describe("context external foundations", () => {
         })
 
         expect(enteredBoundary).to.be(rootBoundary)
-        expect(enteredBoundary[TREE_NODE].path).to.be(rootBoundary[TREE_NODE].path)
         expect(await readPath(chain, ["apis", "value"])).to.be(2)
     })
 
@@ -364,9 +362,7 @@ describe("context external foundations", () => {
             new Execution(),
             { callable: { service: {} }, failure: { service: {} }, visible: {} },
         )
-        const boundaries = externalLocations(chain._externalMutationTree, [])
-
-        expect(boundaries.map(boundary => boundary[TREE_NODE].path)).to.eql([["visible"]])
+        expect(externalLocationPaths(chain._externalMutationTree)).to.eql([["visible"]])
     })
 
     it("keeps the static tree stable through managed COW and Array remapping", () => {
@@ -520,7 +516,7 @@ describe("direct context authority discovery", () => {
                     : { indirect: position === "terminal" ? {} : { resource: {} }, direct: {} }
                 const chain = new runtime.ContextChain(root, ctx, request)
                 const tree = chain._externalMutationTree
-                assert.deepEqual(externalLocations(tree, []).map(record => record[TREE_NODE].path),
+                assert.deepEqual(externalLocationPaths(tree),
                     position === "root" ? [] : [["direct"]])
                 assert.equal(ctx.execution._externalIdentities.has(resource), false)
                 if (kind.endsWith("thenable")) assert.equal(source.value.subscriptions, 1)
@@ -552,7 +548,7 @@ describe("direct context authority discovery", () => {
                     const subscriptions = source.value.subscriptions
                     const request = Object.fromEntries(entries.map(([key]) => [key, { resource: {} }]))
                     const chain = new runtime.ContextChain(root, ctx, request)
-                    assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path),
+                    assert.deepEqual(externalLocationPaths(chain._externalMutationTree),
                         [["direct", "resource"]])
                     if (kind.endsWith("thenable"))
                         assert.equal(source.value.subscriptions, alreadyImported ? subscriptions : 1)
@@ -580,7 +576,7 @@ describe("direct context authority discovery", () => {
             const failure = await runtime.lookupPath(chain, ["source"], ctx)
             assert.equal(failure.cause, cause)
             assert.equal(failure.errorContext, ctx.errorContext)
-            assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["direct"]])
+            assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["direct"]])
         })
     }
 
@@ -598,7 +594,7 @@ describe("direct context authority discovery", () => {
         const chain = new runtime.ContextChain(root, ctx, { indirect: {}, direct: {} })
         assert.equal(probes, 1)
         assert.equal(subscriptions, 1)
-        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["direct"]])
+        assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["direct"]])
     })
 
     it("does not search descendants of a managed endpoint", () => {
@@ -615,7 +611,7 @@ describe("direct context authority discovery", () => {
         const db = external(), ignored = external(), nested = external()
         const root = { api: { db, ignored, managed: { nested } }, pending: new OrderedThenable() }
         const chain = new runtime.ContextChain(root, ctx, { api: { db: {}, managed: {} }, pending: {} })
-        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [["api", "db"]])
+        assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["api", "db"]])
         assert.equal(ctx.execution._externalIdentities.has(ignored), false)
         assert.equal(ctx.execution._externalIdentities.has(nested), false)
     })
@@ -624,7 +620,7 @@ describe("direct context authority discovery", () => {
         const ctx = { execution: new runtime.Execution(), errorContext: "explicit routes" }
         const root = { api: { first: external(), group: { second: external() }, managed: { n: 1 } } }
         const chain = new runtime.ContextChain(root, ctx, { api: { first: {}, group: { second: {} }, managed: {} } })
-        assert.deepEqual(externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path), [
+        assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [
             ["api", "first"], ["api", "group", "second"],
         ])
         assert.equal(externalTree.findBranch(chain._externalMutationTree, ["api", "managed"]), undefined)

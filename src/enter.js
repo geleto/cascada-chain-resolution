@@ -23,7 +23,7 @@ function captureReference(chain, route, mutable, operationContext) {
             const scope = externalTree.tracePath(chain._externalMutationTree, route.path, staticDepth).externalScope
             if (scope) return {
                 placement: { value: scope[externalTree.TREE_NODE].identity, present: true },
-                depth: scope[externalTree.TREE_NODE].path.length - (chain._contextOrigin?.depth ?? 0),
+                depth: scope[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0),
                 node: scope,
             }
         }

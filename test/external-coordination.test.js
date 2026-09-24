@@ -1,4 +1,4 @@
-import { externalLocations } from "./support.js"
+import { externalLocations, externalLocationPaths } from "./support.js"
 import * as externalTree from "../src/external-mutation-tree.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import assert from "node:assert/strict"
@@ -55,7 +55,7 @@ describe("external binding commit", () => {
             { items: { 0: { opaque: {}, field: {} } } })
         const boundaries = externalLocations(chain._externalMutationTree, [])
         assert.equal(boundaries.length, 1)
-        assert.deepEqual(boundaries[0][TREE_NODE].path, ["items", "0"])
+        assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["items", "0"]])
         assert.equal(boundaries[0][TREE_NODE].entry.binding, boundaries[0])
     })
 

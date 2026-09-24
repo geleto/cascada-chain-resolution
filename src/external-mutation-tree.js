@@ -7,7 +7,6 @@ import * as metadata from "./meta.js"
 const TREE_NODE = Symbol("external scope")
 
 function prepareExternalMutationTree(root, requests, operationContext, factsOf, registrations, admitExternal) {
-    const path = []
     return visit(root, requests)
 
     function visit(value, request, parent, native = false) {
@@ -22,7 +21,7 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
         const external = facts.type === metadata.TYPE.External
         if (!external && !metadata.isTraversableType(facts.type)) return undefined
         const node = Object.create(null)
-        const record = node[TREE_NODE] = { parent, path: [...path] }
+        const record = node[TREE_NODE] = { parent, depth: parent ? parent[TREE_NODE].depth + 1 : 0 }
         if (external) {
             if (registrations.has(value)) return errors.validationError(
                 "External identity has multiple context locations", operationContext,
@@ -34,9 +33,7 @@ function prepareExternalMutationTree(root, requests, operationContext, factsOf, 
             const placement = external ? errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(value, key)) :
                 properties.getLanguagePlacementDescriptor(value, key, operationContext)
             if (!placement || !placement.enumerable || !("value" in placement)) continue
-            path.push(key)
             const child = visit(placement.value, request[key], node, external)
-            path.pop()
             if (errors.isPoisonError(child)) return child
             if (child) node[key] = child
         }

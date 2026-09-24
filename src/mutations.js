@@ -650,7 +650,7 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
         // A property write consumes its container, not the old final value.
         const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
         path = operation.route.path
-        const result = operation.hasExternalScope
+        const result = operation.route.externalScope
             ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() : access.write(value)))
             : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
                 if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(

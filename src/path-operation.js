@@ -24,14 +24,13 @@ class PathOperation extends OperationOwner {
         if (mutationScopeDepth !== undefined) mutationScopeDepth += chain._rootPath?.length ?? 0
         this.mutation = mutationScopeDepth !== undefined
         const crossed = this.route.deepestExternalScope
-        if (crossed && this.route.dynamicDepth < crossed[externalTree.TREE_NODE].path.length) {
+        if (crossed && this.route.dynamicDepth < crossed[externalTree.TREE_NODE].depth) {
             this.routeFailure = errors.validationError(
                 "Mutable external identities require a static context path", operationContext,
                 errors.ERROR_KIND.ExternalLocationConflict)
         }
         this.repair = repair && !this.routeFailure
         this.scopeDepth = this.routeFailure && this.mutation ? Math.min(mutationScopeDepth, this.route.firstDynamicSegment) : mutationScopeDepth
-        this.hasExternalScope = Boolean(this.route.externalScope)
         if (this.mutation && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
         // Claim external order before managed gates can suspend path capture.
         // Capture still proceeds now; waiting first could capture a later gate.
@@ -61,8 +60,8 @@ class PathOperation extends OperationOwner {
 
     observe(onValue, onExternal, onFailure, reflectionKind) {
         const boundary = this.route.externalBoundary
-        const depth = boundary ? boundary[externalTree.TREE_NODE].path.length - (this.chain._contextOrigin?.depth ?? 0) : Infinity
-        if (this.mutation && this.hasExternalScope) return walkMutationPath(
+        const depth = boundary ? boundary[externalTree.TREE_NODE].depth - (this.chain._contextOrigin?.depth ?? 0) : Infinity
+        if (this.mutation && this.route.externalScope) return walkMutationPath(
             this.chain, this.route.path.slice(0, depth), this.operationContext, target =>
                 steps.continueOperation(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
                     this.operationContext, value => errors.isPoisonError(value) ? onValue(value) :
@@ -103,7 +102,7 @@ class PathOperation extends OperationOwner {
 
     mutate(transform, replaceScope = false, deleting = false) {
         const { chain, route, operationContext } = this
-        if (this.routeFailure && this.hasExternalScope) return this.observe(value => value, () => this.routeFailure)
+        if (this.routeFailure && this.route.externalScope) return this.observe(value => value, () => this.routeFailure)
         const requestedDepth = this.scopeDepth
         if (!route.externalBoundary && route.firstDynamicSegment < requestedDepth) {
             const depth = route.firstDynamicSegment
@@ -190,7 +189,7 @@ function repairPath(chain, path, operationContext, firstDynamicSegment = path.le
             // prefix, not permission to repair the dynamically chosen scope.
             return operation.finishMutation(operation.mutate(() => operation.routeFailure))
         }
-        if (operation.hasExternalScope) return operation.finish(operation.observe(value => value, () => undefined))
+        if (operation.route.externalScope) return operation.finish(operation.observe(value => value, () => undefined))
         const node = operation.route.externalTreeNode
         // Restoration selects exactly the requested placement. It neither
         // creates working state nor widens an absent Array index to its owner.

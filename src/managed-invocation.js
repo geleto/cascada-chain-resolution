@@ -75,23 +75,12 @@ function prepareManagedReceiverAndArguments(invocationWork) {
 }
 
 function resolveAndLeaseReceiverGraph(invocationWork) {
-    const { receiver } = invocationWork
     const preparation = {
         errors: new Set(),
-        receiver: undefined,
         visited: new WeakSet(),
     }
     let unregisterRelease
-    const readiness = internalSteps.consumeValue(
-        receiver,
-        invocationWork.operationContext,
-        errorUtils.ERROR_KIND.OperationInputFailed,
-        resolved => {
-            preparation.receiver = resolved
-            return visit(resolved)
-        },
-        invocationWork,
-    )
+    const readiness = visit(invocationWork.receiver)
     if (languageValues.isPending(readiness, invocationWork.operationContext)) {
         unregisterRelease = operationLifecycle.releaseOnClose(
             invocationWork,
@@ -142,7 +131,7 @@ function resolveAndLeaseReceiverGraph(invocationWork) {
     }
 
     function finish() {
-        const receiver = preparation.receiver
+        const receiver = invocationWork.receiver
         const errors = preparation.errors
         unregisterRelease?.()
         release()
@@ -156,7 +145,6 @@ function resolveAndLeaseReceiverGraph(invocationWork) {
 
     function release() {
         preparation.errors = undefined
-        preparation.receiver = undefined
         preparation.visited = undefined
     }
 }
@@ -247,7 +235,6 @@ function prepareMethodReceiver(receiver, invocationWork) {
 function materializeObservationReceiver(receiver, invocationWork) {
     const { operationContext } = invocationWork
     const parents = new Map()
-    const reached = new Set()
     const needed = new Set()
     const queue = []
     visit(receiver)
@@ -261,15 +248,15 @@ function materializeObservationReceiver(receiver, invocationWork) {
     // Both modes use one graph copier. An observation seeds unchanged nodes
     // with their own identity; mutation starts with an empty identity map.
     const copies = new Map()
-    for (const source of reached) if (!needed.has(source)) copies.set(source, source)
+    for (const source of parents.keys()) if (!needed.has(source)) copies.set(source, source)
     return copyCompleteGraph(receiver, operationContext, copies)
 
     function visit(source) {
         if (
             !languageValues.isTraversable(source, operationContext) ||
-            reached.has(source)
+            parents.has(source)
         ) return
-        reached.add(source)
+        parents.set(source, new Set())
         if (ArrayView.requiresMaterialization(source, operationContext)) {
             requireCopy(source)
         }
@@ -295,13 +282,8 @@ function materializeObservationReceiver(receiver, invocationWork) {
             }
             if (version && (!descriptor || !Object.is(descriptor.value, child))) requireCopy(source)
             if (!languageValues.isTraversable(child, operationContext)) continue
-            let childParents = parents.get(child)
-            if (!childParents) {
-                childParents = new Set()
-                parents.set(child, childParents)
-            }
-            childParents.add(source)
             visit(child)
+            parents.get(child).add(source)
         }
     }
 

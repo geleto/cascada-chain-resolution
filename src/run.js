@@ -31,7 +31,7 @@ function run(chain, path, method, args, operationContext, facts) {
                     externalAccess = access
                     return invokeWithReceiver(access.identity, true)
                 }
-                if (!mutation || operation.hasExternalScope) return operation.observe(invokeWithReceiver, native)
+                if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
                 return operation.mutate((scope, state, privateChain, suffix) => {
                     if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
                     const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)

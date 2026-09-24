@@ -391,7 +391,7 @@ describe("public external paths", () => {
         }
     }
 
-    it("keeps predecessor ordering when a reserved mutation fails before native access", async () => {
+    for (const entered of [false, true]) it(`keeps predecessor ordering when a reserved mutation fails before native access, entered=${entered}`, async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const held = Promise.withResolvers(), cause = new Error("prefix failed"), events = []
         let fail = false
@@ -404,18 +404,24 @@ describe("public external paths", () => {
             return Reflect.getOwnPropertyDescriptor(target, key)
         } })
         const chain = new r.ContextChain({ group }, ctx, { group: { api: {} } })
-        const first = r.run(chain, ["group", "api"], "work", ["first"], ctx, { mutationScopeDepth: 2 })
-        fail = true
-        const failed = r.run(chain, ["group", "api"], "work", ["skipped"], ctx, { mutationScopeDepth: 2 })
-        assert.equal(failed.cause, cause)
-        assert.equal(r.lookupPath(chain, ["group"], ctx), failed)
-        const repair = r.repairPath(chain, ["group"], ctx)
-        const last = r.run(chain, ["group", "api"], "work", ["last"], ctx, { mutationScopeDepth: 2 })
+        let first, repair, last
+        const issue = owner => {
+            first = r.run(owner, ["group", "api"], "work", ["first"], ctx, { mutationScopeDepth: 2 })
+            fail = true
+            const failed = r.run(owner, ["group", "api"], "work", ["skipped"], ctx, { mutationScopeDepth: 2 })
+            assert.equal(failed.cause, cause)
+            assert.equal(r.lookupPath(owner, ["group"], ctx), failed)
+            repair = r.repairPath(owner, ["group"], ctx)
+            last = r.run(owner, ["group", "api"], "work", ["last"], ctx, { mutationScopeDepth: 2 })
+        }
+        if (entered) r.enter(chain, [], ctx, true, issue)
+        else issue(chain)
+        const outside = r.run(chain, ["group", "api"], "work", ["outside"], ctx, { mutationScopeDepth: 2 })
         await new Promise(setImmediate)
         assert.deepEqual(events, ["first"])
         held.resolve()
-        await Promise.all([first, repair, last])
-        assert.deepEqual(events, ["first", "last"])
+        await Promise.all([first, repair, last, outside])
+        assert.deepEqual(events, ["first", "last", "outside"])
         assert.equal(r.getErrors(chain, [], ctx), null)
         verifyRefCounts(ctx, chain._state)
     })
@@ -1197,6 +1203,30 @@ describe("public external paths", () => {
         assert.equal(0 in copy.array, false)
         assert.equal(metaOf(host, ctx), undefined)
         verifyRefCounts(ctx, chain._state, managedChain._state)
+    })
+
+    it("reuses admitted prototype facts when copying managed snapshot sources", () => {
+        class Data {}
+        let probes = 0
+        const prototype = new Proxy(Data.prototype, {
+            getOwnPropertyDescriptor(target, key) {
+                probes++
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+            getPrototypeOf(target) { probes++; return Reflect.getPrototypeOf(target) },
+        })
+        const source = Object.assign(Object.create(prototype), { value: 1 })
+        r.managedState(source)
+        const { ctx, chain } = setup({ source })
+        r.import(source, ctx)
+        probes = 0
+        for (const observe of [r.lookupPath, r.export]) {
+            const copy = observe(chain, ["api", "source"], ctx)
+            assert.notEqual(copy, source)
+            assert.equal(Object.getPrototypeOf(copy), prototype)
+            assert.equal(copy.value, 1)
+        }
+        assert.equal(probes, 0)
     })
 
     it("preserves snapshot Functions and copies logical ArrayViews", async () => {

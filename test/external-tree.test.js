@@ -1,4 +1,4 @@
-import { externalLocations } from "./support.js"
+import { externalLocationPaths } from "./support.js"
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
 import * as externalTree from "../src/external-mutation-tree.js"
@@ -6,7 +6,7 @@ import { TREE_NODE } from "../src/external-mutation-tree.js"
 
 const context = () => ({ execution: new runtime.Execution(), errorContext: "context tree" })
 const external = (value = {}) => runtime.externalState(value)
-const paths = chain => externalLocations(chain._externalMutationTree, []).map(record => record[TREE_NODE].path)
+const paths = chain => externalLocationPaths(chain._externalMutationTree)
 
 describe("compiler-guided context tree", () => {
     it("updates previously healthy ancestor queries when contexts compete for an identity", () => {

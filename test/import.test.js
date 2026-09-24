@@ -1,3 +1,6 @@
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import {
     Chain,
     expect,
@@ -23,6 +26,14 @@ import {
 } from "./support.js"
 
 describe("import", () => {
+    it("releases the imported ancestor while nested publication remains pending", () => {
+        const child = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
+            fileURLToPath(new URL("./fixtures/import-retention.js", import.meta.url))], {
+            encoding: "utf8", timeout: 10000,
+        })
+        assert.equal(child.status, 0, child.error?.message ?? child.stderr)
+    })
+
     it("protects imported managed roots", () => {
         const root = { pos: { x: 1 }, delta: { x: 3 } }
         const oldPos = root.pos

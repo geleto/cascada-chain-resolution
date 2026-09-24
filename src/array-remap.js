@@ -12,16 +12,18 @@ function createRemap(
     end = undefined,
 ) {
     const remap = new Array((end ?? ArrayView.minimumLength(array, operationContext)) - start)
-    for (const key of languageProperties.enumerableLanguageKeys(
+    for (const key of languageProperties.enumerableLanguageKeyCandidates(
         array,
         operationContext,
         start,
         end,
     )) {
+        const placement = propertyVersions.getPropertyPlacement(array, key, operationContext)
+        if (placement === undefined) continue
         languageProperties.writeLanguageProperty(
             remap,
             String(Number(key) - start),
-            propertyVersions.getPropertyPlacement(array, key, operationContext),
+            placement,
             operationContext,
         )
     }

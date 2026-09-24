@@ -94,7 +94,8 @@ function processImportSegment(
         }
         containers.clear()
         registrations?.clear()
-        resultErrors = externalMutationTreeSetup = failures = undefined
+        // Pending callbacks need their destination, not the staging root or failure.
+        root = failure = resultErrors = externalMutationTreeSetup = failures = undefined
     }
 
     function inspect(action) {

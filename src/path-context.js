@@ -16,13 +16,12 @@ function captureRoute(chain, path, firstDynamicSegment = path.length, scopeDepth
         ...externalTree.tracePath(chain._externalMutationTree, path, Math.min(scopeDepth, firstDynamicSegment)),
         path,
         firstDynamicSegment,
-        depth: (prefix?.depth ?? 0) + path.length,
         dynamicDepth: prefix && prefix.dynamicDepth < prefix.depth + (rootPath?.length ?? 0)
             ? prefix.dynamicDepth : (prefix?.depth ?? 0) + firstDynamicSegment,
     }
 }
 
-function capturePathOrigin(route, depth = route.depth) {
+function capturePathOrigin(route, depth) {
     // The exposed root may be below this backing root; preserve its provenance.
     return { depth, dynamicDepth: route.dynamicDepth }
 }

@@ -600,11 +600,10 @@ function prepareAndSortRecords(
         errorUtils.isPoisonError(record) ? record : record.value,
     )
     return internalSteps.continueOperation(
-        exportManyValues([snapshot], invocationWork),
+        exportManyValues(snapshot, invocationWork),
         invocationWork.operationContext,
-        readyValues => {
-            if (errorUtils.isPoisonError(readyValues)) return readyValues
-            const [exported] = readyValues
+        exported => {
+            if (errorUtils.isPoisonError(exported)) return exported
 
             for (let index = 0; index < sortable.length; index++) {
                 sortable[index].exported = exported[index]

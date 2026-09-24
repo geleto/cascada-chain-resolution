@@ -70,7 +70,9 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             invalid("External snapshots cannot contain thenables")
             if (!managed) return undefined
         }
-        if (!array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
+        // Admitted managed sources have a fixed category and safe, stable
+        // prototype; only new host sources need those probes here.
+        if (!managed && !array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
 
         const length = array ? (managed
             ? inspect(() => readManagedProperty(source, "length", operationContext))
@@ -78,9 +80,9 @@ function snapshotExternalValue(value, operationContext, admit = true) {
         if (errors.isPoisonError(length)) collect(length)
         else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
             invalid("External snapshot Array has an invalid length")
-        const plain = !array && !errors.isPoisonError(prototype) &&
+        const plain = !managed && !array && !errors.isPoisonError(prototype) &&
             native(() => prototype === null || metadata.isPlainObjectPrototype(prototype))
-        const type = array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
+        const type = managed ? meta.type : array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
         const copy = copies ? array ? new Array(length) : Object.create(prototype) : undefined
         visited.set(source, copy)
         if (copies) copies.push([copy, type, prototype])

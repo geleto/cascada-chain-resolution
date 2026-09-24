@@ -430,3 +430,10 @@ export function externalLocations(tree, path = []) {
         for (const child of Object.values(node)) visit(child)
     }
 }
+
+export function externalLocationPaths(tree, path = []) {
+    if (!tree) return []
+    const paths = tree[TREE_NODE].identity ? [path] : []
+    for (const key of Object.keys(tree)) paths.push(...externalLocationPaths(tree[key], [...path, key]))
+    return paths
+}

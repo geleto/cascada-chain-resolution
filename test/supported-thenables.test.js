@@ -1,4 +1,4 @@
-import { externalLocations } from "./support.js"
+import { externalLocationPaths } from "./support.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import * as internalSteps from "../src/internal-step.js"
 import { markPromiseHandled } from "../src/thenable-subscription.js"
@@ -448,9 +448,8 @@ describe("supported thenables", () => {
         assert.equal(subscriptions, 1)
         assert.equal(root.a, source)
         assert.equal(runtime.lookupPath(chain, ["a"], ctx), shared)
-        const boundaries = externalLocations(chain._externalMutationTree, [])
-        assert.deepEqual(boundaries.map(boundary => boundary[TREE_NODE].path), [["b", "resource"]])
-        assert.equal(ctx.execution._externalIdentities.get(shared.resource), boundaries[0][TREE_NODE].entry)
+        assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["b", "resource"]])
+        assert.equal(ctx.execution._externalIdentities.get(shared.resource), chain._externalMutationTree.b.resource[TREE_NODE].entry)
     })
 
     it("adds no external authority after pending delivery", async () => {

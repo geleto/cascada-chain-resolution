@@ -25,7 +25,7 @@ function validateExternalAccess(identity, node, operationContext) {
 // An entry's outside reservation covers this private view. The same conflict
 // algorithm runs inside it, without joining outside work waiting for the entry.
 function createExternalReservationView(root) {
-    return { root, frontiers: new WeakMap(), effects: new Set() }
+    return { root, frontiers: new WeakMap() }
 }
 
 function frontier(node, view) {
@@ -43,33 +43,31 @@ function frontier(node, view) {
 // capture is pending. Its completion Promise is allocated only for a waiter.
 class ExternalEffect {
     constructor(node, mutation, view, operationContext, subtree = true) {
-        this.view = view
         this.operationContext = operationContext
-        view?.effects.add(this)
         this.node = node
         const predecessors = new Set()
-        const selected = frontier(node, this.view)
+        const selected = frontier(node, view)
         for (const work of subtree ? selected.subtreeWrites : selected.writes) predecessors.add(work)
         if (mutation) for (const work of selected.subtreeReads) predecessors.add(work)
-        for (let parent = node === this.view?.root ? undefined : node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
-            const state = frontier(parent, this.view)
+        for (let parent = node === view?.root ? undefined : node[TREE_NODE].parent; parent; parent = parent[TREE_NODE].parent) {
+            const state = frontier(parent, view)
             for (const work of state.writes) predecessors.add(work)
             if (mutation) for (const work of state.reads) predecessors.add(work)
-            if (parent === this.view?.root) break
+            if (parent === view?.root) break
         }
         // A later mutation transitively covers same-scope/descendant work.
         // Removing frontier membership does not finish that work's lifetime.
         if (mutation) for (const work of predecessors)
-            if (work.node[TREE_NODE].path.length >= node[TREE_NODE].path.length) work.removeMemberships()
+            if (work.node[TREE_NODE].depth >= node[TREE_NODE].depth) work.removeMemberships()
         const memberships = this.memberships = []
         // Prefix validation consumes only this node's metadata. Its propagated
         // membership orders mutations here and above; omitting the direct read
         // membership leaves mutations below it independent.
         if (subtree) memberships.push(mutation ? selected.writes : selected.reads)
         for (let ancestor = node; ancestor; ancestor = ancestor[TREE_NODE].parent) {
-            const state = frontier(ancestor, this.view)
+            const state = frontier(ancestor, view)
             memberships.push(mutation ? state.subtreeWrites : state.subtreeReads)
-            if (ancestor === this.view?.root) break
+            if (ancestor === view?.root) break
         }
         for (const membership of memberships) membership.add(this)
         const wait = predecessors.size === 1 ? predecessors.values().next().value.promise :
@@ -93,16 +91,20 @@ class ExternalEffect {
         const operationContext = this.operationContext
         markPromiseHandled(continueOperation(this.readiness, operationContext, () => {
             this.removeMemberships()
-            this.view?.effects.delete(this)
             this.completion?.resolve()
-            this.completion = this.view = this.node = this.operationContext = undefined
+            this.completion = this.node = this.operationContext = undefined
         }), operationContext)
     }
 }
 
 function pendingExternalEffects(view) {
-    if (view.effects.size === 1) return view.effects.values().next().value.promise
-    if (view.effects.size) return Promise.all([...view.effects].map(work => work.promise))
+    const state = view.frontiers.get(view.root)
+    if (!state) return
+    // A replacing reservation waits for everything it subsumed, including on
+    // early failure. The root frontier therefore covers the entire entry.
+    const effects = [...state.subtreeReads, ...state.subtreeWrites]
+    if (effects.length === 1) return effects[0].promise
+    if (effects.length) return Promise.all(effects.map(work => work.promise))
 }
 
 export { externalCapabilityEscapeError, createExternalReservationView, externalLocationError, ExternalEffect, pendingExternalEffects, validateExternalAccess }
