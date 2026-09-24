@@ -1,4 +1,5 @@
 import {
+    arrayBacking,
     logicalArrayValues,
     logicalProperty,
     logicalKeys,
@@ -50,7 +51,7 @@ describe("ArrayView", () => {
                 for (let i = 0; i < 3; i++) {
                     const result = run(chain, [], method, method === "push" ? [i] : [], { mutationScopeDepth: 0 })
                     expect(result).to.be(method === "push" ? size + i + 1 : size - i - 1)
-                    expect(arrayViews.backingOf(chain._state.value)).to.be(backing)
+                    expect(arrayBacking(chain._state.value)).to.be(backing)
                 }
                 measurements.push({ ...counts })
                 hold.resolve()
@@ -140,7 +141,7 @@ describe("ArrayView", () => {
         const view = run(new Chain(source), [], "push", [4], {})
 
         expect(arrayViews.isArrayView(
-            arrayViews.projectionOf(source),
+            arrayViews.ArrayView.projectionOf(source),
         )).to.be(true)
         expect([
             ...logicalArrayValues(source, testOperationContext()),
@@ -426,7 +427,7 @@ describe("ArrayView", () => {
 
         expect(Array.isArray(result)).to.be(true)
         expect(result).to.eql([1, 2, 3])
-        expect(arrayViews.projectionOf(source)).to.be(source)
+        expect(arrayViews.ArrayView.projectionOf(source)).to.be(source)
         expect(source).to.eql([1, 2])
     })
 
@@ -435,7 +436,7 @@ describe("ArrayView", () => {
         const ownKeys = Reflect.ownKeys(source)
 
         expect(arrayViews.ArrayView.tryAttachTo(source)).to.be(undefined)
-        expect(arrayViews.projectionOf(source)).to.be(source)
+        expect(arrayViews.ArrayView.projectionOf(source)).to.be(source)
         expect(Reflect.ownKeys(source)).to.eql(ownKeys)
 
     })
@@ -533,7 +534,7 @@ describe("ArrayView", () => {
         const grown = chain._state.value
 
         expect(arrayViews.isArrayView(grown)).to.be(true)
-        expect(grown.length).to.be(6)
+        expect(arrayViews.ArrayView.minimumLength(grown)).to.be(6)
         expect([...logicalArrayValues(grown, testOperationContext())]).to.eql([
             1,
             2,

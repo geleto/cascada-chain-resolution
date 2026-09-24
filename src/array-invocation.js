@@ -1,7 +1,7 @@
+import { ArrayView } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as errorUtils from "./error.js"
-import { resolveLength } from "./array-length.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
@@ -33,7 +33,7 @@ function selectArrayMethodDescription(invocationWork) {
         prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueOperation(
             prepareArrayMethodArguments(methodDefinition, invocationWork),
             invocationWork.operationContext, args => errorUtils.isPoisonError(args) || !methodDefinition.intrinsic
-                ? args : runArrayStep(invocationWork, () => prepareIntrinsicArrayShape(args, invocationWork)),
+                ? args : runArrayStep(invocationWork, () => prepareIntrinsicArrayLength(args, invocationWork)),
             undefined, invocationWork)),
         invoke(preparedArguments) {
             return runArrayStep(invocationWork, () => {
@@ -60,8 +60,8 @@ function selectArrayMethodDescription(invocationWork) {
 
 // Intrinsics require an exact remap length. Controlled algorithms prepare
 // their own bounds or capture shape alongside their required placements.
-function prepareIntrinsicArrayShape(args, work) {
-    return resolveLength(work.receiver, work, length => {
+function prepareIntrinsicArrayLength(args, work) {
+    return ArrayView.resolveLength(work.receiver, work, length => {
         work.arrayLength = length
         return args
     })

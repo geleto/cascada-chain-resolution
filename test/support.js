@@ -20,7 +20,7 @@ let testExecution
 // is only a storage projection and has no separate semantic read interface.
 export { readLanguageProperty as logicalProperty, enumerableLanguageKeys as logicalKeys } from "../src/language-properties.js"
 export function* logicalArrayValues(array, operationContext) {
-    const length = sourceArrayViews.publishedArrayLength(array, operationContext)
+    const length = sourceArrayViews.ArrayView.minimumLength(array, operationContext)
     for (let index = 0; index < length; index++) yield readLanguageProperty(array, String(index), operationContext)
 }
 
@@ -221,6 +221,14 @@ ArrayView.tryAttachTo = value => sourceArrayViews.ArrayView.tryAttachTo(
     value,
     testOperationContext("test ArrayView attachment"),
 )
+export function arrayBacking(value, operationContext = testOperationContext("test Array backing")) {
+    const projection = sourceArrayViews.ArrayView.projectionOf(value, operationContext)
+    return sourceArrayViews.isArrayView(projection, operationContext) ? projection._backing : projection
+}
+ArrayView.projectionOf = value => sourceArrayViews.ArrayView.projectionOf(
+    value, testOperationContext("test Array projection"))
+ArrayView.minimumLength = (value, operationContext = testOperationContext("test Array minimum")) =>
+    sourceArrayViews.ArrayView.minimumLength(value, operationContext)
 
 const arrayViews = {
     ...sourceArrayViews,
@@ -232,14 +240,6 @@ const arrayViews = {
     isLogicalArray: value => sourceArrayViews.isLogicalArray(
         value,
         testOperationContext("test logical Array check"),
-    ),
-    backingOf: value => sourceArrayViews.backingOf(
-        value,
-        testOperationContext("test Array backing"),
-    ),
-    projectionOf: value => sourceArrayViews.projectionOf(
-        value,
-        testOperationContext("test Array projection"),
     ),
 }
 

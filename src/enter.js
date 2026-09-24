@@ -7,7 +7,6 @@ import * as steps from "./internal-step.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import * as values from "./language-values.js"
-import { requiresArrayMaterialization } from "./array-view.js"
 import { shallowCopyPathContainer } from "./mutations.js"
 import * as versions from "./property-versions.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
@@ -37,7 +36,6 @@ function captureReference(chain, route, mutable, operationContext) {
                 if (properties.classifyLanguageProperty(value, nextKey, operationContext) !== properties.ORDINARY_PROPERTY) return
                 let next = properties.readLanguagePlacement(value, nextKey, operationContext)
                 if (mutable && (metadata.requiresCopyOnWrite(value, operationContext) ||
-                    requiresArrayMaterialization(value, operationContext) ||
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext) ||
                     properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext, true))) {
                     const copy = shallowCopyPathContainer(value, undefined, operationContext).value

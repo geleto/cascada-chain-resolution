@@ -1,163 +1,254 @@
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
+import { LengthState } from "./array-length.js"
 
-// An Array operand or backing may be a Proxy, so physical reflection and
-// writes can invoke its traps.
+// Native Arrays keep their physical representation until bounds or pending
+// growth require a projection. All Array-specific state stays behind this class.
 class ArrayView {
     constructor(arrayOrArrayView, operationContext, start = 0, end) {
         languageValues.admitReadyValue(arrayOrArrayView, operationContext)
-        const source = projectionOf(arrayOrArrayView, operationContext)
-        const sourceView = isArrayView(source, operationContext) ? source : undefined
-        const sourceStart = sourceView?._start ?? 0
-        if (end === undefined) {
-            end = sourceView
-                ? sourceView.length
-                : physicalArrayLength(source, operationContext)
-        }
+        const source = ArrayView.projectionOf(arrayOrArrayView, operationContext)
+        const view = isArrayView(source, operationContext) ? source : undefined
+        end ??= ArrayView.minimumLength(source, operationContext)
         Object.defineProperties(this, {
-            _backing: { value: sourceView?._backing ?? source },
-            _start: { value: sourceStart + start },
-            _end: {
-                value: sourceStart + end,
-                writable: true,
-            },
+            _backing: { value: view?._backing ?? source },
+            _start: { value: (view?._start ?? 0) + start },
+            _lengthState: { value: end - start, writable: true },
         })
-        languageValues.admitReadyValue(
-            this,
-            operationContext,
-            languageValues.TYPE.Array,
-        )
+        languageValues.admitReadyValue(this, operationContext, languageValues.TYPE.Array)
         metadata.requireMeta(this, operationContext).arrayView = this
     }
 
-    static tryAttachTo(arrayOrArrayView, operationContext) {
-        const projection = projectionOf(arrayOrArrayView, operationContext)
-        const backing = backingOf(projection, operationContext)
-        if (
-            metadata.isImported(arrayOrArrayView, operationContext) ||
-            metadata.isImported(backing, operationContext) ||
-            !hasPhysicalArrayLength(arrayOrArrayView, operationContext)
-        ) return undefined
-        if (isArrayView(projection, operationContext)) return projection
+    static projectionOf(value, operationContext) {
+        return metadata.metaOf(value, operationContext)?.arrayView ?? value
+    }
 
-        const view = new ArrayView(projection, operationContext)
-        metadata.requireMeta(projection, operationContext).arrayView = view
+    // Incremental scans and storage allocation need only the committed prefix.
+    // Ordinary consumers resolve or capture length instead.
+    static minimumLength(array, operationContext) {
+        const state = ArrayView.#stateOf(array, operationContext)
+        return state.minimum ?? state
+    }
+
+    static readyLength(array, operationContext) {
+        const state = ArrayView.#stateOf(array, operationContext)
+        return typeof state === "number" ? state : undefined
+    }
+
+    static resolveLength(array, work, onLength) {
+        const state = ArrayView.#stateOf(array, work.operationContext)
+        return typeof state === "number" ? onLength(state) : state.resolve(work, onLength)
+    }
+
+    static resolveInRange(array, index, work, onInRange) {
+        const state = ArrayView.#stateOf(array, work.operationContext)
+        return typeof state === "number" ? onInRange(index < state) : state.resolve(work, onInRange, index)
+    }
+
+    static captureLength(array, operationContext, owner) {
+        const state = ArrayView.#stateOf(array, operationContext)
+        return typeof state === "number" ? state : state.capture(owner)
+    }
+
+    // An entry can create an index without committing growth at issuance.
+    // The returned completion records creation or final absence for its copies too.
+    static beginIndexTransition(array, key, operationContext) {
+        const bound = Number(key) + 1
+        let state = ArrayView.#stateOf(array, operationContext)
+        if (bound <= (state.minimum ?? state)) return
+        if (typeof state === "number") state = new LengthState(state)
+        ArrayView.#setState(array, state, operationContext)
+        return state.add(bound).complete
+    }
+
+    // Read fallible storage before publication. The returned commit runs after
+    // the index write, with no host read between that write and logical growth.
+    static prepareIndexCreation(array, key, operationContext, writeBack) {
+        if (!isArrayIndex(key)) return
+        const length = Number(key) + 1
+        if (length <= ArrayView.minimumLength(array, operationContext)) return
+        return () => {
+            const view = metadata.metaOf(array, operationContext)?.arrayView
+            if (view) {
+                const state = view.#lengthState
+                if (typeof state === "number") view._lengthState = Math.max(state, length)
+                else state.grow(length)
+            } else if (!writeBack) ArrayView.#setState(array, length, operationContext)
+        }
+    }
+
+    // Container copying transfers shape as well as placements. Earlier growth
+    // outcomes are shared, but each copy owns its subsequent length history.
+    static copyShape(source, destination, operationContext) {
+        const state = ArrayView.#stateOf(source, operationContext)
+        const copy = typeof state === "number" ? state : state.fork()
+        if (copy !== ArrayView.minimumLength(destination, operationContext))
+            ArrayView.#setState(destination, copy, operationContext)
+    }
+
+    static requiresMaterialization(value, operationContext) {
+        // Sharing and leases use ordinary COW; this checks representation only.
+        const view = ArrayView.projectionOf(value, operationContext)
+        return isArrayView(view, operationContext) && (view === value ||
+            view.#minimumLength !== ArrayView.#physicalLength(view._backing, operationContext))
+    }
+
+    static tryAttachTo(arrayOrArrayView, operationContext) {
+        const projection = ArrayView.projectionOf(arrayOrArrayView, operationContext)
+        const backing = isArrayView(projection, operationContext) ? projection._backing : projection
+        if (metadata.isImported(arrayOrArrayView, operationContext) ||
+            metadata.isImported(backing, operationContext) ||
+            ArrayView.readyLength(arrayOrArrayView, operationContext) === undefined) return
+        let view = projection
+        if (!isArrayView(view, operationContext)) {
+            view = new ArrayView(projection, operationContext)
+            metadata.requireMeta(projection, operationContext).arrayView = view
+        }
+        metadata.markShared(backing, operationContext)
         return view
     }
 
     static canGrowEnd(source, count, operationContext) {
-        if (!hasPhysicalArrayLength(source, operationContext)) return false
-        return canGrowBacking(projectionOf(source, operationContext), count, operationContext)
+        return ArrayView.readyLength(source, operationContext) !== undefined &&
+            ArrayView.#canGrowBacking(ArrayView.projectionOf(source, operationContext), count, operationContext)
     }
 
     static tryExtendEnd(source, count, beforeWrite, operationContext) {
         if (!ArrayView.canGrowEnd(source, count, operationContext)) return
         const view = ArrayView.tryAttachTo(source, operationContext)
         if (!view) return
-        const next = new ArrayView(view, operationContext, 0, view.length + count)
+        const next = new ArrayView(view, operationContext, 0, view.#minimumLength + count)
         beforeWrite(next)
-        if (count > 0)
-            extendPhysicalArray(view._backing, count, operationContext)
+        if (count > 0) ArrayView.#extendBacking(view._backing, count, operationContext)
         return next
     }
 
-    get length() {
-        return this._end - this._start
-    }
-
-    #physicalKey(key) {
-        if (!isArrayIndex(key)) return undefined
-        const index = Number(key)
-        if (index >= this.length) return undefined
-        return String(this._start + index)
+    // Broad ranges enumerate stored keys; bounded views inspect only their range.
+    static *physicalKeyCandidates(array, operationContext, start = 0, end) {
+        const projection = ArrayView.projectionOf(array, operationContext)
+        const view = isArrayView(projection, operationContext) ? projection : undefined
+        const backing = view ? view._backing : projection
+        const backingLength = ArrayView.#physicalLength(backing, operationContext)
+        const offset = view ? view._start : 0
+        const extent = view ? view.#minimumLength : backingLength
+        start = offset + Math.max(0, start)
+        end = offset + Math.min(extent, end ?? extent)
+        if (extent >= backingLength && offset === 0 && end - start >= extent / 2) {
+            const ownKeys = errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(backing))
+            // Proxies may list indexes out of order; logical Arrays use index order.
+            const keys = Object.create(null)
+            for (const key of ownKeys) {
+                if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
+                keys[String(Number(key) - offset)] = true
+            }
+            yield* Object.keys(keys)
+        } else {
+            for (let index = start; index < end; index++) yield String(index - offset)
+        }
     }
 
     descriptor(key, operationContext) {
-        if (key === "length") {
-            return {
-                value: this.length,
-                enumerable: false,
-                writable: true,
-                configurable: false,
-            }
+        if (key === "length") return {
+            value: this.#minimumLength, enumerable: false, writable: true, configurable: false,
         }
         const physical = this.#physicalKey(key)
-        return physical === undefined
-            ? undefined
-            : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(
-                this._backing,
-                physical,
-            ),
-              )
+        return physical === undefined ? undefined : errorUtils.runExternalAction(
+            operationContext, () => Object.getOwnPropertyDescriptor(this._backing, physical))
     }
 
     set(key, value, operationContext) {
         if (key === "length") {
-            if (!this.setLength(value, operationContext)) {
-                throw new Error("ArrayView growth requires materialization")
-            }
+            this.#setLength(value, operationContext)
             return
         }
-        const physical = this.#physicalKey(key)
-        if (physical === undefined) {
-            throw new Error("Cannot write outside an ArrayView range")
-        }
+        // A native owner's index write precedes its logical growth commit.
+        // A distinct view writes only within its already established bounds.
         const backing = this._backing
+        const physical = metadata.metaOf(backing, operationContext)?.arrayView === this && isArrayIndex(key)
+            ? String(this._start + Number(key)) : this.#physicalKey(key)
+        if (physical === undefined) throw new Error("Cannot write outside an ArrayView range")
         errorUtils.runExternalAction(operationContext, () => {
-            if (Object.hasOwn(backing, physical)) {
-                backing[physical] = value
-            } else {
-                Object.defineProperty(backing, physical, {
-                    value,
-                    enumerable: true,
-                    writable: true,
-                    configurable: true,
-                })
-            }
+            if (Object.hasOwn(backing, physical)) backing[physical] = value
+            else Object.defineProperty(backing, physical, {
+                value, enumerable: true, writable: true, configurable: true,
+            })
         })
     }
 
     delete(key, operationContext) {
         if (key === "length") return false
         const physical = this.#physicalKey(key)
-        return (
-            physical === undefined ||
-            errorUtils.runExternalAction(
-                operationContext,
-                () => delete this._backing[physical],
-            )
-        )
+        return physical === undefined || errorUtils.runExternalAction(
+            operationContext, () => delete this._backing[physical])
     }
 
-    setLength(length, operationContext) {
-        const growth = length - this.length
+    #setLength(length, operationContext) {
+        const growth = length - this.#minimumLength
         if (growth > 0) {
-            // The view itself is already the resolved internal projection.
-            if (!canGrowBacking(this, growth, operationContext)) return false
-            extendPhysicalArray(this._backing, growth, operationContext)
+            if (!ArrayView.#canGrowBacking(this, growth, operationContext))
+                throw new Error("ArrayView growth requires materialization")
+            ArrayView.#extendBacking(this._backing, growth, operationContext)
         }
-        this._end = this._start + length
+        this._lengthState = length
         const meta = metadata.requireMeta(this, operationContext)
-        meta.arrayLength = length
         if (meta.retainedPrefixLength > length) meta.retainedPrefixLength = length
-        return true
     }
-}
 
-// Check physical capacity on an already resolved projection. Logical shape
-// and imported-data protection remain the responsibility of its caller.
-function canGrowBacking(projection, count, operationContext) {
-    if (count === 0) return true
-    const view = isArrayView(projection, operationContext) ? projection : undefined
-    const backing = view ? view._backing : projection
-    const length = physicalArrayLength(backing, operationContext)
-    if (view && view._end !== length) return false
-    if (length + count > 0xffffffff) return false
-    if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return false
-    const descriptor = errorUtils.runExternalAction(operationContext, () =>
-        Object.getOwnPropertyDescriptor(backing, "length"))
-    return descriptor?.writable === true
+    get #minimumLength() {
+        const state = this.#lengthState
+        return state.minimum ?? state
+    }
+
+    get #lengthState() {
+        // Earlier questions retain their sequence when current bounds become exact.
+        const state = this._lengthState
+        if (state instanceof LengthState && state.minimum === state.maximum)
+            this._lengthState = state.minimum
+        return this._lengthState
+    }
+
+    #physicalKey(key) {
+        if (!isArrayIndex(key)) return undefined
+        const state = this.#lengthState, index = Number(key)
+        return index < (state.maximum ?? state) ? String(this._start + index) : undefined
+    }
+
+    static #stateOf(array, operationContext) {
+        return metadata.metaOf(array, operationContext)?.arrayView?.#lengthState ??
+            ArrayView.#physicalLength(array, operationContext)
+    }
+
+    static #setState(array, state, operationContext) {
+        let view = metadata.metaOf(array, operationContext)?.arrayView
+        if (!view) {
+            view = new ArrayView(array, operationContext, 0, state.minimum ?? state)
+            metadata.requireMeta(array, operationContext).arrayView = view
+        }
+        view._lengthState = state
+    }
+
+    static #physicalLength(array, operationContext) {
+        return errorUtils.runExternalAction(operationContext, () => array.length)
+    }
+
+    static #extendBacking(array, count, operationContext) {
+        errorUtils.runExternalAction(operationContext, () => { array.length += count })
+    }
+
+    // Shape and import protection have already been checked by the caller.
+    static #canGrowBacking(projection, count, operationContext) {
+        if (count === 0) return true
+        const view = isArrayView(projection, operationContext) ? projection : undefined
+        const backing = view ? view._backing : projection
+        const length = ArrayView.#physicalLength(backing, operationContext)
+        if (view && view._start + view.#minimumLength !== length) return false
+        if (length + count > 0xffffffff) return false
+        if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return false
+        const descriptor = errorUtils.runExternalAction(operationContext, () =>
+            Object.getOwnPropertyDescriptor(backing, "length"))
+        return descriptor?.writable === true
+    }
 }
 
 function isArrayView(value, operationContext) {
@@ -165,8 +256,13 @@ function isArrayView(value, operationContext) {
 }
 
 function isLogicalArray(value, operationContext) {
-    return metadata.metaOf(value, operationContext)?.type ===
-        languageValues.TYPE.Array
+    return metadata.metaOf(value, operationContext)?.type === languageValues.TYPE.Array
+}
+
+function isArrayIndex(key) {
+    if (typeof key !== "string" || key === "") return false
+    const index = Number(key)
+    return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key
 }
 
 function hasArrayAncestor(ancestry, array) {
@@ -176,110 +272,4 @@ function hasArrayAncestor(ancestry, array) {
     return false
 }
 
-function attachedViewOf(value, operationContext) {
-    return Array.isArray(value)
-        ? metadata.metaOf(value, operationContext)?.arrayView
-        : undefined
-}
-
-function projectionOf(value, operationContext) {
-    if (isArrayView(value, operationContext)) return value
-    return attachedViewOf(value, operationContext) ?? value
-}
-
-function backingOf(value, operationContext) {
-    const projection = projectionOf(value, operationContext)
-    return isArrayView(projection, operationContext)
-        ? projection._backing
-        : projection
-}
-
-function physicalArrayLength(array, operationContext) {
-    return errorUtils.runExternalAction(operationContext, () => array.length)
-}
-
-function extendPhysicalArray(array, count, operationContext) {
-    errorUtils.runExternalAction(operationContext, () => {
-        array.length += count
-    })
-}
-
-function publishedArrayLength(value, operationContext) {
-    const length = metadata.metaOf(value, operationContext)?.arrayLength
-    return length?.minimum ?? length ?? storedArrayLength(value, operationContext)
-}
-
-function storedArrayLength(value, operationContext) {
-    const projection = projectionOf(value, operationContext)
-    return isArrayView(projection, operationContext)
-        ? projection.length
-        : physicalArrayLength(projection, operationContext)
-}
-
-function hasPhysicalArrayLength(value, operationContext) {
-    const length = metadata.metaOf(value, operationContext)?.arrayLength
-    return length === undefined || (length?.minimum ?? length) === storedArrayLength(value, operationContext) &&
-        (length?.maximum === undefined || length.maximum === length.minimum)
-}
-
-function requiresArrayMaterialization(value, operationContext) {
-    if (isArrayView(projectionOf(value, operationContext), operationContext)) return true
-    const length = metadata.metaOf(value, operationContext)?.arrayLength
-    if (length === undefined) return false
-    const minimum = length.minimum ?? length
-    // Pending growth lives in logical placements; it needs no storage copy.
-    // Resolved shape must match storage before native representation is reused.
-    return (length.maximum ?? minimum) === minimum && minimum !== storedArrayLength(value, operationContext)
-}
-
-function isArrayIndex(key) {
-    if (typeof key !== "string" || key === "") return false
-    const index = Number(key)
-    return Number.isInteger(index) &&
-        index >= 0 &&
-        index < 0xffffffff &&
-        String(index) === key
-}
-
-// Broad ranges enumerate stored indexes; bounded views inspect only their
-// selected indexes, yielding holes lazily without a dense key allocation.
-function* physicalArrayKeyCandidates(arrayOrView, operationContext, start = 0, end) {
-    const projection = projectionOf(arrayOrView, operationContext)
-    const view = isArrayView(projection, operationContext) ? projection : undefined
-    const backing = view ? view._backing : projection
-    const backingLength = physicalArrayLength(backing, operationContext)
-    const offset = view ? view._start : 0
-    const extent = view ? view.length : backingLength
-    start = offset + Math.max(0, start)
-    end = offset + Math.min(extent, end ?? extent)
-
-    if (extent === backingLength && offset === 0 && end - start >= backingLength / 2) {
-        const ownKeys = errorUtils.runExternalAction(operationContext, () =>
-            Reflect.ownKeys(backing),
-        )
-        // Proxies may list indexes out of order; logical Arrays use index order.
-        const keys = Object.create(null)
-        for (const key of ownKeys) {
-            if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
-            keys[String(Number(key) - offset)] = true
-        }
-        yield* Object.keys(keys)
-    } else {
-        for (let index = start; index < end; index++) {
-            yield String(index - offset)
-        }
-    }
-}
-
-export {
-    ArrayView,
-    physicalArrayKeyCandidates,
-    backingOf,
-    hasArrayAncestor,
-    isArrayIndex,
-    isArrayView,
-    isLogicalArray,
-    publishedArrayLength,
-    projectionOf,
-    requiresArrayMaterialization,
-}
+export { ArrayView, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }

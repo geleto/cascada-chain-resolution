@@ -1,6 +1,6 @@
+import { ArrayView } from "./array-view.js"
 import { captureManagedKeys, walkManagedProperties } from "./managed-traversal.js"
 import * as internalSteps from "./internal-step.js"
-import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
 import * as invocation from "./invocation.js"
@@ -270,7 +270,7 @@ function materializeObservationReceiver(receiver, invocationWork) {
             reached.has(source)
         ) return
         reached.add(source)
-        if (arrayViews.requiresArrayMaterialization(source, operationContext)) {
+        if (ArrayView.requiresMaterialization(source, operationContext)) {
             requireCopy(source)
         }
         if (metadata.metaOf(source, operationContext)?.recordOrder) {

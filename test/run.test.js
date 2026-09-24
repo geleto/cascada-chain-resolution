@@ -5,6 +5,7 @@ import * as errorUtils from "../src/error.js"
 import * as internalSteps from "../src/internal-step.js"
 
 import {
+    arrayBacking,
     logicalArrayValues,
     logicalProperty,
     logicalKeys,
@@ -738,7 +739,7 @@ describe("run", () => {
         )
 
         expect(arrayViews.isArrayView(sliced)).to.be(true)
-        expect(arrayViews.backingOf(sliced)).to.be(source)
+        expect(arrayBacking(sliced)).to.be(source)
         expect([...logicalArrayValues(sliced, testOperationContext())]).to.eql([1, 2, 3])
 
         const changed = new Chain(sliced)
@@ -778,9 +779,9 @@ describe("run", () => {
         )
 
         expect(arrayViews.isArrayView(concatenated)).to.be(true)
-        expect(arrayViews.backingOf(concatenated)).to.be(left)
-        expect(arrayViews.projectionOf(left).length).to.be(3)
-        expect(arrayViews.projectionOf(right)).to.be(right)
+        expect(arrayBacking(concatenated)).to.be(left)
+        expect(arrayViews.ArrayView.minimumLength(left)).to.be(3)
+        expect(arrayViews.ArrayView.projectionOf(right)).to.be(right)
         expect(logicalKeys(concatenated, testOperationContext())).to.eql([
             "0",
             "2",

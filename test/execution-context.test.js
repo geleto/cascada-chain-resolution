@@ -1,5 +1,5 @@
 import * as metadata from "../src/meta.js"
-import { ArrayView, projectionOf } from "../src/array-view.js"
+import { ArrayView } from "../src/array-view.js"
 import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as runtime from "../src/index.js"
@@ -173,8 +173,8 @@ describe("operation context", () => {
 
         expect(metadata.requiresCopyOnWrite(value, firstOperationContext)).to.be(true)
         expect(metadata.requiresCopyOnWrite(value, secondOperationContext)).to.be(false)
-        expect(projectionOf(value, firstOperationContext)).to.be(view)
-        expect(projectionOf(value, secondOperationContext)).to.be(value)
+        expect(ArrayView.projectionOf(value, firstOperationContext)).to.be(view)
+        expect(ArrayView.projectionOf(value, secondOperationContext)).to.be(value)
     })
 
     it("shares graph facts only between Chains in one execution", () => {

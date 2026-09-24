@@ -1,5 +1,5 @@
-import * as errorUtils from "./error.js"
 import { isArrayIndex } from "./array-view.js"
+import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 
 function externalState(value) {

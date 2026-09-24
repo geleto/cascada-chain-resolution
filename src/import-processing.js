@@ -1,3 +1,4 @@
+import { ArrayView, isLogicalArray } from "./array-view.js"
 import { continueOperation } from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import { commitExternalLocations, prepareExternalMutationTree } from "./external-mutation-tree.js"
@@ -6,7 +7,6 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { isLogicalArray, publishedArrayLength } from "./array-view.js"
 import { copyContainerStructure } from "./placement-structure.js"
 
 function processImportSegment(
@@ -136,7 +136,7 @@ function processImportSegment(
         if (container.target !== source) return
         const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
         container.target = type === metadata.TYPE.Array
-            ? new Array(publishedArrayLength(source, operationContext)) : Object.create(admittedPrototype)
+            ? new Array(ArrayView.minimumLength(source, operationContext)) : Object.create(admittedPrototype)
         for (const parent of container.parents ?? []) {
             if (retentions.has(parent)) copyContainer(parent)
         }

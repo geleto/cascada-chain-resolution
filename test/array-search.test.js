@@ -87,7 +87,7 @@ describe("Array searches with unfinished growth", () => {
         const ctx = context(), value = Promise.withResolvers(), hold = Promise.withResolvers()
         const chain = new r.Chain([value.promise], ctx)
         const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
-        const receiver = chain._state.value, length = metaOf(receiver, ctx).arrayLength
+        const receiver = chain._state.value, length = metaOf(receiver, ctx).arrayView._lengthState
         const source = length.head.source
         const result = r.run(chain, [], "includes", [7], ctx, {})
         let outcome

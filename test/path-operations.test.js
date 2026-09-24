@@ -1,5 +1,6 @@
 import {
     logicalArrayValues,
+    arrayViews,
     testOperationContext,
     Chain,
     expect,
@@ -762,7 +763,7 @@ describe("path assignment", () => {
         expect(result).to.be(undefined)
         expect(chain._state.value).not.to.be(view)
         expect(exportValue(chain, [])).to.eql([])
-        expect(view.length).to.be(4)
+        expect(arrayViews.ArrayView.minimumLength(view)).to.be(4)
         expect([...logicalArrayValues(view, testOperationContext())]).to.eql([0, 1, 2, 3])
         expect(exportValue(sourceChain, [])).to.eql([0, 1, 2])
         verifyRefCounts(view, source)

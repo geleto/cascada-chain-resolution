@@ -1,7 +1,6 @@
-import { captureArrayLength } from "./array-length.js"
+import { ArrayView, isLogicalArray, hasArrayAncestor } from "./array-view.js"
 import { finishContainerCopy } from "./placement-structure.js"
 import * as internalSteps from "./internal-step.js"
-import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
@@ -57,8 +56,8 @@ function toPrimitiveValue(value, ancestry, operation) {
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
-            if (arrayViews.isLogicalArray(resolved, operation.operationContext)) {
-                if (arrayViews.hasArrayAncestor(ancestry, resolved)) {
+            if (isLogicalArray(resolved, operation.operationContext)) {
+                if (hasArrayAncestor(ancestry, resolved)) {
                     return ""
                 }
                 return joinLogicalArray(
@@ -120,7 +119,7 @@ function joinLogicalArray(array, separator = ",", ancestry = undefined, operatio
     ancestry ??= { array, parent: undefined }
     const operationContext = operation.operationContext
     const shape = errorUtils.catchExternalThrow(
-        () => ({ length: captureArrayLength(array, operationContext, operation) }),
+        () => ({ length: ArrayView.captureLength(array, operationContext, operation) }),
         operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed)
     if (errorUtils.isPoisonError(shape)) return shape
     const keys = [], conversions = []

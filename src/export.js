@@ -1,4 +1,4 @@
-import * as arrayViews from "./array-view.js"
+import { ArrayView } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import * as internalSteps from "./internal-step.js"
@@ -140,7 +140,7 @@ function exportValues(values, owner, onResult) {
 function createOutputContainer(value, operationContext) {
     const meta = metadata.requireMeta(value, operationContext)
     return meta.type === metadata.TYPE.Array
-        ? new Array(arrayViews.publishedArrayLength(value, operationContext))
+        ? new Array(ArrayView.minimumLength(value, operationContext))
         : Object.create(meta.admittedPrototype)
 }
 

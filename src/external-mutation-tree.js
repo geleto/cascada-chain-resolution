@@ -1,7 +1,7 @@
+import { isArrayIndex } from "./array-view.js"
 import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import { isArrayIndex } from "./array-view.js"
 
 // String keys belong exclusively to the compiler's property map.
 const TREE_NODE = Symbol("external scope")

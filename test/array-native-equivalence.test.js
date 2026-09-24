@@ -799,8 +799,8 @@ async function logicalSnapshot(value) {
     if (Error.isError(value)) return value.cause ?? value
     if (!arrayViews.isLogicalArray(value)) return value
 
-    const array = arrayViews.projectionOf(value)
-    const output = new Array(array.length)
+    const array = arrayViews.ArrayView.projectionOf(value)
+    const output = new Array(arrayViews.ArrayView.minimumLength(array, testOperationContext()))
     const keys = arrayViews.isArrayView(array)
         ? logicalKeys(array, testOperationContext())
         : Object.keys(array)

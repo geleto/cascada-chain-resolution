@@ -1,4 +1,4 @@
-import * as arrays from "./array-view.js"
+import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errors from "./error.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
@@ -72,11 +72,10 @@ function snapshotExternalValue(value, operationContext, admit = true) {
         if (!array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
 
         const length = array ? (managed
-            ? inspect(() => arrays.publishedArrayLength(source, operationContext))
+            ? inspect(() => readManagedProperty(source, "length", operationContext))
             : native(() => source.length)) : undefined
-        if (array && managed && meta.arrayLength?.maximum !== undefined && meta.arrayLength.maximum !== meta.arrayLength.minimum)
-            invalid("External snapshots require settled Array length")
-        if (array && !errors.isPoisonError(length) && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
+        if (errors.isPoisonError(length)) collect(length)
+        else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
             invalid("External snapshot Array has an invalid length")
         const plain = !array && !errors.isPoisonError(prototype) &&
             native(() => prototype === null || metadata.isPlainObjectPrototype(prototype))
@@ -89,7 +88,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             : native(() => Reflect.ownKeys(source))
         if (errors.isPoisonError(keys)) return keys
         for (const key of keys) {
-            if (typeof key !== "string" || (array && !arrays.isArrayIndex(key))) continue
+            if (typeof key !== "string" || (array && !isArrayIndex(key))) continue
             let child
             if (managed) {
                 const present = inspect(() => properties.hasLanguageProperty(source, key, operationContext))
@@ -128,8 +127,12 @@ function snapshotExternalValue(value, operationContext, admit = true) {
 
 // Snapshot reads must not normalize source storage or subscribe to a gate.
 function readManagedProperty(owner, key, operationContext) {
-    if (key === "length" && arrays.isLogicalArray(owner, operationContext))
-        return arrays.publishedArrayLength(owner, operationContext)
+    if (key === "length" && isLogicalArray(owner, operationContext)) {
+        const length = ArrayView.readyLength(owner, operationContext)
+        return length === undefined ? errors.validationError(
+            "External snapshots require settled Array length", operationContext,
+            errors.ERROR_KIND.InvalidExternalSnapshot) : length
+    }
     const version = metadata.metaOf(owner, operationContext)?.placementVersions?.[key]
     return version ? version.value : properties.getLanguagePlacementDescriptor(owner, key, operationContext)?.value
 }

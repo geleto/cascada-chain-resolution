@@ -1,5 +1,5 @@
+import { ArrayView, isArrayView } from "./array-view.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
-import * as arrayViews from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as internalSteps from "./internal-step.js"
 import * as languageProperties from "./language-properties.js"
@@ -230,7 +230,7 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         return () => { commit(); commitStructure?.() }
     }
     const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
-    const commitEdge = preparePropertyCommit(owner, key, placement, operationContext, structure)
+    const commitEdge = preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack)
     return () => commitEdge(() => {
         if (writeBack) {
             if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext)
@@ -420,7 +420,7 @@ function normalizeRawPropertyValue(
         installPlacementVersion(owner, key, version, operationContext)
     } else if (version.value !== value) {
         if (writable && !metadata.metaOf(owner, operationContext)?.imported &&
-            !arrayViews.isArrayView(owner, operationContext)) {
+            !isArrayView(owner, operationContext)) {
             const failure = errorUtils.catchExternalThrow(
                 () => languageProperties.writeLanguageProperty(owner, key, version.value, operationContext),
                 operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
@@ -472,7 +472,7 @@ function commitPromiseVersion(
 ) {
     // A view owns its logical placements, not the slots it shares with other
     // owners. Settlement updates the overlay without rewriting their storage.
-    writeBack &&= !arrayViews.isArrayView(owner, operationContext)
+    writeBack &&= !isArrayView(owner, operationContext)
     let { value } = placement
     function recordFailure(failure) {
         // Publishing an already failed value can fail independently. Each retry
@@ -529,7 +529,7 @@ function replaceProperty(owner, key, placement, operationContext) {
 }
 
 function replaceLogicalPlacement(owner, key, placement, operationContext) {
-    preparePropertyCommit(owner, key, placement, operationContext)(() =>
+    preparePropertyCommit(owner, key, placement, operationContext, undefined, false)(() =>
         installPlacementVersion(owner, key, placement, operationContext))
 }
 
@@ -548,18 +548,14 @@ function deleteProperty(owner, key, operationContext) {
 }
 
 function commitArrayLength(array, length, operationContext) {
-    const projection = arrayViews.projectionOf(array, operationContext)
-    const current = arrayViews.publishedArrayLength(array, operationContext)
-    const view = arrayViews.isArrayView(projection, operationContext)
+    const projection = ArrayView.projectionOf(array, operationContext)
+    const current = ArrayView.minimumLength(array, operationContext)
+    const view = isArrayView(projection, operationContext)
         ? projection
         : undefined
     if (view) {
         if (length >= current) {
-            const resized = view.setLength(length, operationContext)
-            if (!resized) {
-                throw new Error("ArrayView growth requires materialization")
-            }
-            metadata.requireMeta(array, operationContext).arrayLength = length
+            view.set("length", length, operationContext)
             return undefined
         }
     }
@@ -584,19 +580,18 @@ function commitArrayLength(array, length, operationContext) {
                 key,
                 operationContext,
                 view
-                    ? () => view.setLength(index, operationContext)
+                    ? () => view.set("length", index, operationContext)
                     : undefined,
             )
         } else if (view) {
-            view.setLength(index, operationContext)
+            view.set("length", index, operationContext)
         }
     }
     setLength(length)
-    metadata.requireMeta(array, operationContext).arrayLength = length
     return undefined
 
     function setLength(nextLength) {
-        if (view) view.setLength(nextLength, operationContext)
+        if (view) view.set("length", nextLength, operationContext)
         else {
             // A logical Array may be a Proxy whose set trap runs here.
             errorUtils.runExternalAction(operationContext, () => {
@@ -606,10 +601,10 @@ function commitArrayLength(array, length, operationContext) {
     }
 }
 
-function preparePropertyCommit(owner, key, placement, operationContext, structure) {
+function preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack = true) {
     // Index creation commits length even when only a logical version can hold
     // its outcome. Capture fallible length/index reads before changing storage.
-    const commitStructure = preparePlacementStructure(owner, key, placement, structure, operationContext)
+    const commitStructure = preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack)
     const commitEdge = refcounts.prepareLiveEdge(owner, key, placement.value, operationContext)
     return updateProperty => commitEdge(() => {
         updateProperty()
@@ -622,7 +617,7 @@ function prepareRetainedArrayProperties(
     destination,
     operationContext,
     sourceStart = 0,
-    sourceEnd = arrayViews.publishedArrayLength(source, operationContext),
+    sourceEnd = ArrayView.minimumLength(source, operationContext),
     destinationOffset = 0,
 ) {
     const sourceMeta = metadata.requireMeta(source, operationContext)

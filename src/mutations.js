@@ -1,8 +1,8 @@
+import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import * as arrayRemaps from "./array-remap.js"
-import * as arrayViews from "./array-view.js"
 import * as conversion from "./language-conversion.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
@@ -68,7 +68,7 @@ function createEmptyContainerCopy(source, operationContext) {
     const type = sourceMeta.type
     let destination
     if (type === languageValues.TYPE.Array) {
-        destination = new Array(arrayViews.publishedArrayLength(source, operationContext))
+        destination = new Array(ArrayView.minimumLength(source, operationContext))
     } else if (
         type === languageValues.TYPE.Record ||
         type === languageValues.TYPE.ManagedClass
@@ -102,7 +102,7 @@ function shallowCopyPathContainer(source, attachmentRoot, operationContext) {
         const placement = propertyVersions.capturePlacement(source, key, operationContext)
         // Fresh records reserve physical key order even while presence is
         // undecided. Arrays must not grow merely to represent such a placement.
-        if (placement.sourceVersion?.pendingPresence && !arrayViews.isLogicalArray(source, operationContext))
+        if (placement.sourceVersion?.pendingPresence && !isLogicalArray(source, operationContext))
             Object.defineProperty(destination, key, { value: undefined, enumerable: true, writable: true, configurable: true })
         propertyVersions.transferPlacement(placement, destination, key, operationContext, true)
     }
@@ -482,7 +482,7 @@ function walkMutationPath(
             key,
             operationContext,
         )
-        if (targetArrayStructure && index > 0 && arrayViews.isLogicalArray(value, operationContext) &&
+        if (targetArrayStructure && index > 0 && isLogicalArray(value, operationContext) &&
             propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             return completeTarget({ ...placement, attachmentRoot, receiver: placement.parent,
                 propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: index - 1 }, () => {
@@ -615,11 +615,11 @@ function walkMutationPath(
         )
 
         function prepareParent() {
-            const projection = arrayViews.projectionOf(value, operationContext)
+            const projection = ArrayView.projectionOf(value, operationContext)
             if (atTarget && !deletesTarget && !preserveOnFailure &&
-                arrayViews.isArrayView(projection, operationContext) && arrayViews.isArrayIndex(key)) {
-                const growth = Number(key) + 1 - arrayViews.publishedArrayLength(value, operationContext)
-                const extended = growth > 0 && arrayViews.ArrayView.tryExtendEnd(value, growth,
+                isArrayView(projection, operationContext) && isArrayIndex(key)) {
+                const growth = Number(key) + 1 - ArrayView.minimumLength(value, operationContext)
+                const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth,
                     view => propertyVersions.prepareRetainedArrayProperties(value, view, operationContext), operationContext)
                 if (extended) {
                     parent = extended
@@ -630,8 +630,7 @@ function walkMutationPath(
             }
             const representationCopy = languageProperties.requiresRepresentationCopyForPropertyMutation(
                 value, key, operationContext, atTarget && deletesTarget)
-            const mustCopyParent = preserveParent ||
-                arrayViews.requiresArrayMaterialization(value, operationContext) || representationCopy
+            const mustCopyParent = preserveParent || representationCopy
             if (mustCopyParent) {
                 const copied = shallowCopyPathContainer(parent, attachmentRoot, operationContext)
                 parent = copied.value

@@ -1,4 +1,4 @@
-import * as arrayViews from "./array-view.js"
+import { ArrayView, isArrayIndex } from "./array-view.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
@@ -31,7 +31,7 @@ function createRemap(
     start = 0,
     end = undefined,
 ) {
-    const remap = new Array((end ?? arrayViews.publishedArrayLength(array, operationContext)) - start)
+    const remap = new Array((end ?? ArrayView.minimumLength(array, operationContext)) - start)
     for (const key of languageProperties.enumerableLanguageKeys(
         array,
         operationContext,
@@ -55,7 +55,7 @@ function traceArrayMutation(array, operationContext, length) {
     const partial = new Array(sourceLength)
     const working = new Proxy(partial, {
         has(target, key) {
-            if (!arrayViews.isArrayIndex(key)) {
+            if (!isArrayIndex(key)) {
                 return Reflect.has(target, key)
             }
             if (Object.hasOwn(target, key)) return true
@@ -67,7 +67,7 @@ function traceArrayMutation(array, operationContext, length) {
             )
         },
         get(target, key, receiver) {
-            if (!arrayViews.isArrayIndex(key)) {
+            if (!isArrayIndex(key)) {
                 return Reflect.get(target, key, receiver)
             }
             if (Object.hasOwn(target, key)) return target[key]
@@ -95,7 +95,7 @@ function traceArrayMutation(array, operationContext, length) {
             return Reflect.set(target, key, value, target)
         },
         deleteProperty(target, key) {
-            if (arrayViews.isArrayIndex(key)) {
+            if (isArrayIndex(key)) {
                 deleted.add(key)
             }
             return Reflect.deleteProperty(target, key)

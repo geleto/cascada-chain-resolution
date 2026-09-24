@@ -1,7 +1,6 @@
+import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as metadata from "./meta.js"
 import * as properties from "./language-properties.js"
-import * as arrays from "./array-view.js"
-import { LengthState, captureArrayLength, registerArrayGrowth, copyArrayLength } from "./array-length.js"
 
 function recordOrder(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
@@ -13,7 +12,7 @@ function recordOrder(owner, operationContext) {
 // One reserved placement can publish several structural effects before its
 // final value. Copies retain its token/outcome; later writers get new tokens.
 function beginPlacementStructure(owner, key, placement, operationContext) {
-    const array = arrays.isLogicalArray(owner, operationContext)
+    const array = isLogicalArray(owner, operationContext)
     const order = array ? undefined : recordOrder(owner, operationContext)
     // -1 keeps physical relative order; Infinity denotes absence. Nonnegative
     // positions order creations by issuance, independently of storage writes.
@@ -21,7 +20,7 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     // All commands inside this entry precede later sibling operations, even
     // when those siblings finish first. No-op/replacement keeps the old position.
     const creationPosition = order ? order.clock.next++ : undefined
-    const growth = array ? registerArrayGrowth(owner, Number(key), operationContext) : undefined
+    const completeGrowth = array ? ArrayView.beginIndexTransition(owner, key, operationContext) : undefined
     const enclosing = metadata.metaOf(owner, operationContext)?.entryGate?.structure
     if (order) order.positions.set(key, token)
     return {
@@ -31,12 +30,12 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
             if (token) placement.position = present ? placement.position < Infinity ? placement.position : creationPosition : Infinity
             return () => {
                 if (token) token.position = placement.position
-                if (present) growth?.complete(true)
+                if (present) completeGrowth?.(true)
                 commitEnclosing?.()
             }
         },
         complete() {
-            growth?.complete(false)
+            completeGrowth?.(false)
             // Captures retain their tokens. A completed physical-order token
             // adds no information to this owner's future enumerations.
             if (order && order.positions.get(key) === token && (token.position === Infinity || token.position === -1)) {
@@ -46,12 +45,12 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     }
 }
 
-function preparePlacementStructure(owner, key, placement, structure, operationContext) {
+function preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack) {
     if (placement.pendingPresence) return () => {}
     if (structure) return structure.prepare(placement)
     const present = placement.present !== false
     const meta = metadata.requireMeta(owner, operationContext)
-    const array = arrays.isLogicalArray(owner, operationContext)
+    const array = isLogicalArray(owner, operationContext)
     const before = meta.placementVersions?.[key]
     const wasPresent = before ? before.present !== false && !before.pendingPresence : properties.hasLanguageProperty(owner, key, operationContext)
     if (placement.position === undefined && wasPresent)
@@ -62,13 +61,10 @@ function preparePlacementStructure(owner, key, placement, structure, operationCo
     const created = present && !wasPresent
     if (order) placement.position = present ? placement.position < Infinity ? placement.position : order.clock.next++ : Infinity
     else if (!array) placement.position = present ? -1 : Infinity
-    const length = created && array && arrays.isArrayIndex(key)
-        ? Math.max(arrays.publishedArrayLength(owner, operationContext), Number(key) + 1) : undefined
+    const commitGrowth = created && array
+        ? ArrayView.prepareIndexCreation(owner, key, operationContext, writeBack) : undefined
     return () => {
-        if (length !== undefined) {
-            if (meta.arrayLength instanceof LengthState) meta.arrayLength.grow(length)
-            else meta.arrayLength = length
-        }
+        commitGrowth?.()
         if (order) {
             if (!present || placement.position === -1) order.positions.delete(key)
             else order.positions.set(key, { position: placement.position })
@@ -78,8 +74,8 @@ function preparePlacementStructure(owner, key, placement, structure, operationCo
 }
 
 function copyContainerStructure(source, destination, operationContext) {
-    if (arrays.isLogicalArray(source, operationContext)) {
-        copyArrayLength(source, destination, operationContext)
+    if (isLogicalArray(source, operationContext)) {
+        ArrayView.copyShape(source, destination, operationContext)
         return
     }
     const order = metadata.metaOf(source, operationContext)?.recordOrder
@@ -96,25 +92,22 @@ function captureRecordOrder(owner, keys, operationContext) {
 function orderRecordKeys(keys, positions) {
     if (!positions?.size) return keys
     return keys.sort((a, b) => {
-        const ai = arrays.isArrayIndex(a), bi = arrays.isArrayIndex(b)
+        const ai = isArrayIndex(a), bi = isArrayIndex(b)
         return ai && bi ? Number(a) - Number(b) : ai ? -1 : bi ? 1 :
             (positions.get(a)?.position ?? -1) - (positions.get(b)?.position ?? -1)
     })
 }
 
 function captureContainerStructure(owner, keys, operationContext) {
-    return arrays.isLogicalArray(owner, operationContext)
-        ? { length: captureArrayLength(owner, operationContext) }
+    return isLogicalArray(owner, operationContext)
+        ? { length: ArrayView.captureLength(owner, operationContext) }
         : { order: captureRecordOrder(owner, keys, operationContext) }
 }
 
 function finishContainerCopy(copy, shape) {
     if (shape.length !== undefined) {
         const length = shape.length
-        if (length instanceof LengthState && length.minimum !== length.maximum)
-            throw new Error("Complete placement traversal left Array shape unresolved")
-        copy.length = length.minimum ?? length
-        length.release?.()
+        copy.length = typeof length === "number" ? length : length.read()
     } else if (shape.order) {
         const keys = orderRecordKeys(Object.keys(copy), shape.order)
         const properties = keys.map(key => Object.getOwnPropertyDescriptor(copy, key))

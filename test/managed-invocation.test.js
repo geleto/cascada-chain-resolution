@@ -1343,6 +1343,25 @@ describe("managed invocation", () => {
         expect(await readPath(new Chain(nested), ["value"])).to.be(1)
     })
 
+    for (const projection of ["entry", "slice", "extended backing"]) {
+        it(`materializes observational Array receivers only when storage differs: ${projection}`, () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: {} }
+            const items = [1, 2], array = new runtime.Chain(items, ctx)
+            if (projection === "entry") runtime.enter(array, [5], ctx, true, () => undefined)
+            else runtime.run(array, [], projection === "slice" ? "slice" : "concat",
+                projection === "slice" ? [] : [[3]], ctx, {})
+            let observed
+            const receiver = new runtime.Chain({ items, inspect() {
+                observed = this.items
+                return this.items.length
+            } }, ctx)
+
+            assert.equal(runtime.run(receiver, [], "inspect", [], ctx, {}), 2)
+            assert.equal(observed === items, projection !== "extended backing")
+            assert.deepEqual(observed, [1, 2])
+        })
+    }
+
     it("materializes logical Arrays before managed external code", () => {
         const source = [1, , 3]
         const view = run(new Chain(source), [], "slice", [0, 3], {})

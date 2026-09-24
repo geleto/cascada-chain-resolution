@@ -1227,6 +1227,23 @@ describe("public external paths", () => {
         assert.deepEqual(await r.export(source, [], ctx), [0, 1, 2])
     })
 
+    for (const created of [false, true]) {
+        it(`rejects unresolved length through a managed native alias, created=${created}`, async () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const array = [1, 2], source = new r.Chain(array, ctx), hold = Promise.withResolvers()
+            const entry = r.enter(source, [5], ctx, true, inside => hold.promise.then(() => {
+                if (created) r.assignPath(inside, [], 5, ctx)
+            }))
+            const chain = new r.ContextChain({ api: r.externalState({ array }) }, ctx, { api: {} })
+            const failure = r.lookupPath(chain, ["api", "array", "length"], ctx)
+            assert.equal(failure.kind, r.ERROR_KIND.InvalidExternalSnapshot)
+            assert.equal(r.getErrors(chain, ["api"], ctx), null)
+            hold.resolve()
+            await entry
+            assert.equal(r.lookupPath(chain, ["api", "array", "length"], ctx), created ? 6 : 2)
+        })
+    }
+
     for (const mutable of [false, true]) {
         it(`exports native properties without admitting host-owned output, mutable=${mutable}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }

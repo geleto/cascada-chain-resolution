@@ -1,5 +1,3 @@
-import * as metadata from "./meta.js"
-import { publishedArrayLength } from "./array-view.js"
 import { continueOperation } from "./internal-step.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 
@@ -17,6 +15,11 @@ class LengthState {
     get minimum() { this.refresh(); return this.tail?.minimum ?? this.baseline }
     get maximum() { this.refresh(); return this.tail?.maximum ?? this.baseline }
 
+    static lengthAnswer(minimum, maximum, index) {
+        if (index === undefined) return minimum === maximum ? minimum : undefined
+        return index < minimum ? true : index >= maximum ? false : undefined
+    }
+
     append(node) {
         node.state = this
         node.previous = this.tail
@@ -27,24 +30,24 @@ class LengthState {
         const maximum = node.previous?.maximum ?? this.baseline
         node.minimum = Math.max(minimum, node.value ?? 0)
         node.maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
-        if (node.question) {
-            // Earlier questions already observe their prefix. Subscribe only
+        if (node.deliver) {
+            // Earlier active questions already observe their prefix. Subscribe only
             // the new interval, leaving the unobserved tail lazy.
-            for (let previous = node.previous; previous && previous !== this.lastQuestion; previous = previous.previous)
+            for (let previous = node.previous; previous && previous !== this.lastActiveQuestion; previous = previous.previous)
                 previous.source?.nodes.add(previous)
-            this.lastQuestion = node
+            this.lastActiveQuestion = node
         }
         return node
     }
 
     remove(node) {
-        if (node === this.lastQuestion) {
+        if (node === this.lastActiveQuestion) {
             let previous = node.previous
-            while (previous && !previous.question) {
+            while (previous && !previous.deliver) {
                 previous.source?.nodes.delete(previous)
                 previous = previous.previous
             }
-            this.lastQuestion = previous
+            this.lastActiveQuestion = previous
         }
         if (node.previous) node.previous.next = node.next
         else this.head = node.next
@@ -52,6 +55,12 @@ class LengthState {
         else this.tail = node.previous
         node.source?.nodes.delete(node)
         node.state = node.previous = node.next = undefined
+    }
+
+    releaseQuestion(node) {
+        const next = node.next
+        this.remove(node)
+        this.compact(next)
     }
 
     grow(length) {
@@ -103,10 +112,10 @@ class LengthState {
             node.minimum = minimum
             node.maximum = maximum
             if (node.question) {
-                const answer = lengthAnswer(minimum, maximum, node.index)
+                const answer = LengthState.lengthAnswer(minimum, maximum, node.index)
                 if (answer !== undefined) {
                     const deliver = node.deliver
-                    ready.push(() => deliver(answer))
+                    if (deliver) ready.push(() => deliver(answer))
                     this.remove(node)
                 }
             } else this.compact(node)
@@ -132,7 +141,7 @@ class LengthState {
     }
 
     resolve(work, onAnswer, index) {
-        const answer = lengthAnswer(this.minimum, this.maximum, index)
+        const answer = LengthState.lengthAnswer(this.minimum, this.maximum, index)
         if (answer !== undefined) return onAnswer(answer)
         const { promise, resolve } = Promise.withResolvers()
         let unregister
@@ -140,13 +149,34 @@ class LengthState {
             unregister?.()
             resolve(answer)
         } })
-        unregister = releaseOnClose(work, () => {
-            if (!node.state) return
-            const next = node.next
-            this.remove(node)
-            this.compact(next)
-        })
+        unregister = releaseOnClose(work, () => node.state?.releaseQuestion(node))
         return continueOperation(promise, work.operationContext, onAnswer, undefined, work)
+    }
+
+    // A read retains one position, not an independently mutable sequence.
+    // Passive markers need no subscriptions; complete traversal reads their
+    // answer after its captured placement transitions have finished.
+    capture(owner) {
+        if (this.minimum === this.maximum) return this.minimum
+        const node = this.append({ question: true })
+        let unregister
+        function release() {
+            unregister?.()
+            unregister = undefined
+            node.state?.releaseQuestion(node)
+        }
+        if (owner) unregister = releaseOnClose(owner, release)
+        return {
+            read() {
+                node.state?.refresh()
+                if (node.minimum !== node.maximum)
+                    throw new Error("Complete placement traversal left Array shape unresolved")
+                const length = node.minimum
+                release()
+                return length
+            },
+            release,
+        }
     }
 
     fork() {
@@ -158,52 +188,6 @@ class LengthState {
         }
         return copy
     }
-
-    release() {
-        this.unregister?.()
-        this.unregister = undefined
-        for (let node = this.head; node;) {
-            const next = node.next
-            this.remove(node)
-            node = next
-        }
-    }
 }
 
-function lengthAnswer(minimum, maximum, index) {
-    if (index === undefined) return minimum === maximum ? minimum : undefined
-    return index < minimum ? true : index >= maximum ? false : undefined
-}
-
-function registerArrayGrowth(array, index, operationContext) {
-    const meta = metadata.requireMeta(array, operationContext)
-    const minimum = publishedArrayLength(array, operationContext)
-    if (index < minimum) return undefined
-    if (!(meta.arrayLength instanceof LengthState)) meta.arrayLength = new LengthState(minimum)
-    return meta.arrayLength.add(index + 1)
-}
-
-function captureArrayLength(array, operationContext, owner) {
-    const state = metadata.metaOf(array, operationContext)?.arrayLength
-    const captured = state instanceof LengthState ? state.fork() : publishedArrayLength(array, operationContext)
-    if (owner && captured instanceof LengthState) captured.unregister = releaseOnClose(owner, () => captured.release())
-    return captured
-}
-
-function copyArrayLength(source, destination, operationContext) {
-    metadata.requireMeta(destination, operationContext).arrayLength = captureArrayLength(source, operationContext)
-}
-
-function resolveLength(array, work, onLength) {
-    const state = metadata.metaOf(array, work.operationContext)?.arrayLength
-    return state instanceof LengthState ? state.resolve(work, onLength) :
-        onLength(publishedArrayLength(array, work.operationContext))
-}
-
-function resolveInRange(array, index, work, onInRange) {
-    const state = metadata.metaOf(array, work.operationContext)?.arrayLength
-    return state instanceof LengthState ? state.resolve(work, onInRange, index) :
-        onInRange(index < publishedArrayLength(array, work.operationContext))
-}
-
-export { LengthState, captureArrayLength, copyArrayLength, registerArrayGrowth, resolveLength, resolveInRange }
+export { LengthState }

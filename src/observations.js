@@ -1,3 +1,4 @@
+import { ArrayView } from "./array-view.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportValue } from "./export.js"
@@ -10,7 +11,6 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
-import { resolveLength } from "./array-length.js"
 
 class ErrorQueryWork extends operationLifecycle.OperationOwner {
     constructor(operationContext, collect = false) {
@@ -305,7 +305,7 @@ function walkObservationPath(
 
     function readPlacement(parent, key, index) {
         if (languageProperties.classifyLanguageProperty(parent, key, operationContext) === languageProperties.ARRAY_LENGTH)
-            return resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
+            return ArrayView.resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
         const { value, present, sourceVersion: version, recovery } =
             languageProperties.readLanguagePlacement(parent, key, operationContext)
         if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present, recovery)

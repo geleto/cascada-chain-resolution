@@ -1,5 +1,5 @@
+import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
-import * as arrayViews from "./array-view.js"
 import * as metadata from "./meta.js"
 import { capturePlacementFromVersion, getPlacementVersion, normalizeRawPropertyValue } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
@@ -11,7 +11,7 @@ const INVALID_ARRAY_KEY = 3
 
 function classifyLanguageProperty(parent, key, operationContext) {
     return classifyProjectedProperty(
-        arrayViews.projectionOf(parent, operationContext),
+        ArrayView.projectionOf(parent, operationContext),
         String(key),
         operationContext,
     )
@@ -21,9 +21,9 @@ function classifyProjectedProperty(parent, key, operationContext) {
     if (typeof parent === "string" && key === "length") {
         return STRING_LENGTH
     }
-    if (arrayViews.isLogicalArray(parent, operationContext)) {
+    if (isLogicalArray(parent, operationContext)) {
         if (key === "length") return ARRAY_LENGTH
-        return arrayViews.isArrayIndex(key)
+        return isArrayIndex(key)
             ? ORDINARY_PROPERTY
             : INVALID_ARRAY_KEY
     }
@@ -61,12 +61,12 @@ function isDataPlacement(descriptor) {
 // A language container may be a Proxy, so the physical property operations
 // below can invoke its traps even though accessors never run as graph values.
 function getLanguagePropertyDescriptor(parent, key, operationContext) {
-    parent = arrayViews.projectionOf(parent, operationContext)
+    parent = ArrayView.projectionOf(parent, operationContext)
     key = String(key)
     if (classifyProjectedProperty(parent, key, operationContext) === INVALID_ARRAY_KEY) {
         return undefined
     }
-    return arrayViews.isArrayView(parent, operationContext)
+    return isArrayView(parent, operationContext)
         ? parent.descriptor(key, operationContext)
         : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
           )
@@ -83,7 +83,8 @@ function requiresRepresentationCopyForPropertyMutation(
     operationContext,
     deleting = false,
 ) {
-    const projected = arrayViews.projectionOf(parent, operationContext)
+    if (ArrayView.requiresMaterialization(parent, operationContext)) return true
+    const projected = ArrayView.projectionOf(parent, operationContext)
     key = String(key)
     const descriptor = getLanguagePropertyDescriptor(projected, key, operationContext)
 
@@ -97,30 +98,30 @@ function requiresRepresentationCopyForPropertyMutation(
     const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(projected),
     )
     if (!extensible) return true
-    if (!Array.isArray(projected) || !arrayViews.isArrayIndex(key)) {
+    if (!Array.isArray(projected) || !isArrayIndex(key)) {
         return false
     }
     const length = getLanguagePropertyDescriptor(projected, "length", operationContext)
-    return Number(key) >= arrayViews.publishedArrayLength(projected, operationContext) &&
+    return Number(key) >= ArrayView.minimumLength(projected, operationContext) &&
         length?.writable !== true
 }
 
 function requiresRepresentationCopyForArrayLengthMutation(array, length, operationContext) {
-    const projection = arrayViews.projectionOf(array, operationContext)
-    const current = arrayViews.publishedArrayLength(projection, operationContext)
+    const projection = ArrayView.projectionOf(array, operationContext)
+    const current = ArrayView.minimumLength(projection, operationContext)
     if (length === current) return false
     if (
-        arrayViews.isArrayView(projection, operationContext) &&
+        isArrayView(projection, operationContext) &&
         length > current
     ) {
-        const canGrow = arrayViews.ArrayView.canGrowEnd(
+        const canGrow = ArrayView.canGrowEnd(
             projection,
             length - current,
             operationContext,
         )
         return !canGrow
     }
-    if (!arrayViews.isArrayView(projection, operationContext)) {
+    if (!isArrayView(projection, operationContext)) {
         const descriptor = getLanguagePropertyDescriptor(array, "length", operationContext)
         if (descriptor?.writable !== true) return true
     }
@@ -186,8 +187,8 @@ function writeLanguageProperty(parent, key, value, operationContext) {
         writeLanguageProperty(gate.owner, gate.key, value, operationContext)
         gate.version.storageAbsent = false
     }
-    parent = arrayViews.projectionOf(parent, operationContext)
-    if (arrayViews.isArrayView(parent, operationContext)) {
+    parent = ArrayView.projectionOf(parent, operationContext)
+    if (isArrayView(parent, operationContext)) {
         parent.set(String(key), value, operationContext)
         return
     }
@@ -214,11 +215,11 @@ function readLanguageProperty(parent, key, operationContext) {
 function readLanguagePlacement(parent, key, operationContext) {
     key = String(key)
     const logicalParent = parent
-    parent = arrayViews.projectionOf(parent, operationContext)
+    parent = ArrayView.projectionOf(parent, operationContext)
     const propertyKind = classifyProjectedProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return { value: undefined, present: false }
     if (propertyKind === ARRAY_LENGTH) {
-        return { value: arrayViews.publishedArrayLength(parent, operationContext), present: true }
+        return { value: ArrayView.readyLength(parent, operationContext), present: true }
     }
     if (propertyKind === STRING_LENGTH) return { value: parent.length, present: true }
 
@@ -253,8 +254,8 @@ function deleteLanguageProperty(parent, key, operationContext) {
         deleteLanguageProperty(gate.owner, gate.key, operationContext)
         gate.version.storageAbsent = true
     }
-    parent = arrayViews.projectionOf(parent, operationContext)
-    if (arrayViews.isArrayView(parent, operationContext))
+    parent = ArrayView.projectionOf(parent, operationContext)
+    if (isArrayView(parent, operationContext))
         return parent.delete(String(key), operationContext)
     return errorUtils.runExternalAction(operationContext, () => delete parent[key])
 }
@@ -262,9 +263,9 @@ function deleteLanguageProperty(parent, key, operationContext) {
 // Capture candidates before descriptor checks so one failing Proxy descriptor
 // cannot hide later siblings from complete Error collection.
 function* enumerableLanguageKeyCandidates(value, operationContext, start = 0, end) {
-    const array = arrayViews.isLogicalArray(value, operationContext)
+    const array = isLogicalArray(value, operationContext)
     const keys = array
-        ? arrayViews.physicalArrayKeyCandidates(value, operationContext, start, end)
+        ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
         : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
     const meta = metadata.metaOf(value, operationContext)
     const versions = meta?.placementVersions

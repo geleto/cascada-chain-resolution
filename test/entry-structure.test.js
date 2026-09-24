@@ -4,7 +4,7 @@ import { metaOf } from "../src/meta.js"
 import { readLanguageProperty } from "../src/language-properties.js"
 import { snapshotExternalValue } from "../src/external-snapshot.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
-import { resolveInRange } from "../src/array-length.js"
+import { ArrayView } from "../src/array-view.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { createRandom, randomInteger } from "./native-equivalence-support.js"
 
@@ -35,7 +35,7 @@ describe("entry structural publication", () => {
     it("does not register unused length forks created by repeated COW", async () => {
         const ctx = context(), chain = new r.Chain([], ctx), hold = Promise.withResolvers()
         const entry = r.enter(chain, [10], ctx, true, () => hold.promise)
-        const source = metaOf(chain._state.value, ctx).arrayLength.head.source
+        const source = metaOf(chain._state.value, ctx).arrayView._lengthState.head.source
         for (let i = 0; i < 1000; i++) {
             r.lookupPath(chain, [], ctx) // Retained outputs require actual COW.
             r.assignPath(chain, [0], i, ctx)
@@ -617,8 +617,15 @@ describe("entry structural publication", () => {
         for (const entered of [false, true]) {
             const ctx = context(), cause = Error("creation refused")
             const storage = [0, 1, 2]
-            const chain = new r.Chain(new Proxy(storage, { defineProperty() { throw cause } }), ctx)
-            const failure = r.enter(chain, [5], ctx, true, inside => r.assignPath(inside, [], 7, ctx))
+            const chain = new r.Chain(new Proxy(storage, {
+                defineProperty(target, key, descriptor) {
+                    if (key === "length") return Reflect.defineProperty(target, key, descriptor)
+                    throw cause
+                },
+            }), ctx)
+            // A failed direct write commits logical growth without reserving
+            // physical capacity. Both subsequent routes must materialize it.
+            const failure = r.assignPath(chain, [5], 7, ctx)
             assert.equal(failure.cause, cause)
             assert.equal(r.lookupPath(chain, ["length"], ctx), 6)
             const result = entered ? r.enter(chain, [4], ctx, true, inside => r.assignPath(inside, [], 8, ctx)) :
@@ -735,7 +742,7 @@ describe("entry structural publication", () => {
         const ctx = context(), hold = Promise.withResolvers()
         const array = [], chain = new r.Chain(array, ctx)
         const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
-        const state = metaOf(array, ctx).arrayLength
+        const state = metaOf(array, ctx).arrayView._lengthState
         const tail = state.tail
         const failure = snapshotExternalValue(array, ctx)
         assert(r.isPoisonError(failure))
@@ -831,16 +838,23 @@ describe("entry structural publication", () => {
         })
     }
 
-    it("commits poison growth without storage and preserves it through repair", async () => {
+    for (const entered of [false, true]) it(`commits poison growth and preserves it through repair, entered=${entered}`, async () => {
         const ctx = context(), cause = new Error("creation refused")
         const storage = [0, 1, 2]
-        const source = new Proxy(storage, { defineProperty() { throw cause } })
+        const source = new Proxy(storage, {
+            defineProperty(target, key, descriptor) {
+                if (key === "length") return Reflect.defineProperty(target, key, descriptor)
+                throw cause
+            },
+        })
         const chain = new r.Chain(source, ctx)
-        const failure = r.enter(chain, [5], ctx, true, inside => r.assignPath(inside, [], 7, ctx))
+        const failure = entered ? r.enter(chain, [5], ctx, true, inside => r.assignPath(inside, [], 7, ctx)) :
+            r.assignPath(chain, [5], 7, ctx)
         assert.equal(failure.cause, cause)
         assert.equal(r.lookupPath(chain, [5], ctx), failure)
         assert.equal(r.lookupPath(chain, ["length"], ctx), 6)
         assert.equal(storage.length, 3)
+        assert.equal(Object.hasOwn(storage, 5), false)
         assert.equal(r.hasError(chain, [], ctx), true)
         assert.equal(r.getErrors(chain, [], ctx), failure)
         await r.repairPath(chain, [5], ctx)
@@ -1024,7 +1038,7 @@ describe("entry structural publication", () => {
                     const index = random(2) ? random(18) : undefined
                     const question = { prefix: [...sources], index, work }
                     questions.push(question)
-                    const result = index === undefined ? r.lookupPath(copy, ["length"], ctx) : resolveInRange(sourceArray, index, work, v => v)
+                    const result = index === undefined ? r.lookupPath(copy, ["length"], ctx) : ArrayView.resolveInRange(sourceArray, index, work, v => v)
                     coverage.add(`${index === undefined ? "length" : index % 2 ? "odd" : "even"}:${result instanceof Promise ? "pending" : "ready"}`)
                     if (result instanceof Promise) result.then(v => question.answer = v)
                     else question.answer = result
