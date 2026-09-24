@@ -106,39 +106,6 @@ function requiresRepresentationCopyForPropertyMutation(
         length?.writable !== true
 }
 
-function requiresRepresentationCopyForArrayLengthMutation(array, length, operationContext) {
-    const projection = ArrayView.projectionOf(array, operationContext)
-    const current = ArrayView.minimumLength(projection, operationContext)
-    if (length === current) return false
-    if (
-        isArrayView(projection, operationContext) &&
-        length > current
-    ) {
-        const canGrow = ArrayView.canGrowEnd(
-            projection,
-            length - current,
-            operationContext,
-        )
-        return !canGrow
-    }
-    if (!isArrayView(projection, operationContext)) {
-        const descriptor = getLanguagePropertyDescriptor(array, "length", operationContext)
-        if (descriptor?.writable !== true) return true
-    }
-
-    for (const key of enumerableLanguageKeyCandidates(array, operationContext, length, current)) {
-        const descriptor = getLanguagePropertyDescriptor(
-            array,
-            key,
-            operationContext,
-        )
-        if (descriptor && (
-            !isDataPlacement(descriptor) || !descriptor.configurable
-        )) return true
-    }
-    return false
-}
-
 // These assertions guard internal commits after the owning transition has
 // selected a writable representation.
 function assertCanSetLanguageProperty(parent, key, operationContext) {
@@ -296,7 +263,6 @@ export {
     propertyValidationError,
     readLanguageProperty,
     readLanguagePlacement,
-    requiresRepresentationCopyForArrayLengthMutation,
     requiresRepresentationCopyForPropertyMutation,
     writeLanguageProperty,
 }

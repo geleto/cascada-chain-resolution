@@ -158,10 +158,6 @@ class ArrayView {
     }
 
     set(key, value, operationContext) {
-        if (key === "length") {
-            this.#setLength(value, operationContext)
-            return
-        }
         // A native owner's index write precedes its logical growth commit.
         // A distinct view writes only within its already established bounds.
         const backing = this._backing
@@ -181,18 +177,6 @@ class ArrayView {
         const physical = this.#physicalKey(key)
         return physical === undefined || errorUtils.runExternalAction(
             operationContext, () => delete this._backing[physical])
-    }
-
-    #setLength(length, operationContext) {
-        const growth = length - this.#minimumLength
-        if (growth > 0) {
-            if (!ArrayView.#canGrowBacking(this, growth, operationContext))
-                throw new Error("ArrayView growth requires materialization")
-            ArrayView.#extendBacking(this._backing, growth, operationContext)
-        }
-        this._lengthState = length
-        const meta = metadata.requireMeta(this, operationContext)
-        if (meta.retainedPrefixLength > length) meta.retainedPrefixLength = length
     }
 
     get #minimumLength() {

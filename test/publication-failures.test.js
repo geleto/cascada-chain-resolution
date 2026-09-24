@@ -11,6 +11,32 @@ const causes = error => new Set(leaves(error).map(leaf => leaf.cause))
 
 describe("complete publication failures", () => {
     for (const delayed of [false, true]) {
+        it(`restores the complete Array when publishing a length change fails, delayed=${delayed}`, async () => {
+            const ctx = context(), size = Promise.withResolvers()
+            const cause = new Error("refused resized Array")
+            const original = [1, { value: 2 }, 3], physical = { items: original }
+            let refuses = true
+            const chain = new runtime.Chain(new Proxy(physical, {
+                set(target, key, value, receiver) {
+                    if (refuses && key === "items" && Array.isArray(value)) throw cause
+                    return Reflect.set(target, key, value, receiver)
+                },
+            }), ctx)
+            runtime.assignPath(chain, ["items", "length"], delayed ? size.promise : 1, ctx)
+            const result = runtime.lookupPath(chain, ["items"], ctx)
+            size.resolve(1)
+            const failure = await result
+            assert.equal(failure.cause, cause)
+            assert.equal(failure.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+            assert.deepEqual(original, [1, { value: 2 }, 3])
+            refuses = false
+            await runtime.repairPath(chain, ["items"], ctx)
+            assert.deepEqual(await runtime.export(chain, ["items"], ctx), [1, { value: 2 }, 3])
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
+    for (const delayed of [false, true]) {
         it(`keeps an assigned Error and failed entry write-through together, delayed=${delayed}`, async () => {
             const ctx = context(), inputContext = context(ctx.execution)
             const original = runtime.import(new Error("assigned failure"), inputContext)

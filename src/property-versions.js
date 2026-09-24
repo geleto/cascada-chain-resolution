@@ -527,13 +527,9 @@ function commitPromiseVersion(
     }
 }
 
-// View truncation supplies a bounds change instead of deleting shared storage.
-function replacePlacement(owner, key, placement, operationContext, writeBack = true, write) {
+function replacePlacement(owner, key, placement, operationContext, writeBack = true) {
     preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack)(() => {
-        if (writeBack) {
-            if (write) write()
-            else writePlacementStorage(owner, key, placement, operationContext)
-        }
+        if (writeBack) writePlacementStorage(owner, key, placement, operationContext)
         // Failed storage work must leave the old logical version available.
         detachPlacementVersion(owner, key, operationContext)
         if (!writeBack || placement.promiseBacked || placement.recovery)
@@ -558,60 +554,23 @@ function deleteProperty(owner, key, operationContext) {
     replacePlacement(owner, key, { value: undefined, present: false }, operationContext)
 }
 
-function commitArrayLength(array, length, operationContext) {
-    const projection = ArrayView.projectionOf(array, operationContext)
-    const current = ArrayView.minimumLength(array, operationContext)
-    const view = isArrayView(projection, operationContext)
-        ? projection
-        : undefined
-    if (view) {
-        if (length >= current) {
-            view.set("length", length, operationContext)
-            return undefined
-        }
+// Direct length assignment orders after transitions in its truncated suffix,
+// never after ordinary data they publish. Retained-prefix transitions transfer
+// to the new Array without delaying its publication.
+function resolveTruncatedArrayTransitions(array, work, start) {
+    const context = work.operationContext
+    const versions = metadata.metaOf(array, context)?.placementVersions
+    if (!versions) return undefined
+    const waits = []
+    for (const key of Object.keys(versions)) {
+        const version = versions[key]
+        if (Number(key) < start || !version?.transition) continue
+        const wait = resolvePlacementTransition(
+            capturePlacementFromVersion(version), context, () => undefined)
+        if (languageValues.isPending(wait, context)) waits.push(wait)
     }
-    if (length === current) return undefined
-
-    const affected = [...languageProperties.enumerableLanguageKeyCandidates(array, operationContext, length, current)].sort((a, b) => Number(b) - Number(a))
-    for (const key of affected) {
-        const index = Number(key)
-        const property = languageProperties.getLanguagePropertyDescriptor(
-            array,
-            key,
-            operationContext,
-        )
-        if (property && !property.configurable) {
-            throw new Error("Array shrink requires materialization")
-        }
-        // Truncation revokes publication authority even for placements whose
-        // pending values have never occupied physical storage.
-        if (property?.enumerable || getPlacementVersion(array, key, operationContext)) {
-            replacePlacement(
-                array,
-                key,
-                { value: undefined, present: false },
-                operationContext,
-                true,
-                view
-                    ? () => view.set("length", index, operationContext)
-                    : undefined,
-            )
-        } else if (view) {
-            view.set("length", index, operationContext)
-        }
-    }
-    setLength(length)
-    return undefined
-
-    function setLength(nextLength) {
-        if (view) view.set("length", nextLength, operationContext)
-        else {
-            // A logical Array may be a Proxy whose set trap runs here.
-            errorUtils.runExternalAction(operationContext, () => {
-                array.length = nextLength
-            })
-        }
-    }
+    return waits.length ? internalSteps.continueOperation(
+        waits.length === 1 ? waits[0] : Promise.all(waits), context, () => undefined, undefined, work) : undefined
 }
 
 function preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack = true) {
@@ -686,7 +645,7 @@ export {
     commitPlacementVersion,
     publishPromiseVersion,
     assignProperty,
-    commitArrayLength,
+    resolveTruncatedArrayTransitions,
     observePromiseVersion,
     installMutationVersion,
     continueCapturedPromiseVersion,

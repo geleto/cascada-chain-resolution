@@ -271,60 +271,44 @@ function assignManagedPath(
                     target.replaceReceiver(error)
                     return error
                 }
-                const operation = new operationLifecycle.OperationOwner(operationContext)
-                operation.mustPreserveValue = mustPreserveValue(target.receiver, target.attachmentRoot, operationContext)
-                const outcome = internalSteps.continueOperation(transformArrayLength(target.receiver, operation), operationContext, outcome => {
-                    operation.close()
-                    return errorUtils.isPoisonError(outcome) ? { mutatedValue: outcome, result: outcome } : outcome
-                })
-                target.replaceReceiver(internalSteps.continueOperation(outcome, operationContext, outcome => outcome.mutatedValue))
-                return internalSteps.continueOperation(outcome, operationContext, outcome => outcome.result)
+                return assignArrayLength(target)
             },
         )
     })
 
-    function transformArrayLength(array, operation) {
-        return internalSteps.continueOperation(toArrayLength(value, operation), operationContext,
+    function assignArrayLength(target) {
+        const array = target.receiver
+        const operation = new operationLifecycle.OperationOwner(operationContext)
+        const changing = internalSteps.continueOperation(toArrayLength(value, operation), operationContext,
             length => {
                 if (errorUtils.isPoisonError(length)) return length
-                return internalSteps.continueOperation(arrayRemaps.resolveTruncatedArrayTransitions(array, operation, length),
-                    operationContext, () => commitLength(length), undefined, operation)
+                return internalSteps.continueOperation(propertyVersions.resolveTruncatedArrayTransitions(array, operation, length),
+                    operationContext, () => resize(length), undefined, operation)
             },
             undefined, operation)
+        const resized = internalSteps.continueOperation(changing, operationContext, array => {
+            operation.close()
+            return array
+        })
+        target.replaceReceiver(resized)
+        return internalSteps.continueOperation(resized, operationContext, array =>
+            errorUtils.isPoisonError(array) ? array : undefined)
 
-        function commitLength(length) {
+        function resize(length) {
             const branch = externalTree.findBranch(chain._externalMutationTree, path.slice(0, -1))
             if (externalTree.truncatesLocations(branch, length))
                 return languageProperties.propertyValidationError("Array length cannot remove a fixed external namespace", operationContext)
             return errorUtils.catchExternalThrow(
                 () => {
-                    let mutatedValue = array
-                    const representationCopy =
-                        languageProperties.requiresRepresentationCopyForArrayLengthMutation(
-                            array,
-                            length,
-                            operation.operationContext,
-                        )
-                    if (operation.mustPreserveValue || representationCopy) {
-                        mutatedValue = arrayRemaps.createArrayFromRemap(
-                            arrayRemaps.createRemap(array, operation.operationContext),
-                            operation.operationContext,
-                            array,
-                            operation.mustPreserveValue,
-                        )
-                    }
-                    return {
-                        mutatedValue,
-                        result: propertyVersions.commitArrayLength(
-                            mutatedValue,
-                            length,
-                            operation.operationContext,
-                        ),
-                    }
+                    // Scope rollback retains this Array or an ancestor. Build the
+                    // final range directly, preserving retained children and leaving
+                    // discarded placements on the baseline without consuming them.
+                    return arrayRemaps.createArrayFromRemap(
+                        arrayRemaps.createRemap(array, operationContext, 0, length),
+                        operationContext, array)
                 },
                 operationContext,
                 errorUtils.ERROR_KIND.PropertyMutationFailed,
-                failure => ({ mutatedValue: failure, result: failure }),
             )
         }
     }
@@ -477,8 +461,9 @@ function walkMutationPath(
         if (targetArrayStructure && index > 0 && isLogicalArray(value, operationContext) &&
             propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             return completeTarget({ ...placement, attachmentRoot, receiver: placement.parent,
-                propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: index - 1 }, () => {
-                    writeBack(propertyVersions.capturePlacement(placement.parent, placement.key, operationContext, placement.sourceVersion).value)
+                propertyKind: languageProperties.ORDINARY_PROPERTY, pathDepth: index - 1 }, parent => {
+                    // Failed publication may have copied the parent to hold poison.
+                    writeBack(propertyVersions.capturePlacement(parent, placement.key, operationContext, placement.sourceVersion).value)
                 })
         }
         if (propertyKind === languageProperties.INVALID_ARRAY_KEY) {

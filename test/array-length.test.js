@@ -6,6 +6,7 @@ import { metaOf } from "../src/meta.js"
 import { readLanguageProperty } from "../src/language-properties.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
 import { arrayBacking, testOperationContext, flushMicrotasks } from "./support.js"
+import { verifyRefCounts } from "./verify-refcounts.js"
 import { createRandom, randomInteger } from "./native-equivalence-support.js"
 
 // Count traversal work instead of relying on machine-dependent timings. This
@@ -123,8 +124,8 @@ describe("captured Array length knowledge", () => {
         })
     }
 
-    it("materializes a shortened native projection before indexed mutation", () => {
-        const context = testOperationContext("retained physical tail"), storage = [1, 2, 3]
+    it("keeps truncated values absent after indexed mutation and later growth", () => {
+        const context = testOperationContext("shrink then grow"), storage = [1, 2, 3]
         const chain = new runtime.Chain(storage, context)
         runtime.enter(chain, [5], context, true, () => undefined)
         runtime.assignPath(chain, ["length"], 1, context)
@@ -135,6 +136,30 @@ describe("captured Array length knowledge", () => {
         assert.deepEqual(runtime.export(chain, [], context), [9, , ,])
     })
 
+    for (const shared of [false, true]) {
+        it(`copies only the retained range for length assignment, shared=${shared}`, () => {
+            const context = testOperationContext("bounded resize copy")
+            let discardedReads = 0, subscriptions = 0
+            const storage = [1, 2, 3, 4, { then(resolve) { subscriptions++; resolve(5) } }]
+            if (!shared) Object.defineProperty(storage, "length", { writable: false })
+            const source = new Proxy(storage, {
+                getOwnPropertyDescriptor(target, key) {
+                    if (/^[1-4]$/.test(key)) discardedReads++
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+            const chain = new runtime.Chain(source, context)
+            if (shared) runtime.lookupPath(chain, [], context)
+            discardedReads = 0
+
+            assert.equal(runtime.assignPath(chain, ["length"], 1, context), undefined)
+            assert.equal(discardedReads, 0, "copying must not inspect discarded elements")
+            assert.equal(subscriptions, 0, "copying must not consume discarded payloads")
+            assert.deepEqual(runtime.export(chain, [], context), [1])
+            assert.equal(storage.length, 5)
+            verifyRefCounts(context, chain._state)
+        })
+    }
     it("preserves independent backing and length after COW", async () => {
         const context = testOperationContext("copied length"), storage = [1, 2]
         const chain = new runtime.Chain(storage, context), hold = Promise.withResolvers()

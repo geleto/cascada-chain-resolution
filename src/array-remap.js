@@ -4,26 +4,6 @@ import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
 import * as internalSteps from "./internal-step.js"
 import * as refcounts from "./refcounts.js"
-import * as metadata from "./meta.js"
-
-// Direct length mutation can remove live placements in its truncated suffix.
-// Wait for their transitions, never for ordinary data they publish. Method
-// remaps instead transfer placements into a separate owner and need no wait.
-function resolveTruncatedArrayTransitions(array, work, start) {
-    const context = work.operationContext
-    const versions = metadata.metaOf(array, context)?.placementVersions
-    if (!versions) return undefined
-    const waits = []
-    for (const key of Object.keys(versions)) {
-        const version = versions[key]
-        if (Number(key) < start || !version?.transition) continue
-        const wait = propertyVersions.resolvePlacementTransition(
-            propertyVersions.capturePlacementFromVersion(version), context, () => undefined)
-        if (languageValues.isPending(wait, context)) waits.push(wait)
-    }
-    return waits.length ? internalSteps.continueOperation(
-        waits.length === 1 ? waits[0] : Promise.all(waits), context, () => undefined, undefined, work) : undefined
-}
 
 function createRemap(
     array,
@@ -113,7 +93,6 @@ function resolveDenseRemapPresence(remap, operation) {
 }
 
 export {
-    resolveTruncatedArrayTransitions,
     createArrayFromRemap,
     createRemap,
     placeRemap,
