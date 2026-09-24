@@ -279,10 +279,13 @@ function assignManagedPath(
     function assignArrayLength(target) {
         const array = target.receiver
         const operation = new operationLifecycle.OperationOwner(operationContext)
-        const changing = internalSteps.continueOperation(toArrayLength(value, operation), operationContext,
-            length => {
-                if (errorUtils.isPoisonError(length)) return length
-                return internalSteps.continueOperation(propertyVersions.resolveTruncatedArrayTransitions(array, operation, length),
+        const changing = internalSteps.continueOperation(conversion.toNumberValue(value, operation), operationContext,
+            number => {
+                if (errorUtils.isPoisonError(number)) return number
+                const length = number >>> 0
+                if (length !== number) return errorUtils.validationError(
+                    "Invalid array length", operationContext, errorUtils.ERROR_KIND.InvalidArrayLength)
+                return internalSteps.continueOperation(resolveTruncatedArrayTransitions(array, length, operationContext),
                     operationContext, () => resize(length), undefined, operation)
             },
             undefined, operation)
@@ -314,25 +317,21 @@ function assignManagedPath(
     }
 }
 
-function toArrayLength(value, operation) {
-    return internalSteps.continueOperation(
-        conversion.toNumberValue(value, operation),
-        operation.operationContext,
-        number => {
-            if (errorUtils.isPoisonError(number)) return number
-
-            const length = number >>> 0
-            return length === number
-                ? length
-                : errorUtils.validationError(
-                    "Invalid array length",
-                    operation.operationContext,
-                    errorUtils.ERROR_KIND.InvalidArrayLength,
-                )
-        },
-        undefined,
-        operation,
-    )
+// Direct length assignment waits for transitions in its truncated suffix,
+// never for ordinary data they publish. Retained-prefix transitions transfer
+// to the new Array without delaying its publication.
+function resolveTruncatedArrayTransitions(array, start, operationContext) {
+    const versions = metadata.metaOf(array, operationContext)?.placementVersions
+    if (!versions) return undefined
+    const waits = []
+    for (const key of Object.keys(versions)) {
+        const version = versions[key]
+        if (Number(key) < start || !version?.transition) continue
+        const wait = propertyVersions.resolvePlacementTransition(
+            propertyVersions.capturePlacementFromVersion(version), operationContext, () => undefined)
+        if (languageValues.isPending(wait, operationContext)) waits.push(wait)
+    }
+    return waits.length > 1 ? Promise.all(waits) : waits[0]
 }
 
 // path identifies the complete mutation target. The walk starts at the private

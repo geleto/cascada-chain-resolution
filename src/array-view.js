@@ -109,18 +109,27 @@ class ArrayView {
         return view
     }
 
-    static canGrowEnd(source, count, operationContext) {
-        return ArrayView.readyLength(source, operationContext) !== undefined &&
-            ArrayView.#canGrowBacking(ArrayView.projectionOf(source, operationContext), count, operationContext)
-    }
-
     static tryExtendEnd(source, count, beforeWrite, operationContext) {
-        if (!ArrayView.canGrowEnd(source, count, operationContext)) return
+        if (ArrayView.readyLength(source, operationContext) === undefined) return
+        const projection = ArrayView.projectionOf(source, operationContext)
+        const sourceView = isArrayView(projection, operationContext) ? projection : undefined
+        const backing = sourceView?._backing ?? projection
+        // Check tail availability before attachment marks the backing shared.
+        // An empty extension needs no physical write.
+        if (count > 0) {
+            const length = ArrayView.#physicalLength(backing, operationContext)
+            if (sourceView && sourceView._start + sourceView.#minimumLength !== length) return
+            if (length + count > 0xffffffff) return
+            if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return
+            const descriptor = errorUtils.runExternalAction(operationContext, () =>
+                Object.getOwnPropertyDescriptor(backing, "length"))
+            if (descriptor?.writable !== true) return
+        }
         const view = ArrayView.tryAttachTo(source, operationContext)
         if (!view) return
         const next = new ArrayView(view, operationContext, 0, view.#minimumLength + count)
         beforeWrite(next)
-        if (count > 0) ArrayView.#extendBacking(view._backing, count, operationContext)
+        if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length += count })
         return next
     }
 
@@ -214,24 +223,6 @@ class ArrayView {
 
     static #physicalLength(array, operationContext) {
         return errorUtils.runExternalAction(operationContext, () => array.length)
-    }
-
-    static #extendBacking(array, count, operationContext) {
-        errorUtils.runExternalAction(operationContext, () => { array.length += count })
-    }
-
-    // Shape and import protection have already been checked by the caller.
-    static #canGrowBacking(projection, count, operationContext) {
-        if (count === 0) return true
-        const view = isArrayView(projection, operationContext) ? projection : undefined
-        const backing = view ? view._backing : projection
-        const length = ArrayView.#physicalLength(backing, operationContext)
-        if (view && view._start + view.#minimumLength !== length) return false
-        if (length + count > 0xffffffff) return false
-        if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return false
-        const descriptor = errorUtils.runExternalAction(operationContext, () =>
-            Object.getOwnPropertyDescriptor(backing, "length"))
-        return descriptor?.writable === true
     }
 }
 

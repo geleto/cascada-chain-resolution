@@ -554,25 +554,6 @@ function deleteProperty(owner, key, operationContext) {
     replacePlacement(owner, key, { value: undefined, present: false }, operationContext)
 }
 
-// Direct length assignment orders after transitions in its truncated suffix,
-// never after ordinary data they publish. Retained-prefix transitions transfer
-// to the new Array without delaying its publication.
-function resolveTruncatedArrayTransitions(array, work, start) {
-    const context = work.operationContext
-    const versions = metadata.metaOf(array, context)?.placementVersions
-    if (!versions) return undefined
-    const waits = []
-    for (const key of Object.keys(versions)) {
-        const version = versions[key]
-        if (Number(key) < start || !version?.transition) continue
-        const wait = resolvePlacementTransition(
-            capturePlacementFromVersion(version), context, () => undefined)
-        if (languageValues.isPending(wait, context)) waits.push(wait)
-    }
-    return waits.length ? internalSteps.continueOperation(
-        waits.length === 1 ? waits[0] : Promise.all(waits), context, () => undefined, undefined, work) : undefined
-}
-
 function preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack = true) {
     // Index creation commits length even when only a logical version can hold
     // its outcome. Capture fallible length/index reads before changing storage.
@@ -645,7 +626,6 @@ export {
     commitPlacementVersion,
     publishPromiseVersion,
     assignProperty,
-    resolveTruncatedArrayTransitions,
     observePromiseVersion,
     installMutationVersion,
     continueCapturedPromiseVersion,
