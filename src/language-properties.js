@@ -10,14 +10,7 @@ const STRING_LENGTH = 2
 const INVALID_ARRAY_KEY = 3
 
 function classifyLanguageProperty(parent, key, operationContext) {
-    return classifyProjectedProperty(
-        ArrayView.projectionOf(parent, operationContext),
-        String(key),
-        operationContext,
-    )
-}
-
-function classifyProjectedProperty(parent, key, operationContext) {
+    key = String(key)
     if (typeof parent === "string" && key === "length") {
         return STRING_LENGTH
     }
@@ -61,11 +54,11 @@ function isDataPlacement(descriptor) {
 // A language container may be a Proxy, so the physical property operations
 // below can invoke its traps even though accessors never run as graph values.
 function getLanguagePropertyDescriptor(parent, key, operationContext) {
-    parent = ArrayView.projectionOf(parent, operationContext)
     key = String(key)
-    if (classifyProjectedProperty(parent, key, operationContext) === INVALID_ARRAY_KEY) {
+    if (classifyLanguageProperty(parent, key, operationContext) === INVALID_ARRAY_KEY) {
         return undefined
     }
+    parent = ArrayView.projectionOf(parent, operationContext)
     return isArrayView(parent, operationContext)
         ? parent.descriptor(key, operationContext)
         : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
@@ -111,34 +104,21 @@ function requiresRepresentationCopyForPropertyMutation(
 function assertCanSetLanguageProperty(parent, key, operationContext) {
     const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
     if (!descriptor) return
-    assertDataPlacement(descriptor)
-    assertWritable(descriptor)
-}
-
-function assertDataPlacement(descriptor) {
     if (!descriptor.enumerable) {
-        fatalPropertyError("Cannot mutate non-enumerable property")
+        throw new Error("Cannot mutate non-enumerable property")
     }
     if (!("value" in descriptor)) {
-        fatalPropertyError("Cannot assign to accessor property")
+        throw new Error("Cannot assign to accessor property")
     }
-    return descriptor
-}
-
-function assertWritable(descriptor) {
     if (!descriptor.writable) {
-        fatalPropertyError("Cannot assign to non-writable property")
+        throw new Error("Cannot assign to non-writable property")
     }
-}
-
-function fatalPropertyError(message) {
-    throw new Error(message)
 }
 
 function assertCanDeleteLanguageProperty(parent, key, operationContext) {
     const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
     if (isDataPlacement(descriptor) && !descriptor.configurable) {
-        fatalPropertyError("Cannot delete non-configurable property")
+        throw new Error("Cannot delete non-configurable property")
     }
 }
 
@@ -172,20 +152,18 @@ function readLanguageProperty(parent, key, operationContext) {
 // installed by normalization. Baseline capture deliberately does not consume.
 function readLanguagePlacement(parent, key, operationContext) {
     key = String(key)
-    const logicalParent = parent
-    parent = ArrayView.projectionOf(parent, operationContext)
-    const propertyKind = classifyProjectedProperty(parent, key, operationContext)
+    const propertyKind = classifyLanguageProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return { value: undefined, present: false }
     if (propertyKind === ARRAY_LENGTH) {
         return { value: ArrayView.readyLength(parent, operationContext), present: true }
     }
     if (propertyKind === STRING_LENGTH) return { value: parent.length, present: true }
 
-    const meta = metadata.metaOf(logicalParent, operationContext)
+    const meta = metadata.metaOf(parent, operationContext)
     let version = meta?.placementVersions?.[key]
     if (version) return capturePlacementFromVersion(version)
     const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
-    const value = normalizeRawPropertyValue(logicalParent, key, descriptor?.value, operationContext, descriptor?.writable)
+    const value = normalizeRawPropertyValue(parent, key, descriptor?.value, operationContext, descriptor?.writable)
     version = meta?.placementVersions?.[key]
     return version ? capturePlacementFromVersion(version) : {
         value, present: descriptor !== undefined,
@@ -213,19 +191,16 @@ function deleteLanguageProperty(parent, key, operationContext) {
     return errorUtils.runExternalAction(operationContext, () => delete parent[key])
 }
 
-// Capture candidates before descriptor checks so one failing Proxy descriptor
-// cannot hide later siblings from complete Error collection.
-function* enumerableLanguageKeyCandidates(value, operationContext, start = 0, end) {
+// Capture candidates at the call, before descriptor checks, so one failing
+// Proxy descriptor cannot hide later siblings from complete Error collection.
+function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end) {
     const array = isLogicalArray(value, operationContext)
     const keys = array
         ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
         : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
     const meta = metadata.metaOf(value, operationContext)
     const versions = meta?.placementVersions
-    if (!versions) {
-        for (const key of keys) if (typeof key === "string") yield key
-        return
-    }
+    if (!versions) return array ? keys : keys.filter(key => typeof key === "string")
     const candidates = Object.create(null)
     for (const key of keys) if (typeof key === "string") candidates[key] = true
     for (const key of Object.keys(versions)) {
@@ -233,14 +208,18 @@ function* enumerableLanguageKeyCandidates(value, operationContext, start = 0, en
             candidates[key] = true
         }
     }
-    yield* orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
+    return orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
 }
 
-function enumerableLanguageKeys(value, operationContext, start = 0, end) {
+// Complete collectors guard both listing and each presence check. Keep the
+// keys captured before a listing failure and continue past failed descriptors.
+function enumerableLanguageKeys(value, operationContext, start = 0, end, inspect = action => action()) {
     const placements = []
-    for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
-        if (hasLanguageProperty(value, key, operationContext)) placements.push(key)
-    }
+    inspect(() => {
+        for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
+            if (inspect(() => hasLanguageProperty(value, key, operationContext)) === true) placements.push(key)
+        }
+    })
     return placements
 }
 

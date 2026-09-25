@@ -5,11 +5,14 @@ import * as propertyVersions from "./property-versions.js"
 import * as internalSteps from "./internal-step.js"
 import * as refcounts from "./refcounts.js"
 
+// Fix presence without consuming values. Complete preparation supplies a guard
+// to retain unreadable placements as Error inputs; structural remaps fail fast.
 function createRemap(
     array,
     operationContext,
     start = 0,
     end = undefined,
+    inspect = action => action(),
 ) {
     const remap = new Array((end ?? ArrayView.minimumLength(array, operationContext)) - start)
     for (const key of languageProperties.enumerableLanguageKeyCandidates(
@@ -18,7 +21,7 @@ function createRemap(
         start,
         end,
     )) {
-        const placement = propertyVersions.getPropertyPlacement(array, key, operationContext)
+        const placement = inspect(() => propertyVersions.getPropertyPlacement(array, key, operationContext))
         if (placement === undefined) continue
         languageProperties.writeLanguageProperty(
             remap,

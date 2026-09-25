@@ -1,5 +1,5 @@
 import { ArrayView } from "./array-view.js"
-import { captureManagedKeys, walkManagedProperties } from "./managed-traversal.js"
+import { walkManagedProperties } from "./managed-traversal.js"
 import * as internalSteps from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
@@ -430,17 +430,10 @@ function validateReceiver(receiver, operationContext) {
         }
         languageValues.admitReadyValue(value, operationContext)
         if (!languageValues.isTraversable(value, operationContext)) return
-        const keys = captureManagedKeys(value, operationContext, inspect)
+        const keys = languageProperties.enumerableLanguageKeys(value, operationContext, 0, undefined, inspect)
         for (const key of keys) {
             // Validation must inspect leased data without consuming it.
-            const version = metadata.metaOf(value, operationContext).placementVersions?.[key]
-            const child = version ? version.value : inspect(() =>
-                languageProperties.getLanguagePlacementDescriptor(
-                    value,
-                    key,
-                    operationContext,
-                )?.value,
-            )
+            const child = inspect(() => propertyVersions.capturePlacement(value, key, operationContext).value)
             walk(child)
         }
     }

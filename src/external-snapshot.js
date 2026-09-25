@@ -87,7 +87,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
         visited.set(source, copy)
         if (copies) copies.push([copy, type, prototype])
         const keys = managed
-            ? inspect(() => [...properties.enumerableLanguageKeyCandidates(source, operationContext)])
+            ? inspect(() => properties.enumerableLanguageKeyCandidates(source, operationContext))
             : native(() => Reflect.ownKeys(source))
         if (errors.isPoisonError(keys)) return keys
         for (const key of keys) {

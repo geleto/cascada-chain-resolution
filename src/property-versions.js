@@ -577,7 +577,13 @@ function prepareRetainedArrayProperties(
     // The captured prefix already contains normalized, protected values.
     // Revisit its overlays and capture only the newly added physical suffix.
     const retainedEnd = Math.max(sourceStart, Math.min(sourceEnd, sourceMeta.retainedPrefixLength ?? 0))
-    for (const sourceKey of retainedKeys()) {
+    const retainedKeys = retainedEnd > sourceStart
+        ? Object.keys(sourceMeta.placementVersions ?? {}).filter(key => Number(key) >= sourceStart && Number(key) < retainedEnd)
+        : []
+    const keys = retainedEnd < sourceEnd
+        ? retainedKeys.concat(languageProperties.enumerableLanguageKeyCandidates(source, operationContext, retainedEnd, sourceEnd))
+        : retainedKeys
+    for (const sourceKey of keys) {
         // An absent overlay can hide a physical slot in the shared backing.
         // Retain it too; only a hole with no overlay needs no destination state.
         const captured = languageProperties.readLanguagePlacement(source, sourceKey, operationContext)
@@ -599,16 +605,6 @@ function prepareRetainedArrayProperties(
             errorUtils.ERROR_KIND.AssignmentValueFailed, false)
     }
     metadata.requireMeta(destination, operationContext).retainedPrefixLength = sourceEnd + destinationOffset
-
-    function* retainedKeys() {
-        if (retainedEnd > sourceStart) {
-            for (const key of Object.keys(sourceMeta.placementVersions ?? {})) {
-                if (Number(key) >= sourceStart && Number(key) < retainedEnd) yield key
-            }
-        }
-        if (retainedEnd < sourceEnd)
-            yield* languageProperties.enumerableLanguageKeyCandidates(source, operationContext, retainedEnd, sourceEnd)
-    }
 }
 
 export {

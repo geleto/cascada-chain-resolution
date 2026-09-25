@@ -6,7 +6,6 @@ import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
 import { exportManyValues } from "./export.js"
 import * as invocation from "./invocation.js"
-import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
@@ -285,28 +284,6 @@ function runArrayStep(invocationWork, work) {
     )
 }
 
-// Complete preparation keeps an unreadable placement as an Error input instead
-// of abandoning known siblings. Fix presence before resolving any property value.
-// Structural remaps keep their ordinary all-or-nothing capture contract.
-function collectArrayPlacements(array, invocationWork) {
-    const operationContext = invocationWork.operationContext
-    const placements = new Array(ArrayView.minimumLength(array, operationContext))
-    for (const key of languageProperties.enumerableLanguageKeyCandidates(array, operationContext)) {
-        const placement = runArrayStep(invocationWork, () =>
-            propertyVersions.getPropertyPlacement(array, key, operationContext),
-        )
-        if (placement !== undefined) {
-            languageProperties.writeLanguageProperty(
-                placements,
-                key,
-                placement,
-                operationContext,
-            )
-        }
-    }
-    return placements
-}
-
 function prepareConcatArguments(invocationWork) {
     const parts = invocationWork.args.map(item =>
         internalSteps.consumeValue(
@@ -385,7 +362,8 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
                 errorUtils.ERROR_KIND.InvalidArrayOperation,
             )
         }
-        const source = collectArrayPlacements(array, invocationWork)
+        const source = arrayRemaps.createRemap(array, invocationWork.operationContext, 0, undefined,
+            action => runArrayStep(invocationWork, action))
         const shape = { length: ArrayView.captureLength(array, invocationWork.operationContext, invocationWork) }
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
@@ -503,7 +481,8 @@ function prepareToSortedRemap(comparator, invocationWork) {
 
 function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
     const thisValue = invocationWork.receiver
-    const source = collectArrayPlacements(thisValue, invocationWork)
+    const source = arrayRemaps.createRemap(thisValue, invocationWork.operationContext, 0, undefined,
+        action => runArrayStep(invocationWork, action))
     const shape = { length: ArrayView.captureLength(thisValue, invocationWork.operationContext, invocationWork) }
     const records = []
     for (const key of Object.keys(source)) {

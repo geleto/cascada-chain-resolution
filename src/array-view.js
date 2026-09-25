@@ -133,8 +133,9 @@ class ArrayView {
         return next
     }
 
-    // Broad ranges enumerate stored keys; bounded views inspect only their range.
-    static *physicalKeyCandidates(array, operationContext, start = 0, end) {
+    // Capture storage candidates now: broad ranges enumerate stored keys;
+    // bounded views inspect only their range.
+    static physicalKeyCandidates(array, operationContext, start = 0, end) {
         const projection = ArrayView.projectionOf(array, operationContext)
         const view = isArrayView(projection, operationContext) ? projection : undefined
         const backing = view ? view._backing : projection
@@ -151,10 +152,11 @@ class ArrayView {
                 if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
                 keys[String(Number(key) - offset)] = true
             }
-            yield* Object.keys(keys)
-        } else {
-            for (let index = start; index < end; index++) yield String(index - offset)
+            return Object.keys(keys)
         }
+        const keys = []
+        for (let index = start; index < end; index++) keys.push(String(index - offset))
+        return keys
     }
 
     descriptor(key, operationContext) {
@@ -208,7 +210,8 @@ class ArrayView {
     }
 
     static #stateOf(array, operationContext) {
-        return metadata.metaOf(array, operationContext)?.arrayView?.#lengthState ??
+        const view = metadata.metaOf(array, operationContext)?.arrayView
+        return view ? view.#lengthState :
             ArrayView.#physicalLength(array, operationContext)
     }
 
