@@ -1,12 +1,10 @@
-import { ArrayView } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
-import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import { walkManagedProperties } from "./managed-traversal.js"
-import { captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
+import { createEmptyContainer, defineCopyProperty, captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -109,7 +107,7 @@ function exportValues(values, owner, onResult) {
         visited.add(value)
         if (copies) {
             const output = step(() =>
-                createOutputContainer(value, operationContext),
+                createEmptyContainer(value, operationContext),
             )
             if (copies) copies.set(value, output)
         }
@@ -120,12 +118,12 @@ function exportValues(values, owner, onResult) {
                     return undefined
                 }
                 const readiness = walk(resolved)
-                if (copies) writeOutputProperty(copies.get(value), key, outputOf(resolved))
+                if (copies) defineCopyProperty(copies.get(value), key, outputOf(resolved))
                 return readiness
             },
             key => {
                 // Fix output key order at capture, before any settlement.
-                if (copies) writeOutputProperty(copies.get(value), key, undefined)
+                if (copies) defineCopyProperty(copies.get(value), key, undefined)
             }, keys => {
                 if (!copies) return
                 const shape = step(() => captureContainerStructure(value, keys, operationContext))
@@ -137,23 +135,6 @@ function exportValues(values, owner, onResult) {
                 }
             })
     }
-}
-
-function createOutputContainer(value, operationContext) {
-    const meta = metadata.requireMeta(value, operationContext)
-    return meta.type === metadata.TYPE.Array
-        ? new Array(ArrayView.minimumLength(value, operationContext))
-        : Object.create(meta.admittedPrototype)
-}
-
-function writeOutputProperty(parent, key, value) {
-    // Never invoke an inherited setter on the fresh runtime-owned copy.
-    Object.defineProperty(parent, key, {
-        value,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-    })
 }
 
 export { exportManyValues, exportValue }

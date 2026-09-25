@@ -67,6 +67,31 @@ describe("ArrayView", () => {
         })
     }
 
+    it("copies ready Error overlays without rereading backing descriptors", () => {
+        const errors = Array.from({ length: 16 }, (_, i) => new Error(`retained ${i}`))
+        let descriptors = 0
+        const backing = new Proxy(errors, {
+            getOwnPropertyDescriptor(target, key) {
+                descriptors++
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const first = run(new Chain(backing), [], "push", [], {})
+        let derived = first
+        descriptors = 0
+        for (let i = 0; i < 3; i++) {
+            derived = run(new Chain(derived), [], "push", [], {})
+            expect(arrayBacking(derived)).to.be(backing)
+        }
+        expect(descriptors).to.be(0)
+
+        const chain = new Chain(derived)
+        for (let i = 0; i < errors.length; i++) {
+            expect(errorCause(lookupPath(chain, [i]))).to.be(errors[i])
+        }
+        verifyRefCounts(first, derived, backing)
+    })
+
     it("retains newly assigned suffix children through offset derivations", () => {
         const view = run(new Chain([0, 1]), [], "push", [], {})
         const chain = new Chain(view)

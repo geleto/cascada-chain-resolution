@@ -13,7 +13,7 @@ import * as refcounts from "./refcounts.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
 import { externalLocationError } from "./external-operation.js"
-import { copyContainerStructure } from "./placement-structure.js"
+import { createEmptyContainer, defineCopyProperty, copyContainerStructure } from "./placement-structure.js"
 
 function containsPromise(value, operationContext, visited = new Set()) {
     if (languageValues.isPending(value, operationContext)) return true
@@ -45,31 +45,10 @@ function mustPreserveValue(value, attachmentRoot, operationContext) {
         metadata.requiresCopyOnWrite(value, operationContext)
 }
 
-function createEmptyContainerCopy(source, operationContext) {
-    const sourceMeta = metadata.requireMeta(source, operationContext)
-    const type = sourceMeta.type
-    let destination
-    if (type === languageValues.TYPE.Array) {
-        destination = new Array(ArrayView.minimumLength(source, operationContext))
-    } else if (
-        type === languageValues.TYPE.Record ||
-        type === languageValues.TYPE.ManagedClass
-    ) {
-        destination = Object.create(sourceMeta.admittedPrototype)
-    } else {
-        throw new TypeError("Cannot copy a non-container value")
-    }
-    languageValues.admitReadyValue(
-        destination,
-        operationContext,
-        type,
-        sourceMeta.admittedPrototype,
-    )
-    return destination
-}
-
 function shallowCopyPathContainer(source, operationContext) {
-    const destination = createEmptyContainerCopy(source, operationContext)
+    const destination = createEmptyContainer(source, operationContext)
+    const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
+    languageValues.admitReadyValue(destination, operationContext, type, admittedPrototype)
 
     // Copy only language-visible own enumerable string keys. Identity metadata
     // stays with the source; captured structural state is transferred below.
@@ -83,8 +62,8 @@ function shallowCopyPathContainer(source, operationContext) {
         // Fresh records reserve physical key order even while presence is
         // undecided. Arrays must not grow merely to represent such a placement.
         if (placement.sourceVersion?.pendingPresence && !isLogicalArray(source, operationContext))
-            Object.defineProperty(destination, key, { value: undefined, enumerable: true, writable: true, configurable: true })
-        propertyVersions.transferPlacement(placement, destination, key, operationContext, true)
+            defineCopyProperty(destination, key, undefined)
+        propertyVersions.copyPlacement(placement, destination, key, operationContext)
     }
     // Initial population copies existing structure; it is not a new sequence
     // of insertions. Install captured order only after those physical writes.
@@ -580,10 +559,11 @@ function walkMutationPath(
                     return
                 }
             }
-            const representationCopy = languageProperties.requiresRepresentationCopyForPropertyMutation(
-                value, key, operationContext, atTarget && deletesTarget)
-            const mustCopyParent = preserveParent || representationCopy
-            if (mustCopyParent) {
+            if (preserveParent || languageProperties.requiresRepresentationCopyForPropertyMutation(
+                value, key, operationContext,
+                atTarget && deletesTarget
+                    ? languageProperties.PROPERTY_MUTATION_MODE.Delete
+                    : languageProperties.PROPERTY_MUTATION_MODE.Assign)) {
                 parent = shallowCopyPathContainer(parent, operationContext)
                 attachmentRoot ??= parent
             }
@@ -675,7 +655,6 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
 export {
     assignPath,
     captureMutationResult,
-    createEmptyContainerCopy,
     deletePath,
     transformProperty,
     walkMutationPath,

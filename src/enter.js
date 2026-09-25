@@ -36,8 +36,8 @@ function captureReference(chain, route, mutable, operationContext) {
                 if (properties.classifyLanguageProperty(value, nextKey, operationContext) !== properties.ORDINARY_PROPERTY) return
                 let next = properties.readLanguagePlacement(value, nextKey, operationContext)
                 if (mutable && (metadata.requiresCopyOnWrite(value, operationContext) ||
-                    properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext) ||
-                    properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext, true))) {
+                    properties.requiresRepresentationCopyForPropertyMutation(value, nextKey, operationContext,
+                        properties.PROPERTY_MUTATION_MODE.AssignOrDelete))) {
                     const copy = shallowCopyPathContainer(value, operationContext)
                     const copied = { ...placement, value: copy }
                     versions.replacePlacement(parent, key, copied, operationContext, false)

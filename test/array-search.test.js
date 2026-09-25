@@ -8,6 +8,22 @@ const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
 describe("Array searches with unfinished growth", () => {
+    it("reads each immediate includes value once, including holes", () => {
+        const ctx = context(), reads = new Map()
+        const source = new Proxy([0, , 2], {
+            getOwnPropertyDescriptor(target, key) {
+                reads.set(key, (reads.get(key) ?? 0) + 1)
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new r.Chain(source, ctx)
+        reads.clear()
+        assert.equal(r.run(chain, [], "includes", [9], ctx, {}), false)
+        for (const key of ["0", "1", "2"]) assert.equal(reads.get(key), 1)
+        assert.equal(r.run(chain, [], "includes", [undefined], ctx, {}), true)
+        verifyRefCounts(ctx, chain._state)
+    })
+
     for (const method of ["indexOf", "lastIndexOf"]) {
         it(`${method} uses captured absence after an entry deletes its element`, async () => {
             const ctx = context(), hold = Promise.withResolvers()

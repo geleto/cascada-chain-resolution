@@ -8,7 +8,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { createEmptyContainerCopy } from "./mutations.js"
+import { createEmptyContainer, defineCopyProperty } from "./placement-structure.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 
@@ -272,16 +272,12 @@ function materializeObservationReceiver(receiver, invocationWork) {
             operationContext,
         )) {
             const { value: child, present } = languageProperties.readLanguagePlacement(source, key, operationContext)
-            const version = propertyVersions.getPlacementVersion(source, key, operationContext)
-            const descriptor = version
-                ? languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
-                : undefined
-            if (!present) {
-                if (descriptor) requireCopy(source)
-                continue
+            // Once copying is required, only logical children matter.
+            if (!needed.has(source) && propertyVersions.getPlacementVersion(source, key, operationContext)) {
+                const descriptor = languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
+                if (present ? !descriptor || !Object.is(descriptor.value, child) : descriptor) requireCopy(source)
             }
-            if (version && (!descriptor || !Object.is(descriptor.value, child))) requireCopy(source)
-            if (!languageValues.isTraversable(child, operationContext)) continue
+            if (!present || !languageValues.isTraversable(child, operationContext)) continue
             visit(child)
             parents.get(child).add(source)
         }
@@ -303,13 +299,15 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
 
     const existing = copies.get(source)
     if (existing) return existing
-    const destination = createEmptyContainerCopy(source, operationContext)
+    const destination = createEmptyContainer(source, operationContext)
+    const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
+    languageValues.admitReadyValue(destination, operationContext, type, admittedPrototype)
     copies.set(source, destination)
     for (const key of languageProperties.enumerableLanguageKeys(
         source,
         operationContext,
     )) {
-        languageProperties.writeLanguageProperty(
+        defineCopyProperty(
             destination,
             key,
             copyCompleteGraph(
@@ -317,7 +315,6 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
                 operationContext,
                 copies,
             ),
-            operationContext,
         )
     }
     return destination

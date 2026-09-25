@@ -2,6 +2,23 @@ import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as metadata from "./meta.js"
 import * as properties from "./language-properties.js"
 
+// Allocate physical shape only. The caller owns admission, placement copying,
+// and transfer of captured length or record order.
+function createEmptyContainer(source, operationContext) {
+    const meta = metadata.requireMeta(source, operationContext)
+    return meta.type === metadata.TYPE.Array
+        ? new Array(ArrayView.minimumLength(source, operationContext))
+        : Object.create(meta.admittedPrototype)
+}
+
+// Fresh runtime-owned copies have ordinary storage. Define an own property so
+// inherited setters never participate; live placements use guarded publication.
+function defineCopyProperty(copy, key, value) {
+    Object.defineProperty(copy, key, {
+        value, enumerable: true, writable: true, configurable: true,
+    })
+}
+
 function recordOrder(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     // Untouched keys keep their physical relative order. Only protected or
@@ -117,5 +134,6 @@ function finishContainerCopy(copy, shape) {
 }
 
 export { beginPlacementStructure, preparePlacementStructure,
+    createEmptyContainer, defineCopyProperty,
     captureContainerStructure, finishContainerCopy,
     copyContainerStructure, orderRecordKeys }

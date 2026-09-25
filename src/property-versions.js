@@ -6,7 +6,7 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
-import { beginPlacementStructure, preparePlacementStructure } from "./placement-structure.js"
+import { beginPlacementStructure, preparePlacementStructure, defineCopyProperty } from "./placement-structure.js"
 
 class PropertyPlacement {
     constructor(owner, key, operationContext) {
@@ -113,6 +113,19 @@ function retainPlacement(placement, operationContext) {
         metadata.markShared(placement.value, operationContext)
     }
     if (placement.recovery) retainPlacement(placement.recovery, operationContext)
+}
+
+// Initialize a fresh, unindexed destination. Ready copies have no old edge or
+// structural effect to publish; the container copier transfers their shape.
+// Shared backing copies only overlays. Pending copies keep ordinary publication.
+function copyPlacement(placement, owner, key, operationContext, writeBack = true) {
+    if (languageValues.isPending(placement.value, operationContext))
+        return transferPlacement(placement, owner, key, operationContext, true, undefined,
+            errorUtils.ERROR_KIND.AssignmentValueFailed, writeBack)
+    retainPlacement(placement, operationContext)
+    if (writeBack && placement.present) defineCopyProperty(owner, key, placement.value)
+    if (!writeBack || placement.recovery)
+        installPlacementVersion(owner, key, createVersionFromPlacement(placement), operationContext)
 }
 
 function transferPlacement(placement, owner, key, operationContext, retained = false, destinationVersion,
@@ -372,7 +385,8 @@ function isPropertyPlacement(value) {
 }
 
 function resolvePropertyValueAtKey(owner, key, operationContext) {
-    return getPropertyPlacement(owner, key, operationContext)?.resolveValue()
+    // Immediate capture supplies both presence and value in one read.
+    return new PropertyPlacement(owner, String(key), operationContext).resolveValue()
 }
 
 function requirePromiseVersion(owner, key, operationContext) {
@@ -589,20 +603,9 @@ function prepareRetainedArrayProperties(
         const captured = languageProperties.readLanguagePlacement(source, sourceKey, operationContext)
         if (!captured.present && !getPlacementVersion(source, sourceKey, operationContext)) continue
         const destinationKey = String(Number(sourceKey) + destinationOffset)
-        const { value } = captured
-        if (!languageValues.isPending(value, operationContext)) {
-            retainPlacement(captured, operationContext)
-            // Views share physical backing, but every retained placement keeps
-            // its logical value, including a fixed Error or custom-thenable outcome.
-            if (getPlacementVersion(source, sourceKey, operationContext))
-                installPlacementVersion(destination, destinationKey, {
-                    value, present: captured.present, recovery: captured.recovery,
-                }, operationContext)
-            continue
-        }
-        transferPlacement(captured,
-            destination, destinationKey, operationContext, true, undefined,
-            errorUtils.ERROR_KIND.AssignmentValueFailed, false)
+        if (getPlacementVersion(source, sourceKey, operationContext))
+            copyPlacement(captured, destination, destinationKey, operationContext, false)
+        else retainPlacement(captured, operationContext)
     }
     metadata.requireMeta(destination, operationContext).retainedPrefixLength = sourceEnd + destinationOffset
 }
@@ -618,6 +621,7 @@ export {
     resolvePlacement,
     resolvePlacementTransition,
     retainPlacement,
+    copyPlacement,
     transferPlacement,
     commitPlacementVersion,
     publishPromiseVersion,

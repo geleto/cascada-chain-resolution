@@ -1,4 +1,5 @@
 import { ArrayView } from "./array-view.js"
+import { defineCopyProperty } from "./placement-structure.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
@@ -23,12 +24,7 @@ function createRemap(
     )) {
         const placement = inspect(() => propertyVersions.getPropertyPlacement(array, key, operationContext))
         if (placement === undefined) continue
-        languageProperties.writeLanguageProperty(
-            remap,
-            String(Number(key) - start),
-            placement,
-            operationContext,
-        )
+        defineCopyProperty(remap, String(Number(key) - start), placement)
     }
     return remap
 }

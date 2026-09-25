@@ -1,4 +1,4 @@
-import { ArrayView, isLogicalArray } from "./array-view.js"
+import { isLogicalArray } from "./array-view.js"
 import { continueOperation } from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import { commitExternalLocations, prepareExternalMutationTree } from "./external-mutation-tree.js"
@@ -7,7 +7,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { copyContainerStructure } from "./placement-structure.js"
+import { createEmptyContainer, defineCopyProperty, copyContainerStructure } from "./placement-structure.js"
 
 function processImportSegment(
     root,
@@ -71,9 +71,8 @@ function processImportSegment(
                 // Record slots preserve key order beneath pending overlays;
                 // Array slots would incorrectly commit speculative growth.
                 if (target !== source && version.present !== false &&
-                    (!version.pendingPresence || !isLogicalArray(target, operationContext))) Object.defineProperty(target, key, {
-                    value: version.value, enumerable: true, writable: true, configurable: true,
-                })
+                    (!version.pendingPresence || !isLogicalArray(target, operationContext)))
+                    defineCopyProperty(target, key, version.value)
                 if (version.promiseBacked || (target !== source && version.recovery) || (target === source && version.value !== original))
                     propertyVersions.installPlacementVersion(target, key, version, operationContext)
             }
@@ -135,9 +134,7 @@ function processImportSegment(
     function copyContainer(source) {
         const container = containers.get(source)
         if (container.target !== source) return
-        const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
-        container.target = type === metadata.TYPE.Array
-            ? new Array(ArrayView.minimumLength(source, operationContext)) : Object.create(admittedPrototype)
+        container.target = createEmptyContainer(source, operationContext)
         for (const parent of container.parents ?? []) {
             if (retentions.has(parent)) copyContainer(parent)
         }

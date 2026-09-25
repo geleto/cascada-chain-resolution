@@ -9,6 +9,41 @@ import { metaOf } from "../src/meta.js"
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    it("captures and prepares an entry without repeating its storage check", () => {
+        const ctx = context()
+        let reads = 0
+        const source = new Proxy({ item: 1 }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "item") reads++
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const chain = new runtime.Chain(source, ctx)
+        reads = 0
+        runtime.enter(chain, ["item"], ctx, true, () => {})
+        assert.equal(reads, 2, "One capture and one combined assignment/deletion check")
+        assert.deepEqual(runtime.export(chain, [], ctx), { item: 1 })
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    for (const action of ["assign", "delete"]) {
+        it(`materializes entry storage that refuses ${action}`, async () => {
+            const ctx = context(), source = {}
+            Object.defineProperty(source, "item", {
+                value: 1, enumerable: true,
+                writable: action !== "assign", configurable: action !== "delete",
+            })
+            const chain = new runtime.Chain(source, ctx)
+            await runtime.enter(chain, ["item"], ctx, true, inside => action === "assign"
+                ? runtime.assignPath(inside, [], 2, ctx)
+                : runtime.deletePath(inside, [], ctx))
+            assert.deepEqual(await runtime.export(chain, [], ctx), action === "assign" ? { item: 2 } : {})
+            assert.equal(source.item, 1)
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     for (const initial of [1, undefined]) {
         it(`captures lookup presence and value in one descriptor read, initial=${initial}`, () => {
             const ctx = context()

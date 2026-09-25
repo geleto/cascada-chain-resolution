@@ -4,6 +4,7 @@ import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import { capturePlacement } from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
+import { defineCopyProperty } from "./placement-structure.js"
 
 // External snapshots are ready-only transactions. Sources keep their admission
 // and logical storage; only a completely successful output graph is admitted.
@@ -107,9 +108,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
                 child = native(() => source[key])
             }
             const copied = walk(child)
-            if (copies) Object.defineProperty(copy, key, {
-                value: copied, enumerable: true, writable: true, configurable: true,
-            })
+            if (copies) defineCopyProperty(copy, key, copied)
         }
         return copy
     }

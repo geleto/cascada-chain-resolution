@@ -9,6 +9,12 @@ const ARRAY_LENGTH = 1
 const STRING_LENGTH = 2
 const INVALID_ARRAY_KEY = 3
 
+const PROPERTY_MUTATION_MODE = Object.freeze({
+    Assign: 0,
+    Delete: 1,
+    AssignOrDelete: 2,
+})
+
 function classifyLanguageProperty(parent, key, operationContext) {
     key = String(key)
     if (typeof parent === "string" && key === "length") {
@@ -74,18 +80,19 @@ function requiresRepresentationCopyForPropertyMutation(
     parent,
     key,
     operationContext,
-    deleting = false,
+    mode = PROPERTY_MUTATION_MODE.Assign,
 ) {
     if (ArrayView.requiresMaterialization(parent, operationContext)) return true
     const projected = ArrayView.projectionOf(parent, operationContext)
     key = String(key)
     const descriptor = getLanguagePropertyDescriptor(projected, key, operationContext)
 
-    if (deleting) {
+    if (mode === PROPERTY_MUTATION_MODE.Delete) {
         return isDataPlacement(descriptor) && !descriptor.configurable
     }
     if (descriptor) {
-        return !isDataPlacement(descriptor) || !descriptor.writable
+        return !isDataPlacement(descriptor) || !descriptor.writable ||
+            mode === PROPERTY_MUTATION_MODE.AssignOrDelete && !descriptor.configurable
     }
 
     const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(projected),
@@ -226,6 +233,7 @@ function enumerableLanguageKeys(value, operationContext, start = 0, end, inspect
 export {
     ARRAY_LENGTH,
     INVALID_ARRAY_KEY,
+    PROPERTY_MUTATION_MODE,
     ORDINARY_PROPERTY,
     STRING_LENGTH,
     assertCanDeleteLanguageProperty,
