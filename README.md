@@ -268,7 +268,7 @@ Every path operation accepts an optional final `firstDynamicSegment` argument,
 defaulting to `path.length` (fully static). `run` carries it in its facts object.
 The compiler supplies the index of the first computed key, even when that key
 already holds a string or number. Every selected registered resource path must precede that index; computed unregistered native suffixes and ordinary managed paths remain supported.
-Promise-valued path keys are separate work in Phase 10.
+Promise-valued path keys are separate work in [Phase 5](docs/runtime-evolution-plan.md#phase-5-support-promise-valued-path-segments).
 
 Pass the original target to `enter`. It captures a selectable anchor and retains any unavailable, intrinsic, or native suffix as the reference path, without consuming unused data. See the [entry handoff](docs/integration.md#entry-target-selection).
 
