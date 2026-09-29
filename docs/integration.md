@@ -1,6 +1,6 @@
 # Public higher-runtime integration
 
-This document specifies the implemented public root API and compiler handoff. ContextChain consumes the compiler mutation access tree below; [Phase 7](runtime-evolution-plan.md#phase-7-cut-cascada-over-to-the-execution-error-architecture) implements its emission in Cascada.
+This document specifies the public root API and accepted compiler handoff contract. **Implementation status:** complete fresh-input preparation and parent indexing are pending Phase 1; bounded delivery, ownership derived from parents, and retirement are pending Phase 2. The current runtime still uses permanent `shared` protection. The reception and delivery sections below describe that accepted target, not guarantees already supplied by the current implementation. The [runtime evolution plan](runtime-evolution-plan.md) tracks these changes and compiler emission in Phase 7.
 
 Cascada imports only the documented root package API. Public Chain operations retain their result boundaries; unwrapped core operations, graph metadata, and private external-escape machinery remain package internals. Every semantic operation carries its immutable { execution, errorContext }, and related Chains share their execution. Source handles remain opaque to graph code.
 
@@ -36,6 +36,72 @@ For pending completion, use the outward Promise's rejection settlement directly;
 Where an input permits availability, ordinary supported-thenable consumption accepts a PoisonedValue and stores its Error. Where thenables are forbidden, use that boundary's existing validation behavior instead; declarations do not start consuming expression failures or create operation-context poison. The container has inherited then behavior. Validation of a callable placement named then is not a substitute for input consumption.
 
 A standalone external call exports all required arguments before invoking the Function with undefined as its receiver, then admits its result through public importMethodResult. Failed preparation collects all required Errors and suppresses invocation. Iterator advancement and finalization retain their protocol-specific rules in Phase 7. No private imports, duplicate guards, Error constructors, compatibility aliases, or second continuation mechanism are needed.
+
+## Managed value reception and delivery
+
+### Immediate reception and continued use
+
+A raw managed result is an immediate runtime handoff, not an independently retained value. Issue its consumer before an intervening operation can change its source. Continued use requires a Chain or another explicit holder; host retention uses detached export. This applies to lookup, returned Array elements, managed method results, entry results, and higher-runtime forwarding.
+
+Issuing the consumer transfers responsibility for preserving its inputs, including pending inputs. A ready receiver installs a placement, captures an independent export, or acquires an ordinary lease before target mutation, callback-capable preparation, or suspension. A pending receiver subscribes immediately and establishes that protection in its direct delivery callback. A call argument needs no artificial parent placement. Each use releases only its own protection after its last source access or transfer, which may precede call completion.
+
+| Receiving boundary | Preparation and preservation |
+| --- | --- |
+| Chain initialization or managed assignment | Prepare fresh managed input at reception, before target waits; attach the destination or retain through publication. Preserve the captured input rather than consuming the raw input twice. |
+| Call input | Prepare every fresh input that the call consumes or provisionally retains, whether the eventual boundary is native or controlled. Retain through last source access. Method selection and native export remain receiver-first. Ready rejected dispatch and inputs known to be unused remain unconsumed. |
+| Selected outward-only assignment | Establish known external ordering claims, then capture, protect, and prepare fresh input through common reception at issuance. Export that prepared outcome before target or predecessor waits and carry the detached result to the write. |
+| Public export or script return | Export a selected Chain/path, or first receive a returned value in its result Chain. Copy available source state synchronously and capture exact pending versions. Output copies create no managed parents. |
+
+Every consumed fresh managed source uses common preparation, including one whose only consumer is export. Its internal relationships are real managed edges; the detached exported copies create no managed parents. Preparation failure at an outward-write input uses `OperationInputFailed`; a distinct inspection failure during copying remains `ExportReflectionFailed`.
+
+Fresh-container preparation establishes available internal relationships before a wait. Leasing only `{ child: source.lookup(["child"]) }` cannot protect its borrowed child until that edge is known. Reuse the common preparation walk and already prepared identities; do not recursively lease every descendant. Native host results cross import before ordinary Chain initialization or assignment. Cascada-created literals keep their runtime-owned origin.
+
+Each evaluation of an object or Array literal must allocate the containers constructed by that expression afresh, including newly constructed nested literals. The compiler must not cache a mutable data template and submit it as a new literal on later evaluations or in another execution. A newly allocated wrapper may intentionally contain existing managed references, and repeated immediate handoff of a prepared value within one execution preserves its identity; reception itself does not clone it. Host-owned templates go through import, while managed values crossing executions go through export then import. The reusable compiler mutation-access-tree constants described below are control data, not reusable runtime-owned literal graphs.
+
+For example, this schematic lowering assumes `getData()` is a Cascada call whose host result, if any, has already crossed import. Public kernel calls additionally carry their operation contexts:
+
+```js
+const temp = new Chain(getData());
+contextChain.call(["receiver", "process"], temp.lookup(["child"]));
+temp.assign([], null);
+```
+
+The call accepts the argument before the compiler clears the temporary root; it need not finish first. Pending lookup, receiving work, and unfinished writers retain their own captured values and publication obligations. If evaluating another argument issues commands before the final call, receive the earlier lookup into a holder immediately. A JavaScript local alone supplies no retention. Root clearing removes that holder's edge and permits retirement only of graph state no surviving use needs; it does not cancel earlier effects.
+
+### Pending delivery
+
+The producer protects a captured managed value before later source writers can run. Each consumer establishes independent protection before that producer protection ends. Use ordinary lease counters; language results remain ordinary values or Promises.
+
+1. At ordered source capture, establish the pending version's retention obligation. When its managed value becomes available, acquire delivery protection before advancing later source work. Acquiring only at outward fulfillment is too late.
+2. Carry a private release handle through producing work and the common managed-value result boundary, initialized before callback-capable work. Producer closure must not release it before delivery. Immutable operation contexts contain no mutable retention state; prefix and version captures keep their separate lifetimes.
+3. Before exposing the exact native outward Promise `R`, register a cleanup observer on `R`. Its callback queues one microtask to release producer delivery retention. Return `R` itself, not the observer's derived Promise. The observer's Promise remains handled.
+4. Subscribe each receiving input directly at issuance. In its reaction, install a parent, take its own lease, or complete independent export capture before further suspension or callback-capable preparation. Common preparation does this for nested pending inputs during its existing walk. Closed receivers skip operation-only admission and acquisition; required shared settlement remains independent.
+5. The queued release ends only the producer's hold. Consumer holds end independently after publication, capture, last access, or final disposal. Rejection and fatal-result cleanup use the same idempotent release ownership. If internal synchronous delivery acquired protection but the public result is ready, release it at the synchronous return boundary; no deferred delivery interval exists. Synchronous failure before exposure releases there too.
+
+The cleanup observer runs before direct receiving reactions and queues release behind them. Immediate registration also covers an outward Promise already fulfilled before return. Source thenables keep their normal FIFO and synchronous-delivery semantics; the observer is on the native outward result, not on an estimated intermediate Promise step. Ready results and non-managed results require no deferred managed-result lease.
+
+### Forwarding and joining inputs
+
+Protection must happen in each input's direct callback, before forwarding or joining. A forwarding stage is both a receiver and a producer: it retains actual inputs through their last access and protects its actual managed output through its own delivery boundary. A join that merely records values does not establish retention.
+
+| Registration at issuance | Does the receiving callback precede queued release? |
+| --- | --- |
+| `R.then(receive)` | Yes. `receive` must establish protection before further work. |
+| Immediate `await R` in an async function started now | Yes, for the continuation immediately after that await. Protect before its next wait. |
+| `Promise.resolve(R).then(receive)` | Yes when `Promise.resolve` returns that same native Promise. |
+| `(async () => R)().then(receive)` or `new Promise(resolve => resolve(R)).then(receive)` | No guarantee: adoption inserts another delivery stage. |
+| `R.then(value => value).then(receive)` | No guarantee: the first reaction forwarded without retaining. |
+| `Promise.all([R]).then(receive)` | No guarantee: the aggregate reaction is not the direct receiver. |
+
+For an aggregate, first receive and protect every input independently, then join readiness and use those protected values. Keep this at common managed-value reception and result boundaries. Generic `continueOperation` and `collectInputs` composition does not itself give an internal control record or a language value ownership. No result wrapper or provenance lookup is needed to join already protected inputs.
+
+Multiple direct consumers establish independent holds; completing one never releases another. A completed ignored producer result releases its delivery hold without scanning unused payload. An unconsumed raw result cannot be stored for arbitrary later use. Tests and compiler integration must retain such uses explicitly, including raw lookups previously kept across later writes.
+
+### Export capture and source release
+
+Public export reads a Chain/path. Raw-value export helpers serve argument batches and outward writes internally; they do not introduce a public raw-result export API. An operation that waits before starting export owns any needed input lease during that wait.
+
+Once export starts, it copies ready state synchronously and retains exact pending-version dependencies. It adds no blanket identity lease lasting until output completion. Direct delivery into that walk must finish available capture before producer cleanup; each pending dependency preserves its own later input. Error collection and final identity assembly can continue after ready source storage is no longer needed. Export before clearing a result Chain, and deliver to the host only after export completes. Host retention of detached output does not retain its managed source.
 
 ## Compiler construction of the mutation access tree
 

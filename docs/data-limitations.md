@@ -10,6 +10,14 @@ This is the authoritative developer-facing contract for data passed between Java
 - **Controlled method:** a runtime implementation, such as a supported logical Array method, that operates directly on logical Cascada data rather than arbitrary host state.
 - **Supported thenable:** a native Promise with standard behavior or an ordered, chainable Promise-like value satisfying the contract below.
 
+## Managed results and receiving boundaries
+
+**Implementation status:** this section describes the accepted Phase 1/2 target. Complete fresh-input preparation and parent indexing, followed by bounded delivery and retirement, remain pending in the [runtime evolution plan](runtime-evolution-plan.md). The current runtime still relies on permanent `shared` protection.
+
+Managed results preserve their logical values through immediate reception by an operation or retention in a Chain or other explicit holder. A raw managed value or Promise is a handoff, not indefinite storage: receive it before an intervening operation can change its source, and protect each delivered input before forwarding or joining readiness. External code receives detached exports. The [integration contract](integration.md#managed-value-reception-and-delivery) specifies these boundaries and temporary Chain release.
+
+Import host data before ordinary Chain initialization or assignment; Cascada-created structures preserve their runtime-owned origin. Every literal evaluation allocates its newly constructed containers afresh; the compiler must not reuse mutable data templates across evaluations or executions. Existing managed references may intentionally recur within one execution, including inside fresh wrappers, so freshness is not required at every reception. Host-owned cached graphs require import; direct cross-execution transfer of managed identities is unsupported and requires export then import. Prepare each fresh input that a call consumes or provisionally retains before receiver waits or selected processing, including its available internal relationships. Native export and method selection remain receiver-first. Reuse completed preparation. Ready rejected calls and inputs known to be unused do not consume arguments. Outward-only writes also prepare fresh managed sources before export; their source relationships are managed facts, while detached output copies have no managed parents.
+
 ## Allowed nondeterminism in Error handling
 
 Successful supported operations retain sequential equivalence, ownership, immutable-output, and FIFO effect-ordering guarantees. The exceptions below concern Error reporting and detection; they grant no permission to reorder successful data operations or omit required Error collection. Do not add a global ordering barrier, sorting pass, or history registry solely to make these failure outcomes deterministic.
@@ -17,6 +25,7 @@ Successful supported operations retain sequential equivalence, ownership, immuta
 | Case | What may vary | What remains required |
 | --- | --- | --- |
 | Compound Errors and `getErrors` | Child order, the retained representative among equivalent wrappers, and the compound's representative source | Complete semantic membership for required collection; every retained child keeps its cause, source, and kind; created Errors and child arrays never change afterward |
+| Structural failure during fresh-input preparation | Which available nested values belong to the failing synchronous segment; failure replaces that whole segment, while later delivery starts its own segment | Preserve committed earlier segments and causal Error kinds. Target or receiver delay alone does not postpone preparation of the same consumed input. Ordinary nested Error data poisons its branch rather than failing structural preparation. |
 | Competing independent fatal failures | Which failure reaches the execution's first fatal commit | One authoritative Error per execution, reporting once, prompt failure of pending operation results, and no later runtime effects after the normal fatal checkpoints |
 | An operation result racing execution fatality | Whether outward settlement finishes before an independently detected fatal | The existing first-transition rule: a pending outward result fails on fatality; an already-settled result cannot be changed |
 | Invalid sharing of one mutable external identity between independent context imports | When the conflict is discovered, which location reports it first, and which earlier operations have already completed | No permanent winner chosen by import arrival order; once the competing bindings are known, access through both fails; completed results and host effects cannot be undone |
@@ -82,7 +91,7 @@ host-supplied graph data and remain available.
 - Strings support documented native observations only.
 - Number, Boolean, BigInt, Symbol, `null`, and `undefined` have no methods or property writes.
 - A Promise or supported thenable has no direct operations; the resolved value determines its capabilities.
-- A Promise or supported-thenable input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to a call rejected while its receiver is ready; application code remains responsible for handling its rejection. While receiver selection is pending, explicit call arguments are provisionally consumed only at root availability so their captured values can be preserved if the boundary uses them.
+- A Promise or supported-thenable input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to a call rejected while its receiver is ready; application code remains responsible for handling its rejection. While receiver selection is pending, explicit arguments may be provisionally consumed and fresh managed structure prepared to preserve borrowed descendants. Such inspection does not make an ultimately unused input a required wait or Error-collection obligation.
 - A language Error has no operations and propagates when consumed.
 
 ## Promises and supported thenables

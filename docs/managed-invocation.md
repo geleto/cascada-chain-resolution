@@ -1,5 +1,7 @@
 # Managed Invocation Architecture
 
+**Implementation status:** common fresh-argument preparation and complete parent indexing are Phase 1 targets; bounded delivery and the replacement of permanent sharing are Phase 2 targets. The current receiver preparation and invocation machinery remains in use. See the [runtime evolution plan](runtime-evolution-plan.md) before treating the pending reception rules below as current behavior.
+
 ## Causal completion
 
 Receiver preparation and argument export complete their entire required Error frontier before invocation. A direct method Error fails the selected mutation scope with `InvocationFailed` whether returned, thrown, fulfilled, or rejected. Importing an independent successful result graph is a separate boundary: its `ImportReflectionFailed` outcome does not discard valid receiver mutation. The direct host-result continuation makes this decision before result import. A prototype accessor safely detected before invocation returns `InvalidManagedReceiver`. Operation resources close through the common idempotent owner transition after final call completion; a component finishing preparation does not close sibling collection.
@@ -40,7 +42,7 @@ One operation context performs the call:
 6. Import the result. Validate and publish a mutation receiver before its result becomes observable.
 7. Release operation resources after their last possible access on every completion path.
 
-If receiver selection is pending, the common coordinator consumes each possible root-argument Promise. A ready custom thenable retains its fulfilled identity synchronously; only a returned pending continuation is handled as detached work. A traversable fulfillment is leased until selected preparation synchronously captures that root. This closes the interval before argument export can register its own ordered work without exporting or traversing arguments before receiver classification.
+Common [input reception](integration.md#immediate-reception-and-continued-use) prepares every fresh argument that the call consumes or provisionally retains, before a receiver wait or selected processing. Available structure establishes relationships to borrowed descendants; each direct pending-input callback protects delivery. Keep method selection and argument export receiver-first. Already prepared input skips repeat preparation, and ready rejected dispatch leaves arguments unused. Release argument leases after export capture or another consumer accepts every remaining source dependency.
 
 ## Receiver preparation
 
@@ -52,7 +54,7 @@ Preparation consumes the complete receiver graph because method code may read an
 
 Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
-Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise versions can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; only identities retained by the imported result become permanently shared.
+Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise versions can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; identities retained by the imported result keep the placements and capture obligations of their actual uses.
 
 Arguments cross the host boundary through one `exportManyValues` operation. Managed argument graphs are independent copies with aliases, cycles, Array structure, and admitted prototypes preserved across argument positions. Functions and external identities remain exact. Receiver and argument identities are not cross-remapped, and managed invocation adds no argument-source leases after export capture.
 
@@ -70,7 +72,7 @@ A clean receiver is published through the ordinary mutation transition only afte
 
 ## Results and direct Promises
 
-Observations and non-receiver mutation results use common method-result import: it traverses even an already admitted managed root, enforces result-boundary restrictions, and marks every reached managed identity shared. A mutation returning its working receiver selects the published receiver and marks it shared when retained as output. A mutation prefix or external child does not change these ownership rules. A mutation can move a result descendant onto a shorter receiver path, where sharing only the result root would not protect it. The common result traversal protects that descendant without result-provenance state or a separate mutation-result policy.
+Observations and non-receiver mutation results use common method-result import: it traverses even an already admitted managed root where result-boundary validation requires it. Returning the working mutation receiver selects its published logical value. Preserve all result uses through common capture and receiving lifetimes, including descendants arbitrary receiver mutation can detach from their former ancestors. A mutation prefix or external child does not change these ownership rules; no permanent result-sharing flag substitutes for actual retention.
 
 Borrowing includes lazily admitted descendants of a managed source. Establish their ordinary source placement captures before result-specific pending validation, and copy only affected containers and their borrowed ancestors. A fresh result alias may precede the managed branch owning it: reconcile its staged capture when ownership becomes known, preserving aliases, cycles, source settlement, and unchanged-branch sharing. Raw Errors newly produced by native mutation still receive invocation attribution.
 

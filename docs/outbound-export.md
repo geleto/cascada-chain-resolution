@@ -1,6 +1,6 @@
 # Outbound export
 
-**Status:** Implemented.
+**Status:** The graph copier is implemented. Common preparation of fresh export sources and complete parent indexing remain Phase 1 work. Bounded managed-result delivery and logical-identity deduplication remain work in phases 2 and 4 of the [runtime evolution plan](runtime-evolution-plan.md). The source-reception requirements below describe the accepted target; the current copier can still admit and normalize an unprepared source.
 
 Export enforces the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
 
@@ -40,7 +40,11 @@ Export traverses every available placement synchronously. A pending placement is
 
 The operation retains output copies, its identity tables, and captured property versions. It does not lease or reread managed source identities. Later managed mutation may therefore proceed normally without changing the captured output.
 
+Public export captures a selected Chain/path. Internal value export serves argument batches and outward writes; it is not a separate public result API. Receive fresh managed sources through common input preparation before the copier reads them, including outward-only assignments. Reuse completed preparation and exact captured versions rather than consuming raw inputs twice. Source containers gain their complete internal relationships; detached output copies remain outside managed admission and parent indexing. Input-preparation failures retain `OperationInputFailed` at outward reception, while distinct export inspection failures use `ExportReflectionFailed`. A caller waiting before export starts owns the input protection needed during that wait. Under the [receiving contract](integration.md#export-capture-and-source-release), each direct input callback preserves its value, prepares newly available structure, and copies available state before further suspension or producer cleanup. This adds no blanket source-identity lease over export traversal or output completion.
+
 Export captures only the selected path and the Promise frontier recursively exposed from it. It does not wait for unrelated graph Promises or build a refcount index. A rejected data Promise is already contextualized by the boundary that introduced it; export preserves that occurrence.
+
+For script return, issue public export from the result Chain/path before clearing its temporary holder. A pending expression result can first enter a result Chain through immediate handoff and then use the same public export. Do not defer first capture to an unprotected lookup-result Promise callback. Once export has accepted preservation responsibility, temporary root clearing need not await completed output. Host delivery still waits for the complete export, including required nested data, Errors, and the logical identity decisions specified by [phase 4](runtime-evolution-plan.md#phase-4-deduplicate-export-and-unify-identity-consumers). Capturing input, ending managed-source access, and completing host output are distinct lifetime points; retaining the detached output does not keep an input lease alive.
 
 ## Output lifetime
 
@@ -52,6 +56,6 @@ The result is synchronous when every consumed frontier transition returns direct
 
 ## Ownership
 
-Export adds no owner or shared mark to its source. This relies on ordinary ownership rules: another valid Cascada owner marks managed data shared, and later mutation uses COW. Application code must not mutate data after passing it to Cascada. Exact external state remains governed by its own ordering and mutation authority; export grants none.
+Exported copies add no managed parent to their source. Current placements, retained uses, and imported-data protection preserve inputs until capture. Application code must not mutate managed data after passing it to Cascada. Exact external state remains governed by its own ordering and mutation authority; export grants none.
 
 `src/export.js` owns `exportValue`, `exportManyValues`, copying, Error collection, and output release. `src/managed-traversal.js` shares managed key capture and placement delivery with receiver preparation; export reserves output keys before pending delivery and applies copying to each delivered value. `src/internal-step.js` owns complete root readiness and guarded continuation, while `src/operation-lifecycle.js` owns operation closure and releases; observation and invocation code call the two export shapes directly.

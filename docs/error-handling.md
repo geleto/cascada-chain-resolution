@@ -1,5 +1,7 @@
 # Error Handling Architecture
 
+**Implementation status:** the fresh-input preparation and attribution rules below include the accepted Phase 1 target; uniform preparation at Chain, assignment, call, and outward-write reception is not yet implemented. See the [runtime evolution plan](runtime-evolution-plan.md) for that work, separately from the existing Error machinery.
+
 ## Purpose
 
 This document defines how Cascada classifies, represents, attributes, propagates, combines, and reports failures. It also defines how a fatal failure closes an execution.
@@ -241,6 +243,10 @@ Contextualize raw native Errors at their introducing boundaries; propagate an ex
 - Promise fulfillment begins another atomic import segment; it neither reopens nor rolls back the earlier segment.
 
 Store no wrapper on the native Error identity and keep no execution-wide or runtime-wide Error cache. Reuse through an existing walk map is optional; do not retain that map across import segments merely to intern wrappers. Semantic equivalence is resolved during collection.
+
+Fresh-input preparation uses the same segment boundary without conflating it with import. Ordinary Error data remains at its branch; supported structural inspection failure replaces the complete current synchronous segment with Error data and commits none of its staged facts. A later nested delivery starts a new segment, so it can fail locally without undoing earlier admission. Preparation failure is failed input, not a failed target write requiring rollback: initialization or assignment publishes the Error-valued input through its normal rules. Actual required-publication failure retains its separate repair semantics.
+
+The receiving boundary fixes the causal kind: `ChainValueFailed` for ordinary Chain input, `AssignmentValueFailed` for managed assignment input, `OperationInputFailed` for fresh call-input preparation, and `ImportReflectionFailed` for import reflection. Consumed fresh call inputs are prepared before selected native export regardless of receiver readiness; genuine later export reflection still uses `ExportReflectionFailed`. Receiver delay alone must not change the kind of the same input-inspection failure. The [input contract](data-limitations.md#allowed-nondeterminism-in-error-handling) states the narrower segment-availability exception.
 
 ### Promises, versions, and thenables
 
