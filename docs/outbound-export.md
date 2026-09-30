@@ -1,6 +1,6 @@
 # Outbound export
 
-**Status:** The graph copier is implemented. Common preparation of fresh export sources and complete parent indexing remain Phase 1 work. Bounded managed-result delivery and logical-identity deduplication remain work in phases 2 and 4 of the [runtime evolution plan](runtime-evolution-plan.md). The source-reception requirements below describe the accepted target; the current copier can still admit and normalize an unprepared source.
+**Status:** the graph copier, common source preparation, and complete parent indexing are implemented. Bounded managed-result delivery and logical-identity deduplication remain work in phases 2 and 4 of the [runtime evolution plan](runtime-evolution-plan.md). Export receives prepared source graphs; detached output copies acquire no managed parents.
 
 Export enforces the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
 

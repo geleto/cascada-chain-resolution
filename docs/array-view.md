@@ -33,6 +33,8 @@ Installed placement versions also contribute logical indexes, including without 
 
 The common language-property boundary reads each logical owner's installed versions before its translated physical descriptors. It also enumerates candidates and resolves logical presence for records, Arrays, and views. ArrayView supplies storage projection and length knowledge, without a separate logical element-read, enumeration, or iteration API. Traversal, ownership, import, export, refcounting, Error search, and copy-on-write use the same owner and property boundary.
 
+Physical writes and deletions also use the common language-property boundary. At the write point, a view translates the logical key to its backing destination; the common writer uses the descriptor captured during preflight and maintains physical backing occurrences. Descriptor preflight remains separate from this translation so inspecting a native Array slot does not advance pending length state. ArrayView has no separate storage mutation implementation.
+
 Ordinary indexed mutation or deletion on a distinct view materializes the changing identity first. A native Array with an attached projection continues in place when ordinary ownership permits and its committed length matches physical storage; additional independent entries do not copy it. Sharing and leases use ordinary COW. A mismatch between committed and physical length requires materialization before indexed mutation, including retained storage outside the view or logical growth without physical storage. Endpoint methods may derive views over shared storage because they do not change any preserved view's logical surface.
 
 ## Length state and backing ownership
@@ -41,7 +43,7 @@ Possible out-of-range creation adds a contribution to the existing length sequen
 
 Placement publication uses two class operations: `beginIndexTransition` returns the completion action for possible creation, and `prepareIndexCreation` returns a growth commit for a known creation. Preparation performs fallible storage reads before publication; the commit updates logical growth after the element write without another host read. Callers hold neither sequence nodes nor a separate length-registration token.
 
-Copying a logical Array also copies its shape through `copyShape`, called by common container-copy bookkeeping. This is distinct from copying backing storage: an independently mutable copy retains earlier growth outcomes but must exclude later source operations. Only that case forks the sequence. Read-only captures retain one position instead. Native Arrays with no projection continue to use their physical length directly.
+Copying a logical Array also copies its shape through `prepareShapeCopy`, called by common container-copy bookkeeping. This is distinct from copying backing storage: an independently mutable copy retains earlier growth outcomes but must exclude later source operations. Only that case forks the sequence. Read-only captures retain one position instead. Native Arrays with no projection continue to use their physical length directly.
 
 Preparing a shared-storage derivation marks the backing Array with the ordinary `shared` flag. Subsequent mutation of its existing slots follows ordinary COW. Length assignment on that shared native owner also uses ordinary COW; a distinct view retains independent bounds. A projection installed only to track length does not mark the Array shared. Pre-existing storage outside a view's range remains unavailable for extension, even when it consists entirely of holes. Imported backing is never modified. End extension still reuses shared backing when it adds storage beyond preserved bounds. No separate backing-ownership flag or speculative capacity lifecycle is needed.
 
@@ -67,7 +69,15 @@ Retained-property capture and Promise settlement on a view update its logical ov
 
 `concat` extends only the receiver backing; it never prepends into an argument backing. The receiver's attached view keeps its old end while the result view includes the appended suffix. The suffix is built as a sparse property-placement remap, so holes, ownership, Promise versions, and indexed-edge accounting use the same placement path as materialization. Overlapping inputs, including `array.concat(array)`, are captured before placement. If the receiver does not reach the physical end or its backing cannot extend, concat materializes normally.
 
-End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
+End growth is shared by `push`, `concat`, and past-length assignment. It requires the physical end and writable length, plus extensibility when properties will be added. The extension helper owns prefix capture, backing growth, any suffix population, and construction publication or discard; it returns only a published view. If extension is ineligible, the logical range materializes and the operation continues on a native Array.
+
+## Incoming placements
+
+A backing Array's execution-local metadata lazily owns an `ArrayBacking` record. It stores the native logical owner and derived published owners once. A managed physical child stores `(backing, index)`; parent enumeration expands it into in-range owners that have no overlay at that index. An overlay-held child instead stores its direct `(owner, key)` placement. This avoids recording every inherited child again when creating a view. Internal projection objects are not additional logical owners.
+
+Storage preflight captures the actual physical descriptor separately from the logical value. Successful writes maintain backing occurrences even when a source gate masks the slot. Optional writeback failure keeps the old physical occurrence and the accepted logical overlay. Private view construction registers its owner and final overlays only at completion, without buffering edges or rescanning backing elements. Physical recording skips an uninitialized backing, not an uninitialized view: writes to existing backing remain immediate. A later construction failure discards the unfinished owner without undoing successful backing writes.
+
+Owner retirement remains Phase 2 work. Replacing a root removes that root placement; it does not yet unregister otherwise unreachable views.
 
 ## Materialization and length
 

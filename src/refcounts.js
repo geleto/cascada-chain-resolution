@@ -3,7 +3,6 @@ import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 
-const COMMIT_UNINDEXED_EDGE = updateProperty => updateProperty()
 const COUNT_FIELDS = ["promiseCount", "errorCount", "cycleCutCount"]
 
 function getRefCounter(node, operationContext) {
@@ -51,69 +50,33 @@ function buildRefIndex(value, operationContext) {
     }
 
     const staged = new Map()
-    const pending = new Set()
-    discover(value)
-
-    // A later custom-thenable subscription in this same synchronous index build
-    // can deliver earlier subscriptions in FIFO order, advancing captured versions.
-    // Discover those newly available values before counting, without resubscribing
-    // or rereading physical slots. Discovery can settle a version already skipped
-    // in this pass, so repeat while available work makes progress.
-    while (pending.size > 0) {
-        let advanced = false
-        for (const version of pending) {
-            if (languageValues.isPending(version.value, operationContext)) continue
-            pending.delete(version)
-            discover(version.value)
-            advanced = true
-        }
-        if (!advanced) break
-    }
-
     const active = new Set()
-    count(value)
+    visit(value)
 
     // No external reflection or subscription remains. Publish the complete region,
     // including cut targets, before adding its reverse edges to existing indexes.
     for (const { meta, counter } of staged.values()) {
-        if (counter) Object.assign(meta, counter)
+        Object.assign(meta, counter)
     }
     for (const [node, { children }] of staged) {
         for (const child of children) addParentCounterEdge(child, node)
     }
     return value
 
-    function discover(node) {
-        if (!languageValues.isTraversable(node, operationContext) ||
-            getRefCounter(node, operationContext) || staged.has(node)) return
-        const meta = metadata.requireMeta(node, operationContext)
-        const placements = new Map()
-        staged.set(node, { meta, placements, children: [] })
-        for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
-            const child = languageProperties.readLanguageProperty(node, key, operationContext)
-            const version = meta.placementVersions?.[key] ?? { value: child }
-            placements.set(key, version)
-            if (languageValues.isPending(version.value, operationContext)) pending.add(version)
-            else discover(version.value)
-        }
-    }
-
-    function count(node) {
-        // A required settlement during discovery may have completed this index
-        // independently. Reuse it instead of overwriting its live bookkeeping.
-        const existing = getRefCounter(node, operationContext)
+    function visit(node) {
+        const existing = getRefCounter(node, operationContext) ?? staged.get(node)?.counter
         if (existing) return existing
-        const state = staged.get(node)
-        if (state.counter) return state.counter
-        const counter = state.counter = {
+        const counter = {
             promiseCount: 0,
             errorCount: 0,
             cycleCutCount: 0,
             parents: new Map(),
         }
+        const children = []
+        staged.set(node, { meta: metadata.requireMeta(node, operationContext), counter, children })
         active.add(node)
-        for (const [key, version] of state.placements) {
-            const child = version.value
+        for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
+            const child = languageProperties.readLanguageProperty(node, key, operationContext)
             if (languageValues.isPending(child, operationContext))
                 counter.promiseCount++
             else if (errorUtils.isPoisonError(child)) counter.errorCount++
@@ -122,10 +85,10 @@ function buildRefIndex(value, operationContext) {
                     updateCycleCut(counter, key, true)
                     counter.cycleCutCount++
                 } else {
-                    const childCounter = count(child)
+                    const childCounter = visit(child)
                     for (const field of COUNT_FIELDS)
                         counter[field] += Number(childCounter[field] > 0)
-                    state.children.push(childCounter)
+                    children.push(childCounter)
                 }
             }
         }
@@ -176,16 +139,15 @@ function prepareRefEdge(
 
 // Complete fallible graph preparation and capture edge contributions first.
 // After storage succeeds, publish bookkeeping without callbacks or suspension.
-function prepareLiveEdge(
+function prepareCounterUpdate(
     owner,
     key,
+    before,
     value,
     operationContext,
-    previousPlacement,
 ) {
     const counter = getRefCounter(owner, operationContext)
-    if (!counter) return COMMIT_UNINDEXED_EDGE
-
+    if (!counter) return
     const cycleCut = prepareRefEdge(
         owner,
         counter,
@@ -193,13 +155,12 @@ function prepareLiveEdge(
         operationContext,
     )
     const previousState = getValueRefState(
-        previousPlacement ? previousPlacement.value : languageProperties.readLanguageProperty(owner, key, operationContext),
+        before,
         operationContext,
         counter.cycleCuts?.has(key) === true,
     )
     const nextState = getValueRefState(value, operationContext, cycleCut)
-    return updateProperty => {
-        updateProperty()
+    return () => {
         updateCycleCut(counter, key, cycleCut)
         removeParentCounterEdge(previousState.childCounter, owner)
         addParentCounterEdge(nextState.childCounter, owner)
@@ -261,5 +222,5 @@ export {
     getRequiredRefCounter,
     hasCycleCut,
     indexValueIfSourceIndexed,
-    prepareLiveEdge,
+    prepareCounterUpdate,
 }

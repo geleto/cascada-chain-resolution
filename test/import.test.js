@@ -26,7 +26,7 @@ import {
 } from "./support.js"
 
 describe("import", () => {
-    it("releases the imported ancestor while nested publication remains pending", () => {
+    it("retains the imported parent relationship while nested publication remains pending", () => {
         const child = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/import-retention.js", import.meta.url))], {
             encoding: "utf8", timeout: 10000,
@@ -193,7 +193,7 @@ describe("import", () => {
         verifyRefCounts(external)
     })
 
-    it("does not scan an admitted identity inside a host root", async () => {
+    it("reuses prepared runtime identity inside a host root", async () => {
         const pending = deferred()
         const child = { pending: pending.promise }
         lookupPath(new Chain(child), [])
@@ -205,7 +205,7 @@ describe("import", () => {
         pending.resolve(resolved)
         await flushMicrotasks()
 
-        expect(child.pending).to.be(pending.promise)
+        expect(child.pending).to.be(resolved)
         expect(metaOf(resolved)?.imported).to.be(undefined)
         expect(await readPath(new Chain(child), ["pending"])).to.be(resolved)
     })
@@ -221,19 +221,18 @@ describe("import", () => {
         const outer = { nested }
         lookupPath(new Chain(outer), [])
         lookupPath(new Chain(nested), [])
+        scans = 0
 
         importValue({ outer, nested }, "overlapping islands")
         expect(scans).to.be(0)
 
-        const pending = deferred()
-        nested.pending = pending.promise
         importValue({ outer, nested }, "later frontier")
 
         expect(scans).to.be(0)
         expect(metaOf(nested).placementVersions).to.be(undefined)
     })
 
-    it("imports a new direct alias regardless of property order", async () => {
+    it("preserves prepared runtime ownership through a new imported alias in either property order", async () => {
         for (const admittedFirst of [true, false]) {
             const pending = deferred()
             const child = { pending: pending.promise }
@@ -247,13 +246,13 @@ describe("import", () => {
                 : "direct alias first"
 
             importValue(external, errorContext)
-            expect(metaOf(child).imported).to.be(true)
+            expect(metaOf(child).imported).to.be(undefined)
 
             const resolved = { done: true }
             pending.resolve(resolved)
             await flushMicrotasks()
 
-            expect(child.pending).to.be(pending.promise)
+            expect(child.pending).to.be(resolved)
             expect(readPath(new Chain(child), ["pending"])).to.be(
                 resolved,
             )

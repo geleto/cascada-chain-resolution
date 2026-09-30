@@ -1,6 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { runSubscription } from "./thenable-subscription.js"
+import { mayBeThenable, runSubscription } from "./thenable-subscription.js"
 
 const {
     TYPE,
@@ -9,19 +9,13 @@ const {
 
 // Only normalized transition results and logical placements use this test.
 function isPending(value, operationContext) {
-    return value !== null && typeof value === "object" &&
-        !Error.isError(value) && !metadata.metaOf(value, operationContext) &&
-        typeof value.then === "function"
+    return mayBeThenable(value, operationContext) && typeof value.then === "function"
 }
 
 function thenValue(value, onFulfilled, onRejected, operationContext) {
     if (errorUtils.isFatalError(value))
         errorUtils.failExecution(operationContext, value)
-    if (
-        value === null || typeof value !== "object" || Error.isError(value) ||
-            metadata.metaOf(value, operationContext)
-    )
-        return onFulfilled(value)
+    if (!mayBeThenable(value, operationContext)) return onFulfilled(value)
 
     const then = errorUtils.runExternalBoundary(
         operationContext,

@@ -1578,8 +1578,10 @@ describe("run", () => {
 
     it("keeps slice reflection inside the selected range", () => {
         const runtime = createProbe()
+        const chain = new Chain(runtime.value)
+        runtime.reset()
         const view = run(
-            new Chain(runtime.value),
+            chain,
             [],
             "slice",
             [
@@ -2904,9 +2906,11 @@ describe("run", () => {
         const pending = deferred()
         const retained = { pending: pending.promise }
         const failure = new Error("argument reflection failed")
+        let fail = false
         const broken = new Proxy({}, {
-            ownKeys() {
-                throw failure
+            ownKeys(target) {
+                if (fail) throw failure
+                return Reflect.ownKeys(target)
             },
         })
         const receiver = {}
@@ -2915,11 +2919,14 @@ describe("run", () => {
             value() {},
         })
 
+        const argument = { retained, broken }
+        new Chain(argument)
+        fail = true
         const result = run(
             new Chain(receiver),
             [],
             "read",
-            [{ retained, broken }],
+            [argument],
             {},
         )
         expect(result instanceof Promise).to.be(true)
@@ -2933,19 +2940,24 @@ describe("run", () => {
         const pending = deferred()
         const failure = new Error("argument reflection failed")
         let reflected = false
+        let fail = false
         const broken = new Proxy({}, {
-            ownKeys() {
-                throw failure
+            ownKeys(target) {
+                if (fail) throw failure
+                return Reflect.ownKeys(target)
             },
         })
         const receiver = {}
         Object.defineProperty(receiver, "read", { value() {} })
 
+        const argument = { pending: pending.promise, broken }
+        new Chain(argument)
+        fail = true
         const result = run(
             new Chain(receiver),
             [],
             "read",
-            [{ pending: pending.promise, broken }],
+            [argument],
             {},
         )
         expect(result instanceof Promise).to.be(true)

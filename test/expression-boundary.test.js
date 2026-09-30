@@ -181,6 +181,7 @@ describe("expression boundary", () => {
                     return Reflect.getOwnPropertyDescriptor(target, key)
                 },
             })
+            new runtime.Chain(root, ctx)
             const chain = new runtime.Chain(pending ? Promise.resolve(root) : root, ctx)
             fail = true
             await assert.rejects(Promise.resolve(runtime.lookupPathForExpression(chain, ["value"], ctx)), error => {
@@ -203,10 +204,13 @@ describe("expression boundary", () => {
                 assert.equal(await result, "failure" in input)
             }
             const cause = new Error("query reflection")
+            let fail = false
             const root = new Proxy({}, {
-                ownKeys() { throw cause },
+                ownKeys(target) { if (fail) throw cause; return Reflect.ownKeys(target) },
             })
+            new runtime.Chain(root, ctx)
             const chain = new runtime.Chain(pending ? Promise.resolve(root) : root, ctx)
+            fail = true
             const query = runtime.hasError(chain, [], ctx)
             const result = runtime.lookupPathForExpression(new runtime.Chain(query, ctx), [], ctx)
             await assert.rejects(Promise.resolve(result), error => {

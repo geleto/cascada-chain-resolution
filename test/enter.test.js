@@ -574,7 +574,7 @@ describe("enter", () => {
         verifyRefCounts(chain._state.value, external)
     })
 
-    it("writes a transferred imported result into private state", async () => {
+    it("releases transferred private state without disrupting pending imported publication", async () => {
         const pending = deferred()
         const external = { target: pending.promise }
         const chain = new Chain(importValue(external, "transferred target"))
@@ -589,7 +589,7 @@ describe("enter", () => {
         pending.resolve(resolved)
 
         expect(await published).to.be(resolved)
-        expect(entered._state.value).to.be(resolved)
+        expect(entered._state.value).to.be(undefined)
         expect(external.target).to.be(pending.promise)
     })
 
@@ -932,7 +932,7 @@ describe("enter", () => {
         )
 
         expect(result).to.be("nested root")
-        expect(outerChain._state.value).to.eql({ value: 2 })
+        expect(outerChain._state.value).to.be(undefined)
         expect(root.target).to.eql({ value: 2 })
     })
 

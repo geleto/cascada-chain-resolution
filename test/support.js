@@ -179,7 +179,10 @@ function publishPromiseVersion(owner, key, promiseVersion, placement) {
 }
 
 function buildRefIndex(value) {
-    return refcounts.buildRefIndex(value, testOperationContext("test ref index"))
+    const context = testOperationContext("test ref index")
+    // Counter construction consumes a graph already received by the runtime.
+    new runtime.Chain(value, context)
+    return refcounts.buildRefIndex(value, context)
 }
 
 function getRefCounter(value) {

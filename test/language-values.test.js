@@ -373,7 +373,7 @@ describe("value admission", () => {
         })
 
         const chain = new Chain({ value })
-        expect(metadata.metaOf(value)).to.be(undefined)
+        expect(metadata.metaOf(value).type).to.be(languageValues.TYPE.External)
         expect(lookupPath(chain, ["value"])).to.be(value)
         importValue(value, "external import")
         expect(metadata.incrementReadLease(value)).to.be(false)

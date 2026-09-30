@@ -7,6 +7,8 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as refcounts from "./refcounts.js"
 import { beginPlacementStructure, preparePlacementStructure, defineCopyProperty } from "./placement-structure.js"
+import { receiveValue } from "./input-preparations.js"
+import { recordLogicalPlacement } from "./parent-placements.js"
 
 class PropertyPlacement {
     constructor(owner, key, operationContext) {
@@ -46,12 +48,13 @@ class PropertyPlacement {
 // Capture without consuming an unused old value. A replacement must not wait
 // for the value it replaces merely to retain a recovery baseline.
 // Deferred selection supplies its captured version, even if it is now detached.
-function capturePlacement(owner, key, operationContext, capturedVersion) {
+function capturePlacement(owner, key, operationContext, capturedVersion, storage) {
     const version = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
     if (version) return capturePlacementFromVersion(version)
-    const descriptor = languageProperties.getLanguagePlacementDescriptor(owner, key, operationContext)
-    return { value: descriptor?.value, present: Boolean(descriptor),
-        position: metadata.metaOf(owner, operationContext)?.recordOrder?.positions.get(key)?.position ?? (descriptor ? -1 : Infinity) }
+    const descriptor = storage ? storage.descriptor : languageProperties.getLanguagePlacementDescriptor(owner, key, operationContext)
+    const present = descriptor?.enumerable === true && "value" in descriptor
+    return { value: present ? descriptor.value : undefined, present,
+        position: metadata.metaOf(owner, operationContext)?.recordOrder?.positions.get(key)?.position ?? (present ? -1 : Infinity) }
 }
 
 function capturePlacementFromVersion(version) {
@@ -135,25 +138,30 @@ function transferPlacement(placement, owner, key, operationContext, retained = f
         deleteProperty(owner, key, operationContext)
         return undefined
     }
-    if (writeBack && !placement.sourceVersion?.pendingPresence &&
-        (!destinationVersion || isLivePlacementVersion(owner, key, destinationVersion, operationContext)))
-        languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
     let version = createVersionFromPlacement(placement)
-    const deliver = resolved => publishPromiseVersion(owner, key, version, resolved, operationContext, retained)
-    const publication = placement.sourceVersion
-        ? resolvePlacement(placement, operationContext, deliver)
-        : internalSteps.consumeValue(placement.value, operationContext, kind,
-            value => deliver({ ...placement, value }))
-    const pending = trackVersionPublication(version, publication, operationContext)
-    if (destinationVersion) {
-        commitPlacementVersion(owner, key, destinationVersion, version, operationContext, writeBack && !version.pendingPresence, structure)
-        // Synchronous delivery stages above; later delivery advances the exact
-        // captured version only after its complete placement has committed.
-        version = destinationVersion
-    } else if (!writeBack || version.pendingPresence) replacePlacement(owner, key, version, operationContext, false)
-    else if (version.present === false) deleteProperty(owner, key, operationContext)
-    else replacePlacement(owner, key, version, operationContext)
-    return pending ? undefined : publication
+    const construction = metadata.metaOf(owner, operationContext)?.construction
+    const deliver = resolved => construction?.state === "discarded" ? undefined :
+        publishPromiseVersion(construction ? construction.owner : owner, key, version, resolved, operationContext, retained)
+    try {
+        const publication = placement.sourceVersion
+            ? resolvePlacement(placement, operationContext, deliver)
+            : receiveValue(placement.value, operationContext, kind,
+                value => deliver({ ...placement, value }), construction)
+        const pending = trackVersionPublication(version, publication, operationContext)
+        if (destinationVersion) {
+            commitPlacementVersion(owner, key, destinationVersion, version, operationContext, writeBack && !version.pendingPresence, structure)
+            // Synchronous delivery stages above; later delivery advances the exact
+            // captured version only after its complete placement has committed.
+            version = destinationVersion
+        } else if (!writeBack || version.pendingPresence) replacePlacement(owner, key, version, operationContext, false)
+        else if (version.present === false) deleteProperty(owner, key, operationContext)
+        else replacePlacement(owner, key, version, operationContext)
+        return pending ? undefined : publication
+    } finally {
+        // A private destination is retained solely by its construction record,
+        // even when this transfer fails after subscribing to a pending source.
+        if (construction) owner = undefined
+    }
 }
 
 function installPlacementGate(owner, key, operationContext, captured, capturedVersion) {
@@ -175,7 +183,6 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
         },
     }
     const version = { value: gate.promise, promiseBacked: true, pendingPresence: true, transition, position: captured.position }
-    const commit = capturedVersion ? undefined : refcounts.prepareLiveEdge(owner, key, version.value, operationContext, captured)
     gate.structure = beginPlacementStructure(owner, key, captured, operationContext)
     version.storageAbsent = previous ? previous.storageAbsent : !captured.present
     if (capturedVersion) {
@@ -183,7 +190,8 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
         gate.version = capturedVersion
     } else {
         gate.version = version
-        commit(() => installPlacementVersion(owner, key, version, operationContext))
+        prepareEdgeUpdate(owner, key, captured, version.value, operationContext,
+            () => installPlacementVersion(owner, key, version, operationContext))()
     }
     return gate
 }
@@ -226,15 +234,10 @@ function combinePublicationErrors(...values) {
 // An operation publishes all placement facts atomically. Unlike shared Promise
 // settlement, a failed restoration leaves the previous placement available.
 function commitPlacementVersion(owner, key, version, placement, operationContext, writeBack = true, structure) {
-    if (writeBack && isLivePlacementVersion(owner, key, version, operationContext)) {
-        if (placement.present === false && !errorUtils.isPoisonError(placement.value))
-            languageProperties.assertCanDeleteLanguageProperty(owner, key, operationContext)
-        else languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-    }
     preparePlacementCommit(owner, key, version, placement, operationContext, writeBack, structure)()
 }
 
-function preparePlacementCommit(owner, key, version, placement, operationContext, writeBack, structure) {
+function preparePlacementCommit(owner, key, version, placement, operationContext, writeBack, structure, optionalStorage = false) {
     placement.position ??= version.position
     // Captured consumers may resume after publication makes this placement
     // ready. Preserve their value before a later synchronous writer can use it.
@@ -255,14 +258,11 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
         return () => { commit(); commitStructure?.() }
     }
     const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
-    const commitEdge = preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack)
-    return () => commitEdge(() => {
-        if (writeBack) {
-            version.storageAbsent = writePlacementStorage(owner, key, placement, operationContext)
-        }
+    return preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack, storage => {
+        if (storage) version.storageAbsent = storage.commit()
         commit()
         if (absent) detachAbsentVersion(owner, key, version, operationContext)
-    })
+    }, optionalStorage)
 }
 
 function detachAbsentVersion(owner, key, version, operationContext) {
@@ -406,8 +406,17 @@ function assignProperty(
     return transferPlacement({ value, present: true }, owner, key, operationContext, retained, undefined, kind)
 }
 
-// This is the first consumption of a raw placement. Subsequent reads use its
-// logical value and never probe or subscribe to the physical host value again.
+// Prepare at issuance while retaining the original availability signal and its
+// exact delivered version for a destination that may not be available yet.
+function prepareInputPlacement(value, operationContext, kind) {
+    const version = { value, present: true }
+    const publication = receiveValue(value, operationContext, kind, ready => { version.value = ready })
+    trackVersionPublication(version, publication, operationContext)
+    return capturePlacementFromVersion(version)
+}
+
+// Unprepared control inputs (such as Array join separators) consume raw slots
+// here. Published graphs already have prepared logical placements.
 function normalizeRawPropertyValue(
     owner,
     key,
@@ -434,19 +443,16 @@ function normalizeRawPropertyValue(
         return value
     }
     const version = { value }
-    const publication = internalSteps.consumeValue(value, operationContext,
+    const publication = receiveValue(value, operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => publishPromiseVersion(owner, key, version, { value: resolved, present: true }, operationContext))
     if (trackVersionPublication(version, publication, operationContext)) {
-        const meta = metadata.metaOf(owner, operationContext)
-        if (meta?.parents) throw new Error("Indexed promise property has no Promise version")
-        if (meta?.imported) throw new Error("Imported promise property has no Promise version")
         installPlacementVersion(owner, key, version, operationContext)
     } else if (version.value !== value) {
         if (writable && !metadata.metaOf(owner, operationContext)?.imported &&
             !isArrayView(owner, operationContext)) {
             const failure = errorUtils.catchExternalThrow(
-                () => writePlacementStorage(owner, key, version, operationContext),
+                () => preparePlacementStorage(owner, key, version, operationContext).commit(),
                 operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
             if (!failure) return version.value
         }
@@ -465,16 +471,11 @@ function publishPromiseVersion(
     structure,
 ) {
     let { value } = placement
-    let validationFailure
     if (languageValues.isPending(value, operationContext)) {
         throw new Error("A Promise requires a fresh property version")
     }
-    if (languageProperties.isCallableThenPlacement(key, value)) {
-        value = validationFailure = languageProperties.propertyValidationError(
-            "Language data cannot contain a callable then property",
-            operationContext,
-        )
-    }
+    const validationFailure = languageProperties.validatePropertyValue(key, value, operationContext)
+    value = validationFailure ?? value
     languageValues.admitReadyValue(value, operationContext)
     const ready = { value, present: placement.present, recovery: placement.recovery,
         // Ordinary payload settlement does not insert the property again.
@@ -522,61 +523,67 @@ function commitPromiseVersion(
     )
 
     function prepareCommit(nextValue, canWriteBack) {
-        if (canWriteBack && isLivePlacementVersion(owner, key, promiseVersion, operationContext)) {
-            const failure = errorUtils.catchExternalThrow(
-                () => languageProperties.assertCanSetLanguageProperty(
-                    owner,
-                    key,
-                    operationContext,
-                ),
-                operationContext,
-                errorUtils.ERROR_KIND.PropertyMutationFailed,
-            )
-            if (failure) {
-                canWriteBack = false
-            }
-        }
         return preparePlacementCommit(owner, key, promiseVersion,
-            { ...placement, value: nextValue }, operationContext, canWriteBack, structure)
+            { ...placement, value: nextValue }, operationContext, canWriteBack, structure, true)
     }
 }
 
 function replacePlacement(owner, key, placement, operationContext, writeBack = true) {
-    preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack)(() => {
-        if (writeBack) writePlacementStorage(owner, key, placement, operationContext)
+    preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack, storage => {
+        storage?.commit()
         // Failed storage work must leave the old logical version available.
         detachPlacementVersion(owner, key, operationContext)
         if (!writeBack || placement.promiseBacked || placement.recovery)
             installPlacementVersion(owner, key, placement, operationContext)
-    })
+    })()
 }
 
-function writePlacementStorage(owner, key, placement, operationContext) {
+function preparePlacementStorage(owner, key, placement, operationContext) {
     // Entry holders write through their captured source authority. Detached
     // references still advance privately without touching replacement storage.
     const gate = metadata.metaOf(owner, operationContext)?.entryGate
-    if (gate && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext))
-        gate.version.storageAbsent = writePlacementStorage(gate.owner, gate.key, placement, operationContext)
+    const mirror = gate && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)
+        ? preparePlacementStorage(gate.owner, gate.key, placement, operationContext) : undefined
     const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
-    if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext)
-    else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext)
-    return absent
+    const descriptor = absent
+        ? languageProperties.assertCanDeleteLanguageProperty(owner, key, operationContext)
+        : languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
+    return { descriptor, commit() {
+        if (mirror && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext))
+            gate.version.storageAbsent = mirror.commit()
+        if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext, descriptor)
+        else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext, descriptor)
+        return absent
+    } }
 }
 
 function deleteProperty(owner, key, operationContext) {
-    languageProperties.assertCanDeleteLanguageProperty(owner, key, operationContext)
     replacePlacement(owner, key, { value: undefined, present: false }, operationContext)
 }
 
-function preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack = true) {
-    // Index creation commits length even when only a logical version can hold
-    // its outcome. Capture fallible length/index reads before changing storage.
-    const commitStructure = preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack)
-    const commitEdge = refcounts.prepareLiveEdge(owner, key, placement.value, operationContext)
-    return updateProperty => commitEdge(() => {
-        updateProperty()
-        commitStructure()
-    })
+function preparePropertyCommit(owner, key, placement, operationContext, structure, writeBack, updateProperty, optionalStorage = false) {
+    let storage
+    if (writeBack) {
+        const prepare = () => preparePlacementStorage(owner, key, placement, operationContext)
+        storage = optionalStorage ? errorUtils.catchExternalThrow(prepare, operationContext,
+            errorUtils.ERROR_KIND.PropertyMutationFailed, () => undefined) : prepare()
+    }
+    const before = capturePlacement(owner, key, operationContext, undefined, storage)
+    const commitStructure = preparePlacementStructure(owner, key, placement, structure, operationContext, Boolean(storage), before)
+    return prepareEdgeUpdate(owner, key, before, placement.value, operationContext,
+        () => { updateProperty(storage); commitStructure() })
+}
+
+// Prepared placement inspection never consumes values. Storage, shape, and
+// optional counters can therefore be prepared against one stable edge capture.
+function prepareEdgeUpdate(owner, key, before, value, operationContext, commit) {
+    const wasOverlay = Boolean(getPlacementVersion(owner, key, operationContext))
+    const updateCounter = refcounts.prepareCounterUpdate(owner, key, before.value, value, operationContext)
+    return () => {
+        commit()
+        recordLogicalPlacement(owner, key, before.present ? before.value : undefined, value, operationContext, wasOverlay)
+        updateCounter?.()
+    }
 }
 
 function prepareRetainedArrayProperties(
@@ -626,6 +633,7 @@ export {
     commitPlacementVersion,
     publishPromiseVersion,
     assignProperty,
+    prepareInputPlacement,
     observePromiseVersion,
     installMutationVersion,
     continueCapturedPromiseVersion,

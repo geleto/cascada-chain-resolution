@@ -5,6 +5,7 @@ import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { capturePlacement, commitPlacementVersion, createVersionFromPlacement, getPlacementVersion, installMutationVersion, installPlacementVersion } from "../src/property-versions.js"
 import { metaOf } from "../src/meta.js"
+import { fixture } from "./trace-state.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
@@ -76,7 +77,7 @@ describe("placement versions across representation boundaries", () => {
             const ctx = context()
             const original = { n: 1 }
             const source = delivery === "synchronous" ? ready(original) : new OrderedThenable()
-            // Leave the child lazy: ordinary Chain construction only admits its root.
+            // Preparation captures the child; later reads follow that version.
             const chain = new runtime.Chain({ item: source }, ctx)
             const earlier = runtime.lookupPath(chain, ["item"], ctx)
             assert.equal(earlier instanceof Promise, delivery === "pending")
@@ -95,7 +96,7 @@ describe("placement versions across representation boundaries", () => {
         buildRefIndex(owner, ctx)
         const absent = capturePlacement(owner, "5", ctx)
         const version = createVersionFromPlacement(absent)
-        installPlacementVersion(owner, "5", version, ctx)
+        fixture(installPlacementVersion, owner, "5", version, ctx)
         const poison = runtime.createPoisonError(new Error("publication failed"), ctx,
             runtime.ERROR_KIND.PropertyMutationFailed)
         commitPlacementVersion(owner, "5", version, { value: poison, present: true, recovery: absent }, ctx, false)
@@ -134,7 +135,7 @@ describe("placement versions across representation boundaries", () => {
         const owner = chain._state.value
         buildRefIndex(owner, ctx)
         const version = createVersionFromPlacement(capturePlacement(owner, "item", ctx))
-        installPlacementVersion(owner, "item", version, ctx)
+        fixture(installPlacementVersion, owner, "item", version, ctx)
         const poison = runtime.createPoisonError(new Error("logical failure"), ctx,
             runtime.ERROR_KIND.AssignmentValueFailed)
         commitPlacementVersion(owner, "item", version, { value: poison, present: true }, ctx, false)
@@ -176,7 +177,7 @@ describe("placement versions across representation boundaries", () => {
             const key = array ? "1" : "item"
             const chain = new runtime.Chain(owner, ctx)
             const version = createVersionFromPlacement(capturePlacement(source._state, "value", ctx))
-            installPlacementVersion(owner, key, version, ctx)
+            fixture(installPlacementVersion, owner, key, version, ctx)
             assert.equal(Object.hasOwn(owner, key), false)
             assert.equal(runtime.lookupPath(chain, [key], ctx), value)
             assert.equal(runtime.hasError(chain, [], ctx), poisoned)

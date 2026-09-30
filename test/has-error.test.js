@@ -323,9 +323,9 @@ describe("hasError", () => {
         later.resolve(value)
         await flushMicrotasks()
 
-        // Shared publication indexes the value once. The closed query does
-        // not enumerate it again.
-        expect(scans).to.be(1)
+        // Reception prepares the graph and shared publication indexes it.
+        // The closed query performs no additional traversal.
+        expect(scans).to.be(2)
 
         nested.resolve("done")
         await flushMicrotasks()

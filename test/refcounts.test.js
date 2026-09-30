@@ -20,7 +20,9 @@ import {
     expectCounts,
     thrownBy,
     useTestExecution,
+    testOperationContext,
 } from "./support.js"
+import { addParent } from "../src/parent-placements.js"
 
 function keyScanProbe(target) {
     let count = 0
@@ -639,7 +641,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(missing)
         delete missing.self
         expect(thrownBy(() => verifyRefCounts(missing)).message).to.be(
-            "Cycle cut names a missing or non-enumerable property",
+            "Incoming parent placement does not hold its child",
         )
         useTestExecution()
 
@@ -649,7 +651,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(primitive)
         primitive.self = 1
         expect(thrownBy(() => verifyRefCounts(primitive)).message).to.be(
-            "Cycle cut must contain a traversable value",
+            "Incoming parent placement does not hold its child",
         )
         useTestExecution()
 
@@ -675,14 +677,15 @@ describe("graph presence summaries", () => {
         const unindexed = new Chain({})._state.value
         metaOf(overlaid).placementVersions.pending.value = unindexed
         expect(thrownBy(() => verifyRefCounts(overlaid)).message).to.be(
-            "Ref-indexed parent contains non-ref-indexed child",
+            "Missing incoming parent placement",
         )
     })
 
     it("detects every parent-edge consistency failure", () => {
         const missingChildIndexRoot = {}
         buildRefIndex(missingChildIndexRoot)
-        missingChildIndexRoot.child = {}
+        missingChildIndexRoot.child = new Chain({})._state.value
+        addParent(missingChildIndexRoot.child, missingChildIndexRoot, "child", testOperationContext())
         expect(thrownBy(() => verifyRefCounts(missingChildIndexRoot)).message).to.be(
             "Ref-indexed parent contains non-ref-indexed child",
         )
@@ -697,7 +700,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(cutOwner)
         delete metaOf(cutTarget).parents
         expect(thrownBy(() => verifyRefCounts(cutOwner)).message).to.be(
-            "Ref-indexed parent contains non-ref-indexed child",
+            "Counter parent projection omits a complete incoming placement",
         )
         useTestExecution()
 
@@ -706,7 +709,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(missingReverseRoot)
         getRefCounter(missingReverseChild).parents.delete(missingReverseRoot)
         expect(thrownBy(() => verifyRefCounts(missingReverseRoot)).message).to.be(
-            "Parent edge count is inconsistent",
+            "Counter parent projection omits a complete incoming placement",
         )
         useTestExecution()
 
@@ -714,7 +717,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(primitiveParentChild)
         getRefCounter(primitiveParentChild).parents.set(7, 1)
         expect(thrownBy(() => verifyRefCounts(primitiveParentChild)).message).to.be(
-            "Parent edge points to a non-traversable value",
+            "Counter parent projection omits a complete incoming placement",
         )
         useTestExecution()
 
@@ -724,7 +727,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(unindexedParentChild)
         getRefCounter(unindexedParentChild).parents.set(unindexedParent, 1)
         expect(thrownBy(() => verifyRefCounts(unindexedParentChild)).message).to.be(
-            "Parent edge points to non-ref-indexed parent",
+            "Counter parent projection omits a complete incoming placement",
         )
         useTestExecution()
 
@@ -733,7 +736,7 @@ describe("graph presence summaries", () => {
         buildRefIndex(detachedParent)
         delete detachedParent.child
         expect(thrownBy(() => verifyRefCounts(detachedChild)).message).to.be(
-            "Parent edge count is inconsistent",
+            "Incoming parent placement does not hold its child",
         )
     })
 
@@ -747,6 +750,8 @@ describe("graph presence summaries", () => {
         right.left = left
         getRefCounter(left).parents.set(right, 1)
         getRefCounter(right).parents.set(left, 1)
+        addParent(left, right, "left", testOperationContext())
+        addParent(right, left, "right", testOperationContext())
 
         const failure = thrownBy(() => verifyRefCounts(left))
         expect(failure.message).to.be("Ref-count parent graph contains a cycle")
@@ -858,7 +863,7 @@ describe("graph presence summaries", () => {
         verifyRefCounts(root)
     })
 
-    it("does not inspect a detached resolved branch without a consumer", async () => {
+    it("prepares detached version delivery without starting a query traversal", async () => {
         const outer = deferred()
         let reflections = 0
         const resolved = new Proxy({}, {
@@ -879,7 +884,9 @@ describe("graph presence summaries", () => {
 
         expect(root.value).to.be("fixed")
         expect(promiseVersion.value).to.be(resolved)
-        expect(reflections).to.be(0)
+        expect(reflections).to.be(1)
+        expect(metaOf(resolved).placementsInitialized).to.be(true)
+        expect(getRefCounter(resolved)).to.be(undefined)
         verifyRefCounts(root)
     })
 

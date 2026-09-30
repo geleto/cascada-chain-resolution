@@ -12,7 +12,7 @@ This is the authoritative developer-facing contract for data passed between Java
 
 ## Managed results and receiving boundaries
 
-**Implementation status:** this section describes the accepted Phase 1/2 target. Complete fresh-input preparation and parent indexing, followed by bounded delivery and retirement, remain pending in the [runtime evolution plan](runtime-evolution-plan.md). The current runtime still relies on permanent `shared` protection.
+**Implementation status:** common fresh-input preparation and complete parent indexing are implemented. Bounded delivery, ownership derived from parents, and retirement remain Phase 2 targets in the [runtime evolution plan](runtime-evolution-plan.md). The current runtime still relies on permanent `shared` protection.
 
 Managed results preserve their logical values through immediate reception by an operation or retention in a Chain or other explicit holder. A raw managed value or Promise is a handoff, not indefinite storage: receive it before an intervening operation can change its source, and protect each delivered input before forwarding or joining readiness. External code receives detached exports. The [integration contract](integration.md#managed-value-reception-and-delivery) specifies these boundaries and temporary Chain release.
 

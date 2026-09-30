@@ -16,12 +16,17 @@ const context = () =>
     })
 const leaves = error => error.errors ?? [error]
 
-function unreadableArray(cause) {
-    return new Proxy([1], {
-        ownKeys() {
-            throw cause
+function unreadableArray(cause, ctx) {
+    let fail = false
+    const value = new Proxy([1], {
+        ownKeys(target) {
+            if (fail) throw cause
+            return Reflect.ownKeys(target)
         },
     })
+    new runtime.Chain(value, ctx)
+    fail = true
+    return value
 }
 
 describe("Array copy placement capture", () => {
@@ -40,13 +45,15 @@ describe("Array copy placement capture", () => {
 
     for (const pending of [false, true]) it(`reads a nonnegative at placement without consuming length, pending=${pending}`, async () => {
         const ctx = context(), hold = Promise.withResolvers()
+        let failLength = false
         const source = new Proxy([pending ? hold.promise : 1, 2], {
             get(target, key, receiver) {
-                if (key === "length") throw new Error("length is unavailable")
+                if (failLength && key === "length") throw new Error("length is unavailable")
                 return Reflect.get(target, key, receiver)
             },
         })
         const chain = new runtime.Chain(source, ctx)
+        failLength = true
         const first = runtime.run(chain, [], "at", [0], ctx, {})
         if (!pending) assert.equal(first, 1)
         assert.equal(runtime.run(chain, [], "at", [7], ctx, {}), undefined)
@@ -185,7 +192,7 @@ describe("Array preparation boundaries", () => {
             it(`${method} attributes nested reflection failure with ${delivery} input`, async () => {
                 const ctx = context()
                 const cause = new Error("Array reflection")
-                const input = deliver(unreadableArray(cause))
+                const input = deliver(unreadableArray(cause, ctx))
                 const chain = new runtime.Chain(
                     method === "flat" ? [input] : [],
                     ctx,
@@ -237,16 +244,18 @@ describe("Array preparation boundaries", () => {
                 new Error("first element"),
                 new Error("second element"),
             ]
-            const inputs = causes.map(cause =>
-                deliver(
-                    new Proxy([1], {
+            const inputs = causes.map(cause => {
+                let fail = false
+                const value = new Proxy([1], {
                         getOwnPropertyDescriptor(target, key) {
-                            if (key === "0") throw cause
+                            if (fail && key === "0") throw cause
                             return Reflect.getOwnPropertyDescriptor(target, key)
                         },
-                    }),
-                ),
-            )
+                    })
+                new runtime.Chain(value, ctx)
+                fail = true
+                return deliver(value)
+            })
             const chain = new runtime.Chain(inputs, ctx)
             const failure = await runtime.run(chain, [], "join", [], ctx, {})
             assert.deepEqual(
@@ -272,7 +281,7 @@ describe("Array preparation boundaries", () => {
                 new Error("ready branch"),
                 new Error("later branch"),
             ]
-            const inputs = [unreadableArray(causes[0]), later.promise]
+            const inputs = [unreadableArray(causes[0], ctx), later.promise]
             const chain = new runtime.Chain(
                 method === "flat" ? inputs : [],
                 ctx,
@@ -293,7 +302,7 @@ describe("Array preparation boundaries", () => {
             })
             await Promise.resolve()
             assert.equal(completed, false)
-            later.resolve(unreadableArray(causes[1]))
+            later.resolve(unreadableArray(causes[1], ctx))
             const failure = await outcome
             assert.deepEqual(
                 new Set(leaves(failure).map(error => error.cause)),
@@ -307,7 +316,7 @@ describe("Array preparation boundaries", () => {
         it(`indexOf recovers reflection failure in its next step, pending=${pending}`, async () => {
             const ctx = context()
             const cause = new Error("next element")
-            let fail = true
+            let fail = false
             const receiver = new Proxy([pending ? Promise.resolve(1) : 1, 2], {
                 getOwnPropertyDescriptor(target, key) {
                     if (fail && key === "1") throw cause
@@ -315,6 +324,7 @@ describe("Array preparation boundaries", () => {
                 },
             })
             const chain = new runtime.Chain(receiver, ctx)
+            fail = true
             const failure = await runtime.run(
                 chain,
                 [],

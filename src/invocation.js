@@ -6,6 +6,7 @@ import * as internalSteps from "./internal-step.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
+import { receiveValue } from "./input-preparations.js"
 
 class InvocationWork extends operationLifecycle.OperationOwner {
     receiverReached = false
@@ -37,19 +38,24 @@ class InvocationWork extends operationLifecycle.OperationOwner {
         return exportManyValues(this.args, this)
     }
 
+    receiveArgument(value) {
+        // Payload publication can outlive this invocation. Reception keeps
+        // advancing it; the lease ledger independently stops retaining values.
+        const received = receiveValue(value, this.operationContext,
+            errorUtils.ERROR_KIND.OperationInputFailed, this.leaseArgument)
+        markPromiseHandled(received, this.operationContext)
+        return received
+    }
+
     leaseArgumentsUntilReceiverReached() {
-        for (const value of this.args) {
-            const protection = internalSteps.continueOperation(
-                value,
+        for (let index = 0; index < this.args.length; index++) {
+            const protection = receiveValue(
+                this.args[index],
                 this.operationContext,
-                resolved => {
-                    if (Error.isError(resolved)) return undefined
-                    languageValues.admitReadyValue(resolved, this.operationContext)
-                    this.#argumentsAwaitingReceiverLeases.acquire(resolved)
-                },
-                () => undefined,
-                this,
+                errorUtils.ERROR_KIND.OperationInputFailed,
+                this.#argumentsAwaitingReceiverLeases.acquire,
             )
+            this.args[index] = protection
             markPromiseHandled(protection, this.operationContext)
         }
     }
@@ -190,18 +196,7 @@ function createLeaseLedger(operationContext) {
     return { acquire, release }
 
     function acquire(value) {
-        if (closed || values.has(value)) return value
-        const leased = internalSteps.consumeValue(
-            value,
-            operationContext,
-            errorUtils.ERROR_KIND.OperationInputFailed,
-            ready => {
-                if (!closed && !values.has(ready) && metadata.incrementReadLease(ready, operationContext)) values.add(ready)
-                return ready
-            },
-        )
-        if (!languageValues.isPending(leased, operationContext)) return leased
-        markPromiseHandled(leased, operationContext)
+        if (!closed && !values.has(value) && metadata.incrementReadLease(value, operationContext)) values.add(value)
         return value
     }
 

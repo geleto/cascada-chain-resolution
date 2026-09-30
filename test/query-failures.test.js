@@ -54,7 +54,7 @@ describe("query and export failure boundaries", () => {
                 async () => {
                     const ctx = context()
                     const cause = new Error("query reflection")
-                    let fail = true
+                    let fail = false
                     const target = { clean: 1 }
                     const root = new Proxy(target, {
                         ownKeys(value) {
@@ -63,10 +63,12 @@ describe("query and export failure boundaries", () => {
                         },
                     })
                     target.self = root
+                    new runtime.Chain(root, ctx)
                     const chain = new runtime.Chain(
                         deferred ? Promise.resolve(root) : root,
                         ctx,
                     )
+                    fail = true
                     const result = query(chain, [], ctx)
                     const failure = deferred
                         ? await result
@@ -103,7 +105,7 @@ describe("query and export failure boundaries", () => {
             { pending: new Promise(() => {}) },
             {
                 ownKeys(target) {
-                    if (++scans === 2) throw cause
+                    if (++scans === 3) throw cause
                     return Reflect.ownKeys(target)
                 },
             },
@@ -119,7 +121,7 @@ describe("query and export failure boundaries", () => {
         assert.equal(failure.kind, runtime.ERROR_KIND.QueryReflectionFailed)
         assert.equal(failure.errors, undefined)
         assert.equal(ctx.execution.fatalError, null)
-        assert.equal(scans, 2)
+        assert.equal(scans, 3) // Preparation, shared indexing, then the query.
         assert.equal(runtime.lookupPath(chain, ["known"], ctx), known)
         verifyRefCounts(ctx, chain._state.value)
     })
@@ -138,7 +140,7 @@ describe("query and export failure boundaries", () => {
                     { pending: new Promise(() => {}) },
                     {
                         ownKeys(target) {
-                            if (++scans === 2) throw cause
+                            if (++scans === 3) throw cause
                             return Reflect.ownKeys(target)
                         },
                     },
@@ -157,14 +159,14 @@ describe("query and export failure boundaries", () => {
                 await flush()
                 if (proofFirst) {
                     assert.equal(answer, true)
-                    assert.equal(scans, 1) // Only shared publication remains after closure.
+                    assert.equal(scans, 2) // Preparation and shared indexing remain after closure.
                 } else {
                     assert.equal(answer.cause, cause)
                     assert.equal(
                         answer.kind,
                         runtime.ERROR_KIND.QueryReflectionFailed,
                     )
-                    assert.equal(scans, 2)
+                    assert.equal(scans, 3)
                 }
                 assert.equal(ctx.execution.fatalError, null)
             },

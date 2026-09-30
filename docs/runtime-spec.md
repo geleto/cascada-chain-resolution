@@ -263,17 +263,22 @@ thenable likewise remains physical host data, but its final value uses a fixed
 overlay rather than a Promise version. Frozen imported managed data
 therefore follows the same path as writable imported managed data.
 
-Synchronous custom deliveries reuse the segment's staging walk and identity
-map. One segment-local lifecycle fact transitions from `staging` to either
-`committed` or `abandoned`. Subscriptions that remain pending gain import and
-publication authority only on commit. Release staging collections on either
-terminal transition; retain only the lifecycle fact and captured work needed by
-owned reactions. Abandoned callbacks return after the common execution and
-segment checks without admission or publication, and no committed version needs
-their settlement. Keep their reactions handled without cancelling the source.
-Later delivery for a committed placement starts a new segment. Initial external-tree discovery reads staged
-logical overlays and admission facts together, follows synchronous custom
-outcomes, and stops at pending values. It neither resubscribes nor commits early;
+Synchronous custom delivery reuses the segment's staging walk and identity map.
+Each preparation container has one staged/published/discarded delivery authority. Publication
+commits its incoming occurrences, logical versions, and preparation completion.
+Discarded initialization performs no later destination work; published versions
+still settle after detachment. Overlapping preparation can supersede one record
+without cancelling the rest of the batch or independent result validation.
+Reconcile supersession before final copy shapes, remapping, or admission; adoption
+inspects source captures while existing subscriptions own discovery and validation.
+Commit performs no further discovery or subscription. Initial relationships use
+final private storage or captured host entries, without duplicate edge buffers;
+ready-only construction needs no delivery authority.
+Release staging collections after commit or discard, keeping observed reactions
+handled without cancelling their source. Later delivery starts a new segment.
+Initial external-tree discovery instead follows original inputs and staged
+admission facts. Every Promise or thenable stops discovery, even when ordinary
+import delivers it synchronously. Discovery neither subscribes nor commits early;
 later delivery creates no tree leaves.
 
 External code must not mutate an imported graph after import. Native code must

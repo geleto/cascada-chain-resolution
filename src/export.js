@@ -5,6 +5,7 @@ import * as languageValues from "./language-values.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import { walkManagedProperties } from "./managed-traversal.js"
 import { createEmptyContainer, defineCopyProperty, captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
+import { receiveValue } from "./input-preparations.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -26,7 +27,7 @@ function exportValues(values, owner, onResult) {
     const shapes = new Set()
     let unregister
     const readiness = values.map((value, position) =>
-        internalSteps.consumeValue(
+        receiveValue(
             value,
             operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,

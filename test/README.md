@@ -14,15 +14,18 @@ Prefer integration tests through public operations, as [AGENTS.md](../AGENTS.md#
 | --- | --- |
 | [native-equivalence-support.js](native-equivalence-support.js) | Behavior meant to match native JavaScript, such as property, Array, and String semantics. |
 | [fixtures/placement-sequences.js](fixtures/placement-sequences.js) | Seeded programs on one placement, checked against a sequential model with rollback. |
+| [fixtures/preparation-sequences.js](fixtures/preparation-sequences.js) | Shared identities received by overlapping imports, initialization, assignment, and method results. Varies aliases, cycles, nesting, record/Array shape, ready/native/ordered delivery, and whether a subscription drains earlier preparation before or during the second boundary. |
 | [fixtures/array-sequences.js](fixtures/array-sequences.js) | Seeded Array programs: element entries, direct commands, failure and repair, length, structural methods, and observations issued directly, inside read-only entries, or on lookup snapshots. |
 | [fixtures/nested-sequences.js](fixtures/nested-sequences.js) | Seeded programs on a nested record and Array graph: assignment, deletion, replacement, structure, lookups, and entries at any ancestor, checked against native JavaScript including record key order, on plain, imported, and view-sharing containers. |
 | [fixtures/external-sequences.js](fixtures/external-sequences.js) | Seeded programs on registered external resources with child scopes beside managed data: native calls and accessor writes, failures, rejected arguments and values, scope and root poison, repair, Error queries, dynamic keys, a second context, competing registrations, an unselected alias, an observation-only identity, and mutable, read-only, nested, and mixed entries. Checks the order of every native call, exact Error identities, and that no reservation remains at quiescence. |
 | [fixtures/conflict-matrix.js](fixtures/conflict-matrix.js) | Every predecessor/queued/queued triple on one placement, with a sibling as an order and length witness. |
 | [verify-refcounts.js](verify-refcounts.js) | The common consistency check: it recounts refcount indexes, parent edges, and cycle cuts, then runs the storage oracle. Call it wherever a test checks maintained state. |
+| [verify-parents.js](verify-parents.js) | Independently checks forward logical storage, raw backing occurrences, owner registration, and the counter projection, including storage hidden by bounds and overlays. Recognizes unavailable children through installed publication dependencies and rejects missing child admission without inspecting `then`. Runs first from `verifyRefCounts`, before any normalizing read, and works before counter indexing. |
+| [trace-runtime.js](trace-runtime.js) | Test-only source instrumentation for publication, construction, low-level writes, and admission. Detects untracked writes, first child admission through ordinary reads of initialized owners, and host actions or subscriptions during preparation commit. Production code contains no tracer hooks. |
 | [verify-storage.js](verify-storage.js) | The storage oracle: no installed version may claim absent storage over a physical placement, and an ArrayView's retained backing prefix must stay within its bounds and protect its unversioned managed children. [verify-storage.test.js](verify-storage.test.js) shows the common check rejects corrupted facts. |
 | [storage-settlement.test.js](storage-settlement.test.js), [publication-failures.test.js](publication-failures.test.js) | Bounded storage-failure matrices: optional Promise synchronization versus required mutation publication, direct and nested entry routes, records/Arrays, indexed/unindexed data, repair, Error preservation, and fatal precedence. Follow-up mutation runs before diagnostic observation can introduce sharing or indexing. |
 
-Generated programs and matrices use an independent model derived from the contracts, never from the implementation, and compare every captured and final observation with it. The Array, nested, and external fixtures run each program in three modes; the matrix does so for a sample of its cases and for every case in its full run:
+Generated programs and matrices use an independent model derived from the contracts, never from the implementation, and compare every captured and final observation with it. The preparation, Array, nested, and external fixtures run each program in three modes; the matrix does so for a sample of its cases and for every case in its full run:
 
 - `observed`: initialize the live index, run consistency verifiers between commands and settlement turns, and issue optional diagnostic reads.
 - `verified`: retain indexing and verification, but omit those diagnostic reads.
@@ -34,11 +37,19 @@ Random generation rarely assembles a specific multi-step trigger. Keep an explic
 
 ## Scaling generated runs
 
+Run the same suite with publication instrumentation when changing graph producers or receiving boundaries:
+
+```sh
+node --import ./test/trace-runtime.js --unhandled-rejections=strict ./node_modules/mocha/bin/mocha.js --require ./test/setup.js "test/**/*.test.js"
+```
+
+The loader instruments named helpers, including the edge-neutral pending mutation-version installation. Detached export writes and deliberate internal fixture setup are explicitly scoped. `publication-trace.test.js` proves sensitivity by omitting one boundary in an isolated load; it also runs discarded-construction GC and preparation work-count fixtures. The GC fixture keeps an inspection Error observable while proving that pending callbacks and Error stack frames do not retain the failed input. Use `--import ./test/trace-runtime.js` on direct sequence and matrix commands too: child fixture processes do not inherit their parent’s loader arguments automatically. The incoming oracle uses independent forward descriptors, Array bounds, and overlays rather than the preparer’s key filter.
+
 Default runs stay bounded: the generated tests add about 5 seconds to `npm test`. Before merging changes to shared transition mechanisms, such as placement publication, entry, external reservations, Array length, or structural methods, also run them at a larger scale with these settings:
 
 | Setting | Effect |
 | --- | --- |
-| `CASCADA_SEQUENCE_SEEDS=n` | Seeds for the sequence fixtures (default 16): 4 cases each for placement sequences, 6 programs each for the Array, nested, and external sequences. |
+| `CASCADA_SEQUENCE_SEEDS=n` | Seeds for the sequence fixtures (default 16): 4 cases each for placement sequences, 6 programs each for Array, nested, and external sequences, and 8 programs each for overlapping preparation. |
 | `CASCADA_SEQUENCE_START=i` | First program to run in the Array, nested, or external fixture; use it with the index a failure reports. |
 | `CASCADA_CONFLICT_MATRIX=full` | The complete conflict product in all three harness modes, with checks after every microtask turn in the instrumented runs. |
 | `CASCADA_CONFLICT_PART=i/n` | Runs every n-th case starting at i, to split a full matrix across processes. |

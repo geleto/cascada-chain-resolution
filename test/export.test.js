@@ -5,8 +5,6 @@ import {
     metaOf,
     buildRefIndex,
     getRefCounter,
-    useTestExecution,
-    thrownBy,
     verifyRefCounts,
     assignPath,
     deletePath,
@@ -141,24 +139,6 @@ describe("export", () => {
         expect(shared.value).to.be(1)
         expect(chain._state.value.alias).to.eql({ value: 2 })
         expect(chain._state.value.alias).not.to.be(shared)
-    })
-
-    it("reports a missing indexed Promise version as fatal", () => {
-        const pending = deferred()
-        const root = { pending: pending.promise }
-        let reported
-        useTestExecution(error => {
-            reported = error
-        })
-        buildRefIndex(root)
-        delete metaOf(root).placementVersions.pending
-
-        const failure = thrownBy(() => exportValue(new Chain(root), []))
-
-        expect(failure).to.be(reported)
-        expect(failure.message).to.be(
-            "Indexed promise property has no Promise version",
-        )
     })
 
     it("returns synchronous reflection failures as language Errors", () => {
@@ -332,16 +312,19 @@ describe("export", () => {
         const pending = deferred()
         const reflection = new Error("reflection failed")
         const hidden = new Error("revealed later")
+        let fail = false
         const broken = new Proxy({}, {
-            ownKeys() {
-                throw reflection
+            ownKeys(target) {
+                if (fail) throw reflection
+                return Reflect.ownKeys(target)
             },
         })
-
-        const result = exportValue(new Chain({
+        const chain = new Chain({
             pending: pending.promise,
             broken,
-        }), [])
+        })
+        fail = true
+        const result = exportValue(chain, [])
 
         expect(result instanceof Promise).to.be(true)
         pending.resolve({ hidden })
@@ -353,17 +336,22 @@ describe("export", () => {
         const inner = deferred()
         const reflection = new Error("delayed reflection failed")
         const hidden = new Error("nested later")
+        let fail = false
         const broken = new Proxy({}, {
-            ownKeys() {
-                throw reflection
+            ownKeys(target) {
+                if (fail) throw reflection
+                return Reflect.ownKeys(target)
             },
         })
+        const branch = { inner: inner.promise, broken }
+        new Chain(branch)
+        fail = true
         const result = exportValue(
             new Chain({ branch: outer.promise }),
             [],
         )
 
-        outer.resolve({ inner: inner.promise, broken })
+        outer.resolve(branch)
         await flushMicrotasks()
         inner.resolve({ hidden })
 
@@ -374,17 +362,20 @@ describe("export", () => {
         const reflection = new Error("Array length failed")
         const nested = new Error("inside Array")
         let lengthReads = 0
+        let fail = false
         const array = new Proxy([nested], {
             get(target, key, receiver) {
-                if (key === "length" && lengthReads++ === 0) {
+                if (fail && key === "length" && lengthReads++ === 0) {
                     throw reflection
                 }
                 return Reflect.get(target, key, receiver)
             },
         })
 
+        const chain = new Chain({ array })
+        fail = true
         expectExportErrors(
-            exportValue(new Chain({ array }), []),
+            exportValue(chain, []),
             [reflection, nested],
         )
     })

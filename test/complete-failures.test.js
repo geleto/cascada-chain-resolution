@@ -21,15 +21,18 @@ describe("complete failure outcomes", () => {
             const first = new Error("first")
             const last = new Error("last")
             const reflection = new Error("descriptor")
+            let fail = false
             const graph = new Proxy({ first, bad: 0, last }, {
                 getOwnPropertyDescriptor(value, key) {
-                    if (key === "bad") throw reflection
+                    if (fail && key === "bad") throw reflection
                     return Reflect.getOwnPropertyDescriptor(value, key)
                 },
             })
             const receiver = { read() { assert.fail("failed preparation must not invoke external code") } }
+            new runtime.Chain(graph, ctx)
             if (route === "receiver") receiver.graph = graph
             const chain = new runtime.Chain(route === "export" ? graph : receiver, ctx)
+            fail = true
             const result = route === "export"
                 ? runtime.export(chain, [], ctx)
                 : runtime.run(chain, [], "read", route === "argument" ? [graph] : [], ctx, {})

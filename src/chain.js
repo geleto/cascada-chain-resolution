@@ -1,16 +1,13 @@
 import * as errorUtils from "./error.js"
 import { importContext } from "./import.js"
 import * as internalSteps from "./internal-step.js"
-import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
+import { initializeHolder } from "./parent-placements.js"
 
 class Chain {
     constructor(initialValue, operationContext) {
         internalSteps.runInternalStep(operationContext, () => {
-            const rootState = {}
-            languageValues.admitReadyValue(
-                rootState, operationContext, languageValues.TYPE.Record, Object.prototype,
-            )
+            const rootState = initializeHolder({}, operationContext)
             propertyVersions.assignProperty(
                 rootState,
                 "value",

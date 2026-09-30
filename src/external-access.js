@@ -4,7 +4,7 @@ import * as imports from "./import.js"
 import * as steps from "./internal-step.js"
 import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
-import { exportManyValues, exportValue } from "./export.js"
+import { exportValue } from "./export.js"
 import { externalCapabilityEscapeError, validateExternalAccess } from "./external-operation.js"
 import { readManagedProperty, snapshotExternalValue } from "./external-snapshot.js"
 
@@ -60,10 +60,8 @@ class ExternalAccess {
     }
 
     write(value) {
-        return steps.continueOperation(exportManyValues([value], this.operation), this.operationContext, prepared => {
-            if (errors.isPoisonError(prepared)) return prepared
-            return this.changeProperty(false, prepared[0])
-        })
+        // Issuance already captured and exported the input, before native waits.
+        return errors.isPoisonError(value) ? value : this.changeProperty(false, value)
     }
 
     delete() { return this.changeProperty(true) }

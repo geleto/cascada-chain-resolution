@@ -13,7 +13,9 @@ import * as refcounts from "./refcounts.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
 import { externalLocationError } from "./external-operation.js"
-import { createEmptyContainer, defineCopyProperty, copyContainerStructure } from "./placement-structure.js"
+import { createEmptyContainer, defineCopyProperty, prepareContainerStructureCopy } from "./placement-structure.js"
+import { PlacementConstruction } from "./parent-placements.js"
+import { exportValue } from "./export.js"
 
 function containsPromise(value, operationContext, visited = new Set()) {
     if (languageValues.isPending(value, operationContext)) return true
@@ -49,25 +51,26 @@ function shallowCopyPathContainer(source, operationContext) {
     const destination = createEmptyContainer(source, operationContext)
     const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
     languageValues.admitReadyValue(destination, operationContext, type, admittedPrototype)
-
-    // Copy only language-visible own enumerable string keys. Identity metadata
-    // stays with the source; captured structural state is transferred below.
-    // Both containers retain every copied child until replacement, including
-    // when a path operation does nothing or its child is still pending.
-    for (const key of languageProperties.enumerableLanguageKeys(
-        source,
-        operationContext,
-    )) {
-        const placement = languageProperties.readLanguagePlacement(source, key, operationContext)
-        // Fresh records reserve physical key order even while presence is
-        // undecided. Arrays must not grow merely to represent such a placement.
-        if (placement.sourceVersion?.pendingPresence && !isLogicalArray(source, operationContext))
-            defineCopyProperty(destination, key, undefined)
-        propertyVersions.copyPlacement(placement, destination, key, operationContext)
-    }
-    // Initial population copies existing structure; it is not a new sequence
-    // of insertions. Install captured order only after those physical writes.
-    copyContainerStructure(source, destination, operationContext)
+    PlacementConstruction.initializeAndPublish(destination, operationContext, destination => {
+        // Copy only language-visible own enumerable string keys. Identity metadata
+        // stays with the source; captured structural state is transferred below.
+        // Both containers retain every copied child until replacement, including
+        // when a path operation does nothing or its child is still pending.
+        for (const key of languageProperties.enumerableLanguageKeys(
+            source,
+            operationContext,
+        )) {
+            const placement = languageProperties.readLanguagePlacement(source, key, operationContext)
+            // Fresh records reserve physical key order even while presence is
+            // undecided. Arrays must not grow merely to represent such a placement.
+            if (placement.sourceVersion?.pendingPresence && !isLogicalArray(source, operationContext))
+                defineCopyProperty(destination, key, undefined)
+            propertyVersions.copyPlacement(placement, destination, key, operationContext)
+        }
+        // Initial population copies existing structure; it is not a new sequence
+        // of insertions. Install captured order only after those physical writes.
+        prepareContainerStructureCopy(source, destination, operationContext)()
+    })
     refcounts.indexValueIfSourceIndexed(source, destination, operationContext)
     return destination
 }
@@ -203,9 +206,8 @@ function assignManagedPath(
                 ) {
                     const logicalKey = path.length ? target.key : chain._rootKey
                     const publish = resolved => {
-                        if (languageProperties.isCallableThenPlacement(logicalKey, resolved.value))
-                            return languageProperties.propertyValidationError(
-                                "Language data cannot contain a callable then property", operationContext)
+                        const failure = languageProperties.validatePropertyValue(logicalKey, resolved.value, operationContext)
+                        if (failure) return failure
                         const result = propertyVersions.transferPlacement(resolved, target.parent, target.key, operationContext)
                         if (target.attachmentRoot && containsPromise(
                             languageProperties.readLanguageProperty(target.parent, target.key, operationContext), operationContext,
@@ -550,8 +552,7 @@ function walkMutationPath(
             if (atTarget && !deletesTarget && !preserveOnFailure &&
                 isArrayView(projection, operationContext) && isArrayIndex(key)) {
                 const growth = Number(key) + 1 - ArrayView.minimumLength(value, operationContext)
-                const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth,
-                    view => propertyVersions.prepareRetainedArrayProperties(value, view, operationContext), operationContext)
+                const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth, operationContext)
                 if (extended) {
                     parent = extended
                     attachmentRoot ??= parent
@@ -623,15 +624,24 @@ function deletePath(chain, path, operationContext, mutationScopeDepth = path.len
 }
 
 function mutatePath(chain, path, placement, operationContext, depth, dynamic, deleting) {
-    const value = placement?.value
+    let value = placement?.value
     return internalSteps.runInternalStep(operationContext, () => {
         if (errorUtils.isFatalError(value)) throw value
         const replaceScope = depth === path.length
         // A property write consumes its container, not the old final value.
         const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
+        const external = Boolean(operation.route.externalScope)
         path = operation.route.path
-        const result = operation.route.externalScope
-            ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() : access.write(value)))
+        if (!deleting && !operation.routeFailure && !external) {
+            placement = propertyVersions.prepareInputPlacement(value, operationContext, errorUtils.ERROR_KIND.AssignmentValueFailed)
+        }
+        const outward = !deleting && !operation.routeFailure && external
+            ? exportValue(value, operation)
+            : undefined
+        if (external) markPromiseHandled(outward, operationContext)
+        const result = external
+            ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() :
+                internalSteps.continueOperation(outward, operationContext, value => access.write(value), undefined, operation)))
             : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
                 if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
                     "A mutable external namespace cannot be replaced or deleted", operationContext)
@@ -645,7 +655,8 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
                     return captureMutationResult(privateChain, result, operationContext)
                 })
             }, replaceScope, deleting))
-        if (!deleting && languageValues.isPending(result, operationContext)) operation.leaseValues([value])
+        if (!deleting && !operation.routeFailure && !external && languageValues.isPending(result, operationContext))
+            operation.leaseValue(propertyVersions.resolvePlacement(placement, operationContext, ready => ready.value))
         if (!languageValues.isPending(result, operationContext)) return result
         markPromiseHandled(result, operationContext)
         return undefined

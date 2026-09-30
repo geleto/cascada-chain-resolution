@@ -1,6 +1,6 @@
 # Error Handling Architecture
 
-**Implementation status:** the fresh-input preparation and attribution rules below include the accepted Phase 1 target; uniform preparation at Chain, assignment, call, and outward-write reception is not yet implemented. See the [runtime evolution plan](runtime-evolution-plan.md) for that work, separately from the existing Error machinery.
+**Implementation status:** the fresh-input preparation and attribution rules below are implemented at Chain, assignment, call-input, and outward-write reception. Phase 2 delivery and lifetime work remains separate; see the [runtime evolution plan](runtime-evolution-plan.md).
 
 ## Purpose
 
@@ -279,7 +279,7 @@ Consume a possible placement thenable before choosing its representation. If its
 
 Error recognition precedes thenability recognition. Admission also preserves an identity's already-fixed category before probing; the metadata short-circuit is an admission invariant, not a thenability cache. Failure while ordinary raw recognition or subscription invokes supported host behavior belongs to that exact causal boundary. The contract does not require special diagnosis for an unstable getter or broken ordering: a safely observed throw is classified normally, while an undetectable ordering violation is an unsupported host-contract violation.
 
-Readiness and publication authority remain scoped to the work they describe. A pending independent result cannot extend completed path selection, receiver publication, or source capture. Import subscriptions share one segment-local lifecycle fact, `staging -> committed` or `staging -> abandoned`. Commit grants semantic publication authority; abandonment makes later callbacks return after the common execution and segment checks without that work. Release staging collections on either terminal transition while retaining rejection ownership of already-created reactions. Synchronous custom delivery joins the current staging walk; later delivery for a committed placement starts a new segment. No committed shared version exists for an abandoned import subscription to settle.
+Readiness and publication authority remain scoped to the work they describe. A pending independent result cannot extend completed path selection, receiver publication, or source capture. Graph preparation and private construction use per-container staged/published/discarded records. Commit grants semantic publication authority; discarding initialization makes its callbacks return without destination work. Published versions still settle after detachment. An overlapping boundary can supersede one initialization without cancelling the rest of its batch or independent result validation. Release staging collections on completion or discard while retaining rejection ownership of observed sources. Synchronous custom delivery joins the current walk; later delivery for a published placement starts a new segment.
 
 ### Hook-free contextualization and diagnostics
 

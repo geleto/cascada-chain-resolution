@@ -124,8 +124,9 @@ The source implements Phase 9D-B and the [public higher-runtime API](docs/integr
 
 ### `new Chain(initialValue, operationContext)`
 
-Creates a mutation-capable Chain rooted at an existing Cascada value. It admits
-the value but does not import host data; pass host-provided roots through
+Creates a mutation-capable Chain rooted at an existing Cascada value. It prepares
+fresh available structure and records parent placements without importing it;
+pending branches continue preparation on delivery. Pass host-provided roots through
 `import` first. Read-only and automatically closed Chains exist only inside
 `enter`.
 

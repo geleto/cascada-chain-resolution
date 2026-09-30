@@ -37,8 +37,9 @@ function propertyValidationError(message, operationContext) {
     )
 }
 
-function isCallableThenPlacement(key, value) {
-    return key === "then" && typeof value === "function"
+function validatePropertyValue(key, value, operationContext) {
+    if (key === "then" && typeof value === "function")
+        return propertyValidationError("Language data cannot contain a callable then property", operationContext)
 }
 
 function normalizePathSegment(segment, operationContext) {
@@ -108,8 +109,15 @@ function requiresRepresentationCopyForPropertyMutation(
 
 // These assertions guard internal commits after the owning transition has
 // selected a writable representation.
+function getStorageDescriptor(parent, key, operationContext) {
+    // A native Array may have an attached logical length projection. Storage
+    // preflight needs its actual slot, without traversing pending length history.
+    return isArrayView(parent, operationContext) ? parent.descriptor(String(key), operationContext) :
+        errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key))
+}
+
 function assertCanSetLanguageProperty(parent, key, operationContext) {
-    const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
+    const descriptor = getStorageDescriptor(parent, key, operationContext)
     if (!descriptor) return
     if (!descriptor.enumerable) {
         throw new Error("Cannot mutate non-enumerable property")
@@ -120,25 +128,29 @@ function assertCanSetLanguageProperty(parent, key, operationContext) {
     if (!descriptor.writable) {
         throw new Error("Cannot assign to non-writable property")
     }
+    return descriptor
 }
 
 function assertCanDeleteLanguageProperty(parent, key, operationContext) {
-    const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
+    const descriptor = getStorageDescriptor(parent, key, operationContext)
     if (isDataPlacement(descriptor) && !descriptor.configurable) {
         throw new Error("Cannot delete non-configurable property")
     }
+    return descriptor
 }
 
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
-function writeLanguageProperty(parent, key, value, operationContext) {
+function writeLanguageProperty(parent, key, value, operationContext, descriptor) {
     parent = ArrayView.projectionOf(parent, operationContext)
     if (isArrayView(parent, operationContext)) {
-        parent.set(String(key), value, operationContext)
-        return
+        const target = parent.mutationTarget(String(key), operationContext, true)
+        parent = target.parent
+        key = target.key
     }
+    const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
     errorUtils.runExternalAction(operationContext, () => {
-        if (Object.hasOwn(parent, key)) {
+        if (descriptor) {
             parent[key] = value
             return
         }
@@ -149,6 +161,7 @@ function writeLanguageProperty(parent, key, value, operationContext) {
             configurable: true,
         })
     })
+    if (isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, value, operationContext)
 }
 
 function readLanguageProperty(parent, key, operationContext) {
@@ -191,17 +204,25 @@ function hasLanguageProperty(parent, key, operationContext) {
     return descriptor !== undefined
 }
 
-function deleteLanguageProperty(parent, key, operationContext) {
+function deleteLanguageProperty(parent, key, operationContext, descriptor) {
     parent = ArrayView.projectionOf(parent, operationContext)
-    if (isArrayView(parent, operationContext))
-        return parent.delete(String(key), operationContext)
-    return errorUtils.runExternalAction(operationContext, () => delete parent[key])
+    if (isArrayView(parent, operationContext)) {
+        const target = parent.mutationTarget(String(key), operationContext, false)
+        if (!target) return key !== "length"
+        parent = target.parent
+        key = target.key
+    }
+    const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
+    const removed = errorUtils.runExternalAction(operationContext, () => delete parent[key])
+    if (removed && isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, undefined, operationContext)
+    return removed
 }
 
 // Capture candidates at the call, before descriptor checks, so one failing
 // Proxy descriptor cannot hide later siblings from complete Error collection.
-function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end) {
-    const array = isLogicalArray(value, operationContext)
+function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end,
+    type = metadata.metaOf(value, operationContext)?.type) {
+    const array = type === metadata.TYPE.Array
     const keys = array
         ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
         : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
@@ -243,7 +264,7 @@ export {
     enumerableLanguageKeys,
     getLanguagePlacementDescriptor,
     hasLanguageProperty,
-    isCallableThenPlacement,
+    validatePropertyValue,
     enumerableLanguageKeyCandidates,
     normalizePathSegment,
     propertyValidationError,

@@ -151,10 +151,11 @@ describe("captured Array length knowledge", () => {
             const chain = new runtime.Chain(source, context)
             if (shared) runtime.lookupPath(chain, [], context)
             discardedReads = 0
+            const preparedSubscriptions = subscriptions
 
             assert.equal(runtime.assignPath(chain, ["length"], 1, context), undefined)
             assert.equal(discardedReads, 0, "copying must not inspect discarded elements")
-            assert.equal(subscriptions, 0, "copying must not consume discarded payloads")
+            assert.equal(subscriptions, preparedSubscriptions, "copying must not consume discarded payloads again")
             assert.deepEqual(runtime.export(chain, [], context), [1])
             assert.equal(storage.length, 5)
             verifyRefCounts(context, chain._state)

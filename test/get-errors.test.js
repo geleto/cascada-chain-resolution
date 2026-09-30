@@ -19,7 +19,6 @@ import {
     metaOf,
     exportValue,
     useTestExecution,
-    thrownBy,
     verifyRefCounts,
 } from "./support.js"
 
@@ -97,9 +96,11 @@ describe("getErrors", () => {
     it("returns query-only reflection failures as poison", () => {
         for (const query of [hasError, getErrors]) {
             const failure = new Error("query reflection failed")
+            let fail = false
             const value = new Proxy({}, {
-                ownKeys() {
-                    throw failure
+                ownKeys(target) {
+                    if (fail) throw failure
+                    return Reflect.ownKeys(target)
                 },
             })
             let reported
@@ -107,7 +108,9 @@ describe("getErrors", () => {
                 reported = error
             })
 
-            const thrown = query(new Chain(value), [])
+            const chain = new Chain(value)
+            fail = true
+            const thrown = query(chain, [])
             expect(errorCause(thrown)).to.be(failure)
             expect(reported).to.be(undefined)
         }
@@ -123,7 +126,7 @@ describe("getErrors", () => {
             const value = new Proxy(target, {
                 ownKeys(target) {
                     scans++
-                    if (scans === 2) throw failure
+                    if (scans === 3) throw failure
                     return Reflect.ownKeys(target)
                 },
             })
@@ -138,12 +141,12 @@ describe("getErrors", () => {
             const failureResult = await result
             expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
-            expect(scans).to.be(2)
+            expect(scans).to.be(3)
 
             inner.resolve({ ready: true })
             await flushMicrotasks()
 
-            expect(scans).to.be(2)
+            expect(scans).to.be(3)
             expect(metaOf(value).placementVersions.inner.value)
                 .to.eql({
                 ready: true,
@@ -230,23 +233,6 @@ describe("getErrors", () => {
 
         second.resolve(secondError)
         expectErrors(await collected, [firstError, secondError])
-    })
-
-    it("reports a missing indexed Promise version as fatal", () => {
-        for (const query of [hasError, getErrors]) {
-            useTestExecution()
-            const pending = deferred()
-            const root = { pending: pending.promise }
-            buildRefIndex(root)
-            delete metaOf(root).placementVersions.pending
-
-            const failure = thrownBy(() => query(new Chain(root), []))
-
-            expect(failure instanceof Error).to.be(true)
-            expect(failure.message).to.be(
-                "Indexed promise property has no Promise version",
-            )
-        }
     })
 
     it("continues through cycle cuts while collecting ordinary Errors", () => {

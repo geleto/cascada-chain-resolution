@@ -5,6 +5,7 @@ import * as languageValues from "./language-values.js"
 import * as propertyVersions from "./property-versions.js"
 import * as internalSteps from "./internal-step.js"
 import * as refcounts from "./refcounts.js"
+import { PlacementConstruction } from "./parent-placements.js"
 
 // Fix presence without consuming values. Complete preparation supplies a guard
 // to retain unreadable placements as Error inputs; structural remaps fail fast.
@@ -40,7 +41,7 @@ function createArrayFromRemap(
         operationContext,
         languageValues.TYPE.Array,
     )
-    placeRemap(output, remap, operationContext)
+    PlacementConstruction.initializeAndPublish(output, operationContext, output => placeRemap(output, remap, operationContext))
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(
             refIndexSource,

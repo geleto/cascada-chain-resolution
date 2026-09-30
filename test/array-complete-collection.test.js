@@ -111,11 +111,19 @@ describe("complete Array preparation", () => {
                 const later = Promise.withResolvers()
                 let fail = false
                 let nestedReads = 0
-                const nested = cause => new Proxy([1], {
-                    ownKeys() { nestedReads++; throw cause },
-                })
-                const delivered = delivery === "ready" ? nested(last)
-                    : delivery === "synchronous" ? ready(nested(last)) : later.promise
+                const nested = cause => {
+                    const value = new Proxy([1], {
+                        ownKeys(target) {
+                            if (fail) { nestedReads++; throw cause }
+                            return Reflect.ownKeys(target)
+                        },
+                    })
+                    new runtime.Chain(value, ctx)
+                    return value
+                }
+                const lastValue = nested(last)
+                const delivered = delivery === "ready" ? lastValue
+                    : delivery === "synchronous" ? ready(lastValue) : later.promise
                 const source = new Proxy([nested(first), 0, delivered], {
                     getOwnPropertyDescriptor(target, key) {
                         if (fail && key === "1") throw reflection
@@ -132,7 +140,7 @@ describe("complete Array preparation", () => {
                     await flush()
                     assert.equal(settled, false)
                 } else assert(runtime.isPoisonError(work))
-                later.resolve(nested(last))
+                later.resolve(lastValue)
                 assertCauses(await work, depth ? [first, reflection, last] : [reflection])
                 assert.equal(nestedReads, depth ? 2 : 0)
                 assert.equal(ctx.execution.fatalError, null)
@@ -148,7 +156,7 @@ describe("complete Array preparation", () => {
             const reflection = new Error("middle descriptor")
             let fail = false
             const nested = cause => method === "flat"
-                ? new Proxy([1], { ownKeys() { throw cause } }) : cause
+                ? new Proxy([1], { ownKeys(target) { if (fail) throw cause; return Reflect.ownKeys(target) } }) : cause
             const source = new Proxy([0, nested(first), , 0, nested(last), 0], {
                 ownKeys(target) {
                     assert.equal(fail, false, "must not scan the entire backing")

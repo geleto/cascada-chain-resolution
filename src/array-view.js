@@ -2,6 +2,31 @@ import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import { LengthState } from "./array-length.js"
+import { addParent, removeParent, PlacementConstruction } from "./parent-placements.js"
+import { prepareRetainedArrayProperties } from "./property-versions.js"
+
+class ArrayBacking {
+    constructor(array) {
+        this.array = array
+        this.owners = new Set([array])
+    }
+
+    // Includes the original Array alongside its derived views.
+    visitViewPlacements(indexes, operationContext, visit) {
+        for (const owner of this.owners) {
+            const meta = metadata.requireMeta(owner, operationContext)
+            const view = meta.arrayView
+            const start = view?._start ?? 0
+            const length = view ? view._lengthState.minimum ?? view._lengthState : undefined
+            for (const index of indexes) {
+                const logical = index - start
+                if (logical < 0 || length !== undefined && logical >= length) continue
+                const key = String(logical)
+                if (!meta.placementVersions?.[key] && visit(owner, key) === false) return false
+            }
+        }
+    }
+}
 
 // Native Arrays keep their physical representation until bounds or pending
 // growth require a projection. All Array-specific state stays behind this class.
@@ -80,11 +105,40 @@ class ArrayView {
 
     // Container copying transfers shape as well as placements. Earlier growth
     // outcomes are shared, but each copy owns its subsequent length history.
-    static copyShape(source, destination, operationContext) {
+    static prepareShapeCopy(source, destination, operationContext) {
         const state = ArrayView.#stateOf(source, operationContext)
         const copy = typeof state === "number" ? state : state.fork()
-        if (copy !== ArrayView.minimumLength(destination, operationContext))
-            ArrayView.#setState(destination, copy, operationContext)
+        const changed = copy !== ArrayView.minimumLength(destination, operationContext)
+        return () => {
+            if (changed) ArrayView.#setState(destination, copy, operationContext)
+        }
+    }
+
+    static registerOwner(owner, operationContext) {
+        const view = metadata.metaOf(owner, operationContext)?.arrayView
+        const backing = view?._backing ?? owner
+        const meta = metadata.requireMeta(backing, operationContext)
+        if (view || meta.arrayBacking) {
+            const record = meta.arrayBacking ??= new ArrayBacking(backing)
+            record.owners.add(owner)
+        }
+    }
+
+    static recordBackingPlacement(owner, key, previous, value, operationContext) {
+        if (!isArrayIndex(String(key))) return
+        const view = metadata.metaOf(owner, operationContext)?.arrayView
+        const backing = view?._backing ?? owner
+        const meta = metadata.requireMeta(backing, operationContext)
+        const index = (view?._start ?? 0) + Number(key)
+        if (!meta.placementsInitialized) return
+        let record = meta.arrayBacking
+        if (!record && metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type)) {
+            record = meta.arrayBacking = new ArrayBacking(backing)
+            record.owners.add(backing)
+        }
+        if (!record) return
+        removeParent(previous, record, index, operationContext)
+        addParent(value, record, index, operationContext)
     }
 
     static requiresMaterialization(value, operationContext) {
@@ -109,7 +163,7 @@ class ArrayView {
         return view
     }
 
-    static tryExtendEnd(source, count, beforeWrite, operationContext) {
+    static tryExtendEnd(source, count, operationContext, populate) {
         if (ArrayView.readyLength(source, operationContext) === undefined) return
         const projection = ArrayView.projectionOf(source, operationContext)
         const sourceView = isArrayView(projection, operationContext) ? projection : undefined
@@ -128,9 +182,11 @@ class ArrayView {
         const view = ArrayView.tryAttachTo(source, operationContext)
         if (!view) return
         const next = new ArrayView(view, operationContext, 0, view.#minimumLength + count)
-        beforeWrite(next)
-        if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length += count })
-        return next
+        return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
+            prepareRetainedArrayProperties(source, next, operationContext)
+            if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length += count })
+            populate?.(next)
+        })
     }
 
     // Capture storage candidates now: broad ranges enumerate stored keys;
@@ -168,26 +224,17 @@ class ArrayView {
             operationContext, () => Object.getOwnPropertyDescriptor(this._backing, physical))
     }
 
-    set(key, value, operationContext) {
+    mutationTarget(key, operationContext, writing) {
         // A native owner's index write precedes its logical growth commit.
         // A distinct view writes only within its already established bounds.
         const backing = this._backing
-        const physical = metadata.metaOf(backing, operationContext)?.arrayView === this && isArrayIndex(key)
+        const physical = writing && metadata.metaOf(backing, operationContext)?.arrayView === this && isArrayIndex(key)
             ? String(this._start + Number(key)) : this.#physicalKey(key)
-        if (physical === undefined) throw new Error("Cannot write outside an ArrayView range")
-        errorUtils.runExternalAction(operationContext, () => {
-            if (Object.hasOwn(backing, physical)) backing[physical] = value
-            else Object.defineProperty(backing, physical, {
-                value, enumerable: true, writable: true, configurable: true,
-            })
-        })
-    }
-
-    delete(key, operationContext) {
-        if (key === "length") return false
-        const physical = this.#physicalKey(key)
-        return physical === undefined || errorUtils.runExternalAction(
-            operationContext, () => delete this._backing[physical])
+        if (physical === undefined) {
+            if (writing) throw new Error("Cannot write outside an ArrayView range")
+            return undefined
+        }
+        return { parent: backing, key: physical }
     }
 
     get #minimumLength() {
@@ -250,4 +297,4 @@ function hasArrayAncestor(ancestry, array) {
     return false
 }
 
-export { ArrayView, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }
+export { ArrayView, ArrayBacking, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }

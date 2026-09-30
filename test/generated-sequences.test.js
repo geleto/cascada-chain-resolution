@@ -25,6 +25,20 @@ const product = (...lists) => lists.reduce((combinations, list) =>
 const harnessModes = ["harness:observed", "harness:verified", "harness:bare"]
 
 describe("generated operation sequences", () => {
+    it("preserves shared input across overlapping preparation and draining delivery", function () {
+        this.timeout(60000)
+        const { programs, runs, coverage } = runFixture("preparation-sequences.js", 55000)
+        assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 8)
+        assert.equal(runs, programs * 3)
+        for (const combination of [
+            ...harnessModes,
+            ...product(["boundary"], ["import", "chain", "assignment", "method-result"]),
+            ...product(["array", "nested"], [false, true]),
+            ...product(["drain"], ["before", "during"]),
+            ...product(["delivery"], ["ready", "native", "ordered"]),
+        ]) assert(coverage.includes(combination), `missing ${combination}`)
+    })
+
     it("matches a sequential model for conflicting commands on one placement", function () {
         const full = process.env.CASCADA_CONFLICT_MATRIX === "full"
         this.timeout(full ? 7200000 : 60000)

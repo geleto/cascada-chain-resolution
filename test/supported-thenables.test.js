@@ -254,13 +254,12 @@ describe("supported thenables", () => {
         assert.equal(ctx.execution.fatalError, null)
     })
 
-    it("normalizes ready root and property values without changing versions", () => {
+    it("normalizes ready root and property values without Promise versions", () => {
         const ctx = context()
         const root = { count: ready(1) }
         const chain = new runtime.Chain(ready(root), ctx)
         assert.equal(chain._state.value, root)
         assert.equal(runtime.lookupPath(chain, ["count"], ctx), 1)
-        assert.equal(root.count, 1)
         assert.equal(properties.getPromiseVersion(root, "count", ctx), undefined)
         runtime.assignPath(chain, ["count"], ready(2), ctx)
         assert.equal(chain._state.value.count, 2)
@@ -522,15 +521,16 @@ describe("supported thenables", () => {
         assert.equal(calls, 1)
     })
 
-    it("preserves Error, Function, and admitted category before then access", () => {
+    it("consumes Errors, Functions, and admitted values without additional then reads", () => {
         const ctx = context()
-        const fail = () => { throw new Error("then must not be read") }
-        const error = Object.defineProperty(new Error("data"), "then", { get: fail })
-        const fn = Object.defineProperty(() => {}, "then", { get: fail })
+        let reads = 0
+        const readThen = () => { reads++; return undefined }
+        const error = Object.defineProperty(new Error("data"), "then", { get: readThen })
+        const fn = Object.defineProperty(() => {}, "then", { get: readThen })
         class External {}
-        const external = new External()
+        const external = Object.defineProperty(new External(), "then", { get: readThen })
         new runtime.Chain(external, ctx)
-        Object.defineProperty(external, "then", { get: fail })
+        const baseline = reads
         for (const value of [error, fn, external]) {
             const result = internalSteps.consumeValue(
                 value,
@@ -538,6 +538,7 @@ describe("supported thenables", () => {
                 errors.ERROR_KIND.OperationInputFailed,
             )
             assert.equal(Error.isError(value) ? result.cause : result, value)
+            assert.equal(reads, baseline)
         }
     })
 

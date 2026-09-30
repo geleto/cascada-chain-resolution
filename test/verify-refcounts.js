@@ -8,8 +8,10 @@ import * as propertyVersions from "../src/property-versions.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
 import { verifyStorage } from "./verify-storage.js"
+import { verifyParents } from "./verify-parents.js"
 
 function verifyRefCounts(operationContext, ...roots) {
+    verifyParents(operationContext, ...roots)
     const seen = new Set()
     for (const root of roots) verifyReachable(root, seen, operationContext)
 

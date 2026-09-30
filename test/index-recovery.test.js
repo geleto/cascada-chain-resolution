@@ -63,7 +63,7 @@ for (const route of ["assignment", "deferred assignment", "imported fulfillment"
 }
 
 describe("index preparation", () => {
-    it("discovers an earlier pending version settled while draining a later one", () => {
+    it("indexes values delivered through nested preparation callbacks", () => {
         const ctx = context()
         const earlier = new OrderedThenable()
         const later = new OrderedThenable()
@@ -88,8 +88,8 @@ describe("index preparation", () => {
                 },
             },
         }
-        // The first drain pass skips earlier, then discovers later's new child.
-        // That child's subscription delivers earlier; another pass must index it.
+        // Input preparation follows each delivery before indexing begins; the
+        // counter walk only inspects the completed logical placement captures.
         const chain = new runtime.Chain(root, ctx)
         assert.equal(runtime.getErrors(chain, [], ctx), error)
         assert.equal(runtime.hasError(chain, [], ctx), true)
@@ -135,7 +135,7 @@ describe("index preparation", () => {
                 async () => {
                     const ctx = context()
                     const cause = new Error("query reflection failed")
-                    let fail = true
+                    let fail = false
                     const a = {}
                     const b = { back: a }
                     a.b = b
@@ -145,7 +145,9 @@ describe("index preparation", () => {
                             return Reflect.ownKeys(target)
                         },
                     })
+                    new runtime.Chain(a, ctx)
                     const chain = new runtime.Chain(pending ? Promise.resolve(a) : a, ctx)
+                    fail = true
                     const result = query(chain, [], ctx)
                     const failure = pending
                         ? await result

@@ -7,6 +7,7 @@ import * as versions from "./property-versions.js"
 import * as properties from "./language-properties.js"
 import { createLeaseLedger } from "./invocation.js"
 import { OperationOwner } from "./operation-lifecycle.js"
+import { markPromiseHandled } from "./thenable-subscription.js"
 import { capturePathOrigin, captureRoute } from "./path-context.js"
 import { walkObservationPath } from "./observations.js"
 import { captureMutationResult, transformProperty, walkMutationPath } from "./mutations.js"
@@ -53,9 +54,13 @@ class PathOperation extends OperationOwner {
         }
     }
 
-    leaseValues(values) {
+    leaseValue(value) {
         this.leases ??= createLeaseLedger(this.operationContext)
-        for (const value of values) this.leases.acquire(value)
+        // This follows an already-prepared input version. Only protection
+        // belongs to this operation; source settlement has its own owner.
+        markPromiseHandled(
+            steps.continueOperation(value, this.operationContext, this.leases.acquire, undefined, this),
+            this.operationContext)
     }
 
     observe(onValue, onExternal, onFailure, reflectionKind) {
@@ -127,7 +132,8 @@ class PathOperation extends OperationOwner {
             }
             const depth = target.pathDepth ?? requestedDepth
             const node = externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth))
-            return transformProperty(target, operationContext, (value, state) => {
+            let holder
+            const outcome = transformProperty(target, operationContext, (value, state) => {
                 return steps.continueOperation(this.externalEffect?.readiness, operationContext, () => {
                     const blocker = this.externalBlocker(false)
                     if (blocker) return blocker
@@ -138,6 +144,7 @@ class PathOperation extends OperationOwner {
                     if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
                         return this.routeFailure = externalLocationError(operationContext)
                     const privateChain = new Chain(undefined, operationContext)
+                    holder = privateChain._state
                     versions.transferPlacement(state.baseline, privateChain._state, "value", operationContext)
                     privateChain._externalMutationTree = node
                     privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
@@ -146,6 +153,13 @@ class PathOperation extends OperationOwner {
                     return transform(value, state, privateChain, route.path.slice(depth), node)
                 })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair })
+            return steps.continueOperation(outcome, operationContext, published => {
+                // The destination has accepted the capture. Detach this private
+                // placement so later delivery cannot repopulate a spent holder.
+                if (holder) versions.deleteProperty(holder, "value", operationContext)
+                holder = undefined
+                return published
+            })
         }, { targetArrayStructure: true, deletesTarget: deleting,
             preserveOnFailure: this.repair,
             onExternalFailure: error => { this.routeFailure = error } })

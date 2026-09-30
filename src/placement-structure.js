@@ -1,6 +1,5 @@
 import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as metadata from "./meta.js"
-import * as properties from "./language-properties.js"
 
 // Allocate physical shape only. The caller owns admission, placement copying,
 // and transfer of captured length or record order.
@@ -62,16 +61,15 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     }
 }
 
-function preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack) {
+function preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack, before) {
     if (placement.pendingPresence) return () => {}
     if (structure) return structure.prepare(placement)
     const present = placement.present !== false
     const meta = metadata.requireMeta(owner, operationContext)
     const array = isLogicalArray(owner, operationContext)
-    const before = meta.placementVersions?.[key]
-    const wasPresent = before ? before.present !== false && !before.pendingPresence : properties.hasLanguageProperty(owner, key, operationContext)
+    const wasPresent = before.present && !before.sourceVersion?.pendingPresence
     if (placement.position === undefined && wasPresent)
-        placement.position = before?.position ?? meta.recordOrder?.positions.get(key)?.position ?? -1
+        placement.position = before.position
     const commitEntry = meta.entryGate?.structure.prepare(placement)
     const order = !array && (meta.entryGate || placement.position >= 0 && placement.position < Infinity)
         ? recordOrder(owner, operationContext) : meta.recordOrder
@@ -90,14 +88,16 @@ function preparePlacementStructure(owner, key, placement, structure, operationCo
     }
 }
 
-function copyContainerStructure(source, destination, operationContext) {
+function prepareContainerStructureCopy(source, destination, operationContext) {
     if (isLogicalArray(source, operationContext)) {
-        ArrayView.copyShape(source, destination, operationContext)
-        return
+        return ArrayView.prepareShapeCopy(source, destination, operationContext)
     }
     const order = metadata.metaOf(source, operationContext)?.recordOrder
-    if (order?.positions.size) metadata.requireMeta(destination, operationContext).recordOrder = {
+    const copy = order?.positions.size ? {
         clock: order.clock, positions: new Map(order.positions),
+    } : undefined
+    return () => {
+        if (copy) metadata.requireMeta(destination, operationContext).recordOrder = copy
     }
 }
 
@@ -136,4 +136,4 @@ function finishContainerCopy(copy, shape) {
 export { beginPlacementStructure, preparePlacementStructure,
     createEmptyContainer, defineCopyProperty,
     captureContainerStructure, finishContainerCopy,
-    copyContainerStructure, orderRecordKeys }
+    prepareContainerStructureCopy, orderRecordKeys }

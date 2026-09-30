@@ -42,33 +42,26 @@ they are neither descendant totals nor ownership reference counts.
 `buildRefIndex(value, operationContext)` prepares one complete region in an
 operation-local map, reusing already-complete indexes:
 
-1. Discover unindexed traversable identities and capture each logical property
-   version. Reads normalize newly reached placements and install versions only
-   for actually pending outcomes.
-2. Finish discovery of captured versions advanced by later synchronous
-   subscriptions. Reuse their current logical values without another
-   subscription or physical-slot read; repeat only while newly available work
-   advances the frontier. Discovering a later version can settle one already
-   skipped in that pass, requiring another pass. Still-pending versions remain
-   pending edges.
-3. Count the captured graph with a DFS. An edge to an active identity becomes a
-   staged cut; other traversable edges contribute child presence and staged
-   reverse-parent additions. An index completed independently by shared
-   settlement during discovery is reused.
-4. Commit every prepared counter and cut, then add the reverse edges, including
+1. Traverse unindexed identities and count their prepared logical properties in
+   one DFS. An edge to an active identity becomes a staged cut; other traversable
+   edges contribute child presence and staged reverse-parent additions. Reuse
+   completed live or staged child counters. Inspection starts no normalization
+   or subscription; pending values remain pending edges. No captured-placement
+   map or second graph traversal is needed.
+2. Commit every prepared counter and cut, then add the reverse edges, including
    additions to existing indexes, in one synchronous transition with no host
    reflection or subscriptions.
 
-All fallible reflection and logical-value preparation precede this commit.
+All fallible reflection precedes this commit.
 An abandoned build publishes no partial index, cut, or reverse-parent edge.
-Ordinary normalization and shared property settlement remain valid independent
-transitions; the build does not roll them back. Index presence always denotes a
+Input preparation and shared property settlement remain independent transitions;
+the build only inspects their published values. Index presence always denotes a
 complete downward-closed region, including its cut targets. A descendant cannot
 be published while a cut still reaches an unfinished ancestor.
 
-This algorithm accepts cyclic runtime and imported data equally. Import does
-not prepare the graph for ref-indexing. No cut-target queue or persistent
-construction state is needed.
+This algorithm accepts cyclic runtime and imported data equally. Import prepares
+logical placements but does not build this optional index. No pending-frontier
+drain, cut-target queue, or persistent construction state is needed.
 
 ## Publishing an indexed edge
 
@@ -77,11 +70,13 @@ edge closes a projected cycle exactly when walking upward from the container
 through the maintained `parents` DAG reaches that value. Such an edge becomes a
 cut; every other edge receives the normal reverse-parent entry.
 
-`prepareLiveEdge` completes fallible child indexing and captures the old and new
-property contributions. Its returned commit completes storage work first, then
-publishes the logical value, Promise version, and cut state, replaces reverse-parent
-multiplicities, and updates live counters through the parent DAG. After storage
-succeeds, this bookkeeping runs without callbacks or suspension.
+`prepareCounterUpdate` completes fallible child indexing and captures the old and
+new property contributions. Property-version publication supplies the captured
+old value and owns commit ordering: storage, logical version, structure, incoming
+placements, then this optional counter update. The counter update replaces cut
+state and reverse-parent multiplicities and propagates deltas through the parent
+DAG. Refcounts owns no property mutation or complete-parent maintenance. After
+storage succeeds, bookkeeping runs without callbacks or suspension.
 
 Assignment, deletion, Promise settlement, Array remapping, and COW
 reconstruction all use this accounting. A detached Promise version settles

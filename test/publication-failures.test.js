@@ -369,8 +369,10 @@ describe("complete publication failures", () => {
         const chain = new runtime.Chain(source, ctx)
         buildRefIndex(source, ctx)
         const work = runtime.lookupPath(chain, ["value"], ctx)
+        const child = new Proxy([1], { ownKeys(target) { if (fail) throw causes[0]; return Reflect.ownKeys(target) } })
+        new runtime.Chain(child, ctx)
         fail = true
-        later.resolve(new Proxy([1], { ownKeys() { throw causes[0] } }))
+        later.resolve(child)
         later.flush()
         const result = await work
         fail = false

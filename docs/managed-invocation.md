@@ -1,6 +1,6 @@
 # Managed Invocation Architecture
 
-**Implementation status:** common fresh-argument preparation and complete parent indexing are Phase 1 targets; bounded delivery and the replacement of permanent sharing are Phase 2 targets. The current receiver preparation and invocation machinery remains in use. See the [runtime evolution plan](runtime-evolution-plan.md) before treating the pending reception rules below as current behavior.
+**Implementation status:** common fresh-argument preparation and complete parent indexing are implemented. Bounded delivery and replacing permanent sharing remain Phase 2 targets in the [runtime evolution plan](runtime-evolution-plan.md). Private native mutation graphs acquire incoming relationships only after successful receiver validation or result adoption.
 
 ## Causal completion
 
@@ -55,6 +55,8 @@ Preparation consumes the complete receiver graph because method code may read an
 Every traversable receiver identity is leased while preparation may resume reading it. Readiness comes from each normalized preparation or result transition, not from whether its callback populated preparation state. A synchronous observation releases the leases after result admission. An actually pending direct-result observation retains them through settlement so a later Cascada mutation uses COW without waiting. A mutation releases receiver-source leases immediately before isolation; its isolated receiver is then private. The separate `receiverReached` fact remains necessary: a receiver may already be selected even when the invoked method's independent result is pending.
 
 Observation materialization copies only paths needed to expose logical storage. Both fixed overlays and Promise versions can make a physical slot differ from its prepared logical value. Materialize the affected containers and ancestors while preserving aliases and cycles; do not resubscribe to the physical thenable. Receiver leases protect reused children for the call; identities retained by the imported result keep the placements and capture obligations of their actual uses.
+
+Materialization copies remain private working storage and publish no incoming relationships merely for the observation. Result admission initializes any copy that escapes, including copies reached through returned aliases or cycles. Repeated observations returning primitives therefore add no permanent parent occurrences to borrowed children.
 
 Arguments cross the host boundary through one `exportManyValues` operation. Managed argument graphs are independent copies with aliases, cycles, Array structure, and admitted prototypes preserved across argument positions. Functions and external identities remain exact. Receiver and argument identities are not cross-remapped, and managed invocation adds no argument-source leases after export capture.
 

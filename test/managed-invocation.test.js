@@ -728,7 +728,11 @@ describe("managed invocation", () => {
             ...receiverErrors,
             argumentError,
         ]))
-        assert(result.errors.every(error => error.errorContext === "test run" && error.kind === runtime.ERROR_KIND.OperationInputFailed))
+        for (const error of result.errors) {
+            const argument = errorCause(error) === argumentError
+            assert.equal(error.errorContext, argument ? "test run" : "test Chain initialization")
+            assert.equal(error.kind, argument ? runtime.ERROR_KIND.OperationInputFailed : runtime.ERROR_KIND.ChainValueFailed)
+        }
     })
 
     it("collects pending receiver and argument Errors regardless of settlement order", async () => {
@@ -757,7 +761,11 @@ describe("managed invocation", () => {
             receiverFailure,
             argumentFailure,
         ]))
-        assert(errors.every(error => error.errorContext === "test run" && error.kind === runtime.ERROR_KIND.OperationInputFailed))
+        for (const error of errors) {
+            const argument = errorCause(error) === argumentFailure
+            assert.equal(error.errorContext, argument ? "test run" : "test Chain initialization")
+            assert.equal(error.kind, argument ? runtime.ERROR_KIND.OperationInputFailed : runtime.ERROR_KIND.ChainValueFailed)
+        }
     })
 
     it("rejects invalid completed state and awaits a direct result Promise", async () => {

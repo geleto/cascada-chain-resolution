@@ -11,6 +11,7 @@ import { externalCapabilityEscapeError } from "./external-operation.js"
 import { createEmptyContainer, defineCopyProperty } from "./placement-structure.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
+import { initializePlacements } from "./parent-placements.js"
 
 function selectManagedMethodDescription(invocationWork) {
     const { mutation, receiver } = invocationWork
@@ -249,6 +250,7 @@ function materializeObservationReceiver(receiver, invocationWork) {
     // with their own identity; mutation starts with an empty identity map.
     const copies = new Map()
     for (const source of parents.keys()) if (!needed.has(source)) copies.set(source, source)
+    // These copies stay private unless result admission publishes them.
     return copyCompleteGraph(receiver, operationContext, copies)
 
     function visit(source) {
@@ -307,15 +309,12 @@ function copyCompleteGraph(source, operationContext, copies = new Map()) {
         source,
         operationContext,
     )) {
-        defineCopyProperty(
-            destination,
-            key,
-            copyCompleteGraph(
+        const child = copyCompleteGraph(
                 languageProperties.readLanguageProperty(source, key, operationContext),
                 operationContext,
                 copies,
-            ),
-        )
+            )
+        defineCopyProperty(destination, key, child)
     }
     return destination
 }
@@ -360,6 +359,7 @@ function invokeMutation(callable, receiver, args, operationContext) {
         // Direct method failure poisons the receiver. Importing an independent
         // result can fail separately after the method has completed its mutation.
         const failures = { errors: new Set() }
+        const receiverFailure = validateReceiver(receiver, operationContext)
         const imported =
             value === receiver
                 ? receiver
@@ -368,12 +368,11 @@ function invokeMutation(callable, receiver, args, operationContext) {
                       operationContext,
                       failures,
                   )
-        return finishMutation(receiver, imported, failures.errors, operationContext)
+        return finishMutation(receiver, imported, failures.errors, receiverFailure)
     }
 }
 
-function finishMutation(receiver, result, resultErrors, operationContext) {
-    const failure = validateReceiver(receiver, operationContext)
+function finishMutation(receiver, result, resultErrors, failure) {
     if (failure) {
         result = errorUtils.combineErrors([failure, ...resultErrors], "Managed mutation failed")
     }
@@ -386,8 +385,10 @@ function finishMutation(receiver, result, resultErrors, operationContext) {
 function validateReceiver(receiver, operationContext) {
     const visited = new Set()
     const errors = new Set()
+    const entries = new Map()
     let unsafeThenError
     walk(receiver)
+    if (!errors.size) for (const [owner, placements] of entries) initializePlacements(owner, operationContext, placements)
     return errors.size === 0
         ? undefined
         : errorUtils.combineErrors(
@@ -427,11 +428,14 @@ function validateReceiver(receiver, operationContext) {
         }
         languageValues.admitReadyValue(value, operationContext)
         if (!languageValues.isTraversable(value, operationContext)) return
+        const placements = metadata.metaOf(value, operationContext).placementsInitialized ? undefined : []
+        if (placements) entries.set(value, placements)
         const keys = languageProperties.enumerableLanguageKeys(value, operationContext, 0, undefined, inspect)
         for (const key of keys) {
             // Validation must inspect leased data without consuming it.
             const child = inspect(() => propertyVersions.capturePlacement(value, key, operationContext).value)
             walk(child)
+            placements?.push([key, child])
         }
     }
 

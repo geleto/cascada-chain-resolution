@@ -5,6 +5,7 @@ import * as metadata from "./meta.js"
 import { capturePlacement } from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { defineCopyProperty } from "./placement-structure.js"
+import { initializePlacements } from "./parent-placements.js"
 
 // External snapshots are ready-only transactions. Sources keep their admission
 // and logical storage; only a completely successful output graph is admitted.
@@ -18,6 +19,8 @@ function snapshotExternalValue(value, operationContext, admit = true) {
     // same independent copies without admission or a second copying pass.
     if (admit) for (const [copy, type, prototype] of copies)
         metadata.getOrCreateMeta(copy, operationContext, type, prototype)
+    if (admit) for (const [copy, type] of copies)
+        if (metadata.isTraversableType(type)) initializePlacements(copy, operationContext)
     return result
 
     function collect(failure) {
@@ -108,7 +111,9 @@ function snapshotExternalValue(value, operationContext, admit = true) {
                 child = native(() => source[key])
             }
             const copied = walk(child)
-            if (copies) defineCopyProperty(copy, key, copied)
+            if (copies) {
+                defineCopyProperty(copy, key, copied)
+            }
         }
         return copy
     }

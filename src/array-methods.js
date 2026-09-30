@@ -9,6 +9,8 @@ import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
+import { PlacementConstruction } from "./parent-placements.js"
+import { receiveValue } from "./input-preparations.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { finishContainerCopy } from "./placement-structure.js"
 
@@ -137,7 +139,7 @@ function prepareAtIndex(work) {
 }
 
 function prepareWithArguments(work) {
-    const replacement = work.leaseArgument(work.args[1])
+    const replacement = work.receiveArgument(work.args[1])
     return internalSteps.prepareInputs([numericInput(work.args[0], work)], work.operationContext,
         ([index = 0]) => runArrayStep(work, () => {
             const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
@@ -286,7 +288,7 @@ function runArrayStep(invocationWork, work) {
 
 function prepareConcatArguments(invocationWork) {
     const parts = invocationWork.args.map(item =>
-        internalSteps.consumeValue(
+        receiveValue(
             item,
             invocationWork.operationContext,
             errorUtils.ERROR_KIND.OperationInputFailed,
@@ -825,15 +827,16 @@ function tryDeriveArrayView(start, end, invocationWork) {
     if (!projection) return undefined
 
     const view = new ArrayView(projection, operationContext, start, end)
-    propertyVersions.prepareRetainedArrayProperties(
-        thisValue,
-        view,
-        operationContext,
-        start,
-        end,
-        -start,
-    )
-    return view
+    return PlacementConstruction.initializeAndPublish(view, operationContext, view => {
+        propertyVersions.prepareRetainedArrayProperties(
+            thisValue,
+            view,
+            operationContext,
+            start,
+            end,
+            -start,
+        )
+    })
 }
 
 function tryConcatArrayView(parts, invocationWork) {
@@ -848,20 +851,15 @@ function tryConcatArrayView(parts, invocationWork) {
 
 function tryAppendArrayView(suffix, invocationWork) {
     const { receiver: thisValue, operationContext } = invocationWork
-    const view = ArrayView.tryExtendEnd(
+    return ArrayView.tryExtendEnd(
         thisValue,
         suffix.length,
-        derived => propertyVersions.prepareRetainedArrayProperties(
-            thisValue,
-            derived,
-            operationContext,
-        ),
         operationContext,
+        view => {
+            const start = ArrayView.readyLength(view, operationContext) - suffix.length
+            arrayRemaps.placeRemap(view, suffix, operationContext, start)
+        },
     )
-    if (!view) return undefined
-    const start = ArrayView.readyLength(view, operationContext) - suffix.length
-    arrayRemaps.placeRemap(view, suffix, operationContext, start)
-    return view
 }
 
 export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep }

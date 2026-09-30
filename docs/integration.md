@@ -1,6 +1,6 @@
 # Public higher-runtime integration
 
-This document specifies the public root API and accepted compiler handoff contract. **Implementation status:** complete fresh-input preparation and parent indexing are pending Phase 1; bounded delivery, ownership derived from parents, and retirement are pending Phase 2. The current runtime still uses permanent `shared` protection. The reception and delivery sections below describe that accepted target, not guarantees already supplied by the current implementation. The [runtime evolution plan](runtime-evolution-plan.md) tracks these changes and compiler emission in Phase 7.
+This document specifies the public root API and accepted compiler handoff contract. **Implementation status:** common fresh-input preparation and complete parent indexing are implemented. Bounded delivery, ownership derived from parents, and retirement remain Phase 2 targets; the runtime still uses permanent `shared` protection. Reception rules below are implemented, while bounded delivery and cleanup describe the accepted target. The [runtime evolution plan](runtime-evolution-plan.md) tracks these changes and compiler emission in Phase 7.
 
 Cascada imports only the documented root package API. Public Chain operations retain their result boundaries; unwrapped core operations, graph metadata, and private external-escape machinery remain package internals. Every semantic operation carries its immutable { execution, errorContext }, and related Chains share their execution. Source handles remain opaque to graph code.
 

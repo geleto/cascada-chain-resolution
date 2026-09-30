@@ -1469,7 +1469,7 @@ describe("public external paths", () => {
         verifyRefCounts(calledAt, chain._state, input._state, output._state)
     })
 
-    it("borrows an unconsumed Chain placement through its ordinary source settlement", async () => {
+    it("borrows a prepared Chain placement through its original source settlement", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const pending = Promise.withResolvers()
         const graph = { pending: pending.promise }
@@ -1481,7 +1481,7 @@ describe("public external paths", () => {
         const cause = new Error("source")
         pending.reject(cause)
         const failure = await r.lookupPath(input, ["pending"], ctx)
-        assert.equal(failure.kind, r.ERROR_KIND.OperationInputFailed)
+        assert.equal(failure.kind, r.ERROR_KIND.ChainValueFailed)
         assert.equal(await r.lookupPath(output, ["pending"], ctx), failure)
         assert.equal(ctx.execution.fatalError, null)
     })
@@ -1521,7 +1521,7 @@ describe("public external paths", () => {
             } else {
                 assert.equal(resultValue, sourceValue)
                 if (outcome === "rejection") {
-                    assert.equal(sourceValue.kind, r.ERROR_KIND.OperationInputFailed)
+                    assert.equal(sourceValue.kind, r.ERROR_KIND.ChainValueFailed)
                     assert.equal(sourceValue.cause, cause)
                 } else assert.deepEqual(sourceValue, value)
             }

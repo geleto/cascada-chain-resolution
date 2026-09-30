@@ -73,7 +73,7 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     for (let index = 0; index < fixedCount; index++) {
         const input = inputs[index]
         if (input === PASS_AS_PAYLOAD) {
-            prepared[index] = invocationWork.leaseArgument(args[index])
+            prepared[index] = invocationWork.receiveArgument(args[index])
             continue
         }
         const result = input(args[index], invocationWork)
@@ -93,7 +93,7 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     }
     if (methodDefinition.remainingArgsAsPayload) {
         for (let index = inputs.length; index < args.length; index++) {
-            prepared[index] = invocationWork.leaseArgument(args[index])
+            prepared[index] = invocationWork.receiveArgument(args[index])
         }
     }
     return internalSteps.prepareInputs(

@@ -97,7 +97,9 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
                     versions.capturePlacement(entered._state, "value", operationContext), operationContext)
                 const external = node ? pendingExternalEffects(entered._externalReservationView) : undefined
                 markPromiseHandled(steps.collectInputs([publication, external], operationContext, () => {
+                    // Stop mirroring before deleting the spent private placement.
                     metadata.metaOf(entered._state, operationContext).entryGate = undefined
+                    versions.deleteProperty(entered._state, "value", operationContext)
                     effect?.complete()
                 }), operationContext)
                 return result

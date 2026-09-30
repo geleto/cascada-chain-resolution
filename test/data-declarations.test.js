@@ -9,6 +9,7 @@ import {
     managedState,
     managedStateClass,
     metadata,
+    useTestExecution,
 } from "./support.js"
 
 describe("data declarations", () => {
@@ -227,6 +228,9 @@ describe("data declarations", () => {
         new Chain(external)
         expect(managedState(root)).to.be(root)
 
+        new Chain(candidate)
+        expect(metadata.metaOf(candidate).type).to.be(languageValues.TYPE.External)
+        useTestExecution()
         new Chain(candidate)
         expect(metadata.metaOf(candidate).type).to.be(
             languageValues.TYPE.ManagedClass,
