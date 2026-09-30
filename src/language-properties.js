@@ -37,9 +37,9 @@ function propertyValidationError(message, operationContext) {
     )
 }
 
-function validatePropertyValue(key, value, operationContext) {
+function validatePropertyValue(key, value, operationContext, kind = errorUtils.ERROR_KIND.PropertyValidation) {
     if (key === "then" && typeof value === "function")
-        return propertyValidationError("Language data cannot contain a callable then property", operationContext)
+        return errorUtils.validationError("Language data cannot contain a callable then property", operationContext, kind)
 }
 
 function normalizePathSegment(segment, operationContext) {

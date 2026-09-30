@@ -26,7 +26,7 @@ Managed class prototypes may contain accessors, but Cascada never selects them a
 
 ## Admission
 
-The first available use records one fixed category and, for managed classes and records, the prototype then present. An earlier identity declaration selects the category without binding the prototype. Explicit identity declarations take precedence over class declarations. Arrays retain Array semantics; callable thenables retain Promise semantics.
+The first available use records one fixed category and, for managed classes and records, the prototype then present. An earlier identity declaration selects the category without binding the prototype. A prototype substituted before admission must independently satisfy the managed-class contract; declaration validation does not certify later replacements. Explicit identity declarations take precedence over class declarations. Arrays retain Array semantics; callable thenables retain Promise semantics.
 
 Managed records, Arrays, and classes are traversable. External identities, Functions, and Errors are leaves. External values retain their exact identity but currently cannot be path receivers or `run` receivers.
 

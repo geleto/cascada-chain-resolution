@@ -27,12 +27,14 @@ The runtime recognizes these value categories:
 A successful non-Promise language-data result must be safe under native Promise
 resolution. Assignment and Promise-backed publication reject an ordinary
 callable own `then` placement as `PropertyValidation`. Completed managed mutation
-checks native lookup on the receiver and every traversable managed descendant,
-including non-enumerable own properties, Array non-index properties, and
-inherited descriptors. Callable data properties and accessors produce
-`InvalidManagedReceiver` without invoking accessors. Managed-class declaration
-and snapshot adoption also reject callable or accessor `then` on the retained prototype
-chain, which must remain stable. Standard prototypes remain stable. Exact
+uses the same placement-value rule with `InvalidManagedReceiver` and rejects
+newly encountered stored thenables without subscribing. It does not rescan
+admitted identities' hidden properties or prototype chains. Managed-class
+declaration and snapshot adoption reject callable or accessor `then` on the
+retained prototype chain, which must remain safe and stable. Any replacement
+prototype chosen before admission must independently satisfy that contract.
+Installing unsafe native `then` outside language placements is unsupported.
+Standard prototypes remain stable. Exact
 Functions and external identities used as successful non-Promise values must
 have a stable native `then` lookup that safely yields a non-callable value from
 first use onward; read-only-after-admission alone is insufficient. Unsafe exact

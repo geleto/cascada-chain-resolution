@@ -386,7 +386,6 @@ function validateReceiver(receiver, operationContext) {
     const visited = new Set()
     const errors = new Set()
     const entries = new Map()
-    let unsafeThenError
     walk(receiver)
     if (!errors.size) for (const [owner, placements] of entries) initializePlacements(owner, operationContext, placements)
     return errors.size === 0
@@ -411,20 +410,20 @@ function validateReceiver(receiver, operationContext) {
         visited.add(value)
         const meta = metadata.metaOf(value, operationContext)
         if (meta && !metadata.isTraversableType(meta.type)) return
-        const unsafeThen = inspect(() => hasUnsafeNativeThen(value))
-        if (errorUtils.isPoisonError(unsafeThen)) {
-            // Known managed structure still contributes its placement Errors.
-            // An unknown identity cannot be admitted after an unreadable probe.
-            if (!meta) return
-        } else if (unsafeThen) {
-            errors.add(unsafeThenError ??= errorUtils.validationError(
-                "Managed mutation receiver contains an unsafe then property",
-                operationContext,
-                errorUtils.ERROR_KIND.InvalidManagedReceiver,
-            ))
-            // An unadmitted thenable is invalid availability, not graph data.
-            // An admitted managed receiver still contributes its other Errors.
-            if (!meta) return
+        if (!meta) {
+            // Recognize new stored thenables without subscribing. Admitted
+            // values keep their category; native surface stability is a host contract.
+            const thenable = inspect(() => errorUtils.runExternalAction(operationContext,
+                () => typeof value.then === "function"))
+            if (errorUtils.isPoisonError(thenable)) return
+            if (thenable) {
+                errors.add(errorUtils.validationError(
+                    "Managed mutation receiver contains a Promise or thenable",
+                    operationContext,
+                    errorUtils.ERROR_KIND.InvalidManagedReceiver,
+                ))
+                return
+            }
         }
         languageValues.admitReadyValue(value, operationContext)
         if (!languageValues.isTraversable(value, operationContext)) return
@@ -434,6 +433,9 @@ function validateReceiver(receiver, operationContext) {
         for (const key of keys) {
             // Validation must inspect leased data without consuming it.
             const child = inspect(() => propertyVersions.capturePlacement(value, key, operationContext).value)
+            const failure = languageProperties.validatePropertyValue(key, child, operationContext,
+                errorUtils.ERROR_KIND.InvalidManagedReceiver)
+            if (failure) errors.add(failure)
             walk(child)
             placements?.push([key, child])
         }
@@ -447,18 +449,6 @@ function validateReceiver(receiver, operationContext) {
         )
         if (errorUtils.isPoisonError(result)) errors.add(result)
         return result
-    }
-
-    function hasUnsafeNativeThen(value) {
-        for (let current = value; current !== null;) {
-            const descriptor = errorUtils.runExternalAction(operationContext, () =>
-                Object.getOwnPropertyDescriptor(current, "then"),
-            )
-            if (descriptor) return !("value" in descriptor) || typeof descriptor.value === "function"
-            current = errorUtils.runExternalAction(operationContext, () => Object.getPrototypeOf(current),
-            )
-        }
-        return false
     }
 }
 

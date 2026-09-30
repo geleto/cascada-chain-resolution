@@ -19,7 +19,7 @@ The copier:
 - keeps Functions and external identities exact; and
 - emits no ArrayView, Promise version, metadata, counter, or other runtime representation.
 
-Every successful output follows the native `then` contract in [`data-limitations.md`](data-limitations.md). Exact Functions and external leaves must have a stable native lookup that safely yields a non-callable value from their first use onward; ready and pending export both preserve those exact identities. Managed producers validate their native lookup surface before publication. Export copies only language placements and preserves admitted prototypes; it does not copy hidden properties or add an exact-value probe or result wrapper.
+Every successful output follows the native `then` contract in [`data-limitations.md`](data-limitations.md). Exact Functions and external leaves must have a stable native lookup that safely yields a non-callable value from their first use onward; ready and pending export both preserve those exact identities. Managed producers reject callable `then` placements, while declaration and snapshot prototype validation and the host's native-surface stability obligations protect the rest of lookup. Export copies only language placements and preserves admitted prototypes; it does not copy hidden properties or add an exact-value probe or result wrapper.
 
 Each successful batch root retains its own result position. Any reached Error prevents the whole host call after all required roots and nested branches finish collection.
 

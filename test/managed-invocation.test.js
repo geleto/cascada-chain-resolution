@@ -1015,49 +1015,21 @@ describe("managed invocation", () => {
         expect(chain._state.value).to.be(failure)
     })
 
-    it("rejects callable then properties created by managed mutation", () => {
-        const value = {
-            change() {
-                this.then = () => {
-                    throw new Error("receiver was invoked as a Promise")
-                }
-                return "done"
-            },
-        }
-        const chain = new Chain(value)
-
-        const failure = run(
-            chain,
-            [],
-            "change",
-            [],
-            { mutationScopeDepth: 0 },
-        )
-
-        expect(failure).to.be.a(runtime.PoisonError)
-        expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
-        expect(chain._state.value).to.be(failure)
-    })
-
-    for (const shape of ["hidden data", "accessor", "Array property", "nested accessor", "new nested accessor", "inherited data", "inherited accessor"]) {
+    for (const shape of ["root", "existing child", "new child", "stored Promise"]) {
         for (const pending of [false, true]) {
             it("rejects " + shape + " then after " + (pending ? "pending" : "ready") + " managed completion", async () => {
                 const execution = useTestExecution()
                 let calls = 0
-                const then = () => { calls++; return 99 }
+                const then = resolve => { calls++; return resolve(99) }
                 const value = {
-                    child: [],
+                    child: {},
                     change() {
                         const mutate = () => {
-                            if (shape === "new nested accessor") this.child = {}
-                            const target = shape === "Array property" || shape.includes("nested") ? this.child : this
-                            const surface = shape.startsWith("inherited") ? {} : target
-                            Object.defineProperty(surface, "then", {
-                                configurable: true,
-                                ...(shape.includes("accessor") ? { get: then } : { value: then }),
-                            })
-                            if (surface !== target) Object.setPrototypeOf(target, surface)
-                            return !pending && shape === "hidden data" ? this : "done"
+                            if (shape === "stored Promise") this.child = Promise.resolve(99)
+                            else if (shape === "new child") this.child = { then }
+                            else if (shape === "existing child") this.child.then = then
+                            else this.then = then
+                            return !pending && shape === "root" ? this : "done"
                         }
                         return pending ? Promise.resolve().then(mutate) : mutate()
                     },
@@ -1074,11 +1046,11 @@ describe("managed invocation", () => {
         }
     }
 
-    it("keeps other receiver Errors when an admitted node has unsafe then", () => {
+    it("keeps other receiver Errors alongside a callable then placement", () => {
         const cause = new Error("stored failure")
         const value = {
             change() {
-                Object.defineProperty(this, "then", { value() {} })
+                this.then = resolve => resolve(1)
                 this.bad = cause
             },
         }
@@ -1090,39 +1062,51 @@ describe("managed invocation", () => {
         expect(chain._state.value).to.be(failure)
     })
 
-    it("allows non-callable hidden then without changing graph export", async () => {
+    it("preserves non-callable then placements through mutation and export", async () => {
         const value = {
-            child: [],
+            child: {},
             change() {
-                Object.defineProperty(this.child, "then", { value: 12 })
-                Object.defineProperty(this, "then", { value: 42 })
+                this.child.then = 12
+                this.then = 42
                 return Promise.resolve("done")
             },
         }
         const chain = new Chain(value)
         expect(await run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be("done")
-        expect(await lookupPath(chain, ["child"])).to.eql([])
+        expect(await lookupPath(chain, ["child"])).to.eql({ then: 12 })
         const exported = await exportValue(chain, [])
-        expect(Object.hasOwn(exported, "then")).to.be(false)
-        expect(Object.hasOwn(exported.child, "then")).to.be(false)
+        expect(exported.then).to.be(42)
+        expect(exported.child.then).to.be(12)
         verifyRefCounts(chain._state)
     })
 
-    it("poisons native then descriptor failure at receiver validation", () => {
-        const execution = useTestExecution()
-        const cause = new Error("then descriptor failed")
-        const traps = {
-            getOwnPropertyDescriptor(target, key) {
-                if (target.fail && key === "then") throw cause
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
-        }
-        const chain = new Chain({ child: { fail: false }, change() { this.child = new Proxy(this.child, traps); this.child.fail = true } })
+    it("recognizes a new stored thenable through a stable getter without subscribing", () => {
+        let reads = 0, calls = 0
+        const then = resolve => { calls++; return resolve(1) }
+        const chain = new Chain({ change() {
+            this.child = { get then() { reads++; return then } }
+        } })
         const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
-        expect(failure.cause).to.be(cause)
         expect(chain._state.value).to.be(failure)
-        expect(execution.fatalError).to.be(null)
+        expect(reads).to.be(1)
+        expect(calls).to.be(0)
+    })
+
+    it("reuses admitted prototype safety during managed receiver validation", () => {
+        let inspections = 0
+        const prototype = new Proxy({ change() { this.count++; return this.count } }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "then") inspections++
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const value = Object.assign(Object.create(prototype), { count: 1 })
+        runtime.managedState(value)
+        const chain = new Chain(value)
+        const baseline = inspections
+        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(2)
+        expect(inspections).to.be(baseline)
     })
 
     it("poisons receiver validation reflection failures", () => {

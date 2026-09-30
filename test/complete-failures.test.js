@@ -152,12 +152,16 @@ describe("complete failure outcomes", () => {
                 const reflection = new Error("reflection")
                 let fail = false
                 const traps = {
+                    get(value, key, receiver) {
+                        if (fail && trap === "then" && key === "then") throw reflection
+                        return Reflect.get(value, key, receiver)
+                    },
                     ownKeys(value) {
                         if (fail && trap === "keys") throw reflection
                         return Reflect.ownKeys(value)
                     },
                     getOwnPropertyDescriptor(value, key) {
-                        if (fail && key === (trap === "then" ? "then" : "bad") && trap !== "keys") throw reflection
+                        if (fail && trap === "placement" && key === "bad") throw reflection
                         return Reflect.getOwnPropertyDescriptor(value, key)
                     },
                 }
