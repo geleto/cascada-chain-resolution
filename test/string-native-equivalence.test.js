@@ -1,6 +1,6 @@
+import { Chain, run, Execution } from "../src/index.js"
 import assert from "node:assert/strict"
 
-import { Chain, run } from "./support.js"
 import {
     VALUES,
     argumentsByArity,
@@ -113,7 +113,7 @@ function createStringCase(method, fact, index, mode) {
     }
 }
 
-async function compareStringCase(scenario, mode) {
+async function compareStringCase(testContext, scenario, mode) {
     const { method, source, args } = scenario
     const native = callStringMethod(source, method, cloneData(args))
     if (!native.error && method === "matchAll") {
@@ -122,6 +122,7 @@ async function compareStringCase(scenario, mode) {
 
     const chain = new Chain(
         mode.promiseReceiver ? Promise.resolve(source) : source,
+        testContext,
     )
     let result = run(
         chain,
@@ -132,15 +133,16 @@ async function compareStringCase(scenario, mode) {
             ? args.map(value => Promise.resolve(cloneData(value)))
             : cloneData(args)),
         ],
-        {},
+        testContext,
+        { repair: false },
     )
     result = await result
     if (!(result instanceof Error) && method === "matchAll") {
         result = Array.from(result)
     }
 
-    await assertOutcome(result, native.error, native.result, scenario)
-    await assertValue(chain._state.value, source, scenario)
+    await assertOutcome(testContext, result, native.error, native.result, scenario)
+    await assertValue(testContext, chain._state.value, source, scenario)
 }
 
 function callStringMethod(source, method, args) {

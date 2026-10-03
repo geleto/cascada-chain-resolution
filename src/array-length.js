@@ -1,19 +1,47 @@
-import { continueOperation } from "./internal-step.js"
+import { continueGraphTransition } from "./internal-step.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 
 // Contributions and questions share program order. A source outcome can feed
 // several captured sequences, but later additions belong to only one sequence.
 class LengthState {
-    constructor(baseline, outcomes = { revision: 0 }) {
+    constructor(baseline) {
         this.baseline = baseline
-        // Forks share only this invalidation stamp and their captured sources,
-        // never a registry of copies. Unchanged outcomes need no rescan.
-        this.outcomes = outcomes
-        this.revision = outcomes.revision
+        // Outcomes invalidate only retained sequences that contain them. The
+        // counter has no reference back to the sequence or its Array.
+        this.outcomes = { revision: 0 }
+        this.revision = 0
+        this.retentions = 0
+    }
+
+    retain() {
+        if (this.retentions++ !== 0) return
+        this.outcomes.revision++ // An inactive sequence may have missed outcomes.
+        this.refresh()
+        for (let node = this.head; node; node = node.next)
+            node.source?.consumers.set(this.outcomes, undefined)
+    }
+
+    release() {
+        if (--this.retentions !== 0) return
+        for (let node = this.head; node; node = node.next)
+            node.source?.consumers.delete(this.outcomes)
     }
 
     get minimum() { this.refresh(); return this.tail?.minimum ?? this.baseline }
     get maximum() { this.refresh(); return this.tail?.maximum ?? this.baseline }
+
+    currentAnswer(index) {
+        return LengthState.lengthAnswer(this.tail?.minimum ?? this.baseline, this.tail?.maximum ?? this.baseline, index)
+    }
+
+    answer(index) {
+        // Outcomes only tighten these bounds. An already conclusive answer
+        // needs neither fresh outcomes nor a scan of the captured sequence.
+        const answer = this.currentAnswer(index)
+        if (answer !== undefined) return answer
+        this.refresh()
+        return this.currentAnswer(index)
+    }
 
     static lengthAnswer(minimum, maximum, index) {
         if (index === undefined) return minimum === maximum ? minimum : undefined
@@ -21,6 +49,7 @@ class LengthState {
     }
 
     append(node) {
+        if (node.question) this.retain()
         node.state = this
         node.previous = this.tail
         if (this.tail) this.tail.next = node
@@ -30,11 +59,12 @@ class LengthState {
         const maximum = node.previous?.maximum ?? this.baseline
         node.minimum = Math.max(minimum, node.value ?? 0)
         node.maximum = Math.max(maximum, node.source?.bound ?? node.value ?? 0)
+        if (node.source && this.retentions) node.source.consumers.set(this.outcomes, undefined)
         if (node.deliver) {
             // Earlier active questions already observe their prefix. Subscribe only
             // the new interval, leaving the unobserved tail lazy.
             for (let previous = node.previous; previous && previous !== this.lastActiveQuestion; previous = previous.previous)
-                previous.source?.nodes.add(previous)
+                previous.source?.consumers.set(this.outcomes, previous)
             this.lastActiveQuestion = node
         }
         return node
@@ -44,7 +74,7 @@ class LengthState {
         if (node === this.lastActiveQuestion) {
             let previous = node.previous
             while (previous && !previous.deliver) {
-                previous.source?.nodes.delete(previous)
+                previous.source?.consumers.set(this.outcomes, undefined)
                 previous = previous.previous
             }
             this.lastActiveQuestion = previous
@@ -53,8 +83,9 @@ class LengthState {
         else this.head = node.next
         if (node.next) node.next.previous = node.previous
         else this.tail = node.previous
-        node.source?.nodes.delete(node)
+        node.source?.consumers.delete(this.outcomes)
         node.state = node.previous = node.next = undefined
+        if (node.question) this.release()
     }
 
     releaseQuestion(node) {
@@ -71,16 +102,20 @@ class LengthState {
 
     add(bound) {
         if (bound <= this.minimum) return undefined
-        const outcomes = this.outcomes
         const source = {
-            bound, nodes: new Set(),
+            // One contribution per sequence: its counter always invalidates,
+            // and an optional node requests active notification of its prefix.
+            bound, consumers: new Map(),
             complete(created) {
                 if (source.value !== undefined) return
                 source.value = created ? bound : 0
-                outcomes.revision++
-                for (const node of [...source.nodes]) {
-                    node.state?.refresh(node)
+                const notify = []
+                for (const [counter, node] of source.consumers) {
+                    counter.revision++
+                    if (node) notify.push(node)
                 }
+                source.consumers.clear()
+                for (const node of notify) node.state?.refresh(node)
             },
         }
         this.append({ source })
@@ -88,7 +123,7 @@ class LengthState {
     }
 
     refresh(start = this.head) {
-        if (this.revision === this.outcomes.revision) return
+        if (this.retentions && this.revision === this.outcomes.revision) return
         this.revision = this.outcomes.revision
         const ready = []
         // A subscribed node's preceding sources are subscribed too, so that
@@ -104,7 +139,7 @@ class LengthState {
             }
             if (node.source?.value !== undefined) {
                 node.value = node.source.value
-                node.source.nodes.delete(node)
+                node.source.consumers.delete(this.outcomes)
                 node.source = undefined
             }
             minimum = Math.max(minimum, node.value ?? 0)
@@ -141,7 +176,7 @@ class LengthState {
     }
 
     resolve(work, onAnswer, index) {
-        const answer = LengthState.lengthAnswer(this.minimum, this.maximum, index)
+        const answer = this.answer(index)
         if (answer !== undefined) return onAnswer(answer)
         const { promise, resolve } = Promise.withResolvers()
         let unregister
@@ -150,11 +185,11 @@ class LengthState {
             resolve(answer)
         } })
         unregister = releaseOnClose(work, () => node.state?.releaseQuestion(node))
-        return continueOperation(promise, work.operationContext, onAnswer, undefined, work)
+        return continueGraphTransition(promise, work.operationContext, onAnswer, undefined, work)
     }
 
     // A read retains one position, not an independently mutable sequence.
-    // Passive markers need no subscriptions; complete traversal reads their
+    // Passive markers need no active notifications; complete traversal reads their
     // answer after its captured placement transitions have finished.
     capture(owner) {
         if (this.minimum === this.maximum) return this.minimum
@@ -181,10 +216,10 @@ class LengthState {
 
     fork() {
         if (this.minimum === this.maximum) return this.minimum
-        const copy = new LengthState(this.baseline, this.outcomes)
+        const copy = new LengthState(this.baseline)
         for (let node = this.head; node; node = node.next) {
             if (node.source) copy.append({ source: node.source })
-            else if (!node.question) copy.grow(node.value)
+            else if (!node.question) copy.compact(copy.append({ value: node.value }))
         }
         return copy
     }

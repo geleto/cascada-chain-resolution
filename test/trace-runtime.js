@@ -6,7 +6,6 @@ const stateURL = new URL("./trace-state.js", import.meta.url).href
 const functions = {
     "input-preparations.js": ["prepareInput", "commitPreparedInput"],
     "error.js": ["runExternalAction"],
-    "thenable-subscription.js": ["runSubscription"],
     "property-versions.js": ["replacePlacement", "commitPlacementVersion", "commitPromiseVersion",
         "installPlacementGate", "installMutationVersion", "copyPlacement", "normalizeRawPropertyValue", "installPlacementVersion", "detachPlacementVersion"],
     "language-properties.js": ["writeLanguageProperty", "deleteLanguageProperty"],
@@ -16,7 +15,7 @@ const functions = {
     "export.js": ["exportValues"],
     "managed-invocation.js": ["copyCompleteGraph", "validateReceiver"],
     "external-snapshot.js": ["snapshotExternalValue"],
-    "language-values.js": ["isPending"],
+    "language-values.js": ["isPending", "thenValue"],
     "meta.js": ["getOrCreateMeta"],
 }
 

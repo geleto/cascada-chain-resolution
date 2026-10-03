@@ -1,6 +1,6 @@
 import * as errors from "./error.js"
 import { TREE_NODE, bindingError } from "./external-mutation-tree.js"
-import { continueOperation } from "./internal-step.js"
+import { continueGraphTransition } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
 function externalCapabilityEscapeError(operationContext) {
@@ -72,7 +72,7 @@ class ExternalEffect {
         for (const membership of memberships) membership.add(this)
         const wait = predecessors.size === 1 ? predecessors.values().next().value.promise :
             predecessors.size ? Promise.all([...predecessors].map(work => work.promise)) : undefined
-        this.readiness = continueOperation(wait, operationContext, () => { this.readiness = undefined })
+        this.readiness = continueGraphTransition(wait, operationContext, () => { this.readiness = undefined })
     }
 
     get promise() {
@@ -89,7 +89,7 @@ class ExternalEffect {
         // A failed managed prefix can finish before native access. Keep its
         // predecessor chain intact for later reservations that captured us.
         const operationContext = this.operationContext
-        markPromiseHandled(continueOperation(this.readiness, operationContext, () => {
+        markPromiseHandled(continueGraphTransition(this.readiness, operationContext, () => {
             this.removeMemberships()
             this.completion?.resolve()
             this.completion = this.node = this.operationContext = undefined

@@ -6,13 +6,10 @@ class OrderedThenable {
     subscribers = []
     outcome = undefined
     subscriptions = 0
-    flushOnSubscribe = false
-    deferReady = false
 
     then(onFulfilled, onRejected) {
         this.subscriptions++
-        if (this.outcome && this.flushOnSubscribe) this.flush()
-        if (this.outcome && this.subscribers.length === 0 && !this.deferReady) {
+        if (this.outcome && this.subscribers.length === 0) {
             const callback = this.outcome.rejected ? onRejected : onFulfilled
             return callback(this.outcome.value)
         }
@@ -45,17 +42,10 @@ class OrderedThenable {
     }
 }
 
-// Subscribing to a derived chain first delivers its parent's queued work.
-// Both the source and derived chains still own their ordinary FIFO queues.
+// A custom returned chain also owns its FIFO queue and nested assimilation.
 class ChainedThenable extends OrderedThenable {
-    then(onFulfilled, onRejected) {
-        if (this.parent?.outcome) this.parent.flush()
-        return super.then(onFulfilled, onRejected)
-    }
-
     createPending() {
         const promise = new ChainedThenable()
-        promise.parent = this
         return {
             promise,
             resolve: value => promise.resolve(value),

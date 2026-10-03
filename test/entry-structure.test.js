@@ -1,3 +1,4 @@
+import { lengthNotificationCount } from "./support.js"
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
@@ -54,18 +55,18 @@ describe("entry structural publication", () => {
     it("does not register unused length forks created by repeated COW", async () => {
         const ctx = context(), chain = new r.Chain([], ctx), hold = Promise.withResolvers()
         const entry = r.enter(chain, [10], ctx, true, () => hold.promise)
-        const source = metaOf(chain._state.value, ctx).arrayView._lengthState.head.source
+        const source = metaOf(chain._state.value, ctx).arrayRange.lengthState.head.source
         for (let i = 0; i < 1000; i++) {
             r.lookupPath(chain, [], ctx) // Retained outputs require actual COW.
             r.assignPath(chain, [0], i, ctx)
         }
-        assert.equal(source.nodes.size, 0)
+        assert.equal(lengthNotificationCount(source), 0)
         const length = r.lookupPath(chain, ["length"], ctx)
-        assert.equal(source.nodes.size, 1)
+        assert.equal(lengthNotificationCount(source), 1)
         hold.resolve()
         await entry
         assert.equal(await length, 1)
-        assert.equal(source.nodes.size, 0)
+        assert.equal(lengthNotificationCount(source), 0)
         assert.deepEqual(await r.export(chain, [], ctx), [999])
         verifyRefCounts(ctx, chain._state)
     })
@@ -761,7 +762,7 @@ describe("entry structural publication", () => {
         const ctx = context(), hold = Promise.withResolvers()
         const array = [], chain = new r.Chain(array, ctx)
         const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
-        const state = metaOf(array, ctx).arrayView._lengthState
+        const state = metaOf(array, ctx).arrayRange.lengthState
         const tail = state.tail
         const failure = snapshotExternalValue(array, ctx)
         assert(r.isPoisonError(failure))

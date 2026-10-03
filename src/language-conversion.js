@@ -1,3 +1,4 @@
+import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, hasArrayAncestor } from "./array-view.js"
 import { finishContainerCopy } from "./placement-structure.js"
 import * as internalSteps from "./internal-step.js"
@@ -12,7 +13,7 @@ const stringConcat = String.prototype.concat
 const arrayJoin = Array.prototype.join
 
 function toStringValue(value, ancestry, operation) {
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         toPrimitiveValue(value, ancestry, operation),
         operation.operationContext,
         primitive => {
@@ -31,7 +32,7 @@ function toStringValue(value, ancestry, operation) {
 }
 
 function toNumberValue(value, operation) {
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         toPrimitiveValue(value, undefined, operation),
         operation.operationContext,
         primitive => {
@@ -57,13 +58,13 @@ function toPrimitiveValue(value, ancestry, operation) {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
             if (isLogicalArray(resolved, operation.operationContext)) {
-                if (hasArrayAncestor(ancestry, resolved)) {
+                if (hasArrayAncestor(ancestry, resolved, operation.operationContext)) {
                     return ""
                 }
                 return joinLogicalArray(
                     resolved,
                     ",",
-                    { array: resolved, parent: ancestry },
+                    { identity: captureIdentity(resolved, operation.operationContext), parent: ancestry },
                     operation,
                 )
             }
@@ -92,7 +93,7 @@ function toPrimitiveValue(value, ancestry, operation) {
 }
 
 function toIntegerOrInfinity(value, operation) {
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         toNumberValue(value, operation),
         operation.operationContext,
         number => {
@@ -116,7 +117,7 @@ function conversionError(operationContext) {
 }
 
 function joinLogicalArray(array, separator = ",", ancestry = undefined, operation) {
-    ancestry ??= { array, parent: undefined }
+    ancestry ??= { identity: captureIdentity(array, operation.operationContext), parent: undefined }
     const operationContext = operation.operationContext
     const shape = errorUtils.catchExternalThrow(
         () => ({ length: ArrayView.captureLength(array, operationContext, operation) }),
@@ -128,7 +129,7 @@ function joinLogicalArray(array, separator = ",", ancestry = undefined, operatio
             const conversion = errorUtils.catchExternalThrow(() => {
                 const placement = propertyVersions.getPropertyPlacement(array, key, operationContext)
                 if (!placement) return undefined
-                return internalSteps.continueOperation(placement.resolveValue(), operationContext, value => {
+                return internalSteps.continueGraphTransition(placement.resolveValue(), operationContext, value => {
                     if (errorUtils.isPoisonError(value)) return value
                     return value === undefined || value === null ? "" : toStringValue(value, ancestry, operation)
                 }, undefined, operation)
@@ -137,6 +138,7 @@ function joinLogicalArray(array, separator = ",", ancestry = undefined, operatio
             conversions.push(conversion)
         }
     }, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed, failure => conversions.push(failure))
+    array = undefined
     return internalSteps.prepareInputs(conversions, operationContext, values => {
         const joined = []
         for (let index = 0; index < keys.length; index++) joined[keys[index]] = values[index]

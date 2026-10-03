@@ -2,7 +2,7 @@
 
 This is a compact coverage guide for reviewing the [Phase 2 plan](../runtime-evolution-plan.md#phase-2-replace-permanent-sharing-with-maintained-ownership), its experiments, or its implementation. It explains why individually correct mechanisms fail when combined and turns that into an inventory of obligations to check. The plan owns design and implementation decisions; [audit.md](audit.md) owns the general method and [project-audit.md](project-audit.md) owns snapshot pinning and slicing. Read those first, and do not restate or re-decide the plan here.
 
-Claude and Codex assembled this from audit rounds between 2026-09-30 and 2026-10-01. Its examples illustrate failure families and most are already addressed in the plan. Verify each against the current snapshot before reporting it.
+Claude and Codex assembled this from audit rounds between 2026-09-30 and 2026-10-02. Phase 2 is implemented, so current reviews audit its implementation or hunt for bugs independently. The examples illustrate failure families and are already addressed in the plan; verify each against the current snapshot before reporting it.
 
 ## Why combinations fail
 
@@ -15,7 +15,7 @@ Before Phase 2, several conservative mechanisms made local code safe by default:
 
 Phase 2 replaces those defaults with precise facts that every route must maintain:
 
-1. **Removing blanket protection.** Each route that actually writes shared storage needs its own replacement. Direct indexed assignment and deletion on a native Array whose backing a live slice uses are protected only by `shared` today. Routes that already publish a replacement do not need one.
+1. **Removing blanket protection.** Each route that actually writes shared storage needs its own replacement. Before Phase 2, direct indexed assignment and deletion on a native Array whose backing a live slice used were protected only by `shared`. Routes that already publish a replacement do not need one.
 2. **Releasable protection.** Every hold now ends, and each release point is a hazard: ready-result expiry, the fallback microtask, pending-delivery release, and recovery dependencies ending on repair. Releases can run after a fatal error.
 3. **Authoritative relationships.** Complete incoming relationships become authoritative for ownership and retirement. A missing or stale relationship now causes an in-place write into another owner's value or premature retirement, not an extra copy.
 4. **Runtime-managed references and metadata lifetime.** Phase 1's incoming relationships are strong references from children to parents. Phase 2 must remove them, and every other runtime reference, when no use remains: registry entries, counter links, destination references, closures, and work fields. JavaScript still collects the memory, but only after the runtime drops its references. This brings cycle proofs, batching, activation candidates, and source-reference cleanup.
@@ -56,6 +56,7 @@ Do not try to fill the full product. For each **applicable obligation**, record 
 
 - **Failure direction.** If this fact is missing, stale, or inactive, is the result an extra copy or leak, or an in-place write or premature retirement? The plan already requires conservative copying for ambiguous cases and a valid path to a retained root for liveness. Check that each route applies those rules, and treat any route whose missing fact leads to corruption as high risk.
 - **Causal testing.** A protective flag being set does not prove it is what protects. Disable the suspected mechanism in a scratch loader hook and observe the outcome before attributing protection to it.
+- **Witnesses.** Removing a safeguard must make at least one supported test fail. Passing tests and cited "production evidence" do not show this: several required safeguards could be deleted with the whole suite still green. The [safeguard registry](../../test/safeguards/registry.mjs) removes each registered safeguard in turn; see [Coordinating audits](#coordinating-audits). A safeguard no test misses is either an untested obligation or dead weight, and a probe through supported routes decides which.
 - **Release timing.** Does release follow the last use on every path, including failure, local closure, a consumer that never arrives, and a fatal error before a queued release runs?
 - **Commit visibility.** Can a batch drain while this route holds private state, an unpublished copy, or a parentless output? Which transition owns the drain?
 - **Producer classification.** Is the result held by its source, fresh, removed from its placement, or a detached snapshot?
@@ -78,45 +79,36 @@ Do not report these as defects without new evidence. Each is a deliberate plan d
 - Validation copies of imported nodes keep imported protection and accept the extra copying that causes.
 - Root clearing still happens at the final live scope exit.
 - Reverse liveness proofs pay for relevant ancestry across separate commands; constant-time release is not promised.
+- Deleting an absent property below the first path level can advance ancestor generations, and copy shared ancestors, before the absence is known. Phases 3 and 4 own no-op equivalence.
+- A supported thenable's `then` may synchronously invoke only its newly supplied callback. Draining older callbacks inside `then` is unsupported; see [data-limitations.md](../data-limitations.md).
 - Cleanup within a live execution is required. Retirement and its interactions are therefore the highest-risk area, not an optional feature.
 
 ## Failure families and reproductions
 
-Classes: **current** (observable in the reviewed production snapshot); **end-state risk** (appears only after Phase 2 changes, or under a partial ownership hook); **specification** (plan, contract, or fixture gap); **performance**. The rows record audit evidence, not a live defect list. Recheck their status against the pinned snapshot and the plan's [executed evidence](../runtime-evolution-plan.md#executed-prototypes-and-selected-direction); distinguish a fixed model from an integrated runtime fix.
+The rows below preserve the audit's failure families as implementation regression targets. They are not a list of current defects. Use the production fixtures and pinned revision; prototype source-hook implementations have been removed.
 
-| Family | Example | Reproduction | Class |
-| --- | --- | --- | --- |
-| Removed protection | `a = [1, 2]`; `s = a.slice(0)` held in another Chain; assign or delete `a[0]`. The slice changes when copy-on-write ignores `shared`. | Minimal sequence with a scratch hook disabling `shared` in `requiresCopyOnWrite`; plan [section 3](../runtime-evolution-plan.md#3-one-cow-decision-using-those-facts) | End-state risk |
-| Removed protection (non-example) | `sort`, `reverse`, `fill`, `splice`, `copyWithin`, `shift`, and `unshift` publish a replacement Array and keep the slice intact without `shared`. Do not add per-method copies. | Same hook; plan section 3 | None |
-| Captured identity | `join` of `[1, pending]`, receiver elements replaced, `pending` fulfilled by a lookup of the later receiver: result is `"1,"` instead of `"1,2,3"` | `node test/experiments/phase2-interactions.mjs production`; plan Experiment C | Current |
-| Captured identity | Identity searches report false matches when an address is reused | `phase2-interactions.mjs ownership` (hook covers ordinary record writes only) | End-state risk |
-| Captured identity | Address-keyed export reuses the `{ k: 1 }` output for a later `{ k: 2 }` generation; query visited sets skip newly introduced Error data | Plan [section 2.4](../runtime-evolution-plan.md#24-captured-identity-when-storage-is-reused) and the storage-reuse counterexamples in [executed prototypes](../runtime-evolution-plan.md#executed-prototypes-and-selected-direction) | End-state risk |
-| Capture ordering | Receiver protection acquired after callback-capable argument preparation in 17 Array observations | `phase2-interactions.mjs production` retains eight cases; correction trial in `receiver` mode. The plan's executed evidence records the expanded 39-case probe; [section 5](../runtime-evolution-plan.md#5-verification-and-completion-criteria) lists all 17 methods, their native-Promise controls, and five unused-input controls. | Current |
-| Source references | Spent call arguments retain their sources | `node --expose-gc test/experiments/phase2-interactions.mjs production`; correction trial in `arguments` mode | Current |
-| Source references | `PropertyPlacement.owner`, Error-query source parameters, export callbacks, and shared traversal closures retain retired sources | `node --expose-gc test/experiments/phase2-destinations.mjs`; plan [section 2.3](../runtime-evolution-plan.md#23-retirement-and-relationship-lifetime) | End-state risk |
-| Release after fatal | A queued release that enters a fatal-throwing transition after `failExecution` exits the process | Minimal sequence: `failExecution(ctx, error)`, then `queueMicrotask(() => runInternalStep(ctx, work))`; plan section 5 detached-cleanup bullet | End-state risk |
-| Runtime lifetime | `x -> oldParent -> child` with `y -> child`: the reverse edge pins `oldParent` | Plan section 2.3 | Specification |
-| Runtime lifetime | `a.push(a)` is logically `[[]]` while its backing contains itself | `node test/experiments/phase2-retirement-runtime.mjs` | End-state risk |
-| Runtime lifetime | The earlier full-region reverse proof cost N + 2 visits to release one lease on a child shared by N rows. The selected batch-local proof now examines three parent edges when the three-edge root path comes first. | `node test/experiments/phase2-retirement.mjs` checks early exit, cycles, failed branches, and batch reuse against the independent oracle. Runtime dependency integration and Array owner enumeration remain Experiment A obligations. | Performance; corrected in model, integration pending |
-| Runtime lifetime | N mutating pushes leave N + 1 registered owners; early-exit ownership checks become quadratic | `phase2-retirement-runtime.mjs`, `phase2-ready-handoff.mjs`; plan section 5 owner-history measurement | Current retention; performance once copy-on-write uses parents |
-| Producer classification | A ready `slice` result has zero parents until its receiving Chain attaches | `phase2-ready-handoff.mjs`; plan [ready leases](../runtime-evolution-plan.md#brief-leases-for-ready-outputs) | End-state risk |
-| Producer classification | Each lookup into a registered mutable external resource returns a fresh managed copy with zero parents | `ContextChain({ db: externalState(new Db()) }, ctx, { db: {} })`, then `lookupPath(["db", "config"])` twice; plan integration step 1 | End-state risk |
-| Imported re-entry | Validation copy `C2` of an imported child must keep imported protection, or cached re-entry changes value | Validation-copy probes in `phase2-ready-handoff.mjs`; plan [imported protection](../runtime-evolution-plan.md#imported-protection-and-supported-re-entry) | End-state risk |
-| Imported re-entry | Imported native Arrays own their backing record and keep logical state in overlays that retirement must preserve | Plan section 2.3 Array owner rules | Specification |
-| Metadata separation | Retired counter summaries stop receiving child updates and become stale on re-entry | `phase2-destinations.mjs` counter rebuild checks; plan Experiment B | Specification |
-| Metadata separation | Reactivation during a fallible import walk restores relationships before the segment commits | Plan section 2.3 reactivation rule and Phase 6 constraints; the destinations probe still reactivates during the walk | Specification |
-| Commit visibility | A nested body during preparation retired an immediately received slice and changed a result to `[2]` | Plan executed-prototypes storage-reuse and preparation counterexamples | End-state risk |
-| Commit visibility | A pending managed mutation adopts its receiver before publication resumes two reactions later | Plan section 2.3 boundary rules and section 5 | Specification |
-| Enforced handoff | Tests hold raw lookups across later writes and assert they are unchanged | `test/operation-sequences.test.js`; plan integration step on test migration | Specification |
-| Enforced handoff | Phase 1's `test/fixtures/import-retention.js` expects ancestor retention that Phase 2 forbids | Plan Phase 1 retirement note | Specification |
-| Array representation | One point write after N pushes materializes the whole Array, through assignment and mutable entry; alternating loops copy quadratic volume | `node test/experiments/phase2-array-point-writes.mjs`; plan [section 6](../runtime-evolution-plan.md#6-array-mutation-performance-experiments) | Performance (current) |
-| Array representation | Stack-style `pop` then `push` allocates a new backing per pair | Plan section 6.2 | Performance (current) |
+| Family | Required witness | Production evidence |
+| --- | --- | --- |
+| Removed protection | Retained slices survive indexed assignment/deletion; releasing the extra owner restores eligible reuse. | Ownership, ArrayView, and publication-failure tests. |
+| Captured identity | Address reuse does not merge export generations, skip newly introduced Errors, report false search matches, or mistake a later Array generation for an ancestor. | Ownership interactions plus export and Error-query tests. |
+| Capture ordering | Receiver protection precedes callback-capable argument preparation; the whole argument frontier survives an earlier body. | All 17 Array observations, native controls, and unused-input controls in ownership interactions; fresh-input tests. |
+| Input handoff | Pending Chain/context initialization, assignment, lookup, and external results preserve producer values before later source writers; assignment links its captured RHS. | Ownership tests and indexed/unindexed self-assignment tests. |
+| Source references | Pending captures, queries, exports, and calls release spent parents, siblings, inputs, and discarded shells. | Run `node --expose-gc test/fixtures/ownership-destinations.js` and the corresponding ownership-interactions fixture. |
+| Release after fatal | Detached delivery cleanup clears its own state without an uncaught queued fatal. | Ownership destinations. |
+| Runtime lifetime | Disconnected cycles retire; a root or independent retained use preserves the reachable region; internal backing cycles do not prove liveness. | Independent retirement model and randomized production reachability checks. |
+| Runtime work | Early-exit reverse proof bounds one batch; ignored output does not accumulate owners or queued fallbacks inside direct or entered bodies. | Ownership work fixture; independent ownership model. Long live ancestry across separate commands remains an accepted cost. |
+| Producer classification | Fresh ready slices and external snapshots remain alive until direct reception; source-held ready lookup needs no extra hold. | Ownership and external-context tests; complete-constructor work counts. |
+| Imported re-entry | Validation copies retain imported protection, inactive versions still settle, and restoration repeats neither host inspection nor subscription. | Ownership destinations, input-preparation tests, and work counters. |
+| Metadata separation | Retirement removes counter projections and reverse links while preserving forward logical values and version authority. | Ownership destinations and the independent parent/refcount verifiers. |
+| Commit visibility | Nested bodies commit independently while unfinished input/copy work remains held; receiver publication and result delivery have distinct lifetimes. | Ownership interactions, mutation/entry tests, and the generated sequences. |
+| Enforced handoff | Raw results retained across commands use explicit holders; clearing roots permits collection of abandoned ancestors. | Updated sequence fixtures and import-retention GC fixture. |
+| Array representation | Exclusive point writes copy no prefix; retained views still trigger linear materialization. Pop/push with an unused physical tail retains its safe fallback. | Array point-work and ownership work fixtures; plan section 6 records the kept/reverted trials. |
 
 ## Review pitfalls observed
 
 - **Finding-driven reading.** Enumerate obligations first.
 - **Inferring causation from a set flag.** One review blamed seven Array methods on missing `shared` protection because the flag was set; disabling it showed they already publish replacements.
-- **Model evidence treated as integration evidence.** Check what each experiment hooks: one runner opens transitions at public wrappers and covers ready commands only; another selects retirement explicitly; the `ownership` mode covers ordinary record writes only.
+- **Model evidence treated as integration evidence.** `npm run test:ownership-model` checks the retirement algorithm against a forward-root oracle; it does not run production scheduling, publication, or Array storage. Check what any experiment or probe actually executes before generalizing its result.
 - **The plan and its prototype disagree.** Compare the text with what the experiment executes, such as when reactivation happens.
 - **Measuring the wrong observable.** `chain._state.value` reads the physical property; a published overlay can hold a different logical value. Use `readLanguageProperty` and the public API.
 - **Cost measured along one axis.** Depth without fan-in; one final write without alternating loops.
@@ -125,12 +117,39 @@ Classes: **current** (observable in the reviewed production snapshot); **end-sta
 - **Stale cross-references.** Fixtures and other phases can contradict a revised design; check Phases 1, 5, and 6 and their fixtures.
 - **Snapshot drift.** The plan changed during several audits. Pin the snapshot and recheck before reporting.
 - **Attribution instead of reproduction.** Cite the experiment, mode, or minimal sequence, not who found an issue.
+- **Tests that pin representation.** An assertion that storage is copied rather than written in place, or that runtime-owned host input stays untouched, pins representation unless the contract promises it. Such a test can block a sound simplification; check it against [data-limitations.md](../data-limitations.md) before treating its failure as a defect.
+- **Misreading fault runs.** A run without a test summary crashed; it is not clean. Count failing tests, not exit codes alone.
+- **Coverage without the interaction.** Assert joint keys for the actual histories exercised. A held root makes cached re-entry an active-graph test; prove retirement before calling it retired re-entry. An early expected assertion failure can hide later failures: collect all issued checks and still verify final postconditions.
 
 ## Evidence and reporting
 
 Every finding needs a supported operation sequence, the violated contract, and a reproducer or a precise missing proof. Mark evidence as executed (with command, mode, and result), reasoned, or proposed. State whether a failure occurs in production code or only under a partial ownership hook. Classify it as current, end-state risk, specification, performance, or optional improvement. Rank severity: process crash, silent corruption, and premature retirement first; then leaks; then extra copies and documentation drift. Say when a fix needs a decision from the user.
 
-For an implementation review, attach actual code locations and executed verification to each applicable obligation in the existing inventory. Identify the enforcing boundary, trace its relevant callers and bypasses, and cite the regression, independent verifier, or measured work check. Explain when one executed check covers several routes through the same enforcement path. A plan paragraph or passing prototype alone cannot close an implementation obligation; keep specified, model-verified, and runtime-verified evidence distinct. Record remaining gaps explicitly rather than starting a separate tracking system.
+For an implementation review, attach actual code locations and executed verification to each applicable obligation in the existing inventory. Identify the enforcing boundary, trace its relevant callers and bypasses, and cite the regression, independent verifier, or measured work check. Explain when one executed check covers several routes through the same enforcement path. A plan paragraph or passing prototype alone cannot close an implementation obligation; keep specified, model-verified, and runtime-verified evidence distinct. Record remaining gaps explicitly: safeguard coverage in the registry below, other unresolved obligations in the plan. Do not start another tracking system.
+
+## Coordinating audits
+
+Several models audit this phase, sometimes at the same time. Keep shared state in the repository so each audit extends earlier work instead of repeating it:
+
+- **Start from the witness map.** Run `npm run test:safeguards`, or `npm run test:safeguards -- <id> ...` for your slice, against your pinned snapshot. The [registry](../../test/safeguards/registry.mjs) is the only list of safeguard faults; do not keep a private one.
+- **Keep deferred conformance visible.** Run `npm run test:known-issues:check` and inspect `npm run test:known-issues` failures. A matching baseline means known debt is unchanged, not that conformance passes. Changed symptoms require investigation; fixed witnesses move into the default suite.
+- **Report by entry id.** An `open` entry is already known. Report it again only with new evidence, such as a supported consequence or a proof that none exists, and update its reason in the same change.
+- **Add a test only where one is missing.** That means an entry that is `open` or `lost`, or a newly found safeguard. Before writing it, run the entry: if any test already fails, the witness exists. Add a second witness only for a distinct semantic consequence, and say which. Record the new test's title in `witnesses` in the same change.
+- **One entry per safeguard.** Check existing ids and fault locations before adding one. Delete the entry when its safeguard is removed as redundant.
+- **Keep probes disposable.** Retained evidence belongs in the normal suite, the registry, or the plan's open decisions. Do not add per-audit fixtures or runners for coverage the suite already has.
+- **Recheck before reporting.** Results hold for the snapshot they ran on. If the tree has moved, re-run the affected entries before reporting them as current.
+
+The runner first checks that the unmodified suite is clean. By default it then runs only each entry's listed witnesses, which takes seconds per entry. It falls back to the whole suite when no witness fails or the entry is open; `--full` always runs the whole suite and reports every affected test. Each entry is classified as:
+
+| Status | Meaning and action |
+| --- | --- |
+| `witnessed` | A listed witness fails. Covered. A `--full` run notes when only one test fails at all (thin coverage). |
+| `unlisted` | Only other tests fail. Confirm one is a semantic witness, not an incidental check such as a work-count marker, and list it. |
+| `open` | No test fails and the entry explains why. Probe supported routes: a consequence calls for a regression; none calls for removal. |
+| `lost` | No test fails and the entry is not marked open. Coverage regressed; restore a witness. |
+| `witnessed-but-open` | The entry is marked open but a listed witness now fails. Remove `open`. |
+| `stale` | The fault text no longer matches source. Update the fault, not the status. |
+| `crashed` | The suite died before any test failed. The fault is detected but has no named witness; read the crash before relying on it. Other statuses marked "suite crashed" still name the tests that failed first. |
 
 ## Stages and audits
 
@@ -141,6 +160,8 @@ For an implementation review, attach actual code locations and executed verifica
 | Implementation | Whether actual code maintains the rules across every producer, consumer, publication, and release boundary, checked by the extended independent verifiers inside generated sequences. |
 | Independent bug hunting | Whether combinations and assumptions escaped both design and implementation tests. |
 
+Phase 2 has passed the first three stages. The rest of this section records how they were run, for re-audits and for later phases built the same way.
+
 Follow the plan's [integration sequence](../runtime-evolution-plan.md#42-integration-sequence). At each step, check that every safeguard a step removes, such as `shared` on a route, has its replacement (handoff holds, captured generations, Array storage permission) in place first.
 
 Begin implementation once required semantics and responsibilities have a plausible design and remaining uncertainties have bounded experiments and decision points. An unresolved experiment gates the representation or dependent change it must justify; it does not require another complete plan review before independent implementation work can begin. Complete each experiment's required evidence before relying on its result, and keep integrated acceptance separate from model success.
@@ -149,7 +170,7 @@ Use focused reviews at the high-risk integration points within the coherent Phas
 
 - As handoff and capture become executable, check synchronous callback delivery, the complete retained input frontier, and captured identity under storage reuse.
 - As retirement is connected, check pending publication, working-copy holds, reactivation, source-reference release, and Array storage dependencies together. Resolve their required checks before making replacement ownership authoritative.
-- After integration, audit the actual production replacement with `shared` removed and without correction hooks supplying missing holds, retirement, or generation handling. Diagnostic instrumentation may observe that path; pair it with the uninstrumented controls required by [test/README.md](../../test/README.md). Run the retained counterexamples as regressions, the relevant independent verifiers and generated sequences, and the required lifetime and work-count checks at the plan's acceptance scales.
+- After integration, audit the actual production replacement with `shared` removed and without correction hooks supplying missing holds, retirement, or generation handling. Diagnostic instrumentation may observe that path; pair it with the uninstrumented controls required by [test/README.md](../../test/README.md). Run the retained counterexamples as regressions, the relevant independent verifiers and generated sequences, the safeguard registry, and the required lifetime and work-count checks at the plan's acceptance scales.
 
 Turn each confirmed defect into a regression, check sibling routes using the same mechanism, and re-audit affected interactions after the fix. Reopen architectural decisions when evidence contradicts their assumptions or exposes disproportionate complexity; routine wiring defects need focused correction and verification. If using multiple reviewers, assign complementary slices plus explicit ownership of interactions. Stop a review stage when its applicable obligations have owners, transition arguments, and stage-appropriate evidence, with findings resolved or explicitly recorded. Final acceptance requires resolution of required findings and the plan's completion criteria; neither a fixed number of reviews nor one quiet round establishes that.
 
@@ -158,8 +179,8 @@ Turn each confirmed defect into a regression, check sibling routes using the sam
 - Write review probes in a scratch directory and import production modules through `file://` URLs. A review alone does not authorize repository fixes; make them when requested, then retain useful regressions in the normal test harness.
 - Drive behavior through `src/index.js`: `new Chain(value, ctx)`, `run(chain, path, method, args, ctx, facts)`, `assignPath`, `deletePath`, `enter`, `lookupPath`, and `ContextChain(value, ctx, mutationAccessTree)` with `externalState`. Use `{ execution: new Execution(), errorContext }` as the context.
 - Read logical state with `readLanguageProperty` (`src/language-properties.js`), parent facts with `getParentPlacements` (`src/parent-placements.js`), and metadata with `metaOf` (`src/meta.js`).
-- Test causality with process-local loader hooks (`registerHooks` from `node:module`): for example, make `requiresCopyOnWrite` ignore `shared`, then observe whether the protected value changes.
-- Count work instead of timing it: wrap an owner set's iterator, use the metrics in `phase2-ownership-model.mjs`, and count copies. Use `node --cpu-prof` and aggregate time beneath one function to locate a cost.
+- Test causality with process-local loader hooks (`registerHooks` from `node:module`): for example, make `requiresCopyOnWrite` ignore `preservationParents`, then observe whether a retained recovery baseline changes. For a registered safeguard, use `npm run test:safeguards -- <id>`; its hook also reaches fixtures the suite spawns.
+- Count work instead of timing it: reuse the counting hooks in [ownership-work.js](../../test/fixtures/ownership-work.js), wrap an owner set's iterator, and count copies. Use `node --cpu-prof` and aggregate time beneath one function to locate a cost.
 - Use GC witnesses with `--expose-gc` and `WeakRef`, keeping the execution and surviving children alive.
 - Run crash, livelock, and memory probes in a subprocess with limits.
-- Reuse the runners in `test/experiments/`, with their documented modes, before writing new ones.
+- Reuse the safeguard runner, the ownership model, and the existing fixtures and verifiers in [test/README.md](../../test/README.md) before writing new harnesses.

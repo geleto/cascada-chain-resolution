@@ -1,3 +1,25 @@
+import * as arrayViews from "../src/array-view.js"
+import * as languageValues from "../src/language-values.js"
+import * as propertyVersions from "../src/property-versions.js"
+import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
+import {
+    Chain,
+    assignPath,
+    enter,
+    externalState,
+    export as exportValue,
+    hasError,
+    import as importValue,
+    lookupPath,
+    managedState,
+    managedStateClass,
+    run,
+    Execution,
+} from "../src/index.js"
+import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
+import { failExecution as submitFatal } from "../src/error.js"
+import { verifyRefCounts } from "./verify-refcounts.js"
+
 import * as runtime from "../src/index.js"
 import { runInNewContext } from "node:vm"
 import assert from "node:assert/strict"
@@ -9,112 +31,99 @@ import {
     logicalArrayValues,
     logicalProperty,
     logicalKeys,
-    testOperationContext,
-    Chain,
-    arrayViews,
-    assignPath,
-    buildRefIndex,
     countPromiseRegistrations,
     deferred,
-    enter,
     expect,
-    externalState,
     errorCause,
-    exportValue,
     flushMicrotasks,
-    getRefCounter,
-    hasError,
-    languageValues,
-    importValue,
-    lookupPath,
-    propertyVersions,
     readPath,
-    submitFatal,
-    metaOf,
-    managedState,
-    managedStateClass,
-    run,
-    useTestExecution,
     thrownBy,
-    verifyRefCounts,
 } from "./support.js"
 
 describe("run", () => {
-    it("rejects unsupported calls before consuming arguments", () => {
+    it("rejects unsupported calls without waiting for provisionally prepared mutation arguments", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const before = registrations()
-        const mutation = new Chain([1])
+        const mutation = new Chain([1], testContext)
         const mutationError = run(
             mutation,
             [],
             "map",
             [pending.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(mutationError instanceof Error).to.be(true)
         expect(mutation._state.value).to.be(mutationError)
 
-        const unsupportedMode = new Chain([1])
+        const unsupportedMode = new Chain([1], testContext)
         const unsupportedModeError = run(
             unsupportedMode,
             [],
             "slice",
             [pending.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(unsupportedModeError instanceof Error).to.be(true)
         expect(unsupportedMode._state.value).to.be(unsupportedModeError)
+        expect(registrations() > before).to.be(true)
+        const beforeObservation = registrations()
 
-        const observation = new Chain([1])
+        const observation = new Chain([1], testContext)
         const constructorError = run(
             observation,
             [],
             "constructor",
             [pending.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(constructorError.message).to.be(
             "Method is not callable: constructor",
         )
         expect(observation._state.value).to.eql([1])
 
-        expect(registrations()).to.be(before)
+        expect(registrations()).to.be(beforeObservation)
         pending.resolve(1)
     })
 
     it("uses native String calls and logical Array conversion", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const scalar = function scalar() {}
         expect(run(
-            new Chain("ab"),
+            new Chain("ab", testContext),
             [],
             "concat",
             [scalar],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(String.prototype.concat.call("ab", scalar))
         expect(run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "slice",
             [scalar],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
 
         const argument = deferred()
         const limit = deferred()
-        const chain = new Chain("ab")
-        const result = run(chain, [], "concat", [argument.promise], {})
+        const chain = new Chain("ab", testContext)
+        const result = run(chain, [], "concat", [argument.promise], { ...testContext, errorContext: "test run" }, { repair: false })
         const split = run(
-            new Chain("ab"),
+            new Chain("ab", testContext),
             [],
             "split",
             [
                 "",
                 limit.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(result instanceof Promise).to.be(true)
@@ -127,6 +136,7 @@ describe("run", () => {
     })
 
     it("exports only arguments that native code receives", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const nested = deferred()
         const argument = { nested: nested.promise }
         let received
@@ -140,11 +150,12 @@ describe("run", () => {
         })
 
         const ordinary = run(
-            new Chain(target),
+            new Chain(target, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(ordinary instanceof Promise).to.be(true)
         nested.resolve(3)
@@ -154,11 +165,12 @@ describe("run", () => {
 
         const indexReady = deferred()
         const indexed = run(
-            new Chain([1]),
+            new Chain([1], testContext),
             [],
             "at",
             [{ ready: indexReady.promise }],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(indexed).to.be(1)
         indexReady.resolve(true)
@@ -166,21 +178,23 @@ describe("run", () => {
         const retainedReady = deferred()
         const retained = { ready: retainedReady.promise }
         const pushed = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "push",
             [retained],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(pushed instanceof Promise).to.be(false)
-        expect([...logicalArrayValues(pushed, testOperationContext())]).to.eql([retained])
+        expect([...logicalArrayValues(pushed, testContext)]).to.eql([retained])
         retainedReady.resolve(true)
     })
 
     it("handles arguments captured from other Chains", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const source = new Chain({ argument: pending.promise })
-        const argument = lookupPath(source, ["argument"])
+        const source = new Chain({ argument: pending.promise }, testContext)
+        const argument = lookupPath(source, ["argument"], testContext)
         const target = {}
         Object.defineProperty(target, "read", {
             enumerable: true,
@@ -190,43 +204,46 @@ describe("run", () => {
         })
 
         const observed = run(
-            new Chain(target),
+            new Chain(target, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        assignPath(source, ["argument"], { answer: 2 })
+        assignPath(source, ["argument"], { answer: 2 }, testContext)
         pending.resolve({ answer: 1 })
 
         expect(await observed).to.be(1)
-        expect(exportValue(source, [])).to.eql({
+        expect(exportValue(source, [], testContext)).to.eql({
             argument: { answer: 2 },
         })
 
-        const payloadSource = new Chain({ item: { answer: 3 } })
-        const item = lookupPath(payloadSource, ["item"])
+        const payloadSource = new Chain({ item: { answer: 3 } }, testContext)
+        const item = lookupPath(payloadSource, ["item"], testContext)
         const pushed = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "push",
             [item],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(pushed instanceof Promise).to.be(false)
-        expect([...logicalArrayValues(pushed, testOperationContext())]).to.eql([item])
-        expect([...logicalArrayValues(pushed, testOperationContext())][0]).to.be(item)
-        assignPath(payloadSource, ["item", "answer"], 4)
-        expect([...logicalArrayValues(pushed, testOperationContext())][0].answer).to.be(3)
-        expect(exportValue(payloadSource, [])).to.eql({
+        expect([...logicalArrayValues(pushed, testContext)]).to.eql([item])
+        expect([...logicalArrayValues(pushed, testContext)][0]).to.be(item)
+        assignPath(payloadSource, ["item", "answer"], 4, testContext)
+        expect([...logicalArrayValues(pushed, testContext)][0].answer).to.be(3)
+        expect(exportValue(payloadSource, [], testContext)).to.eql({
             item: { answer: 4 },
         })
     })
 
     it("uses ordinary String invocation and imports results", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const replacement = deferred()
-        const chain = new Chain("abc")
+        const chain = new Chain("abc", testContext)
         const replacementResult = run(
             chain,
             [],
@@ -235,7 +252,8 @@ describe("run", () => {
                 "a",
                 replacement.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         replacement.resolve(() => "x")
@@ -243,14 +261,15 @@ describe("run", () => {
         expect(await replacementResult).to.be("xbc")
 
         const parts = run(
-            new Chain("a,b"),
+            new Chain("a,b", testContext),
             [],
             "split",
             [","],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        const partsChain = new Chain(parts)
-        run(partsChain, [], "push", ["c"], { mutationScopeDepth: 0 })
+        const partsChain = new Chain(parts, testContext)
+        run(partsChain, [], "push", ["c"], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(parts).to.eql(["a", "b"])
         expect(partsChain._state.value).to.eql(["a", "b", "c"])
@@ -258,6 +277,7 @@ describe("run", () => {
     })
 
     it("allows String dispatch protocols and imports their results", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let calls = 0
         const external = { value: 1 }
         class Matcher {
@@ -267,14 +287,15 @@ describe("run", () => {
             }
         }
         const result = run(
-            new Chain("abc"),
+            new Chain("abc", testContext),
             [],
             "match",
             [new Matcher()],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        const resultChain = new Chain(result)
-        assignPath(resultChain, ["value"], 2)
+        const resultChain = new Chain(result, testContext)
+        assignPath(resultChain, ["value"], 2, testContext)
 
         expect(calls).to.be(1)
         expect(result).to.be(external)
@@ -284,19 +305,21 @@ describe("run", () => {
     })
 
     it("imports results delegated through intrinsic String methods", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const external = ["a"]
         const matcher = /a/
         matcher.exec = () => external
 
         const result = run(
-            new Chain("abc"),
+            new Chain("abc", testContext),
             [],
             "match",
             [matcher],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        const resultChain = new Chain(result)
-        assignPath(resultChain, ["0"], "changed")
+        const resultChain = new Chain(result, testContext)
+        assignPath(resultChain, ["0"], "changed", testContext)
 
         expect(result).to.be(external)
         expect(external).to.eql(["a"])
@@ -305,6 +328,7 @@ describe("run", () => {
     })
 
     it("uses only own enumerable data properties as record methods", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = { value: 2 }
         let accessed = false
         Object.defineProperty(source, "read", {
@@ -325,27 +349,28 @@ describe("run", () => {
             },
         })
 
-        expect(run(new Chain(source), [], "read", [], {})).to.be(2)
+        expect(run(new Chain(source, testContext), [], "read", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(2)
         expect(run(
-            new Chain(source),
+            new Chain(source, testContext),
             [],
             "hidden",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
         expect(run(
-            new Chain(source),
+            new Chain(source, testContext),
             [],
             "accessor",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
         expect(accessed).to.be(false)
     })
 
     it("returns a synchronous observation failure without changing its receiver", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("observation failed")
         const source = { value: 2 }
         Object.defineProperty(source, "fail", {
@@ -354,14 +379,15 @@ describe("run", () => {
                 throw failure
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        expect(errorCause(run(chain, [], "fail", [], {}))).to.be(failure)
+        expect(errorCause(run(chain, [], "fail", [], { ...testContext, errorContext: "test run" }, { repair: false }))).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
     })
 
     it("returns a delayed synchronous observation failure", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const argument = deferred()
         const failure = new Error("delayed observation failed")
         const source = { value: 2 }
@@ -371,30 +397,32 @@ describe("run", () => {
                 throw failure
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
         const result = run(
             chain,
             [],
             "fail",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         argument.resolve("ready")
 
         expect(errorCause(await result)).to.be(failure)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("preserves host result Promise outcomes", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const returned = deferred()
         const argument = deferred()
         const fulfilledError = new Error("fulfilled Error")
         const rejectedError = new Error("rejected Error")
         const source = {}
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
         Object.defineProperty(source, "result", {
             enumerable: true,
             value() {
@@ -407,7 +435,8 @@ describe("run", () => {
             [],
             "result",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         argument.resolve("ready")
         returned.resolve(fulfilledError)
@@ -418,7 +447,8 @@ describe("run", () => {
             [],
             "result",
             [],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(ready).not.to.be(returned.promise)
         expect(errorCause(await ready)).to.be(fulfilledError)
@@ -431,11 +461,11 @@ describe("run", () => {
                 return returnedData.promise
             },
         })
-        const dataResult = run(chain, [], "data", [], {})
+        const dataResult = run(chain, [], "data", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(dataResult).not.to.be(returnedData.promise)
         returnedData.resolve(hostValue)
         expect(await dataResult).to.be(hostValue)
-        expect(metaOf(hostValue).imported).to.be(true)
+        expect(metaOf(hostValue, testContext).imported).to.be(true)
 
         const failed = deferred()
         Object.defineProperty(source, "failure", {
@@ -444,7 +474,7 @@ describe("run", () => {
                 return failed.promise
             },
         })
-        const rejection = run(chain, [], "failure", [], {})
+        const rejection = run(chain, [], "failure", [], { ...testContext, errorContext: "test run" }, { repair: false })
         failed.reject(rejectedError)
         const rejected = await rejection
         expect(errorCause(rejected)).to.be(rejectedError)
@@ -452,6 +482,7 @@ describe("run", () => {
     })
 
     it("honors declarations on ready and promised host results", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Managed {}
         const managed = managedState(new Managed())
         const external = externalState({})
@@ -463,19 +494,20 @@ describe("run", () => {
                 value: () => Promise.resolve(external),
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        expect(run(chain, [], "managed", [], {})).to.be(managed)
-        expect(metaOf(managed).type).to.be(
+        expect(run(chain, [], "managed", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(managed)
+        expect(metaOf(managed, testContext).type).to.be(
             languageValues.TYPE.ManagedClass,
         )
-        expect(await run(chain, [], "external", [], {})).to.be(external)
-        expect(metaOf(external).type).to.be(
+        expect(await run(chain, [], "external", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(external)
+        expect(metaOf(external, testContext).type).to.be(
             languageValues.TYPE.External,
         )
     })
 
     it("leases a receiver through a pending host result", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const source = { value: 1 }
         Object.defineProperty(source, "laterRead", {
@@ -484,20 +516,21 @@ describe("run", () => {
                 return completion.promise.then(() => this.value)
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        const result = run(chain, [], "laterRead", [], {})
-        assignPath(chain, ["value"], 2)
+        const result = run(chain, [], "laterRead", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["value"], 2, testContext)
         completion.resolve()
 
         expect(await result).to.be(1)
         expect(source.value).to.be(1)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("admits a promised host receiver alias before releasing its lease", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const source = { value: 1 }
         Object.defineProperty(source, "laterSelf", {
@@ -506,21 +539,25 @@ describe("run", () => {
                 return completion.promise.then(() => this)
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        const result = run(chain, [], "laterSelf", [], {})
+        const result = run(chain, [], "laterSelf", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        const retained = new Chain(result, testContext)
         completion.resolve()
         const alias = await result
-        assignPath(chain, ["value"], 2)
+        assignPath(chain, ["value"], 2, testContext)
 
         expect(alias).to.be(source)
         expect(alias.value).to.be(1)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        await flushMicrotasks()
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
+        expect(retained._state.value).to.be(alias)
     })
 
     it("adopts host result thenables into one operation Promise", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const thenable = {
             then: completion.promise.then.bind(completion.promise),
@@ -533,9 +570,9 @@ describe("run", () => {
                 return returned
             },
         })
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        const result = run(chain, [], "result", [], {})
+        const result = run(chain, [], "result", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(result).not.to.be(thenable)
         completion.resolve("done")
@@ -553,20 +590,22 @@ describe("run", () => {
             [],
             "result",
             [],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(rejectedResult).not.to.be(rejectedThenable)
         failed.reject(failure)
         const rejection = await rejectedResult
         expect(errorCause(rejection)).to.be(failure)
 
-        assignPath(chain, ["value"], 2)
+        assignPath(chain, ["value"], 2, testContext)
         expect(chain._state.value).to.be(source)
         expect(source.value).to.be(2)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("prepares nested Promises before invoking a record method", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const registrationCount = countPromiseRegistrations(pending.promise)
         const source = { nested: { pending: pending.promise } }
@@ -578,7 +617,7 @@ describe("run", () => {
         })
         const initialCount = registrationCount()
 
-        const result = run(new Chain(source), [], "seesPending", [], {})
+        const result = run(new Chain(source, testContext), [], "seesPending", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(result instanceof Promise).to.be(true)
         expect(registrationCount() > initialCount).to.be(true)
@@ -587,6 +626,7 @@ describe("run", () => {
     })
 
     it("exposes prepared logical Promise values to record methods", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const runtimePending = deferred()
         const runtimeOwned = { pending: runtimePending.promise }
         Object.defineProperty(runtimeOwned, "stillPending", {
@@ -595,7 +635,7 @@ describe("run", () => {
                 return this.pending === runtimePending.promise
             },
         })
-        readPath(new Chain(runtimeOwned), ["pending"])
+        readPath(new Chain(runtimeOwned, testContext), ["pending"], testContext)
 
         const importedPending = deferred()
         const imported = { pending: importedPending.promise }
@@ -605,28 +645,30 @@ describe("run", () => {
                 return this.pending === importedPending.promise
             },
         })
-        importValue(imported, "ordinary receiver")
+        importValue(imported, { ...testContext, errorContext: "ordinary receiver" })
 
         runtimePending.resolve("runtime")
         importedPending.resolve("imported")
         await flushMicrotasks()
 
-        expect(run(new Chain(runtimeOwned), [], "stillPending", [], {})).to.be(
+        expect(run(new Chain(runtimeOwned, testContext), [], "stillPending", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(
             false,
         )
-        expect(run(new Chain(imported), [], "stillPending", [], {})).to.be(false)
+        expect(run(new Chain(imported, testContext), [], "stillPending", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(false)
     })
 
     it("imports a record method result that aliases its receiver", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const root = { pending: pending.promise }
         root.self = function () {
             return this
         }
         const languageKeys = Reflect.ownKeys(root)
-        const earlierRead = readPath(new Chain(root), ["pending"])
+        const rootChain = new Chain(root, testContext)
+        const earlierRead = readPath(rootChain, ["pending"], testContext)
 
-        const invocation = run(new Chain(root), [], "self", [], {})
+        const invocation = run(rootChain, [], "self", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(invocation instanceof Promise).to.be(true)
 
         const resolved = { done: true }
@@ -634,45 +676,48 @@ describe("run", () => {
         const result = await invocation
         expect(result).to.be(root)
         expect(Reflect.ownKeys(root)).to.eql(languageKeys)
-        expect(metaOf(root).imported).to.be(undefined)
-        expect(metaOf(root).shared).to.be(true)
+        expect(metaOf(root, testContext).imported).to.be(undefined)
+        expect(requiresCopyOnWrite(root, testContext)).to.be(true)
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
 
         expect(root.pending).to.be(resolved)
-        expect(readPath(new Chain(root), ["pending"])).to.be(resolved)
+        expect(readPath(rootChain, ["pending"], testContext)).to.be(resolved)
     })
 
     it("preserves holes and identities in Array observers", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const child = {}
         const source = [child, , 3]
-        const chain = new Chain(source)
-        const sliced = run(chain, [], "slice", [0], {})
-        const reversed = run(chain, [], "toReversed", [], {})
+        const chain = new Chain(source, testContext)
+        const sliced = run(chain, [], "slice", [0], { ...testContext, errorContext: "test run" }, { repair: false })
+        const reversed = run(chain, [], "toReversed", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect(logicalKeys(sliced, testOperationContext())).to.eql(["0", "2"])
-        expect(logicalProperty(sliced, "0", testOperationContext())).to.be(child)
+        expect(logicalKeys(sliced, testContext)).to.eql(["0", "2"])
+        expect(logicalProperty(sliced, "0", testContext)).to.be(child)
         expect(Object.keys(reversed)).to.eql(["0", "1", "2"])
         expect(reversed).to.eql([3, undefined, child])
         expect(source).to.eql([child, , 3])
     })
 
     it("preserves native defaults after promised arguments", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const sliceEnd = deferred()
         const copyEnd = deferred()
         const flatDepth = deferred()
         const separator = deferred()
         const sliced = run(
-            new Chain([1, 2, 3]),
+            new Chain([1, 2, 3], testContext),
             [],
             "slice",
             [
                 0,
                 sliceEnd.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        const copiedChain = new Chain([1, 2, 3])
+        const copiedChain = new Chain([1, 2, 3], testContext)
         const copied = run(
             copiedChain,
             [],
@@ -682,21 +727,24 @@ describe("run", () => {
                 0,
                 copyEnd.promise,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         const flattened = run(
-            new Chain([[1], [2]]),
+            new Chain([[1], [2]], testContext),
             [],
             "flat",
             [flatDepth.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const joined = run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "join",
             [separator.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         sliceEnd.resolve(undefined)
@@ -704,7 +752,7 @@ describe("run", () => {
         flatDepth.resolve(undefined)
         separator.resolve(undefined)
 
-        expect([...logicalArrayValues((await sliced), testOperationContext())]).to.eql([
+        expect([...logicalArrayValues((await sliced), testContext)]).to.eql([
             1, 2, 3,
         ])
         expect(await copied).to.be(copiedChain._state.value)
@@ -714,81 +762,87 @@ describe("run", () => {
     })
 
     it("recognizes cross-realm Array intrinsics without export", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const source = runInNewContext("[]")
         source.push(pending.promise)
 
-        const result = run(new Chain(source), [], "slice", [], {})
+        const result = run(new Chain(source, testContext), [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(result instanceof Promise).to.be(false)
-        expect(logicalProperty(result, "0", testOperationContext())).to.be(pending.promise)
+        expect(logicalProperty(result, "0", testContext)).to.be(pending.promise)
         pending.resolve(1)
     })
 
     it("derives numeric slices without copying their backing", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [0, 1, 2, 3, 4]
         const sliced = run(
-            new Chain(source),
+            new Chain(source, testContext),
             [],
             "slice",
             [
                 1,
                 -1,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect(arrayViews.isArrayView(sliced)).to.be(true)
-        expect(arrayBacking(sliced)).to.be(source)
-        expect([...logicalArrayValues(sliced, testOperationContext())]).to.eql([1, 2, 3])
+        expect(arrayViews.isArrayView(sliced, testContext)).to.be(true)
+        expect(arrayBacking(sliced, testContext)).to.be(source)
+        expect([...logicalArrayValues(sliced, testContext)]).to.eql([1, 2, 3])
 
-        const changed = new Chain(sliced)
-        run(changed, [], "push", [5], { mutationScopeDepth: 0 })
-        expect(arrayViews.isArrayView(changed._state.value)).to.be(false)
-        expect(exportValue(new Chain(source), [])).to.eql([0, 1, 2, 3, 4])
+        const changed = new Chain(sliced, testContext)
+        run(changed, [], "push", [5], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+        expect(arrayViews.isArrayView(changed._state.value, testContext)).to.be(false)
+        expect(exportValue(new Chain(source, testContext), [], testContext)).to.eql([0, 1, 2, 3, 4])
     })
 
     it("derives views from physically resolved COW Promise forks", async () => {
-        const imported = importValue({ value: 1 }, "fork result")
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const imported = importValue({ value: 1 }, { ...testContext, errorContext: "fork result" })
         const pending = deferred()
-        const chain = new Chain({ values: [pending.promise, "b"] })
+        const chain = new Chain({ values: [pending.promise, "b"] }, testContext)
 
-        lookupPath(chain, ["values"])
-        assignPath(chain, ["values", "1"], "B")
+        lookupPath(chain, ["values"], testContext)
+        assignPath(chain, ["values", "1"], "B", testContext)
         pending.resolve(imported)
         await flushMicrotasks()
 
         const values = chain._state.value.values
-        const sliced = run(new Chain(values), [], "slice", [0, 2], {})
+        const sliced = run(new Chain(values, testContext), [], "slice", [0, 2], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(values[0]).to.be(imported)
-        expect(readPath(new Chain(sliced), ["0"])).to.be(imported)
+        expect(readPath(new Chain(sliced, testContext), ["0"], testContext)).to.be(imported)
     })
 
     it("appends concat items to the receiver backing", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const left = [1, , 3]
         const right = [, 5]
         const concatenated = run(
-            new Chain(left),
+            new Chain(left, testContext),
             [],
             "concat",
             [
                 right,
                 6,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect(arrayViews.isArrayView(concatenated)).to.be(true)
-        expect(arrayBacking(concatenated)).to.be(left)
-        expect(arrayViews.ArrayView.minimumLength(left)).to.be(3)
-        expect(arrayViews.ArrayView.projectionOf(right)).to.be(right)
-        expect(logicalKeys(concatenated, testOperationContext())).to.eql([
+        expect(arrayViews.isArrayView(concatenated, testContext)).to.be(true)
+        expect(arrayBacking(concatenated, testContext)).to.be(left)
+        expect(arrayViews.ArrayView.minimumLength(left, testContext)).to.be(3)
+        expect(metaOf(right, testContext).arrayRange).to.be(undefined)
+        expect(logicalKeys(concatenated, testContext)).to.eql([
             "0",
             "2",
             "4",
             "5",
         ])
-        expect([...logicalArrayValues(concatenated, testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(concatenated, testContext)]).to.eql([
             1,
             undefined,
             3,
@@ -796,24 +850,25 @@ describe("run", () => {
             5,
             6,
         ])
-        expect(exportValue(new Chain(left), [])).to.eql([1, , 3])
+        expect(exportValue(new Chain(left, testContext), [], testContext)).to.eql([1, , 3])
         expect(right).to.eql([, 5])
 
         const self = [1, , 3]
         const selfConcat = run(
-            new Chain(self),
+            new Chain(self, testContext),
             [],
             "concat",
             [self],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        expect(logicalKeys(selfConcat, testOperationContext())).to.eql([
+        expect(logicalKeys(selfConcat, testContext)).to.eql([
             "0",
             "2",
             "3",
             "5",
         ])
-        expect([...logicalArrayValues(selfConcat, testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(selfConcat, testContext)]).to.eql([
             1,
             undefined,
             3,
@@ -821,10 +876,11 @@ describe("run", () => {
             undefined,
             3,
         ])
-        expect(exportValue(new Chain(self), [])).to.eql([1, , 3])
+        expect(exportValue(new Chain(self, testContext), [], testContext)).to.eql([1, , 3])
     })
 
     it("does not probe appended values for runtime-private brands", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = new Proxy({}, {
             get(target, key, receiver) {
                 if (
@@ -836,92 +892,101 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain([1]),
+            new Chain([1], testContext),
             [],
             "concat",
             [value],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect(arrayViews.isArrayView(result)).to.be(true)
-        expect(logicalProperty(result, "1", testOperationContext())).to.be(value)
+        expect(arrayViews.isArrayView(result, testContext)).to.be(true)
+        expect(logicalProperty(result, "1", testContext)).to.be(value)
     })
 
     it("gives concatenated Promise properties independent versions", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const leftChain = new Chain([pending.promise])
+        const leftChain = new Chain([pending.promise], testContext)
         const right = [pending.promise]
         const concatenated = run(
             leftChain,
             [],
             "concat",
             [right],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const versions = [
-            propertyVersions.getPromiseVersion(leftChain._state.value, "0"),
-            propertyVersions.getPromiseVersion(right, "0"),
-            propertyVersions.getPromiseVersion(concatenated, "0"),
-            propertyVersions.getPromiseVersion(concatenated, "1"),
+            propertyVersions.getPromiseVersion(leftChain._state.value, "0", testContext),
+            propertyVersions.getPromiseVersion(right, "0", testContext),
+            propertyVersions.getPromiseVersion(concatenated, "0", testContext),
+            propertyVersions.getPromiseVersion(concatenated, "1", testContext),
         ]
 
         expect(new Set(versions).size).to.be(4)
-        assignPath(leftChain, ["0"], 9)
+        assignPath(leftChain, ["0"], 9, testContext)
         pending.resolve(1)
 
-        expect(await exportValue(new Chain(concatenated), [])).to.eql([1, 1])
-        expect(exportValue(leftChain, [])).to.eql([9])
-        expect(exportValue(new Chain(right), [])).to.eql([1])
-        verifyRefCounts(concatenated, leftChain._state.value, right)
+        expect(await exportValue(new Chain(concatenated, testContext), [], testContext)).to.eql([1, 1])
+        expect(exportValue(leftChain, [], testContext)).to.eql([9])
+        expect(exportValue(new Chain(right, testContext), [], testContext)).to.eql([1])
+        verifyRefCounts(testContext, concatenated, leftChain._state.value, right)
     })
 
     it("materializes ineligible slice and concat results", () => {
-        const slicedSource = importValue([1, 2, 3])
-        const concatSource = importValue([1, 2])
-        const nestedSource = importValue({ values: [1, 2, 3] })
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const slicedSource = importValue([1, 2, 3], testContext)
+        const concatSource = importValue([1, 2], testContext)
+        const nestedSource = importValue({ values: [1, 2, 3] }, testContext)
         const middle = run(
-            new Chain([1, 2, 3]),
+            new Chain([1, 2, 3], testContext),
             [],
             "slice",
             [
                 0,
                 2,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const sliced = run(
-            new Chain(slicedSource),
+            new Chain(slicedSource, testContext),
             [],
             "slice",
             [1],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const concatenated = run(
-            new Chain(concatSource),
+            new Chain(concatSource, testContext),
             [],
             "concat",
             [[3]],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const middleConcat = run(
-            new Chain(middle),
+            new Chain(middle, testContext),
             [],
             "concat",
             [[4]],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const nestedSlice = run(
-            new Chain(nestedSource),
+            new Chain(nestedSource, testContext),
             ["values"],
             "slice",
             [1],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(Array.isArray(sliced)).to.be(true)
         expect(Array.isArray(concatenated)).to.be(true)
         expect(Array.isArray(middleConcat)).to.be(true)
-        expect(metaOf(nestedSource.values).imported).to.be(true)
+        expect(metaOf(nestedSource.values, testContext).imported).to.be(true)
         expect(Array.isArray(nestedSlice)).to.be(true)
         expect(sliced).to.eql([2, 3])
         expect(concatenated).to.eql([1, 2, 3])
@@ -932,56 +997,59 @@ describe("run", () => {
     })
 
     it("forks Promise property versions at the operation position", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const chain = new Chain([pending.promise])
-        const copy = run(chain, [], "slice", [], {})
+        const chain = new Chain([pending.promise], testContext)
+        const copy = run(chain, [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        assignPath(chain, ["0"], 9)
+        assignPath(chain, ["0"], 9, testContext)
         pending.resolve(1)
 
-        expect(await exportValue(new Chain(copy), [])).to.eql([1])
-        expect(exportValue(chain, [])).to.eql([9])
-        verifyRefCounts(copy)
-        verifyRefCounts(chain._state.value)
+        expect(await exportValue(new Chain(copy, testContext), [], testContext)).to.eql([1])
+        expect(exportValue(chain, [], testContext)).to.eql([9])
+        verifyRefCounts(testContext, copy)
+        verifyRefCounts(testContext, chain._state.value)
     })
 
     it("tracks duplicate Promise placements by index during remapping", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const chain = new Chain([pending.promise, pending.promise])
+        const chain = new Chain([pending.promise, pending.promise], testContext)
         const source = chain._state.value
-        propertyVersions.getPropertyPlacement(source, "0").ensureCaptured()
-        const source0 = propertyVersions.getPromiseVersion(source, "0")
-        propertyVersions.getPropertyPlacement(source, "1").ensureCaptured()
-        const source1 = propertyVersions.getPromiseVersion(source, "1")
+        propertyVersions.getPropertyPlacement(source, "0", testContext).ensureCaptured()
+        const source0 = propertyVersions.getPromiseVersion(source, "0", testContext)
+        propertyVersions.getPropertyPlacement(source, "1", testContext).ensureCaptured()
+        const source1 = propertyVersions.getPromiseVersion(source, "1", testContext)
 
         expect(source0 === source1).to.be(false)
-        run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
+        run(chain, [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         const reversed = chain._state.value
-        const reversed0 = propertyVersions.getPromiseVersion(reversed, "0")
-        const reversed1 = propertyVersions.getPromiseVersion(reversed, "1")
+        const reversed0 = propertyVersions.getPromiseVersion(reversed, "0", testContext)
+        const reversed1 = propertyVersions.getPromiseVersion(reversed, "1", testContext)
         expect(reversed0 === reversed1).to.be(false)
         expect(reversed0 === source1).to.be(false)
         expect(reversed1 === source0).to.be(false)
 
-        const copied = new Chain([pending.promise, 0])
-        run(copied, [], "copyWithin", [1, 0, 1], { mutationScopeDepth: 0 })
+        const copied = new Chain([pending.promise, 0], testContext)
+        run(copied, [], "copyWithin", [1, 0, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(
-            propertyVersions.getPromiseVersion(copied._state.value, "0") ===
-                propertyVersions.getPromiseVersion(copied._state.value, "1"),
+            propertyVersions.getPromiseVersion(copied._state.value, "0", testContext) ===
+                propertyVersions.getPromiseVersion(copied._state.value, "1", testContext),
         ).to.be(false)
 
         pending.resolve(1)
-        expect(await exportValue(chain, [])).to.eql([1, 1])
-        expect(await exportValue(copied, [])).to.eql([1, 1])
-        verifyRefCounts(chain._state.value)
-        verifyRefCounts(copied._state.value)
+        expect(await exportValue(chain, [], testContext)).to.eql([1, 1])
+        expect(await exportValue(copied, [], testContext)).to.eql([1, 1])
+        verifyRefCounts(testContext, chain._state.value)
+        verifyRefCounts(testContext, copied._state.value)
     })
 
     it("does not export Error values nested in host inputs", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const direct = new Error("direct")
         const nested = deferred()
-        const flat = run(new Chain([direct]), [], "flat", [], {})
+        const flat = run(new Chain([direct], testContext), [], "flat", [], { ...testContext, errorContext: "test run" }, { repair: false })
         let received
         const target = {}
         Object.defineProperty(target, "inspect", {
@@ -993,11 +1061,12 @@ describe("run", () => {
         })
         const argument = { error: nested.promise }
         const inspected = run(
-            new Chain(target),
+            new Chain(target, testContext),
             [],
             "inspect",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(flat.map(errorCause)).to.eql([direct])
@@ -1008,6 +1077,7 @@ describe("run", () => {
     })
 
     it("combines every Error within each failed host argument", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = new Error("first")
         const second = new Error("second")
         const third = new Error("third")
@@ -1021,14 +1091,15 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(target),
+            new Chain(target, testContext),
             [],
             "inspect",
             [
                 { first, nested: { second } },
                 { third },
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(invoked).to.be(false)
@@ -1038,6 +1109,7 @@ describe("run", () => {
     })
 
     it("deduplicates Errors shared across argument roots", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = new Error("first")
         const second = new Error("second")
         const shared = { first, second }
@@ -1051,14 +1123,15 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(target),
+            new Chain(target, testContext),
             [],
             "inspect",
             [
                 shared,
                 shared,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(invoked).to.be(false)
@@ -1068,130 +1141,134 @@ describe("run", () => {
     })
 
     it("poisons only arguments consumed by an Array method", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const direct = new Error("direct")
         const rejected = new Error("rejected")
         const pending = deferred()
         const concatItem = deferred()
 
         expect(errorCause(run(
-            new Chain("abc"),
+            new Chain("abc", testContext),
             [],
             "slice",
             [direct],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
         expect(errorCause(run(
-            new Chain([1]),
+            new Chain([1], testContext),
             [],
             "with",
             [
                 direct,
                 2,
             ],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
 
-        const pushed = new Chain([1])
+        const pushed = new Chain([1], testContext)
         expect(run(
             pushed,
             [],
             "push",
             [direct],
-            { mutationScopeDepth: 0 },
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )).to.be(2)
-        expect(errorCause(readPath(pushed, ["1"]))).to.be(direct)
+        expect(errorCause(readPath(pushed, ["1"], testContext))).to.be(direct)
 
         const pushedPromise = deferred()
-        const promisedPush = new Chain([])
+        const promisedPush = new Chain([], testContext)
         expect(run(
             promisedPush,
             [],
             "push",
             [pushedPromise.promise],
-            { mutationScopeDepth: 0 },
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )).to.be(1)
         pushedPromise.reject(rejected)
         await flushMicrotasks()
-        expect(errorCause(readPath(promisedPush, ["0"]))).to.be(rejected)
+        expect(errorCause(readPath(promisedPush, ["0"], testContext))).to.be(rejected)
         expect(promisedPush._state.value).not.to.be(rejected)
 
         expect(errorCause(run(
-            new Chain([direct]),
+            new Chain([direct], testContext),
             [],
             "includes",
             [direct],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
         expect(errorCause(run(
-            new Chain([direct]),
+            new Chain([direct], testContext),
             [],
             "indexOf",
             [direct],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
         expect(errorCause(run(
-            new Chain([direct]),
+            new Chain([direct], testContext),
             [],
             "lastIndexOf",
             [direct],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
 
         const concatenated = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [concatItem.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         concatItem.reject(rejected)
         expect(errorCause(await concatenated)).to.be(rejected)
 
         const delayed = run(
-            new Chain([1]),
+            new Chain([1], testContext),
             [],
             "slice",
             [pending.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         pending.reject(rejected)
         expect(errorCause(await delayed)).to.be(rejected)
 
-        const mutation = new Chain([1, 2])
+        const mutation = new Chain([1, 2], testContext)
         const mutationFailure = run(
             mutation,
             [],
             "copyWithin",
             [direct],
-            { mutationScopeDepth: 0 },
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(mutationFailure)).to.be(direct)
         expect(errorCause(run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [direct],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))).to.be(direct)
         expect(mutation._state.value).to.be(mutationFailure)
 
         const mutationPending = deferred()
-        const delayedMutation = new Chain([1, 2])
+        const delayedMutation = new Chain([1, 2], testContext)
         const mutationResult = run(
             delayedMutation,
             [],
             "copyWithin",
             [mutationPending.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         mutationPending.reject(rejected)
         const delayedFailure = await mutationResult
@@ -1200,12 +1277,13 @@ describe("run", () => {
     })
 
     it("does not resolve ignored controlled Array arguments", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const ignored = deferred()
         const registrations = countPromiseRegistrations(ignored.promise)
         const initial = registrations()
 
         const result = run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "slice",
             [
@@ -1213,15 +1291,17 @@ describe("run", () => {
                 1,
                 ignored.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1])
+        expect([...logicalArrayValues(result, testContext)]).to.eql([1])
         expect(registrations()).to.be(initial)
         ignored.resolve(2)
     })
 
     it("does not treat an arbitrary .errors property as a compound", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const firstPending = deferred()
         const secondPending = deferred()
         const first = new Error("first")
@@ -1230,7 +1310,7 @@ describe("run", () => {
         second.errors = [nested]
 
         const delayed = run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "copyWithin",
             [
@@ -1238,7 +1318,8 @@ describe("run", () => {
                 secondPending.promise,
                 firstPending.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         secondPending.reject(second)
         firstPending.reject(first)
@@ -1251,7 +1332,7 @@ describe("run", () => {
         expect(errorCause(combined.errors.find(error => error.cause === second)).errors).to.eql([nested])
 
         const ready = run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "copyWithin",
             [
@@ -1259,7 +1340,8 @@ describe("run", () => {
                 second,
                 first,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(ready.errors).to.have.length(2)
         assert.deepEqual(new Set(ready.errors.map(errorCause)), new Set([first, second]))
@@ -1267,7 +1349,7 @@ describe("run", () => {
 
         const concatPending = deferred()
         const concatResult = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [
@@ -1275,7 +1357,8 @@ describe("run", () => {
                 concatPending.promise,
                 first,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         concatPending.reject(second)
         const concatCombined = await concatResult
@@ -1286,6 +1369,7 @@ describe("run", () => {
     })
 
     it("skips dynamic member lookup when argument export fails", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("invalid argument")
         let reflections = 0
         const receiver = new Proxy({}, {
@@ -1298,7 +1382,7 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        const chain = new Chain(receiver)
+        const chain = new Chain(receiver, testContext)
         reflections = 0
 
         const result = run(
@@ -1306,7 +1390,8 @@ describe("run", () => {
             [],
             "missing",
             [failure],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(errorCause(result)).to.be(failure)
@@ -1314,6 +1399,7 @@ describe("run", () => {
     })
 
     it("rejects a record accessor after clean argument export", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         let lookups = 0
         const receiver = {}
@@ -1325,11 +1411,12 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "missing",
             [pending.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(lookups).to.be(0)
@@ -1339,23 +1426,26 @@ describe("run", () => {
     })
 
     it("rejects unsupported String members without exporting arguments", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const registrations = countPromiseRegistrations(pending.promise)
         const before = registrations()
 
         const missing = run(
-            new Chain("value"),
+            new Chain("value", testContext),
             [],
             "missing",
             [pending.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         const accessor = run(
-            new Chain("value"),
+            new Chain("value", testContext),
             [],
             "__proto__",
             [pending.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(missing.message).to.be("Method is not callable: missing")
@@ -1370,6 +1460,7 @@ describe("run", () => {
     })
 
     it("prepares flat candidates concurrently without resolving retained values", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const second = deferred()
         const retained = deferred()
@@ -1379,13 +1470,13 @@ describe("run", () => {
             first.promise,
             second.promise,
             [retained.promise],
-        ])
+        ], testContext)
         const initial = [
             firstCount(),
             secondCount(),
         ]
 
-        const result = run(chain, [], "flat", [1], {})
+        const result = run(chain, [], "flat", [1], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(firstCount() > initial[0]).to.be(true)
         expect(secondCount() > initial[1]).to.be(true)
@@ -1399,6 +1490,7 @@ describe("run", () => {
     })
 
     it("materializes before a restricted element mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const inserted = { value: 1 }
         const root = [1, 2]
         Object.defineProperty(root, "1", {
@@ -1408,23 +1500,25 @@ describe("run", () => {
             configurable: true,
         })
         const result = run(
-            new Chain(root),
+            new Chain(root, testContext),
             [],
             "fill",
             [inserted],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
 
         expect(result instanceof Error).to.be(false)
         expect(result).to.eql([inserted, inserted])
         expect(root).to.eql([1, 2])
-        const chain = new Chain(result)
-        assignPath(chain, ["0", "value"], 2)
+        const chain = new Chain(result, testContext)
+        assignPath(chain, ["0", "value"], 2, testContext)
         expect(inserted).to.eql({ value: 1 })
-        verifyRefCounts(chain._state.value)
+        verifyRefCounts(testContext, chain._state.value)
     })
 
-    it("shares payloads added by owned Array mutations", () => {
+    it("preserves payloads already held by another owner", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             { method: "push", args: value => [value], index: 1 },
             { method: "unshift", args: value => [value], index: 0 },
@@ -1432,38 +1526,41 @@ describe("run", () => {
         ]
         for (const { method, args, index } of cases) {
             const value = { answer: 1 }
-            const chain = new Chain([0])
+            const payload = new Chain(value, testContext)
+            const chain = new Chain([0], testContext)
 
-            run(chain, [], method, [...args(value)], { mutationScopeDepth: 0 })
-            assignPath(chain, [String(index), "answer"], 2)
+            run(chain, [], method, [...args(value)], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+            assignPath(chain, [String(index), "answer"], 2, testContext)
 
-            expect(value).to.eql({ answer: 1 })
-            expect(chain._state.value[index]).to.eql({ answer: 2 })
-            verifyRefCounts(chain._state.value)
+            expect(payload._state.value).to.eql({ answer: 1 })
+            expect(lookupPath(chain, [String(index)], testContext)).to.eql({ answer: 2 })
+            verifyRefCounts(testContext, chain._state.value)
         }
     })
 
-    it("retains removed splice elements without exposing the baseline", () => {
+    it("reuses exclusively owned removed splice elements after reception", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const removedValue = { value: 1 }
-        const chain = new Chain([removedValue, 2])
+        const chain = new Chain([removedValue, 2], testContext)
 
-        const removed = run(chain, [], "splice", [0, 1], { mutationScopeDepth: 0 })
+        const removed = run(chain, [], "splice", [0, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(removed).to.eql([removedValue])
-        expect(metaOf(removedValue)?.shared).to.be(true)
-        assignPath(new Chain(removed), ["0", "value"], 3)
-        expect(removedValue.value).to.be(1)
+        expect(requiresCopyOnWrite(removedValue, testContext)).to.be(false)
+        assignPath(new Chain(removed, testContext), ["0", "value"], 3, testContext)
+        expect(removedValue.value).to.be(3)
         expect(chain._state.value).to.eql([2])
     })
 
     it("shares splice results retained by a copy-on-write source", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const removedValue = { value: 1 }
         const source = [removedValue, 2]
-        const chain = new Chain(source)
-        lookupPath(chain, [])
+        const chain = new Chain(source, testContext)
+        const retained = new Chain(lookupPath(chain, [], testContext), testContext)
 
-        const removed = run(chain, [], "splice", [0, 1], { mutationScopeDepth: 0 })
-        assignPath(new Chain(removed), ["0", "value"], 3)
+        const removed = run(chain, [], "splice", [0, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+        assignPath(new Chain(removed, testContext), ["0", "value"], 3, testContext)
 
         expect(source[0]).to.be(removedValue)
         expect(removedValue.value).to.be(1)
@@ -1472,25 +1569,27 @@ describe("run", () => {
     })
 
     it("publishes removed ArrayView endpoints as retained values", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         for (const [method, removedIndex] of [
             ["shift", 0],
             ["pop", 1],
         ]) {
             const source = [{ value: 1 }, { value: 2 }]
-            const view = run(new Chain(source), [], "slice", [], {})
-            const chain = new Chain(view)
-            lookupPath(chain, [])
+            const view = run(new Chain(source, testContext), [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
+            const chain = new Chain(view, testContext)
+            lookupPath(chain, [], testContext)
 
-            const removed = run(chain, [], method, [], { mutationScopeDepth: 0 })
-            const removedChain = new Chain(removed)
-            assignPath(removedChain, ["value"], 3)
+            const removed = run(chain, [], method, [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+            const removedChain = new Chain(removed, testContext)
+            assignPath(removedChain, ["value"], 3, testContext)
 
-            expect(arrayViews.isArrayView(chain._state.value)).to.be(true)
+            expect(arrayViews.isArrayView(chain._state.value, testContext)).to.be(true)
             expect(removed).to.be(source[removedIndex])
             expect(source[removedIndex].value).to.be(removedIndex + 1)
             expect(removedChain._state.value).to.eql({ value: 3 })
             expect(removedChain._state.value).not.to.be(removed)
             verifyRefCounts(
+                testContext,
                 source,
                 view,
                 chain._state.value,
@@ -1500,34 +1599,37 @@ describe("run", () => {
     })
 
     it("returns transformed Arrays from mutators in observation mode", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1, 2]
-        const chain = new Chain(source)
-        const result = run(chain, [], "push", [3], {})
-        const cleared = run(new Chain([1]), [], "fill", [], {})
-        const spliced = run(new Chain([1, 2, 3]), [], "splice", [1, 1, 9], {})
+        const chain = new Chain(source, testContext)
+        const result = run(chain, [], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false })
+        const cleared = run(new Chain([1], testContext), [], "fill", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        const spliced = run(new Chain([1, 2, 3], testContext), [], "splice", [1, 1, 9], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(result, testContext)]).to.eql([1, 2, 3])
         expect(cleared).to.eql([undefined])
         expect(spliced).to.eql([1, 9, 3])
-        expect(exportValue(chain, [])).to.eql([1, 2])
+        expect(exportValue(chain, [], testContext)).to.eql([1, 2])
     })
 
     it("selects observation-mode mutators by intrinsic name", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1]
         source.push = 0
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        const result = run(chain, [], "push", [2], {})
-        const original = exportValue(chain, [])
+        const result = run(chain, [], "push", [2], { ...testContext, errorContext: "test run" }, { repair: false })
+        const original = exportValue(chain, [], testContext)
 
-        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, 2])
+        expect([...logicalArrayValues(result, testContext)]).to.eql([1, 2])
         expect(original).to.eql([1])
         expect(Object.hasOwn(original, "push")).to.be(false)
     })
 
     it("ignores concat protocols outside the language graph", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1]
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
         const spread = { [Symbol.isConcatSpreadable]: true, 0: 2, length: 1 }
         const result = run(
@@ -1535,50 +1637,56 @@ describe("run", () => {
             [],
             "concat",
             [spread],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        expect([...logicalArrayValues(result, testOperationContext())]).to.eql([1, spread])
+        expect([...logicalArrayValues(result, testContext)]).to.eql([1, spread])
     })
 
     it("keeps every earlier value stable across prepends", () => {
-        const sourceChain = new Chain([2, 3])
-        const first = run(sourceChain, [], "unshift", [1], {})
-        const second = run(new Chain(first), [], "unshift", [0], {})
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const sourceChain = new Chain([2, 3], testContext)
+        const first = run(sourceChain, [], "unshift", [1], { ...testContext, errorContext: "test run" }, { repair: false })
+        const second = run(new Chain(first, testContext), [], "unshift", [0], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect([...logicalArrayValues(second, testOperationContext())]).to.eql([0, 1, 2, 3])
-        expect([...logicalArrayValues(first, testOperationContext())]).to.eql([1, 2, 3])
-        expect(exportValue(sourceChain, [])).to.eql([2, 3])
+        expect([...logicalArrayValues(second, testContext)]).to.eql([0, 1, 2, 3])
+        expect([...logicalArrayValues(first, testContext)]).to.eql([1, 2, 3])
+        expect(exportValue(sourceChain, [], testContext)).to.eql([2, 3])
     })
 
     it("materializes when an endpoint no longer reaches a physical edge", () => {
-        const sourceChain = new Chain([1, 2, 3])
-        const shorter = run(sourceChain, [], "pop", [], {})
-        const extended = run(new Chain(shorter), [], "push", [4], {})
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const sourceChain = new Chain([1, 2, 3], testContext)
+        const shorter = run(sourceChain, [], "pop", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        const extended = run(new Chain(shorter, testContext), [], "push", [4], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(Array.isArray(extended)).to.be(true)
         expect(extended).to.eql([1, 2, 4])
-        expect([...logicalArrayValues(shorter, testOperationContext())]).to.eql([1, 2])
-        expect(exportValue(sourceChain, [])).to.eql([1, 2, 3])
+        expect([...logicalArrayValues(shorter, testContext)]).to.eql([1, 2])
+        expect(exportValue(sourceChain, [], testContext)).to.eql([1, 2, 3])
     })
 
     it("mutates an owned Array synchronously", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1, 2]
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
-        expect(run(chain, [], "push", [3], { mutationScopeDepth: 0 })).to.be(3)
-        expect(exportValue(chain, [])).to.eql([1, 2, 3])
-        expect(exportValue(new Chain(source), [])).to.eql([1, 2])
+        expect(run(chain, [], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(3)
+        expect(exportValue(chain, [], testContext)).to.eql([1, 2, 3])
+        expect(exportValue(new Chain(source, testContext), [], testContext)).to.eql([1, 2])
     })
 
     it("keeps observation results lazily ref-indexed", () => {
-        const result = run(new Chain([{ value: 1 }]), [], "slice", [], {})
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const result = run(new Chain([{ value: 1 }], testContext), [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect(getRefCounter(result)).to.be(undefined)
+        expect(getRefCounter(result, testContext)).to.be(undefined)
     })
 
     it("keeps slice reflection inside the selected range", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const runtime = createProbe()
-        const chain = new Chain(runtime.value)
+        const chain = new Chain(runtime.value, testContext)
         runtime.reset()
         const view = run(
             chain,
@@ -1588,10 +1696,11 @@ describe("run", () => {
                 500,
                 502,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect([...logicalArrayValues(view, testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(view, testContext)]).to.eql([
             "inside",
             undefined,
         ])
@@ -1600,24 +1709,25 @@ describe("run", () => {
         expect(runtime.inspected.includes(500)).to.be(true)
 
         runtime.reset()
-        const exported = exportValue(new Chain(view), [])
+        const exported = exportValue(new Chain(view, testContext), [], testContext)
         expect(exported.length).to.be(2)
         expect(Object.keys(exported)).to.eql(["0"])
         expect(runtime.ownKeyScans()).to.be(0)
         expect(runtime.inspected.every(inRange)).to.be(true)
 
         const external = createProbe()
-        importValue(external.value, "bounded slice")
+        importValue(external.value, { ...testContext, errorContext: "bounded slice" })
         external.reset()
         const sliced = run(
-            new Chain(external.value),
+            new Chain(external.value, testContext),
             [],
             "slice",
             [
                 500,
                 502,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(Array.isArray(sliced)).to.be(true)
@@ -1627,7 +1737,7 @@ describe("run", () => {
         expect(external.inspected.every(inRange)).to.be(true)
 
         external.reset()
-        const full = run(new Chain(external.value), [], "slice", [], {})
+        const full = run(new Chain(external.value, testContext), [], "slice", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(full.length).to.be(1000)
         expect(Object.keys(full)).to.eql(["0", "500", "999"])
         expect(external.ownKeyScans()).to.be(1)
@@ -1681,12 +1791,14 @@ describe("run", () => {
     })
 
     it("rejects host conversion hooks without invoking them", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const slice = (...bounds) => run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "slice",
             [...bounds],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         for (const bound of [Symbol(), 1n]) {
             expect(slice(bound) instanceof Error).to.be(true)
@@ -1709,6 +1821,7 @@ describe("run", () => {
     })
 
     it("returns slice source reflection as a language Error", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("slice reflection failed")
         const source = new Proxy([1], {
             getOwnPropertyDescriptor(target, key) {
@@ -1716,12 +1829,13 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        expect(errorCause(run(new Chain(source), [], "slice", [0], {}))).to.be(
+        expect(errorCause(run(new Chain(source, testContext), [], "slice", [0], { ...testContext, errorContext: "test run" }, { repair: false }))).to.be(
             failure,
         )
     })
 
     it("preserves imported cycles through structural mutations", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             ["reverse", []],
             ["splice", [0, 1]],
@@ -1732,19 +1846,20 @@ describe("run", () => {
             cyclic.self = cyclic
             const other = { rank: 1 }
             const source = [cyclic, other]
-            importValue(source, `run ${method} cycle`)
-            const chain = new Chain(source)
+            importValue(source, { ...testContext, errorContext: `run ${method} cycle` })
+            const chain = new Chain(source, testContext)
 
-            const result = run(chain, [], method, [...args], { mutationScopeDepth: 0 })
+            const result = run(chain, [], method, [...args], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
             expect(source).to.eql([cyclic, other])
             expect(cyclic.self).to.be(cyclic)
             expect(result instanceof Error).to.be(false)
-            verifyRefCounts(source, chain._state.value, result)
+            verifyRefCounts(testContext, source, chain._state.value, result)
         }
     })
 
     it("does not inspect sparse holes in full-range Array operations", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const length = 10000
         const cases = [
             ["slice", false, []],
@@ -1770,11 +1885,12 @@ describe("run", () => {
                 },
             })
             const result = run(
-                new Chain(source),
+                new Chain(source, testContext),
                 [],
                 method,
                 args,
-                mutate ? { mutationScopeDepth: 0 } : {},
+                { ...testContext, errorContext: "test run" },
+                mutate ? { repair: false, mutationScopeDepth: 0 } : { repair: false },
             )
 
             expect(result instanceof Error).to.be(false)
@@ -1783,35 +1899,38 @@ describe("run", () => {
     })
 
     it("copy-on-writes a shared mutation receiver", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const shared = [1, 2]
         const root = { left: shared, right: shared }
-        importValue(root)
-        const chain = new Chain(root)
+        importValue(root, testContext)
+        const chain = new Chain(root, testContext)
 
-        expect(run(chain, ["left"], "push", [3], { mutationScopeDepth: 1 })).to.be(3)
-        expect(exportValue(chain, [])).to.eql({
+        expect(run(chain, ["left"], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 1 })).to.be(3)
+        expect(exportValue(chain, [], testContext)).to.eql({
             left: [1, 2, 3],
             right: [1, 2],
         })
     })
 
     it("never uses imported nested Arrays as mutable backing", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const external = { values: [1, 2] }
-        importValue(external)
-        const chain = new Chain(external)
+        importValue(external, testContext)
+        const chain = new Chain(external, testContext)
 
-        expect(run(chain, ["values"], "push", [3], { mutationScopeDepth: 1 })).to.be(3)
+        expect(run(chain, ["values"], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 1 })).to.be(3)
         expect(external.values).to.eql([1, 2])
-        expect(exportValue(chain, [])).to.eql({
+        expect(exportValue(chain, [], testContext)).to.eql({
             values: [1, 2, 3],
         })
     })
 
     it("keeps independently rooted imported Arrays materialized", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const values = [1, 2, 3]
-        importValue({ values })
+        importValue({ values }, testContext)
 
-        const result = run(new Chain(values), [], "slice", [1], {})
+        const result = run(new Chain(values, testContext), [], "slice", [1], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(Array.isArray(result)).to.be(true)
         expect(result).to.eql([2, 3])
@@ -1819,8 +1938,9 @@ describe("run", () => {
     })
 
     it("gates delayed mutation preparation and returns its result separately", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain([1, 2, 3])
+        const chain = new Chain([1, 2, 3], testContext)
         const result = run(
             chain,
             [],
@@ -1830,43 +1950,46 @@ describe("run", () => {
                 1,
                 9,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
 
-        expect(readPath(chain, []) instanceof Promise).to.be(true)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(true)
         expect(result instanceof Promise).to.be(true)
         start.resolve(1)
         expect(await result).to.eql([2])
-        expect(await exportValue(chain, [])).to.eql([1, 9, 3])
+        expect(await exportValue(chain, [], testContext)).to.eql([1, 9, 3])
     })
 
     it("selects a pending mutation receiver before its inputs", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const start = deferred()
         const receiverCount = countPromiseRegistrations(receiver.promise)
         const startCount = countPromiseRegistrations(start.promise)
-        const chain = new Chain(receiver.promise)
+        const chain = new Chain(receiver.promise, testContext)
         const initialReceiverCount = receiverCount()
         const initialStartCount = startCount()
 
-        const result = run(chain, [], "splice", [start.promise, 1], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "splice", [start.promise, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(receiverCount()).to.be(initialReceiverCount + 1)
         expect(startCount() > initialStartCount).to.be(true)
-        expect(readPath(chain, []) instanceof Promise).to.be(true)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(true)
 
         receiver.resolve([1, 2])
         await flushMicrotasks()
         start.resolve(0)
         expect(await result).to.eql([1])
-        expect(await exportValue(chain, [])).to.eql([2])
+        expect(await exportValue(chain, [], testContext)).to.eql([2])
     })
 
-    it("leases each captured identity once while the receiver is pending", async () => {
+    it("protects repeated captured arguments while the receiver is pending", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const payload = { value: 1 }
-        const payloadChain = new Chain(payload)
-        const chain = new Chain(receiver.promise)
+        const payloadChain = new Chain(payload, testContext)
+        const chain = new Chain(receiver.promise, testContext)
 
         const result = run(
             chain,
@@ -1878,11 +2001,12 @@ describe("run", () => {
                 payload,
                 payload,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        expect(metaOf(payload).readLeaseCount).to.be(1)
+        expect(metaOf(payload, testContext).readLeaseCount > 0).to.be(true)
 
-        assignPath(payloadChain, ["value"], 2)
+        assignPath(payloadChain, ["value"], 2, testContext)
         receiver.resolve([0])
         expect(await result).to.eql([])
 
@@ -1890,14 +2014,15 @@ describe("run", () => {
         expect(payloadChain._state.value.value).to.be(2)
         expect(chain._state.value[1]).to.be(payload)
         expect(chain._state.value[2]).to.be(payload)
-        expect(metaOf(payload).readLeaseCount).to.be(undefined)
+        expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("leases retained controlled inputs while preparation is pending", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
         const payload = { value: 1 }
-        const payloadChain = new Chain(payload)
-        const receiver = new Chain([0])
+        const payloadChain = new Chain(payload, testContext)
+        const receiver = new Chain([0], testContext)
 
         const result = run(
             receiver,
@@ -1908,26 +2033,28 @@ describe("run", () => {
                 0,
                 payload,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        expect(metaOf(payload).readLeaseCount).to.be(1)
+        expect(metaOf(payload, testContext).readLeaseCount).to.be(1)
 
-        assignPath(payloadChain, ["value"], 2)
+        assignPath(payloadChain, ["value"], 2, testContext)
         start.resolve(1)
         expect(await result).to.eql([])
 
         expect(payload.value).to.be(1)
         expect(payloadChain._state.value.value).to.be(2)
         expect(receiver._state.value[1]).to.be(payload)
-        expect(metaOf(payload).readLeaseCount).to.be(undefined)
+        expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("does not lease arguments ignored by a controlled method", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
         const ignored = { value: 1 }
 
         const result = run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "slice",
             [
@@ -1935,20 +2062,22 @@ describe("run", () => {
                 undefined,
                 ignored,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        expect(metaOf(ignored)).to.be(undefined)
+        expect(metaOf(ignored, testContext)).to.be(undefined)
 
         start.resolve(0)
-        expect(await exportValue(new Chain(await result), [])).to.eql([1, 2])
-        expect(metaOf(ignored)).to.be(undefined)
+        expect(await exportValue(new Chain(await result, testContext), [], testContext)).to.eql([1, 2])
+        expect(metaOf(ignored, testContext)).to.be(undefined)
     })
 
     it("releases retained-input leases when preparation fails", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
         const failure = new Error("invalid start")
         const payload = { value: 1 }
-        const receiver = new Chain([0])
+        const receiver = new Chain([0], testContext)
 
         const result = run(
             receiver,
@@ -1959,65 +2088,70 @@ describe("run", () => {
                 0,
                 payload,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        expect(metaOf(payload).readLeaseCount).to.be(1)
+        expect(metaOf(payload, testContext).readLeaseCount).to.be(1)
 
         start.reject(failure)
         expect(errorCause(await result)).to.be(failure)
         expect(errorCause(receiver._state.value)).to.be(failure)
-        expect(metaOf(payload).readLeaseCount).to.be(undefined)
+        expect(metaOf(payload, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("leases controlled inputs revealed while another input waits", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const second = deferred()
         const value = { answer: 1 }
-        const valueChain = new Chain(value)
+        const valueChain = new Chain(value, testContext)
 
         const result = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [
                 first.promise,
                 second.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         first.resolve(value)
         await flushMicrotasks()
-        expect(metaOf(value).readLeaseCount).to.be(1)
+        expect(metaOf(value, testContext).readLeaseCount).to.be(1)
 
-        assignPath(valueChain, ["answer"], 2)
+        assignPath(valueChain, ["answer"], 2, testContext)
         second.resolve("done")
         const concatenated = await result
 
-        expect(readPath(new Chain(concatenated), ["0"])).to.be(value)
+        expect(readPath(new Chain(concatenated, testContext), ["0"], testContext)).to.be(value)
         expect(value.answer).to.be(1)
         expect(valueChain._state.value.answer).to.be(2)
-        expect(metaOf(value).readLeaseCount).to.be(undefined)
+        expect(metaOf(value, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("captures concat Array items before another item resolves", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const delayed = deferred()
         const item = [1]
-        const itemChain = new Chain(item)
+        const itemChain = new Chain(item, testContext)
 
         const result = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [
                 item,
                 delayed.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        assignPath(itemChain, ["0"], 2)
+        assignPath(itemChain, ["0"], 2, testContext)
         delayed.resolve("done")
 
-        expect([...logicalArrayValues((await result), testOperationContext())]).to.eql([
+        expect([...logicalArrayValues((await result), testContext)]).to.eql([
             1,
             "done",
         ])
@@ -2025,51 +2159,55 @@ describe("run", () => {
     })
 
     it("protects captured concat item values until publication", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const delayed = deferred()
         const child = { value: 1 }
         const item = [child]
-        const itemChain = new Chain(item)
+        const itemChain = new Chain(item, testContext)
 
         const result = run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [
                 item,
                 delayed.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        assignPath(itemChain, ["0", "value"], 2)
+        assignPath(itemChain, ["0", "value"], 2, testContext)
         delayed.resolve("done")
 
-        const output = [...logicalArrayValues((await result), testOperationContext())]
+        const output = [...logicalArrayValues((await result), testContext)]
         expect(output).to.eql([child, "done"])
         expect(child.value).to.be(1)
         expect(itemChain._state.value[0].value).to.be(2)
     })
 
     it("transforms the FIFO property version of a pending receiver", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const source = [1]
-        const chain = new Chain(receiver.promise)
-        const escaped = lookupPath(chain, [])
+        const chain = new Chain(receiver.promise, testContext)
+        const escaped = lookupPath(chain, [], testContext)
 
-        assignPath(chain, ["0"], 9)
-        const result = run(chain, [], "push", [2], { mutationScopeDepth: 0 })
+        assignPath(chain, ["0"], 9, testContext)
+        const result = run(chain, [], "push", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         receiver.resolve(source)
         expect(await escaped).to.be(source)
         expect(await result).to.be(2)
         expect(source).to.eql([1])
-        expect(await exportValue(chain, [])).to.eql([9, 2])
+        expect(await exportValue(chain, [], testContext)).to.eql([9, 2])
     })
 
     it("publishes a delayed receiver before its independent result", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain([1, 2, 3])
-        const result = run(chain, [], "splice", [start.promise, 1], { mutationScopeDepth: 0 })
-        const receiver = lookupPath(chain, [])
+        const chain = new Chain([1, 2, 3], testContext)
+        const result = run(chain, [], "splice", [start.promise, 1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+        const receiver = lookupPath(chain, [], testContext)
         const order = []
 
         receiver.then(() => order.push("receiver"))
@@ -2081,8 +2219,9 @@ describe("run", () => {
     })
 
     it("completes a delayed result after receiver supersession", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const start = deferred()
-        const chain = new Chain({ values: [1, 2, 3] })
+        const chain = new Chain({ values: [1, 2, 3] }, testContext)
         const result = run(
             chain,
             ["values"],
@@ -2091,60 +2230,65 @@ describe("run", () => {
                 start.promise,
                 1,
             ],
-            { mutationScopeDepth: 1 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 1 },
         )
 
-        assignPath(chain, ["values"], ["newer"])
+        assignPath(chain, ["values"], ["newer"], testContext)
         start.resolve(1)
 
         expect(await result).to.eql([2])
-        expect(await exportValue(chain, [])).to.eql({
+        expect(await exportValue(chain, [], testContext)).to.eql({
             values: ["newer"],
         })
     })
 
     it("installs Promise payloads without gating endpoint mutation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const item = deferred()
-        const chain = new Chain([1])
+        const chain = new Chain([1], testContext)
 
-        expect(run(chain, [], "push", [item.promise], { mutationScopeDepth: 0 })).to.be(2)
-        expect(readPath(chain, []) instanceof Promise).to.be(false)
-        expect(readPath(chain, [1]) instanceof Promise).to.be(true)
+        expect(run(chain, [], "push", [item.promise], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(2)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(false)
+        expect(readPath(chain, [1], testContext) instanceof Promise).to.be(true)
 
         item.resolve({ value: 2 })
-        expect(await exportValue(chain, [])).to.eql([
+        expect(await exportValue(chain, [], testContext)).to.eql([
             1,
             { value: 2 },
         ])
-        verifyRefCounts(chain._state.value)
+        verifyRefCounts(testContext, chain._state.value)
     })
 
     it("does not gate a removed Promise result", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const removed = deferred()
-        const chain = new Chain([1, removed.promise])
-        const result = run(chain, [], "pop", [], { mutationScopeDepth: 0 })
+        const chain = new Chain([1, removed.promise], testContext)
+        const result = run(chain, [], "pop", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
-        expect(readPath(chain, []) instanceof Promise).to.be(false)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(false)
         expect(result instanceof Promise).to.be(true)
-        expect(exportValue(chain, [])).to.eql([1])
+        expect(exportValue(chain, [], testContext)).to.eql([1])
         removed.resolve(7)
         expect(await result).to.be(7)
     })
 
     it("preserves a null mutation result", () => {
-        const chain = new Chain([null])
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const chain = new Chain([null], testContext)
 
-        expect(run(chain, [], "pop", [], { mutationScopeDepth: 0 })).to.be(null)
+        expect(run(chain, [], "pop", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(null)
         expect(chain._state.value).to.eql([])
     })
 
     it("does not lease an Array for an independent controlled result", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const selected = deferred()
         const array = [selected.promise]
-        const chain = new Chain(array)
+        const chain = new Chain(array, testContext)
 
-        const result = run(chain, [], "at", [0], {})
-        assignPath(chain, ["0"], 2)
+        const result = run(chain, [], "at", [0], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["0"], 2, testContext)
 
         expect(chain._state.value).to.be(array)
         selected.resolve(1)
@@ -2153,12 +2297,13 @@ describe("run", () => {
     })
 
     it("leases an Array only while controlled arguments resolve", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const index = deferred()
         const array = [1]
-        const chain = new Chain(array)
+        const chain = new Chain(array, testContext)
 
-        const result = run(chain, [], "at", [index.promise], {})
-        assignPath(chain, ["0"], 2)
+        const result = run(chain, [], "at", [index.promise], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["0"], 2, testContext)
 
         index.resolve(0)
         expect(await result).to.be(1)
@@ -2167,24 +2312,26 @@ describe("run", () => {
     })
 
     it("searches Promise elements with method-specific early stopping", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const later = deferred()
-        const chain = new Chain([first.promise, 2, later.promise])
+        const chain = new Chain([first.promise, 2, later.promise], testContext)
 
-        const index = run(chain, [], "indexOf", [2], {})
-        expect(run(chain, [], "includes", [2], {})).to.be(true)
+        const index = run(chain, [], "indexOf", [2], { ...testContext, errorContext: "test run" }, { repair: false })
+        expect(run(chain, [], "includes", [2], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(true)
         first.resolve(1)
         expect(await index).to.be(1)
         later.resolve(3)
     })
 
     it("leases an Array while ordered search continues", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const array = [first.promise, 2]
-        const chain = new Chain(array)
+        const chain = new Chain(array, testContext)
 
-        const result = run(chain, [], "indexOf", [2], {})
-        assignPath(chain, ["1"], 3)
+        const result = run(chain, [], "indexOf", [2], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["1"], 3, testContext)
 
         first.resolve(1)
         expect(await result).to.be(1)
@@ -2193,12 +2340,13 @@ describe("run", () => {
     })
 
     it("does not lease an Array after includes captures its versions", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const array = [first.promise, 2]
-        const chain = new Chain(array)
+        const chain = new Chain(array, testContext)
 
-        const result = run(chain, [], "includes", [1], {})
-        assignPath(chain, ["1"], 1)
+        const result = run(chain, [], "includes", [1], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["1"], 1, testContext)
 
         expect(chain._state.value).to.be(array)
         first.resolve(0)
@@ -2207,15 +2355,16 @@ describe("run", () => {
     })
 
     it("does not register Promise elements beyond an indexOf match", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const later = deferred()
         const firstCount = countPromiseRegistrations(first.promise)
         const laterCount = countPromiseRegistrations(later.promise)
-        const chain = new Chain([first.promise, 2, later.promise])
+        const chain = new Chain([first.promise, 2, later.promise], testContext)
         const initialFirst = firstCount()
         const initialLater = laterCount()
 
-        const result = run(chain, [], "indexOf", [2], {})
+        const result = run(chain, [], "indexOf", [2], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(firstCount() > initialFirst).to.be(true)
         expect(laterCount()).to.be(initialLater)
@@ -2226,44 +2375,47 @@ describe("run", () => {
     })
 
     it("distinguishes omitted and explicit undefined lastIndexOf starts", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const values = [1, 2, 1]
 
         expect(run(
-            new Chain(values),
+            new Chain(values, testContext),
             [],
             "lastIndexOf",
             [1],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(2)
         expect(run(
-            new Chain(values),
+            new Chain(values, testContext),
             [],
             "lastIndexOf",
             [
                 1,
                 undefined,
             ],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(0)
 
         const start = deferred()
         const result = run(
-            new Chain(values),
+            new Chain(values, testContext),
             [],
             "lastIndexOf",
             [
                 1,
                 start.promise,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         start.resolve(undefined)
         expect(await result).to.be(0)
     })
 
     it("protects delayed flat and sort placements until publication", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             { method: "flat", args: [], ready: [3] },
             { method: "sort", args: [() => 0], ready: { value: 3 } },
@@ -2273,13 +2425,13 @@ describe("run", () => {
             const delayed = deferred()
             const child = { value: 1 }
             const source = [child, delayed.promise]
-            const chain = new Chain(source)
+            const chain = new Chain(source, testContext)
 
-            const result = run(chain, [], method, [...args], {})
-            assignPath(chain, ["0", "value"], 2)
+            const result = run(chain, [], method, [...args], { ...testContext, errorContext: "test run" }, { repair: false })
+            assignPath(chain, ["0", "value"], 2, testContext)
             delayed.resolve(ready)
 
-            const output = [...logicalArrayValues((await result), testOperationContext())]
+            const output = [...logicalArrayValues((await result), testContext)]
             expect(output[0]).to.be(child)
             expect(child.value).to.be(1)
             expect(chain._state.value[0].value).to.be(2)
@@ -2287,18 +2439,19 @@ describe("run", () => {
     })
 
     it("preserves sort holes while toSorted reads through them", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [3, , 1, undefined]
-        const sorted = run(new Chain(source), [], "sort", [], {})
-        const copied = run(new Chain(source), [], "toSorted", [], {})
+        const sorted = run(new Chain(source, testContext), [], "sort", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        const copied = run(new Chain(source, testContext), [], "toSorted", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
-        expect([...logicalArrayValues(sorted, testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(sorted, testContext)]).to.eql([
             1,
             3,
             undefined,
             undefined,
         ])
         expect(Object.keys(sorted)).to.eql(["0", "1", "2"])
-        expect([...logicalArrayValues(copied, testOperationContext())]).to.eql([
+        expect([...logicalArrayValues(copied, testContext)]).to.eql([
             1,
             3,
             undefined,
@@ -2308,47 +2461,52 @@ describe("run", () => {
     })
 
     it("resolves a comparator binding before native sort", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const comparator = deferred()
-        const chain = new Chain([3, 1, 2])
+        const chain = new Chain([3, 1, 2], testContext)
         const result = run(
             chain,
             [],
             "sort",
             [comparator.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
 
-        expect(readPath(chain, []) instanceof Promise).to.be(true)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(true)
         comparator.resolve((left, right) => left - right)
         expect(await result).to.eql([1, 2, 3])
-        expect(await exportValue(chain, [])).to.eql([1, 2, 3])
+        expect(await exportValue(chain, [], testContext)).to.eql([1, 2, 3])
     })
 
     it("does not gate for Promises outside the inspected conversion path", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const value = { unrelated: pending.promise }
         const root = [value]
-        const chain = new Chain(root)
+        const chain = new Chain(root, testContext)
 
-        const result = run(chain, [], "sort", [], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "sort", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result instanceof Promise).to.be(false)
         expect(chain._state.value).to.be(result)
-        expect(readPath(chain, [0])).to.be(value)
+        expect(readPath(chain, [0], testContext)).to.be(value)
         pending.resolve(1)
     })
 
     it("rejects Promise-returning comparators without mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const comparison = deferred()
         const registrations = countPromiseRegistrations(comparison.promise)
         const values = [2, 1]
-        const chain = new Chain(values)
+        const chain = new Chain(values, testContext)
         const result = run(
             chain,
             [],
             "sort",
             [() => comparison.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
 
         expect(result instanceof Error).to.be(true)
@@ -2359,12 +2517,13 @@ describe("run", () => {
     })
 
     it("propagates a FatalError returned by a comparator", () => {
+        let testContext
         let reported
-        useTestExecution(error => {
+        testContext = { execution: new Execution(error => {
             reported = error
-        })
+        }), errorContext: "test operation" }
         const source = [2, 1]
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
         const failure = thrownBy(() =>
             internalSteps.runInternalStep(
                 {
@@ -2381,7 +2540,8 @@ describe("run", () => {
             [],
             "sort",
             [() => failure],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         ))
 
         expect(caught).to.be(failure)
@@ -2390,18 +2550,20 @@ describe("run", () => {
     })
 
     it("attributes String conversion failures to conversion", () => {
-        const failure = run(new Chain([Symbol("value")]), [], "join", [], {})
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const failure = run(new Chain([Symbol("value")], testContext), [], "join", [], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(failure.kind).to.be(errorUtils.ERROR_KIND.ScalarConversionFailed)
     })
 
     it("exports one aliased snapshot to a sort comparator", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const shared = { rank: 2 }
         const first = { rank: 1 }
         const compared = []
 
         const result = run(
-            new Chain([shared, shared, first]),
+            new Chain([shared, shared, first], testContext),
             [],
             "toSorted",
             [
@@ -2412,7 +2574,8 @@ describe("run", () => {
                 return left.rank - right.rank
             },
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         const sharedCopies = new Set(
@@ -2428,6 +2591,7 @@ describe("run", () => {
     })
 
     it("exports comparator Errors only when a comparison is possible", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("nested comparator input")
         let called = false
         const comparator = () => {
@@ -2436,27 +2600,30 @@ describe("run", () => {
         }
 
         const failed = run(
-            new Chain([{ failure }, { value: 1 }]),
+            new Chain([{ failure }, { value: 1 }], testContext),
             [],
             "toSorted",
             [comparator],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(errorCause(failed)).to.be(failure)
         expect(called).to.be(false)
 
         const retained = run(
-            new Chain([failure]),
+            new Chain([failure], testContext),
             [],
             "toSorted",
             [comparator],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(errorCause(retained[0])).to.be(failure)
         expect(called).to.be(false)
     })
 
     it("uses intrinsic conversion for language data", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let hookCalls = 0
         const record = {
             toString() {
@@ -2482,44 +2649,44 @@ describe("run", () => {
         managedStateClass(DataValue)
 
         expect(run(
-            new Chain([nested, record, new DataValue()]),
+            new Chain([nested, record, new DataValue()], testContext),
             [],
             "join",
             ["|"],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be("2|[object Object]|[object Object]")
         expect(run(
-            new Chain(nested),
+            new Chain(nested, testContext),
             [],
             "toString",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be("2")
         expect(run(
-            new Chain([[1]]),
+            new Chain([[1]], testContext),
             [],
             "flat",
             [record],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.eql([[1]])
         expect(run(
-            new Chain([Object.create(null)]),
+            new Chain([Object.create(null)], testContext),
             [],
             "join",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
         expect(run(
-            new Chain([1]),
+            new Chain([1], testContext),
             [],
             "join",
             [Symbol()],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
 
         class External {
@@ -2529,54 +2696,58 @@ describe("run", () => {
             }
         }
         expect(run(
-            new Chain([new External()]),
+            new Chain([new External()], testContext),
             [],
             "join",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
         expect(hookCalls).to.be(0)
     })
 
     it("matches native joining for mutually recursive Arrays", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const outer = []
         const inner = []
         outer.push(inner, 1)
         inner.push(outer, 2)
-        importValue(outer, "recursive Array")
+        importValue(outer, { ...testContext, errorContext: "recursive Array" })
 
         expect(run(
-            new Chain(outer),
+            new Chain(outer, testContext),
             [],
             "toString",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(Array.prototype.toString.call(outer))
         expect(run(
-            new Chain(outer),
+            new Chain(outer, testContext),
             [],
             "join",
             ["|"],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(Array.prototype.join.call(outer, "|"))
     })
 
     it("requires comparator results to be Numbers", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const result = run(
-            new Chain([3, 1, 2]),
+            new Chain([3, 1, 2], testContext),
             [],
             "toSorted",
             [(left, right) => ({ value: left - right })],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(result instanceof Error).to.be(true)
     })
 
     it("invokes record methods only on supported object surfaces", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const record = {}
         Object.defineProperty(record, "size", {
             enumerable: true,
@@ -2600,40 +2771,41 @@ describe("run", () => {
         })
 
         const size = run(
-            new Chain(record),
+            new Chain(record, testContext),
             [],
             "size",
             [],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(size).to.eql({ value: 3 })
-        const sizeChain = new Chain(size)
-        assignPath(sizeChain, ["value"], 4)
+        const sizeChain = new Chain(size, testContext)
+        assignPath(sizeChain, ["value"], 4, testContext)
         expect(sizeChain._state.value).not.to.be(size)
         expect(size.value).to.be(3)
         expect(run(
-            new Chain(record),
+            new Chain(record, testContext),
             [],
             "getCallable",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(callable)
         expect(run(
-            new Chain(record),
+            new Chain(record, testContext),
             [],
             "isReceiver",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(true)
         expect(run(
-            new Chain(new Date(123)),
+            new Chain(new Date(123), testContext),
             [],
             "getTime",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(123)
 
         const callableReceiver = function callableReceiver() {}
@@ -2642,12 +2814,12 @@ describe("run", () => {
             invoked = true
         }
         expect(run(
-            new Chain(callableReceiver),
+            new Chain(callableReceiver, testContext),
             [],
             "read",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
         expect(invoked).to.be(false)
 
@@ -2657,16 +2829,17 @@ describe("run", () => {
             value: () => date,
         })
         expect(run(
-            new Chain(record),
+            new Chain(record, testContext),
             [],
             "getDate",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(date)
     })
 
     it("routes managed-class and external receivers through category dispatch", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class ManagedClassReceiver {
             read(addend) {
                 return this.value + addend
@@ -2677,12 +2850,12 @@ describe("run", () => {
         managed.value = 1
 
         expect(run(
-            new Chain(managed),
+            new Chain(managed, testContext),
             [],
             "read",
             [2],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(3)
 
         let invoked = false
@@ -2692,17 +2865,18 @@ describe("run", () => {
             }
         }
         expect(run(
-            new Chain(new ExternalReceiver()),
+            new Chain(new ExternalReceiver(), testContext),
             [],
             "read",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(undefined)
         expect(invoked).to.be(true)
     })
 
     it("leases a method receiver while exported arguments resolve", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const argument = deferred()
         const record = { value: 1 }
         Object.defineProperty(record, "read", {
@@ -2711,16 +2885,17 @@ describe("run", () => {
                 return this.value + addend
             },
         })
-        const chain = new Chain(record)
+        const chain = new Chain(record, testContext)
         const result = run(
             chain,
             [],
             "read",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        assignPath(chain, ["value"], 2)
+        assignPath(chain, ["value"], 2, testContext)
         argument.resolve(0)
 
         expect(await result).to.be(1)
@@ -2728,10 +2903,11 @@ describe("run", () => {
     })
 
     it("releases selection leases after host export captures inputs", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const pending = deferred()
         const argument = { value: 1, pending: pending.promise }
-        const argumentChain = new Chain(argument)
+        const argumentChain = new Chain(argument, testContext)
         const methodReceiver = {}
         Object.defineProperty(methodReceiver, "read", {
             enumerable: true,
@@ -2741,28 +2917,30 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(receiver.promise),
+            new Chain(receiver.promise, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        expect(metaOf(argument).readLeaseCount).to.be(1)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(1)
 
         receiver.resolve(methodReceiver)
         await flushMicrotasks()
-        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(undefined)
 
-        assignPath(argumentChain, ["value"], 2)
+        assignPath(argumentChain, ["value"], 2, testContext)
         expect(argument.value).to.be(2)
         pending.resolve("ready")
         expect(await result).to.be(1)
     })
 
     it("exports aliased host arguments without leasing their source", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const argument = { pending: pending.promise, value: 1 }
-        const argumentChain = new Chain(argument)
+        const argumentChain = new Chain(argument, testContext)
         const receiver = {}
         Object.defineProperty(receiver, "read", {
             enumerable: true,
@@ -2775,27 +2953,29 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "read",
             [
                 argument,
                 argument,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
-        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(undefined)
 
-        assignPath(argumentChain, ["value"], 2)
+        assignPath(argumentChain, ["value"], 2, testContext)
         pending.resolve("ready")
 
         expect(await result).to.eql({ aliased: true, sum: 2 })
         expect(argument.value).to.be(2)
         expect(argumentChain._state.value.value).to.be(2)
-        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("preserves topology shared across host argument roots", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const shared = { value: 1 }
         const first = { pending: pending.promise }
@@ -2812,14 +2992,15 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "inspect",
             [
                 first,
                 second,
             ],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         pending.resolve(shared)
 
@@ -2832,9 +3013,10 @@ describe("run", () => {
     })
 
     it("keeps exported arguments independent through a host result Promise", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const argument = { value: 1 }
-        const argumentChain = new Chain(argument)
+        const argumentChain = new Chain(argument, testContext)
         let received
         const receiver = {}
         Object.defineProperty(receiver, "read", {
@@ -2846,24 +3028,26 @@ describe("run", () => {
         })
 
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(received).not.to.be(argument)
-        expect(metaOf(argument).readLeaseCount).to.be(undefined)
-        assignPath(argumentChain, ["value"], 2)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(undefined)
+        assignPath(argumentChain, ["value"], 2, testContext)
         completion.resolve()
 
         expect(await result).to.be(1)
         expect(argument.value).to.be(2)
-        expect(metaOf(argument).readLeaseCount).to.be(undefined)
+        expect(metaOf(argument, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("preserves admitted prototypes in host arguments", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let constructions = 0
         class Point {
             constructor(value) {
@@ -2889,20 +3073,21 @@ describe("run", () => {
         })
 
         expect(run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "inspect",
             [point],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )).to.be(3)
         expect(received).not.to.be(point)
         expect(Object.getPrototypeOf(received)).to.be(Point.prototype)
         expect(constructions).to.be(0)
-        expect(metaOf(received)).to.be(undefined)
+        expect(metaOf(received, testContext)).to.be(undefined)
     })
 
     it("leaves no source lease while completing Error collection", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const retained = { pending: pending.promise }
         const failure = new Error("argument reflection failed")
@@ -2920,23 +3105,25 @@ describe("run", () => {
         })
 
         const argument = { retained, broken }
-        new Chain(argument)
+        new Chain(argument, testContext)
         fail = true
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(result instanceof Promise).to.be(true)
-        expect(metaOf(retained).readLeaseCount).to.be(undefined)
+        expect(metaOf(retained, testContext).readLeaseCount).to.be(undefined)
 
         pending.resolve("done")
         expect(errorCause(await result)).to.be(failure)
     })
 
     it("continues Error collection after preparation fails", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("argument reflection failed")
         let reflected = false
@@ -2951,14 +3138,15 @@ describe("run", () => {
         Object.defineProperty(receiver, "read", { value() {} })
 
         const argument = { pending: pending.promise, broken }
-        new Chain(argument)
+        new Chain(argument, testContext)
         fail = true
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "read",
             [argument],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(result instanceof Promise).to.be(true)
 
@@ -2972,30 +3160,31 @@ describe("run", () => {
         expect(errorCause(await result)).to.be(failure)
 
         expect(reflected).to.be(true)
-        expect(metaOf(late).readLeaseCount).to.be(undefined)
+        expect(metaOf(late, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("does not admit a top-level input after fatal export closure", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("fatal argument preparation")
         const broken = {
             then() {
-                submitFatal(failure)
+                submitFatal(testContext, failure)
             },
         }
         const receiver = {}
         Object.defineProperty(receiver, "read", { value() {} })
 
         expect(errorCause(thrownBy(() => run(
-            new Chain(receiver),
+            new Chain(receiver, testContext),
             [],
             "read",
             [
                 pending.promise,
                 broken,
             ],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )))).to.be(failure)
 
         let reflected = false
@@ -3009,28 +3198,29 @@ describe("run", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(late)).to.be(undefined)
+        expect(metaOf(late, testContext)).to.be(undefined)
     })
 
     it("abandons late concat work after fatal preparation failure", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("concat preparation failed")
         const broken = {
             then() {
-                submitFatal(failure)
+                submitFatal(testContext, failure)
             },
         }
 
         expect(errorCause(thrownBy(() => run(
-            new Chain([]),
+            new Chain([], testContext),
             [],
             "concat",
             [
                 pending.promise,
                 broken,
             ],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )))).to.be(failure)
 
         let reflected = false
@@ -3044,24 +3234,26 @@ describe("run", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(late)).to.be(undefined)
+        expect(metaOf(late, testContext)).to.be(undefined)
     })
 
     it("abandons late recursive flat work after fatal failure", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const late = deferred()
         const failing = deferred()
         const failure = new Error("recursive flat preparation failed")
         const result = run(
-            new Chain([late.promise, failing.promise]),
+            new Chain([late.promise, failing.promise], testContext),
             [],
             "flat",
             [],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         failing.resolve(new Proxy([1], {
             ownKeys() {
-                submitFatal(failure)
+                submitFatal(testContext, failure)
             },
         }))
         expect(errorCause(await result.catch(error => error))).to.be(failure)
@@ -3080,6 +3272,7 @@ describe("run", () => {
     })
 
     it("balances nested entry and method-argument read leases", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const argument = deferred()
         const record = { value: 1 }
         Object.defineProperty(record, "read", {
@@ -3089,28 +3282,30 @@ describe("run", () => {
             },
         })
 
-        const result = enter(new Chain(record), [], false, entered => {
+        const result = enter(new Chain(record, testContext), [], testContext, false, entered => {
             const observed = run(
                 entered,
                 [],
                 "read",
                 [argument.promise],
-                {},
+                { ...testContext, errorContext: "test run" },
+                { repair: false },
             )
-            expect(metaOf(record).readLeaseCount).to.be(2)
+            expect(metaOf(record, testContext).readLeaseCount).to.be(2)
             return observed
         })
 
         argument.resolve(2)
         expect(await result).to.be(3)
-        expect(metaOf(record).readLeaseCount).to.be(undefined)
+        expect(metaOf(record, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("installs an Error for a missing mutation receiver", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const root = {}
-        const chain = new Chain(root)
+        const chain = new Chain(root, testContext)
 
-        const result = run(chain, ["missing"], "push", [1], { mutationScopeDepth: 1 })
+        const result = run(chain, ["missing"], "push", [1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 1 })
 
         expect(result instanceof Error).to.be(true)
         expect(root.missing).to.be(result)
@@ -3118,6 +3313,7 @@ describe("run", () => {
     })
 
     it("uses only controlled Array methods", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1, 2]
         Object.defineProperty(source, "map", {
             enumerable: false,
@@ -3125,27 +3321,29 @@ describe("run", () => {
                 return this.join("-")
             },
         })
-        const view = run(new Chain(source), [], "push", [3], {})
+        const view = run(new Chain(source, testContext), [], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false })
 
         const overridden = run(
-            new Chain(view),
+            new Chain(view, testContext),
             [],
             "map",
             [],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(overridden instanceof Error).to.be(true)
         expect(run(
-            new Chain([1, 2]),
+            new Chain([1, 2], testContext),
             [],
             "map",
             [value => value],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
     })
 
     it("does not inspect unsupported Array method properties", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("broken method")
         const source = []
         Object.defineProperty(source, "broken", {
@@ -3153,18 +3351,26 @@ describe("run", () => {
             configurable: true,
         })
 
-        const result = run(new Chain(source), [], "broken", [], {})
+        const result = run(new Chain(source, testContext), [], "broken", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(result instanceof Error).to.be(true)
         expect(result).not.to.be(failure)
     })
 
     it("returns a validation Error for intrinsic length receivers", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         for (const receiver of ["abc", [1, 2]]) {
             const root = { target: receiver }
-            const chain = new Chain(root)
+            const chain = new Chain(root, testContext)
             const length = receiver.length
 
-            const result = run(chain, ["target", "length"], "push", [1], { mutationScopeDepth: 2 })
+            const result = run(
+                chain,
+                ["target", "length"],
+                "push",
+                [1],
+                { ...testContext, errorContext: "test run" },
+                { repair: false, mutationScopeDepth: 2 },
+            )
 
             expect(result instanceof Error).to.be(true)
             expect(root.target).to.be(result)
@@ -3173,6 +3379,7 @@ describe("run", () => {
     })
 
     it("isolates one Promise payload reaching several placements", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             { method: "push", source: [], args: promise => [promise, promise] },
             {
@@ -3189,54 +3396,62 @@ describe("run", () => {
         ]
         for (const { method, source, args } of cases) {
             const payload = { answer: 1 }
-            const chain = new Chain(source)
+            const chain = new Chain(source, testContext)
 
-            run(chain, [], method, [...args(Promise.resolve(payload))], { mutationScopeDepth: 0 })
+            run(
+                chain,
+                [],
+                method,
+                [...args(Promise.resolve(payload))],
+                { ...testContext, errorContext: "test run" },
+                { repair: false, mutationScopeDepth: 0 },
+            )
             await flushMicrotasks()
-            assignPath(chain, ["0", "answer"], 2)
+            assignPath(chain, ["0", "answer"], 2, testContext)
             await flushMicrotasks()
 
-            const exported = await exportValue(chain, [])
+            const exported = await exportValue(chain, [], testContext)
             expect(exported[0].answer).to.be(2)
             expect(exported[1].answer).to.be(1)
             expect(payload.answer).to.be(1)
-            verifyRefCounts(chain._state.value)
+            verifyRefCounts(testContext, chain._state.value)
         }
     })
 
     it("rejects synchronous same-execution reentry from external code", () => {
+        let testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             observed => {
                 const receiver = {}
                 Object.defineProperty(receiver, "reenter", {
                     enumerable: true,
                     value() {
-                        readPath(observed, [])
+                        readPath(observed, [], testContext)
                     },
                 })
-                return run(new Chain(receiver), [], "reenter", [], {})
+                return run(new Chain(receiver, testContext), [], "reenter", [], { ...testContext, errorContext: "test run" }, { repair: false })
             },
             observed => run(
-                new Chain([2, 1]),
+                new Chain([2, 1], testContext),
                 [],
                 "sort",
-                [() => readPath(observed, [])],
-                { mutationScopeDepth: 0 },
-
+                [() => readPath(observed, [], testContext)],
+                { ...testContext, errorContext: "test run" },
+                { repair: false, mutationScopeDepth: 0 },
             ),
             observed => lookupPath(new Chain(new Proxy({}, {
                 getOwnPropertyDescriptor() {
-                    readPath(observed, [])
+                    readPath(observed, [], testContext)
                 },
-            })), ["value"]),
+            }), testContext), ["value"], testContext),
         ]
 
         for (const invoke of cases) {
             let reported
-            useTestExecution(error => {
+            testContext = { execution: new Execution(error => {
                 reported = error
-            })
-            const observed = new Chain({ value: 1 })
+            }), errorContext: "test operation" }
+            const observed = new Chain({ value: 1 }, testContext)
             const failure = thrownBy(() => invoke(observed))
 
             expect(failure instanceof Error).to.be(true)
@@ -3248,6 +3463,7 @@ describe("run", () => {
     })
 
     it("poisons Array mutation when preparation reflection fails", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("Array metadata reflection failed")
         const receiver = new Proxy([1, 2], {
             getOwnPropertyDescriptor(target, key) {
@@ -3255,15 +3471,16 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        const chain = new Chain(receiver)
+        const chain = new Chain(receiver, testContext)
 
-        const result = run(chain, [], "reverse", [], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(errorCause(result)).to.be(failure)
         expect(chain._state.value).to.be(result)
         expect([...receiver]).to.eql([1, 2])
     })
 
     it("does not replay Array mutations into protected input storage", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             {
                 method: "reverse",
@@ -3298,31 +3515,30 @@ describe("run", () => {
             const failure = new Error(`${method} replay failed`)
             const removed = source.at(-1)
             const receiver = new Proxy(source, handler(failure))
-            const chain = new Chain(receiver)
-            buildRefIndex(receiver)
+            const chain = new Chain(receiver, testContext)
+            buildRefIndex(receiver, testContext)
 
-            const result = run(chain, [], method, [], { mutationScopeDepth: 0 })
+            const result = run(chain, [], method, [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
             if (Error.isError(removed)) expect(errorCause(result)).to.be(removed)
             else if (method === "pop") expect(result).to.be(removed)
-            expect(exportValue(chain, [])).to.eql(method === "pop" ? [1] : [2, 1])
+            expect(exportValue(chain, [], testContext)).to.eql(method === "pop" ? [1] : [2, 1])
             expect(source.length).to.be(2)
-            verifyRefCounts(receiver)
+            verifyRefCounts(testContext, receiver)
         }
     })
 
     it("poisons Array mutation when a comparator throws", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("comparison failed")
         const source = [2, 1]
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
         const result = run(chain, [], "sort", [
             () => {
             throw failure
         },
-        ],
-        { mutationScopeDepth: 0 },
-        )
+        ], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(errorCause(result)).to.be(failure)
         expect(chain._state.value).to.be(result)
@@ -3330,17 +3546,19 @@ describe("run", () => {
     })
 
     it("returns a delayed comparator throw after poisoning mutation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const comparator = deferred()
         const failure = new Error("delayed comparison failed")
         const source = [2, 1]
-        const chain = new Chain(source)
+        const chain = new Chain(source, testContext)
 
         const result = run(
             chain,
             [],
             "sort",
             [comparator.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         comparator.resolve(() => {
             throw failure
@@ -3353,13 +3571,14 @@ describe("run", () => {
     })
 
     it("reports an unlimited flat of an Array cycle as a language Error", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cyclic = [1]
         cyclic.push(cyclic)
-        importValue(cyclic)
-        const chain = new Chain({ items: cyclic })
+        importValue(cyclic, testContext)
+        const chain = new Chain({ items: cyclic }, testContext)
 
-        const unlimited = run(chain, ["items"], "flat", [Infinity], {})
-        const bounded = run(chain, ["items"], "flat", [2], {})
+        const unlimited = run(chain, ["items"], "flat", [Infinity], { ...testContext, errorContext: "test run" }, { repair: false })
+        const bounded = run(chain, ["items"], "flat", [2], { ...testContext, errorContext: "test run" }, { repair: false })
 
         expect(unlimited.message).to.be(
             "Cannot flat an Array cycle to unlimited depth",
@@ -3371,6 +3590,7 @@ describe("run", () => {
     })
 
     it("ignores inherited numeric accessors when remapping Array data", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const prototype = Object.create(Array.prototype, {
             "1": {
                 get() { throw new Error("Inherited numeric getter was invoked") },
@@ -3379,9 +3599,9 @@ describe("run", () => {
         })
         for (const options of [{}, { mutationScopeDepth: 0 }]) {
             const source = Object.setPrototypeOf([0, , 2, 3, 4, 5, 6], prototype)
-            const result = run(new Chain(source), [], "reverse", [], options)
+            const result = run(new Chain(source, testContext), [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, ...options })
 
-            expect(exportValue(new Chain(result), [])).to.eql([6, 5, 4, 3, 2, , 0])
+            expect(exportValue(new Chain(result, testContext), [], testContext)).to.eql([6, 5, 4, 3, 2, , 0])
             expect(Object.hasOwn(source, "1")).to.be(false)
             expect(source[0]).to.be(0)
             expect(source[6]).to.be(6)
@@ -3389,13 +3609,14 @@ describe("run", () => {
     })
 
     it("materializes a view before an ordinary indexed write", () => {
-        const sourceChain = new Chain([1, 2])
-        const view = run(sourceChain, [], "push", [3], {})
-        const viewChain = new Chain(view)
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
+        const sourceChain = new Chain([1, 2], testContext)
+        const view = run(sourceChain, [], "push", [3], { ...testContext, errorContext: "test run" }, { repair: false })
+        const viewChain = new Chain(view, testContext)
 
-        assignPath(viewChain, ["0"], 9)
-        expect(exportValue(sourceChain, [])).to.eql([1, 2])
-        expect(exportValue(viewChain, [])).to.eql([9, 2, 3])
-        verifyRefCounts(viewChain._state.value)
+        assignPath(viewChain, ["0"], 9, testContext)
+        expect(exportValue(sourceChain, [], testContext)).to.eql([1, 2])
+        expect(exportValue(viewChain, [], testContext)).to.eql([9, 2, 3])
+        verifyRefCounts(testContext, viewChain._state.value)
     })
 })

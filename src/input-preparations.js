@@ -1,5 +1,6 @@
+import { createLeaseLedger } from "./ownership.js"
 import { isLogicalArray } from "./array-view.js"
-import { continueOperation } from "./internal-step.js"
+import { continueGraphTransition } from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import { commitExternalLocations, prepareExternalMutationTree } from "./external-mutation-tree.js"
 import * as languageProperties from "./language-properties.js"
@@ -8,18 +9,25 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { createEmptyContainer, defineCopyProperty, prepareContainerStructureCopy } from "./placement-structure.js"
-import { PlacementConstruction } from "./parent-placements.js"
+import { CONSTRUCTION_STATE, PlacementConstruction } from "./parent-placements.js"
 
-// Ordinary reception shares input preparation with import, but keeps runtime
-// ownership and attributes both input and inspection failures to the receiver.
-function receiveValue(value, operationContext, kind, onValue = value => value, owner) {
-    const deliver = ready => {
-        languageValues.admitReadyValue(ready, operationContext)
-        return onValue(ready)
+// One inward transition consumes availability, prepares the delivered input,
+// and captures it before later work can change its ownership.
+function receiveValue(value, operationContext, policy, onValue = value => value, owner, externalMutationTreeSetup) {
+    const accept = root => {
+        const prepared = prepareInput(root, operationContext, policy,
+            // Context discovery applies only to the supplied, ready root.
+            root === value ? externalMutationTreeSetup : undefined)
+        languageValues.admitReadyValue(prepared, operationContext)
+        return onValue(prepared)
     }
-    return continueOperation(value, operationContext,
-        ready => deliver(prepareInput(ready, operationContext, { kind })),
-        reason => deliver(errorUtils.createPoisonError(reason, operationContext, kind)), owner)
+    try {
+        return continueGraphTransition(value, operationContext, accept,
+            reason => accept(errorUtils.createPoisonError(reason, operationContext, policy.kind)), owner)
+    } finally {
+        // Pending delivery needs neither the original input nor discovery data.
+        value = externalMutationTreeSetup = undefined
+    }
 }
 
 function prepareInput(
@@ -39,19 +47,19 @@ function prepareInput(
     if (!metadata.isObjectLike(root)) return root
     const existing = metadata.metaOf(root, operationContext)
     if (!policy.methodResult && !externalMutationTreeSetup && existing &&
-        (existing.placementsInitialized || !metadata.isTraversableType(existing.type))) {
-        if (policy.imported) metadata.markShared(root, operationContext)
-        return root
-    }
+        (existing.placementsInitialized || !metadata.isTraversableType(existing.type)))
+        return root // The receiving placement or lease restores inactive relationships.
 
+    const leases = createLeaseLedger(operationContext)
     let failure
     let resultErrors = policy.methodResult ? failures?.errors ?? new Set() : undefined
     const admissions = new Map()
     const retentions = new Set()
     const containers = new Map()
     const registrations = externalMutationTreeSetup ? new Map() : undefined
+    let value
     try {
-        const value = walk(root)
+        value = walk(root)
         const tree = !failure && externalMutationTreeSetup
             ? inspect(() => prepareExternalMutationTree(
                 value,
@@ -66,30 +74,31 @@ function prepareInput(
                 },
             ))
             : undefined
-        // Later subscriptions may complete an earlier container's initialization.
-        // Reconcile its source authority before fixing any copy shapes or edges.
-        // Adoption only inspects captures; it starts no new value consumption.
-        if (!failure) for (const container of containers.values()) reconcileInitialization(container)
         if (!failure) for (const [source, container] of containers) {
             if (container.target !== source) container.commitStructure = inspect(() =>
                 prepareContainerStructureCopy(source, container.target, operationContext))
-            else if (container.initializing && container.state === "staged")
+            else if (container.initializing)
                 container.initialEntries = inspect(() => captureInitialEntries(source, container))
         }
         if (failure) return resultErrors
             ? errorUtils.combineErrors(resultErrors, "Method result admission failed") : failure
 
-        commitPreparedInput(admissions, retentions, containers, policy, operationContext)
+        commitPreparedInput(admissions, containers, policy, operationContext)
         if (externalMutationTreeSetup) {
             commitExternalLocations(registrations, operationContext)
             externalMutationTreeSetup.tree = tree
         }
         return containers.get(value)?.target ?? value
     } finally {
+        leases.release()
         admissions.clear()
         retentions.clear()
         for (const container of containers.values()) {
             container.discard()
+            if (container.state === CONSTRUCTION_STATE.Discarded) for (const staged of container.placements.values()) {
+                staged.version.value = staged.version.recovery = undefined
+                staged.original = staged.placement = undefined
+            }
             container.target = undefined
             container.placements = undefined
             container.parents = undefined
@@ -99,7 +108,7 @@ function prepareInput(
         containers.clear()
         registrations?.clear()
         // Pending callbacks need their destination, not the staging root or failure.
-        root = failure = resultErrors = externalMutationTreeSetup = failures = undefined
+        value = root = failure = resultErrors = externalMutationTreeSetup = failures = undefined
     }
 
     function inspect(action) {
@@ -127,7 +136,7 @@ function prepareInput(
             if (!versions?.[key]) entries.push([key, original])
         // A control input may already have overlays. Their logical values say
         // nothing about backing storage, including slots masked as absent.
-        // Capture that storage after subscriptions, before publishing this batch.
+        // Capture that storage before publishing this batch.
         for (const key of Object.keys(versions ?? {})) {
             const descriptor = languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
             if (descriptor) entries.push([key, descriptor.value])
@@ -175,13 +184,10 @@ function prepareInput(
         }
         if (retentions.has(value)) return value
         const existing = metadata.metaOf(value, operationContext)
-        if (admissions.has(value)) {
-            const container = containers.get(value)
-            if (container) reconcileInitialization(container)
-            return value
-        }
+        if (admissions.has(value)) return value
         if (existing) {
             retentions.add(value)
+            leases.acquire(value)
             if ((!policy.methodResult && existing.placementsInitialized) ||
                 !languageValues.isTraversableType(existing.type)) return value
         } else {
@@ -202,14 +208,12 @@ function prepareInput(
         container.placements = new Map()
         container.initializing = !metadata.metaOf(value, operationContext)?.placementsInitialized
         containers.set(value, container)
-        inspect(() => {
+        try { inspect(() => {
             for (const key of languageProperties.enumerableLanguageKeyCandidates(
                 value, operationContext, 0, undefined, factsOf(value).type)) {
-                if (!reconcileInitialization(container)) break
                 const placement = resultErrors
                     ? inspect(() => propertyVersions.capturePlacement(value, key, operationContext))
                     : propertyVersions.capturePlacement(value, key, operationContext)
-                if (!reconcileInitialization(container)) break
                 if (errorUtils.isPoisonError(placement)) continue
                 if (!placement.present) continue
                 const child = placement.value
@@ -225,14 +229,15 @@ function prepareInput(
                     // result validation, never the source's unchecked value.
                     const transition = version.transition = {}
                     transition.promise = propertyVersions.resolvePlacementTransition(placement, operationContext, published => {
-                        if (!reconcileInitialization(container)) return undefined
+                        if (container.state === CONSTRUCTION_STATE.Discarded) return undefined
                         staged.placement = published
                         subscribe()
                         delete version.pendingPresence
                         delete version.transition
                         transition.placement = propertyVersions.capturePlacementFromVersion(version)
                     })
-                    propertyVersions.trackVersionPublication(version, transition.promise, operationContext)
+                    const pending = propertyVersions.trackVersionPublication(version, transition.promise, operationContext)
+                    container.pending ||= pending
                 } else subscribe()
                 if (failure && !resultErrors) break
 
@@ -244,114 +249,70 @@ function prepareInput(
                     version.present = staged.placement.present
                     version.recovery = staged.placement.recovery
                     version.position = staged.placement.position
-                    const publication = continueOperation(staged.placement.value, operationContext, deliver, reason => {
-                        if (!reconcileInitialization(container)) return undefined
+                    const publication = continueGraphTransition(staged.placement.value, operationContext, deliver, reason => {
+                        if (container.state === CONSTRUCTION_STATE.Discarded) return undefined
                         return deliver(staged.placement.sourceVersion ? reason :
                             errorUtils.createPoisonError(reason, operationContext, policy.kind))
                     })
-                    propertyVersions.trackVersionPublication(version, publication, operationContext)
+                    const pending = propertyVersions.trackVersionPublication(version, publication, operationContext)
+                    container.pending ||= pending
                 }
 
                 function deliver(resolved) {
-                    if (!reconcileInitialization(container)) return undefined
+                    if (container.state === CONSTRUCTION_STATE.Discarded) return undefined
                     const source = staged.placement.sourceVersion
                     return source
                         ? propertyVersions.resolvePlacement(propertyVersions.capturePlacementFromVersion(source), operationContext, publish)
                         : publish({ ...staged.placement, value: resolved })
                 }
 
-                function publish(placement) {
-                    if (!reconcileInitialization(container)) return undefined
-                    const validated = languageProperties.validatePropertyValue(key, placement.value, operationContext)
-                        ?? placement.value
-                    if (container.state === "staged") {
-                        const child = walk(validated)
-                        if (!reconcileInitialization(container)) return undefined
-                        version.value = child
-                        version.present = placement.present
-                        version.recovery = placement.recovery
-                        version.position = placement.position
-                        delete version.pendingPresence
-                        delete version.publication
-                        connectChild(container.owner, version.value)
-                    } else {
-                        const prepared = prepareInput(validated, operationContext, policy)
-                        if (placement.recovery) propertyVersions.retainPlacement(placement.recovery, operationContext)
-                        propertyVersions.commitPromiseVersion(container.owner, key, version,
-                            { ...placement, value: prepared },
-                            operationContext, !metadata.isImported(container.owner, operationContext))
-                    }
+                function publish(placement, releaseCapture) {
+                    try {
+                        if (container.state === CONSTRUCTION_STATE.Discarded) return undefined
+                        const validated = languageProperties.validatePropertyValue(key, placement.value, operationContext)
+                            ?? placement.value
+                        if (container.state === CONSTRUCTION_STATE.Staged) {
+                            const child = walk(validated)
+                            version.value = child
+                            version.present = placement.present
+                            version.recovery = placement.recovery
+                            version.position = placement.position
+                            delete version.pendingPresence
+                            delete version.publication
+                            connectChild(container.owner, version.value)
+                        } else {
+                            const prepared = prepareInput(validated, operationContext, policy)
+                            propertyVersions.commitPromiseVersion(container.owner, key, version,
+                                { ...placement, value: prepared },
+                                operationContext, !metadata.isImported(container.owner, operationContext))
+                        }
+                    } finally { releaseCapture?.() }
                 }
             }
-        })
-        value = undefined
-    }
-
-    function reconcileInitialization(container) {
-        if (container.state === "discarded") return false
-        if (container.state === "staged" && container.initializing &&
-            metadata.metaOf(container.owner, operationContext)?.placementsInitialized) {
-            // Completion supersedes initialization, never this boundary's
-            // independent result validation or an adopted copy's construction.
-            if (policy.methodResult) {
-                container.initializing = false
-                adoptCapturedSources(container.owner)
-                return true
-            }
-            admissions.delete(container.owner)
-            retentions.add(container.owner)
-            // A superseded initializer can never redirect aliases to a shell.
-            container.target = container.owner
-            container.discard()
-            return false
-        }
-        return true
-    }
-
-    function adoptCapturedSources(value) {
-        admissions.delete(value)
-        retentions.add(value)
-        for (const [key, staged] of containers.get(value)?.placements ?? []) {
-            const source = inspect(() => propertyVersions.capturePlacement(value, key, operationContext))
-            if (errorUtils.isPoisonError(source)) continue
-            staged.placement.sourceVersion ??= source.sourceVersion
-            // The existing subscription owns discovery and result validation.
-            // Keep unfinished or independently validated outcomes in a copy;
-            // even ready Error attribution may differ from the source's outcome.
-            const version = staged.version
-            if (languageValues.isPending(source.value, operationContext) ||
-                languageValues.isPending(version.value, operationContext) ||
-                !Object.is(source.value, version.value) || source.present !== version.present ||
-                source.recovery !== version.recovery || source.position !== version.position) copyContainer(value)
-            connectChild(value, version.value)
-        }
+        }) } finally { value = undefined }
     }
 }
 
 // Every fallible source read and subscription is complete before this boundary.
-function commitPreparedInput(admissions, retentions, containers, policy, operationContext) {
+function commitPreparedInput(admissions, containers, policy, operationContext) {
     for (const [identity, facts] of admissions) {
         metadata.getOrCreateMeta(identity, operationContext, facts.type, facts.admittedPrototype)
         if (policy.imported) metadata.markImported(identity, operationContext)
     }
-    if (policy.imported) for (const identity of retentions) metadata.markShared(identity, operationContext)
     // Admit all copy shells before publishing any cyclic/aliased edges.
     for (const [source, container] of containers) {
-        if (container.state === "discarded" || container.target === source) continue
+        if (container.target === source) continue
         const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
         metadata.getOrCreateMeta(container.target, operationContext, type, admittedPrototype)
+        if (metadata.isImported(source, operationContext)) metadata.markImported(container.target, operationContext)
     }
     for (const [source, container] of containers) {
-        if (container.state === "discarded") continue
         const { target, placements } = container
         if (target !== source) {
             container.commitStructure()
-            metadata.markShared(target, operationContext)
         }
         for (const [key, { version, original }] of placements) {
             version.value = containers.get(version.value)?.target ?? version.value
-            if (target !== source && version.recovery)
-                propertyVersions.retainPlacement(version.recovery, operationContext)
             // Record slots preserve key order beneath pending overlays;
             // Array slots would incorrectly commit speculative growth.
             if (target !== source && version.present !== false &&
@@ -362,9 +323,9 @@ function commitPreparedInput(admissions, retentions, containers, policy, operati
         }
         if (container.initializing || target !== source) {
             // Pending deliveries now belong to the published copy, if any.
-            container.owner = target
+            container.initialOwner = target
             container.commit(container.initialEntries)
-        } else container.finish("published")
+        } else container.finish(CONSTRUCTION_STATE.Published)
     }
 }
 

@@ -108,10 +108,9 @@ thenable may invoke the continuation synchronously, and Cascada preserves that
 synchronous progress. A later ready subscription cannot overtake an earlier
 registered callback still awaiting delivery. A callback delivered before its
 own subscription returns lets its throw escape that call. A callback delivered
-after its subscription returned pending rejects its own chain on failure, even
-when a newer subscription drains it synchronously. Subscription exit checks the
-subscribing execution on return or throw and propagates its authoritative fatal
-before processing a result, including for no-op ownership subscriptions. A
+after its subscription returned pending rejects its own chain on failure. A
+subscription may synchronously invoke only its newly supplied callback; older
+callbacks must be delivered separately while preserving FIFO. A
 pending subscription returns the chain supplied by the source. Only such a
 pending returned chain participates in aggregate waits, protection lifetimes,
 or outward fatal-result delivery. The kernel keeps no captured callable, thenability cache, canonical
@@ -168,22 +167,18 @@ and a Promise only when resolution or settlement is required.
 
 ## Ownership
 
-Compiler-created graph data is initially singly owned but may be cyclic.
-Reusing or exposing an existing graph identity gives it another owner and
-marks it shared. Mutation through a shared branch performs copy-on-write before
-the first language write.
+Every published managed container has complete incoming placements. A write preserves imported storage, independently held placements, read leases, recovery dependencies, and off-path aliases. COW decisions derive from those current facts; there is no permanent sharing flag.
 
-`lookupPath` extracts its result and marks a returned graph identity shared. Temporary consumers use internal capture and lease mechanisms for their actual use interval; ownership transfer follows the existing placement-transfer rules. Imported values retain their existing import and sharing state.
+`lookupPath` returns an immediate handoff. Receive it in a Chain, assignment, call, or export before an intervening command. Pending captures protect their delivered value before later source writers; fresh ready outputs use a brief delivery lease. Source-held ready lookups need no extra lease. See [managed-value reception](integration.md#managed-value-reception-and-delivery).
+
+Removing a placement or releasing a lease reconsiders the affected region. A node remains live only through a root holder, an independent retained use, or a path from one; internal cycle edges do not keep a detached component live. Retirement removes reverse references and optional indexes, preserving authoritative forward state for supported re-entry. Root clearing is an ordinary placement replacement, with no separate disposal API.
 
 Non-extensible managed data must enter through import. Its imported ownership,
 rather than its physical shape, causes copy-on-write.
 
 ## Copy-on-write
 
-Mutation through a shared branch shallow-copies each node on the target path.
-Off-path properties are reused. Reused traversable children are marked shared, and
-Promise-backed properties receive independent versions at the copy's program
-position.
+Mutation through a protected branch shallow-copies each node on the target path. Reused off-path children acquire the copy's placements, and Promise-backed properties receive independent versions at the copy's program position. Assignment protects its captured right-hand value before changing the destination: `x.self = x` links old `x` into the successor, rather than creating a new self-cycle. Native managed methods retain ordinary JavaScript alias semantics inside their fully isolated receiver.
 
 The copy contains only language-visible keys:
 
@@ -249,8 +244,8 @@ contextualized to the import operation.
 
 Import:
 
-- records origin and marks newly imported managed identities shared;
-- retains already admitted identities without rescanning or changing origin, except when method-result import revisits their graph to enforce boundary restrictions and shared ownership;
+- records origin and protects newly imported managed storage from mutation;
+- reuses already admitted identities without changing origin or reinspecting host storage; cached re-entry restores retired relationships from maintained forward state, while method-result admission revisits the required graph to enforce its boundary restrictions;
 - consumes nested possible Promises and retains continuations only for returned pending work; and
 - does not build subtree counters.
 
@@ -269,10 +264,9 @@ Synchronous custom delivery reuses the segment's staging walk and identity map.
 Each preparation container has one staged/published/discarded delivery authority. Publication
 commits its incoming occurrences, logical versions, and preparation completion.
 Discarded initialization performs no later destination work; published versions
-still settle after detachment. Overlapping preparation can supersede one record
-without cancelling the rest of the batch or independent result validation.
-Reconcile supersession before final copy shapes, remapping, or admission; adoption
-inspects source captures while existing subscriptions own discovery and validation.
+still settle after detachment. A subscription cannot drain older callbacks or
+start a competing initialization. Current synchronous delivery shares the staged
+identity walk; later delivery starts a new segment.
 Commit performs no further discovery or subscription. Initial relationships use
 final private storage or captured host entries, without duplicate edge buffers;
 ready-only construction needs no delivery authority.
@@ -505,7 +499,7 @@ The runtime consequences are deliberately small:
 - Public entry throws an already-stored fatal synchronously. A transition that
   detects a new fatal submits and propagates it; a later continuation that merely
   observes failed execution returns. Checks occur only at public entry, common
-  continuation resumption, external-boundary exit, subscription exit, and scheduler dispatch. Synchronous
+  continuation resumption, external-boundary exit, and scheduler dispatch. Synchronous
   JavaScript is not interrupted, and source Promises are neither cancelled nor
   awaited by shutdown.
 - Every ready operation result stays direct. Only an actually pending direct result
@@ -562,8 +556,7 @@ still returns `undefined`; any later failure is published only in the graph.
 
 ### `lookupPath(chain, path, operationContext)`
 
-Extracts the value captured at the path and marks a returned graph identity
-shared. The result is synchronous unless path resolution crosses a Promise.
+Extracts the value captured at the path under the immediate-handoff contract above. The result is synchronous unless path resolution crosses a Promise.
 
 ### `lookupPathForExpression(chain, path, operationContext)`
 
@@ -683,9 +676,8 @@ The complete implementation is specified in
 The compiler and host layer must:
 
 - wrap every host-provided root with `import(value, operationContext)`;
-- establish shared ownership whenever an existing graph identity gains another
-  owner or escapes;
-- use non-sharing lookup only for internal inspection or proven final transfer;
+- immediately receive managed results through an owning placement, a call's lease, or independent export;
+- retain values needed across subsequent commands in explicit holders and clear those holders at last use;
 - send traversable output to native code only through `export`;
 - evaluate assignment right-hand sides before mutating their destinations; and
 - treat fatal kernel exceptions as fatal integration failures rather than
@@ -701,7 +693,11 @@ classification, ownership, Promise versions, and bookkeeping. It never exposes
 ArrayView backing or dispatches through custom Array properties or prototypes.
 Controlled Array table lookup and trusted native String data-method lookup occur
 during internal dispatch and invoke no application hook. Unsupported names and
-modes therefore fail without preparing arguments. Record and managed-class
+modes fail without boundary-specific conversion or export. Common ownership
+preparation precedes a mutation's receiver walk and an observation's receiver
+wait; it may inspect fresh inputs and subscribe before rejection. A ready
+observational rejection leaves arguments unconsumed. Rejection never waits for
+unused arguments or collects their Errors. Record and managed-class
 member reflection instead occurs once after their required inputs are clean.
 Ordinary native calls instead export explicit arguments as one batch. Export
 captures available state synchronously through exact Promise versions and uses
@@ -717,8 +713,7 @@ extends receiver protection or private mutation until settlement; a nested
 result Promise is ordinary imported data. A mutation validates and admits the
 completed receiver before publishing it through the ordinary transition. It
 returns the published receiver for `this`; every other result is imported, and
-common method-result import marks all reached managed aliases shared without
-copying them.
+common method-result import preserves their admission and relationships, with result delivery retaining them through direct reception.
 
 A `sort` or `toSorted` comparator remains executable control outside the graph.
 When comparison is possible, the wrapper exports every sortable value as one

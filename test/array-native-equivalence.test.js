@@ -1,21 +1,11 @@
+import * as arrayViews from "../src/array-view.js"
+import { Chain, assignPath, deletePath, import as importValue, lookupPath, run, Execution } from "../src/index.js"
+import { verifyRefCounts } from "./verify-refcounts.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 
 import { ARRAY_METHODS } from "../src/array-methods.js"
-import {
-    logicalProperty,
-    logicalKeys,
-    Chain,
-    assignPath,
-    deferred,
-    deletePath,
-    importValue,
-    lookupPath,
-    run,
-    verifyRefCounts,
-    arrayViews,
-    testOperationContext,
-} from "./support.js"
+import { logicalProperty, logicalKeys, deferred } from "./support.js"
 import {
     VALUES,
     argumentsByArity,
@@ -335,36 +325,38 @@ describe("Array native equivalence", () => {
     }
 
     it("matches indexed, length, and deletion sequences", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         for (let caseIndex = 0; caseIndex < 32; caseIndex++) {
             const random = createRandom(0x51f15e + caseIndex)
             const source = generateArray(random, caseIndex)
             const native = cloneData(source)
-            const chain = new Chain(cloneData(source))
+            const chain = new Chain(cloneData(source), testContext)
             for (let step = 0; step < 12; step++) {
                 const kind = randomInteger(random, 3)
                 if (kind === 0) {
                     const index = randomInteger(random, native.length + 4)
                     const value = pick(random, VALUES)
                     native[index] = value
-                    assignPath(chain, [String(index)], value)
+                    assignPath(chain, [String(index)], value, testContext)
                 } else if (kind === 1) {
                     const length = randomInteger(random, 12)
                     native.length = length
-                    assignPath(chain, ["length"], length)
+                    assignPath(chain, ["length"], length, testContext)
                 } else {
                     const index = randomInteger(random, native.length + 3)
                     delete native[index]
-                    deletePath(chain, [String(index)])
+                    deletePath(chain, [String(index)], testContext)
                 }
-                await assertValue(chain._state.value, native, {
+                await assertValue(testContext, chain._state.value, native, {
                     message: `property sequence case=${caseIndex} step=${step}`,
                 })
-                verifyRefCounts(chain._state.value)
+                verifyRefCounts(testContext, chain._state.value)
             }
         }
     })
 
     it("captures structural publication before later writes across observational methods", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cases = [
             ["flat", []], ["flat", [0]], ["sort", []], ["sort", [NUMERIC_COMPARATOR]],
             ["toSorted", []], ["includes", [undefined]], ["indexOf", [undefined]],
@@ -375,14 +367,14 @@ describe("Array native equivalence", () => {
             for (const view of [false, true]) {
                 for (const overwrite of [false, true]) {
                     for (let index = 0; index < 3; index++) {
-                        const ctx = testOperationContext()
-                        const source = new Chain([3, 2, 1])
-                        const chain = view ? new Chain(run(source, [], "slice", [], {})) : source
+                        const ctx = testContext
+                        const source = new Chain([3, 2, 1], testContext)
+                        const chain = view ? new Chain(run(source, [], "slice", [], testContext, { repair: false }), testContext) : source
                         const hold = deferred()
                         const entry = runtime.enter(chain, [index], ctx, true, inside =>
                             hold.promise.then(() => runtime.deletePath(inside, [], ctx)))
-                        const result = run(chain, [], method, args, {})
-                        if (overwrite) assignPath(chain, [index], 42)
+                        const result = run(chain, [], method, args, testContext, { repair: false })
+                        if (overwrite) assignPath(chain, [index], 42, testContext)
                         hold.resolve()
                         await entry
 
@@ -390,13 +382,13 @@ describe("Array native equivalence", () => {
                         delete expected[index]
                         const message = `${method} view=${view} overwrite=${overwrite} index=${index}`
                         assert.deepStrictEqual(
-                            await runtime.export(new Chain(result), [], ctx),
+                            await runtime.export(new Chain(result, testContext), [], ctx),
                             Reflect.apply(Array.prototype[method], expected.slice(), args),
                             message,
                         )
                         if (overwrite) expected[index] = 42
                         assert.deepStrictEqual(await runtime.export(chain, [], ctx), expected, message)
-                        verifyRefCounts(chain._state.value, source._state.value)
+                        verifyRefCounts(testContext, chain._state.value, source._state.value)
                     }
                 }
             }
@@ -404,6 +396,7 @@ describe("Array native equivalence", () => {
     })
 
     it("normalizes descriptor-restricted Array receivers", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         for (const [method, fact] of Object.entries(ARRAY_METHOD_FACTS)) {
             if (!fact.mutationArgs) continue
             for (const restriction of [
@@ -413,7 +406,7 @@ describe("Array native equivalence", () => {
             ]) {
                 const expectedSource = [3, 1, 2, 0]
                 const runtimeSource = restrictedArray(restriction)
-                const chain = new Chain(runtimeSource)
+                const chain = new Chain(runtimeSource, testContext)
                 const expected = callArrayMethod(
                     expectedSource,
                     method,
@@ -424,43 +417,46 @@ describe("Array native equivalence", () => {
                     [],
                     method,
                     [...cloneData(fact.mutationArgs)],
-                    { mutationScopeDepth: 0 },
+                    testContext,
+                    { repair: false, mutationScopeDepth: 0 },
                 )
                 const scenario = {
                     message: `${method} restriction=${restriction}`,
                 }
 
                 await assertOutcome(
+                    testContext,
                     result,
                     expected.error,
                     expected.result,
                     scenario,
                 )
-                await assertValue(chain._state.value, expectedSource, scenario)
-                verifyRefCounts(chain._state.value, result)
+                await assertValue(testContext, chain._state.value, expectedSource, scenario)
+                verifyRefCounts(testContext, chain._state.value, result)
             }
         }
     })
 
 })
 
-async function compareArrayCase(scenario, mode) {
+async function compareArrayCase(testContext, scenario, mode) {
     const nativeSource = cloneData(scenario.source)
     const native = callArrayMethod(
         nativeSource,
         scenario.method,
         cloneData(scenario.args),
     )
-    const world = (mode.setup ?? setupArrayWorld)(scenario, mode)
+    const world = (mode.setup ?? setupArrayWorld)(testContext, scenario, mode)
     const receiverPath = world.path ?? []
     const result = run(
         world.chain,
         receiverPath,
         scenario.method,
         world.args ?? cloneData(scenario.args),
+        testContext,
         mode.mutate
-            ? { mutationScopeDepth: receiverPath.length }
-            : {},
+            ? { repair: false, mutationScopeDepth: receiverPath.length }
+            : { repair: false },
     )
     if (mode.expectPromise) {
         assert(result instanceof Promise, scenario.message)
@@ -471,6 +467,7 @@ async function compareArrayCase(scenario, mode) {
         assert.equal(world.chain._state.value, world.identity, scenario.message)
     }
     const actualResult = await assertOutcome(
+        testContext,
         result,
         native.error,
         mode.mutate ? native.result : (
@@ -480,6 +477,7 @@ async function compareArrayCase(scenario, mode) {
         mode.assertValue,
     )
     await (mode.assertValue ?? assertValue)(
+        testContext,
         world.chain._state.value,
         world.expectedState
             ? world.expectedState(nativeSource)
@@ -487,9 +485,10 @@ async function compareArrayCase(scenario, mode) {
         scenario,
     )
     for (const retained of world.retained ?? []) {
-        await assertValue(retained.actual, retained.expected, scenario)
+        await assertValue(testContext, retained.actual, retained.expected, scenario)
     }
     verifyViewRepresentation(
+        testContext,
         actualResult,
         native,
         nativeSource,
@@ -498,24 +497,25 @@ async function compareArrayCase(scenario, mode) {
         world,
     )
     verifyRefCounts(
+        testContext,
         world.chain._state.value,
         actualResult,
         ...(world.retained ?? []).map(retained => retained.actual),
     )
 }
 
-function setupArrayWorld(scenario, mode) {
-    if (mode.receiver === "view") return setupViewWorld(scenario, mode)
+function setupArrayWorld(testContext, scenario, mode) {
+    if (mode.receiver === "view") return setupViewWorld(testContext, scenario, mode)
     if (mode.receiver === "attached") {
-        return setupAttachedWorld(scenario, mode)
+        return setupAttachedWorld(testContext, scenario, mode)
     }
 
     const receiver = runtimeArray(scenario.source, mode)
     if (mode.frozen) Object.freeze(receiver)
     let world
     if (mode.receiver === "shared") {
-        const chain = new Chain({ changed: receiver, retained: receiver })
-        lookupPath(chain, ["retained"])
+        const chain = new Chain({ changed: receiver, retained: receiver }, testContext)
+        lookupPath(chain, ["retained"], testContext)
         world = {
             chain,
             path: ["changed"],
@@ -526,8 +526,8 @@ function setupArrayWorld(scenario, mode) {
         }
     } else if (mode.receiver === "shared ancestor") {
         const branch = { value: receiver }
-        const chain = new Chain({ changed: branch, retained: branch })
-        lookupPath(chain, ["retained"])
+        const chain = new Chain({ changed: branch, retained: branch }, testContext)
+        lookupPath(chain, ["retained"], testContext)
         world = {
             chain,
             path: ["changed", "value"],
@@ -538,9 +538,9 @@ function setupArrayWorld(scenario, mode) {
         }
     } else if (mode.receiver === "imported") {
         const external = { value: receiver }
-        importValue(external)
+        importValue(external, testContext)
         world = {
-            chain: new Chain(external),
+            chain: new Chain(external, testContext),
             path: ["value"],
             expectedState: nativeSource => ({ value: nativeSource }),
             retained: [{
@@ -552,6 +552,7 @@ function setupArrayWorld(scenario, mode) {
         world = {
             chain: new Chain(
                 mode.promiseReceiver ? Promise.resolve(receiver) : receiver,
+                testContext,
             ),
             identity: mode.assertIdentity ? receiver : undefined,
         }
@@ -562,26 +563,26 @@ function setupArrayWorld(scenario, mode) {
     return world
 }
 
-function rejectedElementWorld(scenario) {
+function rejectedElementWorld(testContext, scenario) {
     const receiver = cloneData(scenario.source)
     const rejection = deferred()
     receiver[0] = undefined
-    const chain = new Chain(receiver)
-    assignPath(chain, ["0"], rejection.promise)
+    const chain = new Chain(receiver, testContext)
+    assignPath(chain, ["0"], rejection.promise, testContext)
     return {
         chain,
         afterInvoke: () => rejection.reject(scenario.source[0]),
     }
 }
 
-function setupViewWorld(scenario, mode) {
+function setupViewWorld(testContext, scenario, mode) {
     const backing = cloneData(scenario.layout.backing)
     if (mode.restriction === "non-extensible") {
         Object.preventExtensions(backing)
     } else if (mode.restriction === "fixed-length") {
         Object.defineProperty(backing, "length", { writable: false })
     }
-    const base = new Chain(backing)
+    const base = new Chain(backing, testContext)
     const view = run(
         base,
         [],
@@ -590,11 +591,12 @@ function setupViewWorld(scenario, mode) {
             scenario.layout.start,
             scenario.layout.end,
         ],
-        {},
+        testContext,
+        { repair: false },
     )
-    assert(arrayViews.isArrayView(view), scenario.message)
+    assert(arrayViews.isArrayView(view, testContext), scenario.message)
     const world = {
-        chain: new Chain(view),
+        chain: new Chain(view, testContext),
         retained: [
             { actual: view, expected: scenario.source },
             { actual: base._state.value, expected: scenario.layout.backing },
@@ -611,18 +613,20 @@ function setupViewWorld(scenario, mode) {
     return world
 }
 
-function setupAttachedWorld(scenario) {
+function setupAttachedWorld(testContext, scenario) {
     const receiver = cloneData(scenario.layout.backing)
-    const chain = new Chain(receiver)
+    const chain = new Chain(receiver, testContext)
     const marker = 0x61 + scenario.index
     const version = run(
         chain,
         [],
         "push",
         [marker],
-        {},
+        testContext,
+        { repair: false },
     )
-    assert(arrayViews.isArrayView(version), scenario.message)
+    assert(arrayViews.isArrayView(version, testContext), scenario.message)
+    const retainedVersion = new Chain(version, testContext)
     const expectedVersion = cloneData(scenario.source)
     Array.prototype.push.call(expectedVersion, marker)
     return {
@@ -786,36 +790,32 @@ function argumentWillWait(scenario) {
         ARGUMENT_WAIT_METHODS.has(scenario.method)
 }
 
-async function assertLogicalValue(actual, expected, scenario) {
+async function assertLogicalValue(testContext, actual, expected, scenario) {
     assert.deepStrictEqual(
-        await logicalSnapshot(actual),
-        await logicalSnapshot(expected),
+        await logicalSnapshot(testContext, actual),
+        await logicalSnapshot(testContext, expected),
         scenario.message,
     )
 }
 
-async function logicalSnapshot(value) {
+async function logicalSnapshot(testContext, value) {
     value = await value
     if (Error.isError(value)) return value.cause ?? value
-    if (!arrayViews.isLogicalArray(value)) return value
+    if (!arrayViews.isLogicalArray(value, testContext)) return value
 
-    const array = arrayViews.ArrayView.projectionOf(value)
-    const output = new Array(arrayViews.ArrayView.minimumLength(array, testOperationContext()))
-    const keys = arrayViews.isArrayView(array)
-        ? logicalKeys(array, testOperationContext())
-        : Object.keys(array)
+    const array = value
+    const output = new Array(arrayViews.ArrayView.minimumLength(array, testContext))
+    const keys = logicalKeys(array, testContext)
     for (const key of keys) {
         if (!arrayViews.isArrayIndex(key)) continue
-        const element = arrayViews.isArrayView(array)
-            ? logicalProperty(array, key, testOperationContext())
-            : array[key]
-        output[key] = await logicalSnapshot(element)
+        const element = logicalProperty(array, key, testContext)
+        output[key] = await logicalSnapshot(testContext, element)
     }
     return output
 }
 
 function verifyViewRepresentation(
-    actualResult,
+    testContext, actualResult,
     native,
     nativeSource,
     scenario,
@@ -854,10 +854,10 @@ function verifyViewRepresentation(
     if (expected === undefined) return
 
     const output = mode.mutate ? world.chain._state.value : actualResult
-    assert.equal(arrayViews.isArrayView(output), expected, scenario.message)
+    assert.equal(arrayViews.isArrayView(output, testContext), expected, scenario.message)
 }
 
-async function compareDelayedObservation(scenario, mode) {
+async function compareDelayedObservation(testContext, scenario, mode) {
     const observedSource = cloneData(scenario.source)
     const native = callArrayMethod(
         observedSource,
@@ -869,6 +869,7 @@ async function compareDelayedObservation(scenario, mode) {
     const laterNative = callArrayMethod(finalSource, "push", [marker])
     const chain = new Chain(
         runtimeArray(scenario.source, mode),
+        testContext,
     )
     const result = run(
         chain,
@@ -879,28 +880,31 @@ async function compareDelayedObservation(scenario, mode) {
             ? promisedArguments(scenario.args)
             : cloneData(scenario.args)),
         ],
-        {},
+        testContext,
+        { repair: false },
     )
     assert(result instanceof Promise, scenario.message)
-    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
+    const laterResult = run(chain, [], "push", [marker], testContext, { repair: false, mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
+        testContext,
         result,
         native.error,
         scenario.mutates ? observedSource : native.result,
         scenario,
     )
     const actualLaterResult = await assertOutcome(
+        testContext,
         laterResult,
         laterNative.error,
         laterNative.result,
         scenario,
     )
-    await assertValue(chain._state.value, finalSource, scenario)
-    verifyRefCounts(chain._state.value, actualResult, actualLaterResult)
+    await assertValue(testContext, chain._state.value, finalSource, scenario)
+    verifyRefCounts(testContext, chain._state.value, actualResult, actualLaterResult)
 }
 
-async function compareDelayedMutation(scenario, mode) {
+async function compareDelayedMutation(testContext, scenario, mode) {
     const nativeSource = cloneData(scenario.source)
     const native = callArrayMethod(
         nativeSource,
@@ -912,6 +916,7 @@ async function compareDelayedMutation(scenario, mode) {
     const laterNative = callArrayMethod(nativeSource, "push", [marker])
     const chain = new Chain(
         runtimeArray(scenario.source, mode),
+        testContext,
     )
     const result = run(
         chain,
@@ -922,28 +927,31 @@ async function compareDelayedMutation(scenario, mode) {
             ? promisedArguments(scenario.args)
             : cloneData(scenario.args)),
         ],
-        { mutationScopeDepth: 0 },
+        testContext,
+        { repair: false, mutationScopeDepth: 0 },
     )
     assert(result instanceof Promise, scenario.message)
-    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
+    const laterResult = run(chain, [], "push", [marker], testContext, { repair: false, mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
+        testContext,
         result,
         native.error,
         expectedResult,
         scenario,
     )
     const actualLaterResult = await assertOutcome(
+        testContext,
         laterResult,
         laterNative.error,
         laterNative.result,
         scenario,
     )
-    await assertValue(chain._state.value, nativeSource, scenario)
-    verifyRefCounts(chain._state.value, actualResult, actualLaterResult)
+    await assertValue(testContext, chain._state.value, nativeSource, scenario)
+    verifyRefCounts(testContext, chain._state.value, actualResult, actualLaterResult)
 }
 
-async function comparePromiseViewVersionChain(scenario) {
+async function comparePromiseViewVersionChain(testContext, scenario) {
     const nativeSource = cloneData(scenario.source)
     const native = callArrayMethod(
         nativeSource,
@@ -958,7 +966,7 @@ async function comparePromiseViewVersionChain(scenario) {
     const logicalIndex = firstPresentIndex(scenario.source)
     const physicalIndex = scenario.layout.start + logicalIndex
     backing[physicalIndex] = Promise.resolve(backing[physicalIndex])
-    const base = new Chain(backing)
+    const base = new Chain(backing, testContext)
     const view = run(
         base,
         [],
@@ -967,34 +975,39 @@ async function comparePromiseViewVersionChain(scenario) {
             scenario.layout.start,
             scenario.layout.end,
         ],
-        {},
+        testContext,
+        { repair: false },
     )
-    const chain = new Chain(view)
+    const chain = new Chain(view, testContext)
     const result = run(
         chain,
         [],
         scenario.method,
         [...cloneData(scenario.args)],
-        { mutationScopeDepth: 0 },
+        testContext,
+        { repair: false, mutationScopeDepth: 0 },
     )
-    const laterResult = run(chain, [], "push", [marker], { mutationScopeDepth: 0 })
+    const laterResult = run(chain, [], "push", [marker], testContext, { repair: false, mutationScopeDepth: 0 })
 
     const actualResult = await assertOutcome(
+        testContext,
         result,
         native.error,
         expectedResult,
         scenario,
     )
     const actualLaterResult = await assertOutcome(
+        testContext,
         laterResult,
         laterNative.error,
         laterNative.result,
         scenario,
     )
-    await assertValue(chain._state.value, nativeSource, scenario)
-    await assertValue(view, scenario.source, scenario)
-    await assertValue(base._state.value, scenario.layout.backing, scenario)
+    await assertValue(testContext, chain._state.value, nativeSource, scenario)
+    await assertValue(testContext, view, scenario.source, scenario)
+    await assertValue(testContext, base._state.value, scenario.layout.backing, scenario)
     verifyRefCounts(
+        testContext,
         chain._state.value,
         view,
         base._state.value,

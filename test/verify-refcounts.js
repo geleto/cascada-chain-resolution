@@ -63,6 +63,10 @@ function verifyReachable(node, seen, operationContext) {
                 fatal("Parent edge count is inconsistent", operationContext)
             }
         }
+        const expectedChildren = new Set([...childEdges.keys()].map(child => getRefCounter(child, operationContext).parents))
+        const actualChildren = counter.counterChildren ?? new Set()
+        if (expectedChildren.size !== actualChildren.size || [...expectedChildren].some(parents => !actualChildren.has(parents)))
+            fatal("Counter child links are inconsistent", operationContext)
         verifyStoredParentEdges(node, operationContext)
     }
 
@@ -140,6 +144,8 @@ function verifyStoredParentEdges(node, operationContext) {
         if (!getRefCounter(parent, operationContext)) {
             fatal("Parent edge points to non-ref-indexed parent", operationContext)
         }
+        if (!getRefCounter(parent, operationContext).counterChildren?.has(counter.parents))
+            fatal("Counter parent edge has no reciprocal child link", operationContext)
 
         let actualCount = 0
         for (const key of languageProperties.enumerableLanguageKeys(

@@ -64,7 +64,7 @@ function placeRemap(
 
 function placeEntry(destination, key, entry, operationContext) {
     if (propertyVersions.isPropertyPlacement(entry)) {
-        propertyVersions.transferPlacement(entry.ensureCaptured(), destination, key, operationContext, true)
+        propertyVersions.transferPlacement(entry.ensureCaptured(), destination, key, operationContext)
         return
     }
     propertyVersions.assignProperty(
@@ -72,7 +72,6 @@ function placeEntry(destination, key, entry, operationContext) {
         key,
         entry,
         operationContext,
-        true,
     )
 }
 
@@ -83,12 +82,12 @@ function resolveDenseRemapPresence(remap, operation) {
     for (const key of Object.keys(remap)) {
         const placement = remap[key]
         if (!propertyVersions.isPropertyPlacement(placement)) continue
-        const pending = internalSteps.continueOperation(placement.resolvePresence(), operation.operationContext, () => {
+        const pending = internalSteps.continueGraphTransition(placement.resolvePresence(), operation.operationContext, () => {
             if (placement.present === false) remap[key] = undefined
         }, undefined, operation)
         if (languageValues.isPending(pending, operation.operationContext)) waits.push(pending)
     }
-    return internalSteps.continueOperation(waits.length ? Promise.all(waits) : undefined,
+    return internalSteps.continueGraphTransition(waits.length ? Promise.all(waits) : undefined,
         operation.operationContext, () => remap, undefined, operation)
 }
 

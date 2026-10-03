@@ -13,7 +13,7 @@ const source = new Proxy({ pending, bad: 1 }, {
     },
 })
 const chain = new r.Chain(source, ctx)
-const retained = r.lookupPath(chain, [], ctx)
+const retained = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
 const copies = trackCopies()
 armed = true
 r.assignPath(chain, ["next"], 2, ctx)
@@ -25,7 +25,7 @@ for (let turn = 0; turn < 20; turn++) {
 }
 assert.equal(copies[0].deref(), undefined, "A discarded destination is retained by a pending copy callback")
 pending.resolve({ done: true })
-assert.deepEqual(await r.export(new r.Chain(retained, ctx), ["pending"], ctx), { done: true })
+assert.deepEqual(await r.export(retained, ["pending"], ctx), { done: true })
 
 // Error stack frames can retain a preparation receiver as well as pending
 // callbacks. Keep the failure observable while proving its input can be freed.

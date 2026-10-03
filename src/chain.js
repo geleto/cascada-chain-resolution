@@ -1,19 +1,19 @@
+import { runReceivingCommand } from "./ownership.js"
 import * as errorUtils from "./error.js"
-import { importContext } from "./import.js"
-import * as internalSteps from "./internal-step.js"
 import * as propertyVersions from "./property-versions.js"
 import { initializeHolder } from "./parent-placements.js"
 
 class Chain {
-    constructor(initialValue, operationContext) {
-        internalSteps.runInternalStep(operationContext, () => {
+    constructor(initialValue, operationContext, contextSetup) {
+        runReceivingCommand(operationContext, () => {
             const rootState = initializeHolder({}, operationContext)
-            propertyVersions.assignProperty(
+            propertyVersions.transferPlacement(
+                contextSetup ? propertyVersions.prepareInputPlacement(initialValue, operationContext,
+                    errorUtils.ERROR_KIND.ContextValueFailed, contextSetup) : { value: initialValue, present: true },
                 rootState,
                 "value",
-                initialValue,
                 operationContext,
-                false,
+                undefined,
                 errorUtils.ERROR_KIND.ChainValueFailed,
             )
             this._state = rootState
@@ -37,17 +37,9 @@ class ContextChain extends Chain {
         operationContext,
         mutationAccessTree = undefined,
     ) {
-        super(undefined, operationContext)
-        internalSteps.runInternalStep(operationContext, () => {
-            const setup = mutationAccessTree === undefined
-                ? undefined : { mutationAccessTree }
-            const importedValue = importContext(initialValue, operationContext, setup)
-            if (setup?.tree !== undefined) this._externalMutationTree = setup.tree
-            propertyVersions.assignProperty(
-                this._state, "value", importedValue, operationContext,
-                false, errorUtils.ERROR_KIND.ChainValueFailed,
-            )
-        })
+        const setup = { mutationAccessTree }
+        super(initialValue, operationContext, setup)
+        if (setup.tree !== undefined) this._externalMutationTree = setup.tree
     }
 }
 

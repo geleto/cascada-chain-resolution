@@ -1,3 +1,4 @@
+import { runOutsideGraphTransition, runReceivingCommand } from "./ownership.js"
 import { Chain } from "./chain.js"
 import * as externalTree from "./external-mutation-tree.js"
 import { capturePathOrigin, captureRoute } from "./path-context.js"
@@ -10,6 +11,7 @@ import * as values from "./language-values.js"
 import { shallowCopyPathContainer } from "./mutations.js"
 import * as versions from "./property-versions.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
+import { receiveValue } from "./input-preparations.js"
 
 // Selection consumes no unavailable suffix. The same anchor/rebased reference
 // represents missing, poisoned, pending, intrinsic, and native destinations.
@@ -57,14 +59,13 @@ function captureReference(chain, route, mutable, operationContext) {
     }
 }
 
-function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSegment = path.length) {
+function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSegment = path.length, delivery) {
     return steps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         if (mutable && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
         const route = captureRoute(chain, path, firstDynamicSegment)
         const { key, placement, depth, node, gate } = captureReference(chain, route, mutable, operationContext)
         const effect = node ? new ExternalEffect(node, mutable, chain._externalReservationView, operationContext) : undefined
-        if (!mutable && values.isPending(placement.value, operationContext)) versions.retainPlacement(placement, operationContext)
         const entered = new Chain(undefined, operationContext)
         entered._readOnly = !mutable
         entered._rootKey = depth ? key ?? route.path[depth - 1] : chain._rootKey
@@ -73,33 +74,37 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
         entered._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
         entered._externalReservationView = node ? createExternalReservationView(node) : chain._externalReservationView
         versions.transferPlacement(placement, entered._state, "value", operationContext)
-        let leased
+        let leasedValue
         return versions.resolvePlacementTransition(placement, operationContext, captured => {
             // The private root holder has one placement, whose publication
             // authority is already captured by the entry's gate.
             if (gate) metadata.requireMeta(entered._state, operationContext).entryGate = gate
-            if (!mutable && !values.isPending(captured.value, operationContext))
-                leased = metadata.incrementReadLease(captured.value, operationContext)
-            return steps.continueOperation(effect?.readiness, operationContext, () => {
-                const result = onEntered(entered)
+            if (!mutable && !values.isPending(captured.value, operationContext) &&
+                metadata.incrementReadLease(captured.value, operationContext)) leasedValue = captured.value
+            captured = undefined
+            return steps.continueGraphTransition(effect?.readiness, operationContext, () => {
+                const result = runOutsideGraphTransition(operationContext, () => onEntered(entered))
                 if (operationContext.execution.fatalError) throw operationContext.execution.fatalError
-                return steps.continueOperation(result, operationContext, complete, reason => {
+                const receive = result => runReceivingCommand(operationContext, () =>
+                    receiveValue(result, operationContext, { kind: errors.ERROR_KIND.OperationInputFailed }, complete))
+                return steps.continueOperation(result, operationContext, receive, reason => {
                     if (!errors.isPoisonError(reason)) throw reason
-                    return complete(reason)
+                    return receive(reason)
                 })
             })
 
             function complete(result) {
-                if (errors.isFatalError(result)) throw result
+                delivery?.capture(result)
                 entered._closed = true
-                if (leased) metadata.decrementReadLease(captured.value, operationContext)
+                if (leasedValue !== undefined) metadata.decrementReadLease(leasedValue, operationContext)
+                leasedValue = undefined
                 const publication = gate && versions.completePlacementGate(gate,
                     versions.capturePlacement(entered._state, "value", operationContext), operationContext)
                 const external = node ? pendingExternalEffects(entered._externalReservationView) : undefined
                 markPromiseHandled(steps.collectInputs([publication, external], operationContext, () => {
                     // Stop mirroring before deleting the spent private placement.
                     metadata.metaOf(entered._state, operationContext).entryGate = undefined
-                    versions.deleteProperty(entered._state, "value", operationContext)
+                    versions.releaseHolder(entered._state, operationContext)
                     effect?.complete()
                 }), operationContext)
                 return result

@@ -1,5 +1,4 @@
-// Run: node test/experiments/phase2-array-point-writes.mjs
-// Baseline work counter for F8, not a performance fix or a timing threshold.
+// Read-only copy-loop counter for exclusive Array point writes.
 import assert from 'node:assert/strict'
 import { registerHooks } from 'node:module'
 
@@ -30,10 +29,25 @@ for (const size of [50, 100, 200]) for (const mode of ['assign', 'enter']) {
         }
         if (!alternating) { copied = 0; write(0) }
         const measured = copied
-        assert.equal(measured, alternating ? size * (size + 3) / 2 : size + 1)
+        assert.equal(measured, 0)
         assert.equal(r.lookupPath(array, ['0', 'k'], ctx), 1)
         samples.push({size, mode, alternating, copiedPlacements:measured})
     }
 }
+for (const size of [50, 200]) for (const mode of ['assign', 'enter']) {
+    const ctx = {execution:new r.Execution(), errorContext:'retained point writes'}
+    const array = new r.Chain([], ctx)
+    for (let index = 0; index < size; index++)
+        r.run(array, [], 'push', [{k:0}], ctx, {mutationScopeDepth:0})
+    const earlier = new r.Chain(r.run(array, [], 'slice', [], ctx, {}), ctx)
+    copied = 0
+    if (mode === 'assign') r.assignPath(array, ['0', 'k'], 1, ctx)
+    else r.enter(array, ['0'], ctx, true, child => r.assignPath(child, ['k'], 1, ctx))
+    const measured = copied
+    assert.equal(measured, size + 1)
+    assert.equal(r.lookupPath(earlier, ['0', 'k'], ctx), 0)
+    assert.equal(r.lookupPath(array, ['0', 'k'], ctx), 1)
+    samples.push({size, mode, retained:true, copiedPlacements:measured})
+}
 console.log(JSON.stringify({samples,
-    scope:'Current production copying, measured without additional graph inspection in the copy loop. F8 remains open.'}, null, 2))
+    scope:'Exclusive point writes copy no Array prefix; retained backing owners still require materialization.'}, null, 2))

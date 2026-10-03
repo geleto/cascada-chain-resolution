@@ -9,17 +9,17 @@ import { OrderedThenable, ChainedThenable, ready } from "./ordered-thenable.js"
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 
 describe("shared input preparation", () => {
-    it("does not normalize an admitted control input while staging a fallible result", () => {
+    it("keeps failed argument preparation atomic before later result admission", () => {
         const ctx = context(), child = {}, cause = new Error("later inspection")
         const delivery = ready(child)
         const input = { good: delivery, bad: new Proxy({}, { ownKeys() { throw cause } }) }
-        assert.equal(r.run(new r.Chain([], ctx), [], "includes", [input], ctx, {}), false)
+        assert.equal(r.run(new r.Chain([], ctx), [], "includes", [input], ctx, {}).cause, cause)
         const result = r.importMethodResult(input, ctx)
         assert.equal(result.kind, r.ERROR_KIND.ImportReflectionFailed)
         assert.equal(result.cause, cause)
         assert.equal(input.good, delivery)
-        assert.equal(metaOf(input, ctx).placementVersions, undefined)
-        assert.equal(metaOf(input, ctx).placementsInitialized, undefined)
+        assert.equal(metaOf(input, ctx)?.placementVersions, undefined)
+        assert.equal(metaOf(input, ctx)?.placementsInitialized, undefined)
         assert.equal(metaOf(child, ctx), undefined)
     })
 
@@ -79,7 +79,7 @@ describe("shared input preparation", () => {
     }
 
     for (const boundary of ["import", "chain", "assignment"]) for (const nested of [false, true]) {
-        it(`preserves aliases around superseded initialization, boundary=${boundary}, nested=${nested}`, async () => {
+        it(`preserves aliases across pending and ready reception, boundary=${boundary}, nested=${nested}`, async () => {
             const ctx = context(), trigger = new ChainedThenable(), pending = Promise.withResolvers()
             const earlier = r.import(trigger, ctx), derived = trigger.then(() => "drained")
             const shared = { p: pending.promise }
@@ -143,38 +143,8 @@ describe("shared input preparation", () => {
         })
     }
 
-    for (const array of [false, true]) for (const delivered of [false, true]) {
-        it(`isolates an already validated result when late adoption publishes a different Error, array=${array}, delivered=${delivered}`, async () => {
-            const ctx = context(), resultContext = { ...ctx, errorContext: {} }
-            const trigger = new ChainedThenable(), cause = new Error("shared input")
-            const earlier = r.import(trigger, ctx)
-            const input = delivered ? ready(cause) : cause
-            const shared = array ? [input] : { bad: input }, key = array ? "0" : "bad"
-            let originalError
-            const later = trigger.then(() => {
-                originalError = metaOf(shared, ctx).placementVersions[key].value
-                return 1
-            })
-            trigger.resolve(shared)
-            const result = r.importMethodResult({ shared, alias: shared, later }, resultContext)
-            const source = new r.Chain(await earlier, ctx), output = new r.Chain(result, resultContext)
-            assert.equal(r.lookupPath(source, [key], ctx), originalError)
-            assert.equal(originalError.kind, r.ERROR_KIND.ContextValueFailed)
-            assert.equal(originalError.errorContext, ctx.errorContext)
-            const resultError = r.lookupPath(output, ["shared", key], resultContext)
-            assert.equal(resultError.kind, r.ERROR_KIND.InvocationFailed)
-            assert.equal(resultError.errorContext, resultContext.errorContext)
-            assert.equal(resultError.cause, cause)
-            assert.notEqual(r.lookupPath(output, ["shared"], resultContext), shared)
-            assert.equal(r.lookupPath(output, ["shared"], resultContext), r.lookupPath(output, ["alias"], resultContext))
-            assert.equal(r.getErrors(source, [], ctx), originalError)
-            assert.equal(r.getErrors(output, [], resultContext), resultError)
-            verifyRefCounts(ctx, source._state, output._state)
-        })
-    }
-
     for (const array of [false, true]) for (const nested of [false, true]) {
-        it(`finishes late source adoption before remapping aliases and cycles, array=${array}, nested=${nested}`, async () => {
+        it(`preserves aliases and cycles in borrowed pending validation copies, array=${array}, nested=${nested}`, async () => {
             const ctx = context(), trigger = new ChainedThenable(), pending = Promise.withResolvers()
             const earlier = r.import(trigger, ctx)
             const later = trigger.then(() => 1)
@@ -183,6 +153,7 @@ describe("shared input preparation", () => {
             if (array) shared.push(shared)
             else shared.self = shared
             trigger.resolve(shared)
+            await earlier
             const input = { shared, alias: shared, wrapper: { shared }, later }
             const result = r.importMethodResult(input, ctx)
             assert.equal(await earlier, shared)
@@ -203,7 +174,7 @@ describe("shared input preparation", () => {
         })
     }
 
-    it("returns late adoption reflection failure before publishing the result segment", async () => {
+    it("keeps result publication atomic when an admitted source fails reflection", async () => {
         const ctx = context(), trigger = new ChainedThenable(), cause = new Error("late reflection failure")
         let armed = false, failures = 0
         const shared = new Proxy({ child: {} }, { getOwnPropertyDescriptor(target, key) {
@@ -211,9 +182,10 @@ describe("shared input preparation", () => {
             return Reflect.getOwnPropertyDescriptor(target, key)
         } })
         const earlier = r.import(trigger, ctx)
-        const later = trigger.then(() => { armed = true; return 1 })
         trigger.resolve(shared)
-        const input = { shared, later }
+        await earlier
+        armed = true
+        const input = { shared }
         const result = r.importMethodResult(input, ctx)
         assert.equal(failures, 1)
         assert.equal(result.cause, cause)
@@ -224,15 +196,15 @@ describe("shared input preparation", () => {
         verifyParents(ctx, shared)
     })
 
-    it("preserves result validation and source isolation when initialization is superseded", async () => {
+    it("preserves result validation and source isolation for pending borrowed properties", async () => {
         const ctx = context(), trigger = new OrderedThenable(), pending = new OrderedThenable()
         const resource = {}
         r.externalState(resource)
         const authority = new r.ContextChain({ resource }, ctx, { resource: {} })
         const earlier = r.import(trigger, ctx)
         const shared = { pending, trigger }
-        trigger.flushOnSubscribe = true
         trigger.resolve(shared)
+        await earlier
         const result = r.importMethodResult(shared, ctx)
         assert.equal(await earlier, shared)
         assert.notEqual(result, shared)
@@ -245,43 +217,42 @@ describe("shared input preparation", () => {
         verifyParents(ctx, shared, result, authority._state)
     })
 
-    for (const fail of [false, true]) {
-        it(`stops superseded initialization while preserving independently committed work, fail=${fail}`, async () => {
-            const ctx = context(), trigger = new OrderedThenable(), pending = new OrderedThenable()
-            const earlier = r.import(trigger, ctx)
-            let restSubscriptions = 0, childScans = 0
-            const child = new Proxy({}, { ownKeys(target) { childScans++; return Reflect.ownKeys(target) } })
-            const shared = { pending, trigger, rest: { then(deliver) { restSubscriptions++; return deliver(1) } } }
-            trigger.flushOnSubscribe = true
-            trigger.resolve(shared)
-            const other = { inner: {} }
-            const root = { shared, other }
-            if (fail) root.bad = new Proxy({}, { ownKeys() { throw new Error("later failure") } })
-            const result = r.import(root, ctx)
-            assert.equal(await earlier, shared)
-            assert.equal(r.isPoisonError(result), fail)
-            assert.equal(restSubscriptions, 1, "The losing walk stops before the next placement")
-            assert.equal(metaOf(shared, ctx).placementsInitialized, true)
-            assert.equal(metaOf(other, ctx)?.placementsInitialized, fail ? undefined : true)
-            pending.resolve(child)
-            await r.lookupPath(new r.Chain(shared, ctx), ["pending"], ctx)
-            assert.equal(childScans, 1, "Discarded subscriptions do no later discovery")
-            verifyParents(ctx, shared, ...(fail ? [] : [root]))
-        })
-    }
-
-    it("prepares an admitted control input when it first becomes managed data", () => {
+    it("prepares an argument once and restores its relationships at later reception", () => {
         const ctx = context(), child = {}, input = { child }
         const array = new r.Chain([1], ctx)
         assert.equal(r.run(array, [], "includes", [input], ctx, {}), false)
-        assert.equal(metaOf(input, ctx).placementsInitialized, undefined)
+        assert.equal(metaOf(input, ctx).placementsInitialized, true)
         const chain = new r.Chain(input, ctx)
         assert.equal(metaOf(input, ctx).placementsInitialized, true)
         verifyParents(ctx, chain._state)
     })
 
+    for (const ordered of [false, true]) {
+        it(`keeps a changed validation copy distinct from its borrowed source, ordered=${ordered}`, async () => {
+            const ctx = context(), pending = ordered ? new OrderedThenable() : Promise.withResolvers()
+            const resource = r.externalState({})
+            const authority = new r.ContextChain({ resource }, ctx, { resource: {} })
+            const shared = { child: { value: ordered ? pending : pending.promise } }
+            shared.self = shared
+            const source = new r.Chain(r.import(shared, ctx), ctx)
+            const retained = new r.Chain([r.lookupPath(source, [], ctx)], ctx)
+            const service = new r.Chain(r.externalState({ get() { return shared } }), ctx)
+            const result = new r.Chain(r.run(service, [], "get", [], ctx, {}), ctx)
+            const comparisons = ["includes", "indexOf", "lastIndexOf"].map(method =>
+                r.run(retained, [], method, [r.lookupPath(result, [], ctx)], ctx, {}))
+            pending.resolve(resource)
+            const rejected = await r.lookupPath(result, ["child", "value"], ctx)
+            assert.equal(rejected.kind, r.ERROR_KIND.ExternalCapabilityEscape)
+            assert.deepEqual(await Promise.all(comparisons), [false, -1, -1])
+            assert.equal((await r.lookupPath(source, ["child", "value"], ctx)).kind,
+                r.ERROR_KIND.ExternalLocationConflict)
+            assert.equal(await r.lookupPath(result, ["self"], ctx), r.lookupPath(result, [], ctx))
+            verifyRefCounts(ctx, source._state, retained._state, result._state, authority._state)
+        })
+    }
+
     for (const pending of [false, true]) for (const remove of [false, true]) {
-        it(`initializes Array backing from physical storage after control conversion, pending=${pending}, remove=${remove}`, async () => {
+        it(`restores Array backing after argument conversion, pending=${pending}, remove=${remove}`, async () => {
             const ctx = context(), child = {}, delivery = Promise.withResolvers()
             const raw = pending ? delivery.promise : ready(child)
             const input = new Proxy([raw], { set(target, key, value) {
@@ -292,7 +263,7 @@ describe("shared input preparation", () => {
             delivery.resolve(child)
             assert.equal(await converted, "1[object Object]2")
             assert.equal(input[0], raw)
-            assert.equal(metaOf(input, ctx).placementsInitialized, undefined)
+            assert.equal(metaOf(input, ctx).placementsInitialized, true)
             const chain = new r.Chain(input, ctx)
             verifyParents(ctx, chain._state)
             if (remove) r.deletePath(chain, [0], ctx)
@@ -303,26 +274,22 @@ describe("shared input preparation", () => {
         })
     }
 
-    it("finishes overlaid Array storage inspection before publishing fresh containers", () => {
-        const ctx = context(), child = {}, cause = new Error("Backing inspection failed")
-        let failRead = false
+    it("restores prepared Array relationships without inspecting retired host storage", () => {
+        const ctx = context(), child = {}
+        let inspect = true
         const input = new Proxy([ready(child)], {
             set() { throw new Error("Optional cache write refused") },
             getOwnPropertyDescriptor(target, key) {
-                if (failRead && key === "0") throw cause
+                if (!inspect && key === "0") throw new Error("Unexpected reinspection")
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
         assert.equal(r.run(new r.Chain([1, 2], ctx), [], "join", [input], ctx, {}), "1[object Object]2")
-        const fresh = {}, root = { fresh, input }
-        failRead = true
-        const result = new r.Chain(root, ctx)._state.value
-        assert.equal(result.kind, r.ERROR_KIND.ChainValueFailed)
-        assert.equal(result.cause, cause)
-        assert.equal(metaOf(root, ctx), undefined)
-        assert.equal(metaOf(fresh, ctx), undefined)
-        assert.equal(metaOf(input, ctx).placementsInitialized, undefined)
-        assert.equal(getParentPlacements(child, ctx).some(p => p.parent === input), false)
+        inspect = false
+        const root = { fresh: {}, input }
+        const chain = new r.Chain(root, ctx)
+        assert.equal(chain._state.value, root)
+        assert.deepEqual(getParentPlacements(child, ctx), [{ parent: input, key: "0" }])
         assert.equal(ctx.execution.fatalError, null)
     })
 
@@ -407,7 +374,8 @@ describe("shared input preparation", () => {
         assert.equal(r.run(chain, [], "consume", [input], ctx, {}), 1)
         assert.notEqual(output, input)
         assert.equal(metaOf(output, ctx), undefined)
-        assert.deepEqual(getParentPlacements(child, ctx), [{ parent: input, key: "child" }])
+        assert.deepEqual(getParentPlacements(child, ctx), [])
+        assert.equal(metaOf(input, ctx).relationshipsActive, false)
         verifyParents(ctx, input)
     })
 

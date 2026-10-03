@@ -11,15 +11,15 @@ function capture() {
     return { ancestor: new WeakRef(root), child: new runtime.Chain(root.child, ctx) }
 }
 
-// Complete incoming relationships retain this imported ancestor through its
-// surviving child. Retirement and imported host obligations are Phase 2 work.
+// The child has its own holder. The abandoned ancestor and its reverse edges
+// retire without cancelling the child's independent pending publication.
 let collected = false
 for (let attempt = 0; attempt < 20; attempt++) {
     await new Promise(setImmediate)
     global.gc()
     if (ancestor.deref() === undefined) { collected = true; break }
 }
-assert(!collected, "The imported child's current parent relationship was lost")
+assert(collected, "A retained child keeps its discarded ancestor alive")
 pending.resolve(7)
 assert.equal(await runtime.lookupPath(child, ["value"], ctx), 7)
 assert.equal(ctx.execution.fatalError, null)

@@ -8,11 +8,11 @@ import * as errors from "../src/error.js"
 function logicalPlacements(owner, context) {
     const meta = metadata.metaOf(owner, context)
     const array = meta.type === metadata.TYPE.Array
-    const view = meta.arrayView
-    const offset = view?._start ?? 0
-    const length = view ? view._lengthState.minimum ?? view._lengthState : undefined
+    const view = meta.arrayRange
+    const offset = view?.start ?? 0
+    const length = view ? view.lengthState.minimum ?? view.lengthState : undefined
     const placements = new Map()
-    for (const key of Reflect.ownKeys(view?._backing ?? owner)) {
+    for (const key of Reflect.ownKeys(view?.backing ?? owner)) {
         if (typeof key !== "string") continue
         let logical = key
         if (array) {
@@ -22,7 +22,7 @@ function logicalPlacements(owner, context) {
             if (projected < 0 || length !== undefined && projected >= length) continue
             logical = String(projected)
         }
-        const descriptor = Object.getOwnPropertyDescriptor(view?._backing ?? owner, key)
+        const descriptor = Object.getOwnPropertyDescriptor(view?.backing ?? owner, key)
         if (descriptor?.enumerable && "value" in descriptor) placements.set(logical, descriptor.value)
     }
     for (const [key, version] of Object.entries(meta.placementVersions ?? {})) {
@@ -56,7 +56,7 @@ function verifyParents(context, ...roots) {
     }
 
     function checkBacking(owner, meta) {
-        const array = meta.arrayView?._backing ?? owner
+        const array = meta.arrayRange?.backing ?? owner
         const record = metadata.metaOf(array, context)?.arrayBacking
         // A native Array's length-only projection needs no backing record until
         // it stores a managed child or another logical owner shares its storage.
@@ -65,8 +65,8 @@ function verifyParents(context, ...roots) {
         backings.add(array)
         for (const registered of record?.owners ?? []) {
             const registeredMeta = metadata.metaOf(registered, context)
-            if (!registeredMeta?.placementsInitialized ||
-                (registeredMeta.arrayView?._backing ?? registered) !== array)
+            if (!registeredMeta?.relationshipsActive ||
+                (registeredMeta.arrayRange?.backing ?? registered) !== array)
                 fail("Invalid Array backing owner")
         }
         for (const key of Reflect.ownKeys(array)) {
@@ -87,7 +87,17 @@ function verifyParents(context, ...roots) {
         if (!metadata.isTraversableType(meta?.type) || seen.has(node)) return
         seen.add(node)
         if (!meta.placementsInitialized) fail("Published managed container has incomplete parent preparation")
+        if (!meta.relationshipsActive) {
+            if (meta.incomingParents || meta.preservationParents || meta.parents || meta.counterChildren ||
+                meta.promiseCount !== undefined || meta.errorCount !== undefined || meta.cycleCutCount !== undefined ||
+                meta.cycleCuts || meta.destination?.owner || meta.backingRecord?.owners.has(node))
+                fail("Retired container retains active ownership state")
+            for (const child of forward(node).values()) walk(child)
+            return
+        }
         for (const [source, indexes] of occurrences(node)) if (source instanceof ArrayBacking) {
+            if (!metadata.metaOf(source, context)?.relationshipsActive || !source.owners.size)
+                fail("Incoming backing occurrence has no active owner")
             if (metadata.metaOf(source.array, context)?.arrayBacking !== source) fail("Detached Array backing record")
             for (const index of indexes) {
                 const descriptor = Object.getOwnPropertyDescriptor(source.array, String(index))
@@ -107,6 +117,7 @@ function verifyParents(context, ...roots) {
             keys.add(key)
             if (forward(parent).get(key) !== node) fail("Incoming parent placement does not hold its child")
             const parentMeta = metadata.metaOf(parent, context)
+            if (!parentMeta?.relationshipsActive) fail("Incoming parent placement belongs to a retired parent")
             if (parentMeta.parents && !parentMeta.cycleCuts?.has(key))
                 projection.set(parent, (projection.get(parent) ?? 0) + 1)
         }
@@ -133,4 +144,14 @@ function verifyParents(context, ...roots) {
     }
 }
 
-export { verifyParents, logicalPlacements }
+// The scenario supplies its independently modeled live set. Do not infer it
+// from the runtime's reverse edges, lease counts, or retirement predicate.
+function verifyLiveness(context, nodes, expectedLive) {
+    for (const node of nodes) {
+        if (!!metadata.metaOf(node, context)?.relationshipsActive !== expectedLive.has(node))
+            errors.failExecution(context, new Error("Relationship activity differs from modeled liveness"))
+    }
+    verifyParents(context, ...nodes)
+}
+
+export { verifyParents, verifyLiveness, logicalPlacements }

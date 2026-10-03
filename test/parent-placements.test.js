@@ -72,11 +72,11 @@ describe("complete incoming placements", () => {
         verifyParents(ctx, a._state, b._state)
     })
 
-    it("removes a root placement without retiring descendant placements", () => {
+    it("retires descendant placements after removing their last root", () => {
         const ctx = context(), child = {}, root = { child }, chain = new r.Chain(root, ctx)
         r.assignPath(chain, [], null, ctx)
         assert.deepEqual(pairs(root, ctx), [])
-        assert.deepEqual(pairs(child, ctx), [{ parent: root, key: "child" }])
+        assert.deepEqual(pairs(child, ctx), [])
         verifyParents(ctx, root, chain._state)
     })
 
@@ -176,7 +176,7 @@ describe("complete incoming placements", () => {
         armed = false
         assert(r.isPoisonError(result))
         assert.equal(source[1], child, "Earlier physical storage maintenance survives failure")
-        assert(!pairs(child, ctx).some(p => p.parent !== source && metaOf(p.parent, ctx)?.arrayView))
+        assert(!pairs(child, ctx).some(p => p.parent !== source && metaOf(p.parent, ctx)?.arrayRange))
         assert.deepEqual(r.export(chain, [], ctx), [0])
         verifyParents(ctx, chain._state, child)
     })

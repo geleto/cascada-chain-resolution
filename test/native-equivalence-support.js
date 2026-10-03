@@ -1,7 +1,6 @@
+import { Chain, export as exportValue, Execution } from "../src/index.js"
 import assert from "node:assert/strict"
 import { inspect } from "node:util"
-
-import { Chain, exportValue } from "./support.js"
 
 const VALUES = [
     undefined,
@@ -23,7 +22,7 @@ const VALUES = [
 ]
 
 async function assertOutcome(
-    actual,
+    testContext, actual,
     nativeError,
     expected,
     scenario,
@@ -40,12 +39,12 @@ async function assertOutcome(
         return actual
     }
     assert(!(actual instanceof Error), scenario.message)
-    await compareValue(actual, expected, scenario)
+    await compareValue(testContext, actual, expected, scenario)
     return actual
 }
 
-async function assertValue(actual, expected, scenario) {
-    const exported = await exportValue(new Chain(actual), [])
+async function assertValue(testContext, actual, expected, scenario) {
+    const exported = await exportValue(new Chain(actual, testContext), [], testContext)
     assert.deepStrictEqual(
         cloneData(exported),
         cloneData(expected),
@@ -145,7 +144,8 @@ async function forEachNativeCase(facts, mode, createCase, compare) {
         for (let index = 0; index < mode.cases; index++) {
             const scenario = createCase(method, fact, index, mode)
             if (mode.supports && !mode.supports(scenario)) continue
-            await compare(scenario, mode)
+            const context = { execution: new Execution(), errorContext: scenario.message }
+            await compare(context, scenario, mode)
         }
     }
 }

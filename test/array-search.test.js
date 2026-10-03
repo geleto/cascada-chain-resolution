@@ -1,3 +1,4 @@
+import { lengthNotificationCount } from "./support.js"
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { hasReadLease, metaOf } from "../src/meta.js"
@@ -127,17 +128,17 @@ describe("Array searches with unfinished growth", () => {
         const ctx = context(), value = Promise.withResolvers(), hold = Promise.withResolvers()
         const chain = new r.Chain([value.promise], ctx)
         const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
-        const receiver = chain._state.value, length = metaOf(receiver, ctx).arrayView._lengthState
+        const receiver = chain._state.value, length = metaOf(receiver, ctx).arrayRange.lengthState
         const source = length.head.source
         const result = r.run(chain, [], "includes", [7], ctx, {})
         let outcome
         result.then(value => { outcome = value })
-        assert(source.nodes.size > 0)
+        assert(lengthNotificationCount(source) > 0)
         try {
             value.resolve(7)
             await tick()
             assert.equal(outcome, true)
-            assert.equal(source.nodes.size, 0)
+            assert.equal(lengthNotificationCount(source), 0)
             assert.equal(hasReadLease(receiver, ctx), false)
         } finally { hold.resolve() }
         await entry

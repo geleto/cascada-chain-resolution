@@ -100,62 +100,6 @@ describe("supported thenables", () => {
         assert.equal(source.subscriptions, 3)
     })
 
-    for (const [name, issue] of [
-        ["import", (source, ctx) => runtime.import(source, ctx)],
-        ["Chain construction", (source, ctx) => new runtime.Chain(source, ctx)],
-        ["ContextChain construction", (source, ctx) => new runtime.ContextChain(source, ctx)],
-    ]) {
-        it("propagates an older queued fatal during " + name, async () => {
-            const fatal = existingFatal()
-            const reports = []
-            const earlier = context(error => reports.push(error))
-            const later = { execution: earlier.execution, errorContext: { operation: name } }
-            const waiting = runtime.import(new Promise(() => {}), earlier).catch(error => error)
-            const source = new OrderedThenable()
-            const chain = new runtime.Chain(source, earlier)
-            const originalRoot = chain._state.value
-            source.flushOnSubscribe = true
-            source.resolve(fatal)
-
-            assert.throws(() => issue(source, later), error => error === fatal)
-            assert.equal(earlier.execution.fatalError, fatal)
-            assert.deepEqual(reports, [fatal])
-            assert.equal(await waiting, fatal)
-            await flush()
-            assert.equal(chain._state.value, originalRoot)
-        })
-    }
-
-    for (const exit of ["pending", "invocation throw", "ownership subscription"]) {
-        it("preserves an older queued fatal across " + exit, async () => {
-            const reports = []
-            const ctx = context(error => reports.push(error))
-            const fatal = existingFatal()
-            class ThrowingSubscription extends OrderedThenable {
-                then(onFulfilled, onRejected) {
-                    if (this.outcome) {
-                        this.flush()
-                        throw new Error("invocation failed after queued delivery")
-                    }
-                    return super.then(onFulfilled, onRejected)
-                }
-            }
-            const source = exit === "invocation throw"
-                ? new ThrowingSubscription() : new OrderedThenable()
-            new runtime.Chain(source, ctx)
-            const waiting = runtime.import(new Promise(() => {}), ctx).catch(error => error)
-            source.flushOnSubscribe = true
-            source.deferReady = exit === "pending"
-            source.resolve(fatal)
-            assert.throws(() => exit === "ownership subscription"
-                ? markPromiseHandled(source, ctx)
-                : runtime.import(source, ctx), error => error === fatal)
-            assert.equal(await waiting, fatal)
-            assert.deepEqual(reports, [fatal])
-            await flush()
-        })
-    }
-
     for (const boundary of ["property ownership", "outward bridge"]) {
         it(
             "owns fatal rejection during custom derived " + boundary,
@@ -173,15 +117,13 @@ describe("supported thenables", () => {
                 source.resolve(1)
 
                 if (boundary === "outward bridge") {
-                    // Core import returns pending. Its bridge then delivers the
-                    // older failure; the native executor owns the exposed rejection.
+                    // The earlier callback fails before this result can complete.
                     const result = runtime.import(source, ctx)
                     assert.equal(result instanceof Promise, true)
                     await assert.rejects(result, error => error === ctx.execution.fatalError)
                 } else {
-                    assert.throws(() => runtime.assignPath(chain, ["value"], source, ctx),
-                        error => error === ctx.execution.fatalError)
-                    assert.equal(Object.hasOwn(chain._state.value, "value"), false)
+                    runtime.assignPath(chain, ["value"], source, ctx)
+                    await waiting
                 }
                 const fatal = ctx.execution.fatalError
                 assert.equal(fatal.cause, cause)
@@ -202,9 +144,8 @@ describe("supported thenables", () => {
             throw cause
         })
         const observed = earlier.catch(error => error)
-        source.flushOnSubscribe = true
         source.resolve(42)
-        assert.equal(runtime.import(source, live), 42)
+        assert.equal(await runtime.import(source, live), 42)
         assert.equal((await observed).cause, cause)
         assert.equal(live.execution.fatalError, null)
     })
@@ -380,10 +321,9 @@ describe("supported thenables", () => {
         assert.equal(runtime.run(chain, ["items"], "push", [2], ctx, { mutationScopeDepth: 1 }), 2)
     })
 
-    it("captures entry state before a source drains earlier callbacks inside then", async () => {
+    it("captures entry state before queued thenable delivery", async () => {
         const ctx = context()
         const source = new OrderedThenable()
-        source.flushOnSubscribe = true
         const chain = new runtime.Chain({ child: source }, ctx)
         runtime.assignPath(chain, ["child", "first"], 1, ctx)
         source.resolve({})
@@ -392,14 +332,13 @@ describe("supported thenables", () => {
             runtime.assignPath(privateChain, ["second"], ready(2), ctx)
             return ready("done")
         })
-        assert.equal(entered, "done")
+        assert.equal(await entered, "done")
         assert.deepEqual(await runtime.export(chain, [], ctx), { child: { first: 1, second: 2 } })
     })
 
-    it("publishes enclosing COW after synchronous continuation handoff", async () => {
+    it("publishes enclosing COW after ordered continuation handoff", async () => {
         const ctx = context()
         const source = new OrderedThenable()
-        source.flushOnSubscribe = true
         const root = { child: source }
         runtime.import(root, ctx)
         const chain = new runtime.Chain(root, ctx)
@@ -410,13 +349,13 @@ describe("supported thenables", () => {
         assert.equal(root.child, source)
     })
 
-    it("returns a ready mutation failure after queued delivery inside then", async () => {
+    it("returns a mutation failure after earlier queued delivery completes", async () => {
         const ctx = context()
         const source = new OrderedThenable()
-        source.flushOnSubscribe = true
         const chain = new runtime.Chain({ child: source }, ctx)
         const earlier = runtime.lookupPath(chain, ["child"], ctx)
         source.resolve(null)
+        await earlier
         const failure = runtime.assignPath(chain, ["child", "value"], 1, ctx)
         assert.equal(failure.kind, errors.ERROR_KIND.NullLookup)
         assert.equal(runtime.lookupPath(chain, ["child"], ctx), failure)

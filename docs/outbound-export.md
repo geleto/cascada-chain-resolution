@@ -1,6 +1,6 @@
 # Outbound export
 
-**Status:** the graph copier, common source preparation, and complete parent indexing are implemented. Bounded managed-result delivery and logical-identity deduplication remain work in phases 2 and 4 of the [runtime evolution plan](runtime-evolution-plan.md). Export receives prepared source graphs; detached output copies acquire no managed parents.
+**Status:** the graph copier, common source preparation, parent indexing, bounded delivery, and captured generation identity are implemented. No-op identity deduplication remains Phase 4 work in the [runtime evolution plan](runtime-evolution-plan.md). Export receives prepared source graphs; detached output copies acquire no managed parents.
 
 Export enforces the external-capability restriction: an identity recorded in this execution's external binding map is rejected with `ExternalCapabilityEscape`, including invalid bindings and identities reached after Promise fulfillment. Export still treats external state as opaque and acquires no external phase. The existing copier preserves unregistered observation-only identities exactly; it cannot create or transfer authority.
 
@@ -8,7 +8,7 @@ Export is the single outbound graph boundary. It prepares an ordered batch of ho
 
 ## Copying
 
-One export operation uses one visited set, one source-to-output identity map, and one Error accumulator across the entire batch. Shared inspection preserves aliases and cycles across argument positions. Required root positions remain ordered; semantic Error membership has no separate per-root domain.
+One export operation uses one weak representation-to-visited-generation map, one captured-generation-to-output map, and one Error accumulator across the entire batch. Capture tokens retain no source storage: a later mutation reusing the same JavaScript address cannot collide with an earlier captured generation. An original and its representation-only native observation copy share an output shell, preserving aliases across argument positions. Each required physical representation still receives its own inspection; an equivalent copy cannot hide another representation's reflection failure. Required root positions remain ordered; semantic Error membership has no separate per-root domain.
 
 The copier:
 
@@ -44,7 +44,7 @@ Public export captures a selected Chain/path. Internal value export serves argum
 
 Export captures only the selected path and the Promise frontier recursively exposed from it. It does not wait for unrelated graph Promises or build a refcount index. A rejected data Promise is already contextualized by the boundary that introduced it; export preserves that occurrence.
 
-For script return, issue public export from the result Chain/path before clearing its temporary holder. A pending expression result can first enter a result Chain through immediate handoff and then use the same public export. Do not defer first capture to an unprotected lookup-result Promise callback. Once export has accepted preservation responsibility, temporary root clearing need not await completed output. Host delivery still waits for the complete export, including required nested data, Errors, and the logical identity decisions specified by [phase 4](runtime-evolution-plan.md#phase-4-deduplicate-export-and-unify-identity-consumers). Capturing input, ending managed-source access, and completing host output are distinct lifetime points; retaining the detached output does not keep an input lease alive.
+For script return, issue public export from the result Chain/path before clearing its temporary holder. A pending expression result can first enter a result Chain through immediate handoff and then use the same public export. Do not defer first capture to an unprotected lookup-result Promise callback. Once export has accepted preservation responsibility, temporary root clearing need not await completed output. Host delivery still waits for the complete export, including required nested data, Errors, and the logical identity decisions specified by [phase 4](runtime-evolution-plan.md#phase-4-resolve-copy-identity-and-deduplicate-exports). Capturing input, ending managed-source access, and completing host output are distinct lifetime points; retaining the detached output does not keep an input lease alive.
 
 ## Output lifetime
 

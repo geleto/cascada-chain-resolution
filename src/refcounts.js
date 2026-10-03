@@ -51,17 +51,19 @@ function buildRefIndex(value, operationContext) {
 
     const staged = new Map()
     const active = new Set()
-    visit(value)
+    try {
+        visit(value)
 
-    // No external reflection or subscription remains. Publish the complete region,
-    // including cut targets, before adding its reverse edges to existing indexes.
-    for (const { meta, counter } of staged.values()) {
-        Object.assign(meta, counter)
-    }
-    for (const [node, { children }] of staged) {
-        for (const child of children) addParentCounterEdge(child, node)
-    }
-    return value
+        // No external reflection or subscription remains. Publish the complete region,
+        // including cut targets, before adding its reverse edges to existing indexes.
+        for (const { meta, counter } of staged.values()) {
+            Object.assign(meta, counter)
+        }
+        for (const [node, { children }] of staged) {
+            for (const child of children) addParentCounterEdge(child, node, operationContext)
+        }
+        return value
+    } finally { staged.clear(); active.clear(); value = undefined }
 
     function visit(node) {
         const existing = getRefCounter(node, operationContext) ?? staged.get(node)?.counter
@@ -162,23 +164,28 @@ function prepareCounterUpdate(
     const nextState = getValueRefState(value, operationContext, cycleCut)
     return () => {
         updateCycleCut(counter, key, cycleCut)
-        removeParentCounterEdge(previousState.childCounter, owner)
-        addParentCounterEdge(nextState.childCounter, owner)
+        removeParentCounterEdge(previousState.childCounter, owner, operationContext)
+        addParentCounterEdge(nextState.childCounter, owner, operationContext)
         for (const field of COUNT_FIELDS)
             updateCount(counter, field, nextState[field] - previousState[field], operationContext)
     }
 }
 
-function addParentCounterEdge(counter, parent) {
+function addParentCounterEdge(counter, parent, operationContext) {
     if (!counter) return
     counter.parents.set(parent, (counter.parents.get(parent) ?? 0) + 1)
+    const meta = metadata.requireMeta(parent, operationContext)
+    ;(meta.counterChildren ??= new Set()).add(counter.parents)
 }
 
-function removeParentCounterEdge(counter, parent) {
+function removeParentCounterEdge(counter, parent, operationContext) {
     if (!counter) return
     const count = counter.parents.get(parent)
     if (count === 1) {
         counter.parents.delete(parent)
+        const meta = metadata.requireMeta(parent, operationContext)
+        meta.counterChildren?.delete(counter.parents)
+        if (meta.counterChildren?.size === 0) delete meta.counterChildren
     } else if (count > 1) {
         counter.parents.set(parent, count - 1)
     }

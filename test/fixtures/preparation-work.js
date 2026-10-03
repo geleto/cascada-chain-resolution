@@ -19,14 +19,15 @@ for (const size of [30, 100, 300]) {
                 return deliver(null)
             },
         } })
-        sources[index].flush()
     }
     root.start = { then(deliver) { reveal(size - 1); return deliver(null) } }
     trace.reset()
     const chain = new r.Chain(root, ctx)
+    assert.equal(await r.lookupPath(chain, [0, "trigger"], ctx), null)
     const counts = trace.counts()
     assert.equal(deliveries, size)
-    assert(sources.every(source => source.subscriptions === 1))
+    // Preparation subscribes once; the explicit lookup also observes source zero.
+    assert(sources.every((source, index) => source.subscriptions === (index === 0 ? 2 : 1)))
     results.push({ size, checks: counts.isPending })
     assert.equal(r.lookupPath(chain, [0, "trigger"], ctx), null)
     verifyParents(ctx, chain._state)

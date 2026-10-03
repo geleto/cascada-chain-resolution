@@ -1,27 +1,23 @@
-import { runInNewContext } from "node:vm"
-import assert from "node:assert/strict"
-
+import * as runtime from "../src/index.js"
+import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
     assignPath,
     Chain,
-    buildRefIndex,
-    deferred,
-    errorCause,
-    expect,
-    exportValue,
-    flushMicrotasks,
-    importValue,
+    export as exportValue,
+    import as importValue,
     lookupPath,
-    metaOf,
-    readPath,
     managedStateClass,
-    submitFatal,
-    runtime,
     run,
-    useTestExecution,
-    thrownBy,
-    verifyRefCounts,
-} from "./support.js"
+    Execution,
+} from "../src/index.js"
+import { buildRefIndex } from "../src/refcounts.js"
+import { failExecution as submitFatal } from "../src/error.js"
+import { verifyRefCounts } from "./verify-refcounts.js"
+
+import { runInNewContext } from "node:vm"
+import assert from "node:assert/strict"
+
+import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
 
 describe("managed invocation", () => {
     for (const pending of [false, true]) {
@@ -52,6 +48,7 @@ describe("managed invocation", () => {
     }
 
     it("uses the same managed boundary for record methods", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = {
             count: 1,
             increaseBy(amount) {
@@ -62,43 +59,53 @@ describe("managed invocation", () => {
                 return this.count
             },
         }
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
-        expect(run(chain, [], "increment", [], { mutationScopeDepth: 0 })).to.be(2)
+        expect(run(chain, [], "increment", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(2)
         expect(chain._state.value).not.to.be(value)
         expect(chain._state.value.count).to.be(2)
         expect(value.count).to.be(1)
     })
 
     it("isolates a protected record mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = importValue({
             count: 1,
             increaseBy(amount) {
                 this.count += amount
                 return this.count
             },
-        }, "managed record receiver")
-        const chain = new Chain(source)
+        }, { ...testContext, errorContext: "managed record receiver" })
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        expect(run(chain, [], "increaseBy", [2], { mutationScopeDepth: 0 })).to.be(3)
+        expect(run(chain, [], "increaseBy", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(3)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.count).to.be(3)
         expect(source.count).to.be(1)
     })
 
     it("uses an own record placement instead of an inherited method", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = {
             toString() {
                 return "managed record"
             },
         }
 
-        expect(run(new Chain(value), [], "toString", [], {})).to.be(
+        expect(run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "toString",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )).to.be(
             "managed record",
         )
     })
 
     it("rejects an own record constructor placement", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let called = false
         const value = {
             constructor() {
@@ -107,20 +114,28 @@ describe("managed invocation", () => {
         }
 
         expect(run(
-            new Chain(value),
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "constructor",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ).message).to.be("Method is not callable: constructor")
         expect(called).to.be(false)
     })
 
     it("resolves a Promise-backed record method placement", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const method = deferred()
         const value = { count: 2, read: method.promise }
-        const result = run(new Chain(value), [], "read", [3], {})
+        const result = run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [3],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
 
         method.resolve(function (amount) {
             return this.count + amount
@@ -130,22 +145,24 @@ describe("managed invocation", () => {
     })
 
     it("protects a fulfilled argument root while receiver selection waits", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const argument = deferred()
         const source = { value: 1 }
-        const sourceChain = new Chain(source)
+        const sourceChain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
         const result = run(
-            new Chain(receiver.promise),
+            new Chain(receiver.promise, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         argument.resolve(source)
         await flushMicrotasks()
-        expect(metaOf(source).readLeaseCount).to.be(1)
-        assignPath(sourceChain, ["value"], 2)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(1)
+        assignPath(sourceChain, ["value"], 2, testContext)
         receiver.resolve({
             read(value) {
                 return value.value
@@ -155,18 +172,20 @@ describe("managed invocation", () => {
         expect(await result).to.be(1)
         expect(source.value).to.be(1)
         expect(sourceChain._state.value.value).to.be(2)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("ignores a primitive fulfillment while receiver selection waits", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const argument = deferred()
         const result = run(
-            new Chain(receiver.promise),
+            new Chain(receiver.promise, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         argument.resolve(3)
@@ -177,27 +196,30 @@ describe("managed invocation", () => {
     })
 
     it("releases a fulfilled argument when pending selection fails", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiver = deferred()
         const argument = deferred()
         const source = { value: 1 }
         const result = run(
-            new Chain(receiver.promise),
+            new Chain(receiver.promise, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "missing",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         argument.resolve(source)
         await flushMicrotasks()
-        expect(metaOf(source).readLeaseCount).to.be(1)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(1)
         receiver.resolve({})
 
         expect((await result).message).to.be("Method is not callable: missing")
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("ignores prototype accessors and excludes Object.prototype methods", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let getterCalls = 0
         class WithAccessor {
             get value() {
@@ -210,9 +232,9 @@ describe("managed invocation", () => {
             }
         }
         expect(managedStateClass(WithAccessor)).to.be(undefined)
-        const chain = new Chain(new WithAccessor())
-        expect(run(chain, [], "read", [], {})).to.be(2)
-        expect(run(chain, [], "value", [], {}).kind).to.be(
+        const chain = new Chain(new WithAccessor(), { ...testContext, errorContext: "test Chain initialization" })
+        expect(run(chain, [], "read", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(2)
+        expect(run(chain, [], "value", [], { ...testContext, errorContext: "test run" }, { repair: false }).kind).to.be(
             runtime.ERROR_KIND.InvalidManagedReceiver,
         )
         expect(getterCalls).to.be(0)
@@ -220,16 +242,17 @@ describe("managed invocation", () => {
         class Value {}
         managedStateClass(Value)
         expect(run(
-            new Chain(new Value()),
+            new Chain(new Value(), { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "toString",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
     })
 
     it("ends foreign class lookup before its Object prototype", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const { Foreign, value } = runInNewContext(`
             class Foreign {
                 read() { return this.value }
@@ -238,25 +261,40 @@ describe("managed invocation", () => {
         `)
         managedStateClass(Foreign)
 
-        expect(run(new Chain(value), [], "read", [], {})).to.be(3)
         expect(run(
-            new Chain(value),
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )).to.be(3)
+        expect(run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "toString",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ) instanceof Error).to.be(true)
     })
 
     it("prepares receiver state before reporting a missing method", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {}
         managedStateClass(Value)
         const pending = deferred()
         const value = new Value()
         value.pending = pending.promise
 
-        const result = run(new Chain(value), [], "missing", [], {})
+        const result = run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "missing",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
 
         expect(result instanceof Promise).to.be(true)
         pending.resolve(1)
@@ -264,6 +302,7 @@ describe("managed invocation", () => {
     })
 
     it("rejects a language property that shadows a managed-class method", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             read() {
                 return 1
@@ -273,13 +312,21 @@ describe("managed invocation", () => {
         const value = new Value()
         value.read = () => 2
 
-        expect(run(new Chain(value), [], "read", [], {}).message).to.be(
+        expect(run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        ).message).to.be(
             "Cannot call read because an own data property with that name " +
             "hides the method",
         )
     })
 
     it("ignores an own non-placement during method selection", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let accessed = false
         class Value {
             read() {
@@ -295,11 +342,19 @@ describe("managed invocation", () => {
             },
         })
 
-        expect(run(new Chain(value), [], "read", [], {})).to.be(1)
+        expect(run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )).to.be(1)
         expect(accessed).to.be(false)
     })
 
     it("resolves a method only after clean preparation and before isolation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const reflections = []
         const prototype = new Proxy({
             change() {
@@ -318,14 +373,15 @@ describe("managed invocation", () => {
         managedStateClass(Value)
 
         const failure = new Error("invalid argument")
-        const failed = new Chain(new Value())
+        const failed = new Chain(new Value(), { ...testContext, errorContext: "test Chain initialization" })
         reflections.length = 0
         const argumentFailure = run(
             failed,
             [],
             "change",
             [failure],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(argumentFailure)).to.be(failure)
         expect(reflections).to.eql([])
@@ -333,14 +389,15 @@ describe("managed invocation", () => {
         const receiverFailure = new Error("invalid receiver")
         const invalid = new Value()
         invalid.failure = receiverFailure
-        const invalidChain = new Chain(invalid)
+        const invalidChain = new Chain(invalid, { ...testContext, errorContext: "test Chain initialization" })
         reflections.length = 0
         expect(errorCause(run(
             invalidChain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         ))).to.be(receiverFailure)
         expect(reflections).to.eql([])
 
@@ -350,23 +407,25 @@ describe("managed invocation", () => {
                 return Reflect.ownKeys(target)
             },
         })
-        const chain = new Chain(value)
-        lookupPath(chain, [])
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
+        lookupPath(chain, [], testContext)
         reflections.length = 0
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
-        expect(reflections).to.eql(["receiver", "method", "receiver"])
+        // Isolation assembles from the prepared capture without rereading storage.
+        expect(reflections).to.eql(["receiver", "method"])
         expect(chain._state.value).not.to.be(value)
         expect(chain._state.value.value).to.be(2)
         expect(value.value).to.be(1)
     })
 
     it("rejects a prototype accessor detected before invocation", () => {
+        let testContext
         let reported
-        useTestExecution(error => {
+        testContext = { execution: new Execution(error => {
             reported = error
-        })
+        }), errorContext: "test operation" }
         class Value {
             read() {
                 return 1
@@ -379,12 +438,12 @@ describe("managed invocation", () => {
             },
         })
         const failure = run(
-            new Chain(new Value()),
+            new Chain(new Value(), { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
         expect(failure.message).to.be(
             "Managed class methods must be data properties",
@@ -393,24 +452,25 @@ describe("managed invocation", () => {
     })
 
     it("rejects synchronous same-execution reentry from a managed-class method", () => {
+        let testContext
         let reported
-        useTestExecution(error => {
+        testContext = { execution: new Execution(error => {
             reported = error
-        })
-        const observed = new Chain({ value: 1 })
+        }), errorContext: "test operation" }
+        const observed = new Chain({ value: 1 }, { ...testContext, errorContext: "test Chain initialization" })
         class Value {
             read() {
-                return readPath(observed, [])
+                return readPath(observed, [], testContext)
             }
         }
         managedStateClass(Value)
         const failure = thrownBy(() => run(
-            new Chain(new Value()),
+            new Chain(new Value(), { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [],
-            {},
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         ))
         expect(failure.message).to.be(
             "Cascada execution cannot be re-entered from external code",
@@ -419,6 +479,7 @@ describe("managed invocation", () => {
     })
 
     it("prepares the complete observed receiver under a lease", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             length() {
                 return this.start.x + this.start.y
@@ -428,10 +489,10 @@ describe("managed invocation", () => {
         const pending = deferred()
         const line = new Line()
         line.start = { x: pending.promise, y: 2 }
-        const chain = new Chain(line)
+        const chain = new Chain(line, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "length", [], {})
-        assignPath(chain, ["start", "y"], 5)
+        const result = run(chain, [], "length", [], { ...testContext, errorContext: "test run" }, { repair: false })
+        assignPath(chain, ["start", "y"], 5, testContext)
         pending.resolve(1)
 
         expect(await result).to.be(3)
@@ -440,6 +501,7 @@ describe("managed invocation", () => {
     })
 
     it("returns a nested receiver Error without invoking an observation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("invalid receiver")
         let invoked = false
         class Value {
@@ -451,12 +513,20 @@ describe("managed invocation", () => {
         const value = new Value()
         value.nested = { failure }
 
-        expect(errorCause(run(new Chain(value), [], "read", [], {})))
+        expect(errorCause(run(
+            new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )))
             .to.be(failure)
         expect(invoked).to.be(false)
     })
 
     it("exposes settled logical values without changing imported storage", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Vec {
             value() {
                 return this.x
@@ -466,8 +536,15 @@ describe("managed invocation", () => {
         const pending = deferred()
         const source = new Vec()
         source.x = pending.promise
-        importValue(source, "managed-class Promise state")
-        const result = run(new Chain(source), [], "value", [], {})
+        importValue(source, { ...testContext, errorContext: "managed-class Promise state" })
+        const result = run(
+            new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "value",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
 
         pending.resolve(4)
 
@@ -476,6 +553,7 @@ describe("managed invocation", () => {
     })
 
     it("mutates an owned receiver and returns the published receiver", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Vec {
             add(value) {
                 this.x += value
@@ -485,18 +563,19 @@ describe("managed invocation", () => {
         managedStateClass(Vec)
         const source = new Vec()
         source.x = 1
-        const chain = new Chain(source)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "add", [2], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "add", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value).not.to.be(source)
         expect(result).to.be(chain._state.value)
         expect(result.x).to.be(3)
         expect(source.x).to.be(1)
-        expect(metaOf(result).shared).to.be(true)
+        expect(requiresCopyOnWrite(result, testContext)).to.be(true)
     })
 
     it("copies a protected receiver before direct class mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Vec {
             add(value) {
                 this.x += value
@@ -504,12 +583,12 @@ describe("managed invocation", () => {
             }
         }
         managedStateClass(Vec)
-        const source = importValue(new Vec(), "shared managed-class receiver")
+        const source = importValue(new Vec(), { ...testContext, errorContext: "shared managed-class receiver" })
         source.x = 1
-        importValue(source, "shared managed-class receiver")
-        const chain = new Chain(source)
+        importValue(source, { ...testContext, errorContext: "shared managed-class receiver" })
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        expect(run(chain, [], "add", [2], { mutationScopeDepth: 0 })).to.be(3)
+        expect(run(chain, [], "add", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(3)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value instanceof Vec).to.be(true)
         expect(chain._state.value.x).to.be(3)
@@ -517,6 +596,7 @@ describe("managed invocation", () => {
     })
 
     it("returns the published copy when a protected mutation returns this", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Vec {
             add(value) {
                 this.x += value
@@ -526,19 +606,20 @@ describe("managed invocation", () => {
         managedStateClass(Vec)
         const source = new Vec()
         source.x = 1
-        lookupPath(new Chain(source), [])
-        const chain = new Chain(source)
+        lookupPath(new Chain(source, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "add", [2], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "add", [2], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result).to.be(chain._state.value)
         expect(result).not.to.be(source)
         expect(result.x).to.be(3)
         expect(source.x).to.be(1)
-        expect(metaOf(result).shared).to.be(true)
+        expect(requiresCopyOnWrite(result, testContext)).to.be(true)
     })
 
     it("isolates the complete receiver including protected descendants", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             move() {
                 this.start.x++
@@ -546,12 +627,12 @@ describe("managed invocation", () => {
         }
         managedStateClass(Line)
         const start = { x: 1 }
-        lookupPath(new Chain(start), [])
+        lookupPath(new Chain(start, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
         const line = new Line()
         line.start = start
-        const chain = new Chain(line)
+        const chain = new Chain(line, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "move", [], { mutationScopeDepth: 0 })
+        run(chain, [], "move", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value).not.to.be(line)
         expect(chain._state.value.start).not.to.be(start)
@@ -560,6 +641,7 @@ describe("managed invocation", () => {
     })
 
     it("isolates a managed-class mutation beneath a shared ancestor", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             change() {
                 return ++this.x
@@ -569,10 +651,10 @@ describe("managed invocation", () => {
         const value = new Value()
         value.x = 1
         const source = { value }
-        lookupPath(new Chain(source), [])
-        const chain = new Chain(source)
+        lookupPath(new Chain(source, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        expect(run(chain, ["value"], "change", [], { mutationScopeDepth: 1 })).to.be(2)
+        expect(run(chain, ["value"], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 1 })).to.be(2)
         expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).not.to.be(value)
         expect(chain._state.value.value.x).to.be(2)
@@ -581,6 +663,7 @@ describe("managed invocation", () => {
     })
 
     it("exports managed arguments independently", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             setStart(options) {
                 this.start = options.point
@@ -590,16 +673,17 @@ describe("managed invocation", () => {
         const point = { x: 1 }
         const options = { point }
         const line = new Line()
-        const chain = new Chain(line)
+        const chain = new Chain(line, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "setStart", [options], { mutationScopeDepth: 0 })
+        run(chain, [], "setStart", [options], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value.start).not.to.be(point)
         expect(chain._state.value.start).to.eql(point)
-        expect(metaOf(point).readLeaseCount).to.be(undefined)
+        expect(metaOf(point, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("isolates an argument retained by a later managed-class mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             setStart(start) {
                 this.start = start
@@ -612,10 +696,10 @@ describe("managed invocation", () => {
         managedStateClass(Line)
         const start = { x: 1 }
         const line = new Line()
-        const chain = new Chain(line)
+        const chain = new Chain(line, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "setStart", [start], { mutationScopeDepth: 0 })
-        run(chain, [], "move", [], { mutationScopeDepth: 0 })
+        run(chain, [], "setStart", [start], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+        run(chain, [], "move", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value.start).not.to.be(start)
         expect(chain._state.value.start.x).to.be(2)
@@ -623,6 +707,7 @@ describe("managed invocation", () => {
     })
 
     it("stores a private logical copy of a materialized argument", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Holder {
             setValue(value) {
                 this.value = value
@@ -631,11 +716,11 @@ describe("managed invocation", () => {
         managedStateClass(Holder)
         const pending = deferred()
         const argument = { value: pending.promise }
-        importValue(argument, "managed-class argument")
+        importValue(argument, { ...testContext, errorContext: "managed-class argument" })
         const holder = new Holder()
-        const chain = new Chain(holder)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "setValue", [argument], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "setValue", [argument], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         pending.resolve(3)
         await result
 
@@ -645,6 +730,7 @@ describe("managed invocation", () => {
     })
 
     it("does not cross-remap receiver and argument identities", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             move(options) {
                 this.same = this.start === options.point
@@ -656,9 +742,9 @@ describe("managed invocation", () => {
         const options = { point }
         const line = new Line()
         line.start = point
-        const chain = new Chain(line)
+        const chain = new Chain(line, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "move", [options], { mutationScopeDepth: 0 })
+        run(chain, [], "move", [options], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value.same).to.be(false)
         expect(chain._state.value.start).not.to.be(point)
@@ -668,6 +754,7 @@ describe("managed invocation", () => {
     })
 
     it("poisons the complete mutation receiver for a nested Error", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             read() {
                 return 1
@@ -682,24 +769,33 @@ describe("managed invocation", () => {
         const source = new Value()
         source.child = { failure }
 
-        expect(errorCause(run(new Chain(source), [], "read", [], {})))
+        expect(errorCause(run(
+            new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "read",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )))
             .to.be(failure)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
-        const chain = new Chain(source)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
         const mutationFailure = run(
             chain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(mutationFailure)).to.be(failure)
         expect(chain._state.value).to.be(mutationFailure)
         expect(source.changed).to.be(undefined)
-        expect(metaOf(source).readLeaseCount).to.be(undefined)
+        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("combines every original input Error once", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             read() {
                 throw new Error("must not invoke")
@@ -716,11 +812,12 @@ describe("managed invocation", () => {
         source.second = receiverErrors[1]
 
         const result = run(
-            new Chain(source),
+            new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [{ error: argumentError }],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         expect(result.errors).to.have.length(3)
@@ -736,6 +833,7 @@ describe("managed invocation", () => {
     })
 
     it("collects pending receiver and argument Errors regardless of settlement order", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const receiverFailure = new Error("receiver")
         const argumentFailure = new Error("argument")
         const receiverValue = deferred()
@@ -745,11 +843,12 @@ describe("managed invocation", () => {
             read() {},
         }
         const result = run(
-            new Chain(source),
+            new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [{ failure: argumentValue.promise }],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         argumentValue.resolve(argumentFailure)
@@ -769,6 +868,7 @@ describe("managed invocation", () => {
     })
 
     it("rejects invalid completed state and awaits a direct result Promise", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             leavePromise() {
                 this.value = Promise.resolve(1)
@@ -782,35 +882,37 @@ describe("managed invocation", () => {
         managedStateClass(Value)
 
         const invalid = new Value()
-        const invalidChain = new Chain(invalid)
+        const invalidChain = new Chain(invalid, { ...testContext, errorContext: "test Chain initialization" })
         expect(run(
             invalidChain,
             [],
             "leavePromise",
             [],
-            { mutationScopeDepth: 0 },
-
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         ) instanceof Error).to.be(true)
         expect(invalidChain._state.value instanceof Error).to.be(true)
 
         const valid = new Value()
         valid.value = 1
-        const validChain = new Chain(valid)
+        const validChain = new Chain(valid, { ...testContext, errorContext: "test Chain initialization" })
         const result = run(
             validChain,
             [],
             "returnPromise",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(result instanceof Promise).to.be(true)
-        expect(readPath(validChain, []) instanceof Promise).to.be(true)
+        expect(readPath(validChain, [], testContext) instanceof Promise).to.be(true)
         expect(await result).to.be(2)
         expect(validChain._state.value).not.to.be(valid)
         expect(validChain._state.value.value).to.be(2)
     })
 
     it("poisons a mutation receiver when its method returns an Error", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const resultError = new Error("method result")
         class Value {
             change() {
@@ -821,20 +923,22 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const value = new Value()
         value.value = 1
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         expect(errorCause(run(
             chain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         ))).to.be(resultError)
         expect(chain._state.value.cause).to.be(resultError)
         expect(value.value).to.be(1)
     })
 
     it("attributes an Error added inside an admitted mutation result", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cause = new Error("detached result failure")
         class Value {
             constructor() {
@@ -850,16 +954,17 @@ describe("managed invocation", () => {
         }
         managedStateClass(Value)
         const value = new Value()
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         const result = run(
             chain,
             [],
             "detachResult",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        const failure = lookupPath(new Chain(result), ["failure"])
+        const failure = lookupPath(new Chain(result, { ...testContext, errorContext: "test Chain initialization" }), ["failure"], testContext)
 
         expect(failure.cause).to.be(cause)
         expect(failure.errorContext).to.be("test run")
@@ -869,6 +974,7 @@ describe("managed invocation", () => {
     })
 
     it("keeps a direct mutation Promise private through fulfillment", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const resultError = new Error("result")
         const value = {
@@ -878,16 +984,17 @@ describe("managed invocation", () => {
                 return start()
             },
         }
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         const result = run(
             chain,
             [],
             "change",
             [() => completion.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        expect(readPath(chain, []) instanceof Promise).to.be(true)
+        expect(readPath(chain, [], testContext) instanceof Promise).to.be(true)
         completion.resolve(resultError)
 
         expect(errorCause(await result)).to.be(resultError)
@@ -896,6 +1003,7 @@ describe("managed invocation", () => {
     })
 
     it("poisons a direct mutation Promise rejection without making it fatal", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const argument = deferred()
         const failure = new Error("rejected mutation")
@@ -905,7 +1013,7 @@ describe("managed invocation", () => {
                 return start()
             },
         }
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
         const result = run(
             chain,
             [],
@@ -914,7 +1022,8 @@ describe("managed invocation", () => {
                 argument.promise,
                 () => completion.promise,
             ],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         argument.resolve("ready")
         await flushMicrotasks()
@@ -925,6 +1034,7 @@ describe("managed invocation", () => {
     })
 
     it("protects an observation receiver through direct rejection", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const failure = new Error("observation rejected")
         const value = {
@@ -933,27 +1043,29 @@ describe("managed invocation", () => {
                 return start().then(() => this.child.value)
             },
         }
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
         const result = run(
             chain,
             [],
             "read",
             [() => completion.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
-        expect(metaOf(value).readLeaseCount).to.be(1)
-        assignPath(chain, ["child", "value"], 2)
+        expect(metaOf(value, testContext).readLeaseCount).to.be(1)
+        assignPath(chain, ["child", "value"], 2, testContext)
         completion.reject(failure)
 
         expect(errorCause(await result.catch(error => error))).to.be(failure)
         expect(value.child.value).to.be(1)
         expect(chain._state.value.child.value).to.be(2)
-        expect(metaOf(value).readLeaseCount).to.be(undefined)
-        expect(metaOf(value.child).readLeaseCount).to.be(undefined)
+        expect(metaOf(value, testContext).readLeaseCount).to.be(undefined)
+        expect(metaOf(value.child, testContext).readLeaseCount).to.be(undefined)
     })
 
     it("publishes direct receiver results before a following mutation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         class Value {
             change(start) {
@@ -969,17 +1081,18 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const source = new Value()
         source.value = 1
-        lookupPath(new Chain(source), [])
-        const chain = new Chain(source)
+        lookupPath(new Chain(source, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
         const first = run(
             chain,
             [],
             "change",
             [() => completion.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
-        const second = run(chain, [], "add", [10], { mutationScopeDepth: 0 })
+        const second = run(chain, [], "add", [10], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         completion.resolve()
 
         const firstReceiver = await first
@@ -992,6 +1105,7 @@ describe("managed invocation", () => {
     })
 
     it("publishes receiver validation failure after direct completion", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const value = {
             change(start) {
@@ -999,14 +1113,15 @@ describe("managed invocation", () => {
                 return start()
             },
         }
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         const result = run(
             chain,
             [],
             "change",
             [() => completion.promise],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         completion.resolve("done")
         const failure = await result
@@ -1018,7 +1133,8 @@ describe("managed invocation", () => {
     for (const shape of ["root", "existing child", "new child", "stored Promise"]) {
         for (const pending of [false, true]) {
             it("rejects " + shape + " then after " + (pending ? "pending" : "ready") + " managed completion", async () => {
-                const execution = useTestExecution()
+                let testContext
+                const execution = (testContext = { execution: new Execution(), errorContext: "test operation" }).execution
                 let calls = 0
                 const then = resolve => { calls++; return resolve(99) }
                 const value = {
@@ -1034,8 +1150,8 @@ describe("managed invocation", () => {
                         return pending ? Promise.resolve().then(mutate) : mutate()
                     },
                 }
-                const chain = new Chain(value)
-                const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+                const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
+                const result = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
                 const failure = pending ? await result : result
                 expect(failure).to.be.a(runtime.PoisonError)
                 expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
@@ -1047,6 +1163,7 @@ describe("managed invocation", () => {
     }
 
     it("keeps other receiver Errors alongside a callable then placement", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cause = new Error("stored failure")
         const value = {
             change() {
@@ -1054,8 +1171,8 @@ describe("managed invocation", () => {
                 this.bad = cause
             },
         }
-        const chain = new Chain(value)
-        const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
+        const failure = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(failure).to.be.a(runtime.CompoundPoisonError)
         expect(failure.errors.some(error => error.cause === cause)).to.be(true)
         expect(failure.errors.some(error => error.kind === runtime.ERROR_KIND.InvalidManagedReceiver)).to.be(true)
@@ -1063,6 +1180,7 @@ describe("managed invocation", () => {
     })
 
     it("preserves non-callable then placements through mutation and export", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = {
             child: {},
             change() {
@@ -1071,22 +1189,23 @@ describe("managed invocation", () => {
                 return Promise.resolve("done")
             },
         }
-        const chain = new Chain(value)
-        expect(await run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be("done")
-        expect(await lookupPath(chain, ["child"])).to.eql({ then: 12 })
-        const exported = await exportValue(chain, [])
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
+        expect(await run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be("done")
+        expect(await lookupPath(chain, ["child"], testContext)).to.eql({ then: 12 })
+        const exported = await exportValue(chain, [], testContext)
         expect(exported.then).to.be(42)
         expect(exported.child.then).to.be(12)
-        verifyRefCounts(chain._state)
+        verifyRefCounts(testContext, chain._state)
     })
 
     it("recognizes a new stored thenable through a stable getter without subscribing", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let reads = 0, calls = 0
         const then = resolve => { calls++; return resolve(1) }
         const chain = new Chain({ change() {
             this.child = { get then() { reads++; return then } }
-        } })
-        const failure = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        } }, { ...testContext, errorContext: "test Chain initialization" })
+        const failure = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(failure.kind).to.be(runtime.ERROR_KIND.InvalidManagedReceiver)
         expect(chain._state.value).to.be(failure)
         expect(reads).to.be(1)
@@ -1094,6 +1213,7 @@ describe("managed invocation", () => {
     })
 
     it("reuses admitted prototype safety during managed receiver validation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         let inspections = 0
         const prototype = new Proxy({ change() { this.count++; return this.count } }, {
             getOwnPropertyDescriptor(target, key) {
@@ -1103,13 +1223,14 @@ describe("managed invocation", () => {
         })
         const value = Object.assign(Object.create(prototype), { count: 1 })
         runtime.managedState(value)
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
         const baseline = inspections
-        expect(run(chain, [], "change", [], { mutationScopeDepth: 0 })).to.be(2)
+        expect(run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })).to.be(2)
         expect(inspections).to.be(baseline)
     })
 
     it("poisons receiver validation reflection failures", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("receiver reflection failed")
         const target = { fail: false }
         const traps = {
@@ -1127,20 +1248,22 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const value = new Value()
         value.state = target
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         const validationFailure = run(
             chain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(validationFailure)).to.be(failure)
         expect(chain._state.value).to.be(validationFailure)
     })
 
     it("poisons a mutation when the mutator throws", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("mutator failed")
         class Value {
             change() {
@@ -1150,20 +1273,22 @@ describe("managed invocation", () => {
         }
         managedStateClass(Value)
         const source = new Value()
-        const chain = new Chain(source)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
         const mutationFailure = run(
             chain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         )
         expect(errorCause(mutationFailure)).to.be(failure)
         expect(chain._state.value).to.be(mutationFailure)
     })
 
     it("retains exact admitted identities returned by an observation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Point {
             constructor(x) {
                 this.x = x
@@ -1181,18 +1306,26 @@ describe("managed invocation", () => {
         const holder = new Holder()
         holder.point = new Point(1)
 
-        const result = run(new Chain(holder), [], "result", [], {})
+        const result = run(
+            new Chain(holder, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "result",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
 
         expect(result.self).to.be(result)
         expect(result.point).to.be(holder.point)
         expect(result.point instanceof Point).to.be(true)
-        const chain = new Chain(holder)
-        assignPath(chain, ["point", "x"], 2)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
+        assignPath(chain, ["point", "x"], 2, testContext)
         expect(result.point.x).to.be(1)
         expect(chain._state.value.point.x).to.be(2)
     })
 
     it("shares an exact mutation result through ordinary COW", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Holder {
             change() {
                 this.point.x++
@@ -1202,19 +1335,20 @@ describe("managed invocation", () => {
         managedStateClass(Holder)
         const holder = new Holder()
         holder.point = { x: 1 }
-        const chain = new Chain(holder)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result).to.be(chain._state.value.point)
         expect(result.x).to.be(2)
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(result.x).to.be(2)
         expect(chain._state.value.point).not.to.be(result)
         expect(chain._state.value.point.x).to.be(3)
     })
 
     it("protects descendants retained by a detached mutation result", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Holder {
             detach() {
                 const result = this.wrapper
@@ -1231,12 +1365,12 @@ describe("managed invocation", () => {
         const child = { value: 1 }
         const holder = new Holder()
         holder.wrapper = { branch: { child } }
-        const chain = new Chain(holder)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "detach", [], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "detach", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(result.branch.child).to.be(chain._state.value.child)
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result.branch.child).not.to.be(chain._state.value.child)
         expect(result.branch.child.value).to.be(1)
@@ -1244,6 +1378,7 @@ describe("managed invocation", () => {
     })
 
     it("shares a mutation receiver nested in its result", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             change() {
                 this.x++
@@ -1253,20 +1388,21 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const value = new Value()
         value.x = 1
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
-        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        const result = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(result.me).to.be(chain._state.value)
         expect(result.me instanceof Value).to.be(true)
         expect(result.me.x).to.be(2)
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         expect(result.me.x).to.be(2)
         expect(chain._state.value).not.to.be(result.me)
         expect(chain._state.value.x).to.be(3)
     })
 
     it("keeps external identities and Functions exact in imported results", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class External {}
         const external = new External()
         const fn = () => {}
@@ -1280,13 +1416,21 @@ describe("managed invocation", () => {
         holder.external = external
         holder.fn = fn
 
-        const result = run(new Chain(holder), [], "result", [], {})
+        const result = run(
+            new Chain(holder, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "result",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
 
         expect(result.external).to.be(external)
         expect(result.fn).to.be(fn)
     })
 
     it("keeps result-import reflection failure independent from mutation", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("result reflection failed")
         const result = new Proxy({}, {
             ownKeys() {
@@ -1302,14 +1446,15 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const value = new Value()
         value.value = 1
-        const chain = new Chain(value)
+        const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
 
         expect(errorCause(run(
             chain,
             [],
             "change",
             [],
-            { mutationScopeDepth: 0 },
+            { ...testContext, errorContext: "test run" },
+            { repair: false, mutationScopeDepth: 0 },
         ))).to.be(failure)
         expect(chain._state.value).not.to.be(value)
         expect(chain._state.value.value).to.be(2)
@@ -1317,6 +1462,7 @@ describe("managed invocation", () => {
     })
 
     it("awaits direct Promise results and retains nested Promise results", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             direct() {
                 return Promise.resolve(1)
@@ -1327,12 +1473,12 @@ describe("managed invocation", () => {
             }
         }
         managedStateClass(Value)
-        const chain = new Chain(new Value())
+        const chain = new Chain(new Value(), { ...testContext, errorContext: "test Chain initialization" })
 
-        expect(await run(chain, [], "direct", [], {})).to.be(1)
-        const nested = run(chain, [], "nested", [], {})
+        expect(await run(chain, [], "direct", [], { ...testContext, errorContext: "test run" }, { repair: false })).to.be(1)
+        const nested = run(chain, [], "nested", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(nested instanceof Promise).to.be(false)
-        expect(await readPath(new Chain(nested), ["value"])).to.be(1)
+        expect(await readPath(new Chain(nested, { ...testContext, errorContext: "test Chain initialization" }), ["value"], testContext)).to.be(1)
     })
 
     for (const projection of ["entry", "slice", "extended backing"]) {
@@ -1355,8 +1501,16 @@ describe("managed invocation", () => {
     }
 
     it("materializes logical Arrays before managed external code", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         const source = [1, , 3]
-        const view = run(new Chain(source), [], "slice", [0, 3], {})
+        const view = run(
+            new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "slice",
+            [0, 3],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )
         class Holder {
             inspect() {
                 return Array.isArray(this.items) && !(1 in this.items)
@@ -1373,18 +1527,33 @@ describe("managed invocation", () => {
         const sibling = {}
         holder.sibling = sibling
 
-        expect(run(new Chain(holder), [], "inspect", [], {})).to.be(true)
-        expect(metaOf(sibling).shared).to.be(undefined)
-        const chain = new Chain(holder)
-        run(chain, [], "append", [], { mutationScopeDepth: 0 })
+        expect(run(
+            new Chain(holder, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "inspect",
+            [],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )).to.be(true)
+        expect(requiresCopyOnWrite(sibling, testContext)).to.be(false)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
+        run(chain, [], "append", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value.native).to.be(true)
         expect(Array.isArray(chain._state.value.items)).to.be(true)
         expect(chain._state.value.items).to.eql([1, , 3, 4])
-        expect(run(new Chain(view), [], "join", [","], {})).to.be("1,,3")
+        expect(run(
+            new Chain(view, { ...testContext, errorContext: "test Chain initialization" }),
+            [],
+            "join",
+            [","],
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
+        )).to.be("1,,3")
     })
 
     it("replaces an indexed receiver with an unindexed working copy", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             change() {
                 this.value++
@@ -1394,18 +1563,20 @@ describe("managed invocation", () => {
         const source = new Value()
         source.value = 1
         source.child = { stable: true }
-        buildRefIndex(source)
-        const chain = new Chain(source)
+        new Chain(source, testContext)
+        buildRefIndex(source, testContext)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value).not.to.be(source)
         expect(source.value).to.be(1)
         expect(chain._state.value.value).to.be(2)
-        verifyRefCounts(source, chain._state.value)
+        verifyRefCounts(testContext, source, chain._state.value)
     })
 
     it("copies a live-Promise version owner before direct mutation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             change() {
                 this.changed = true
@@ -1415,8 +1586,8 @@ describe("managed invocation", () => {
         const pending = deferred()
         const source = new Value()
         source.pending = pending.promise
-        const chain = new Chain(source)
-        const result = run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
+        const result = run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         pending.resolve(1)
         await result
@@ -1427,6 +1598,7 @@ describe("managed invocation", () => {
     })
 
     it("remaps earlier sibling aliases copied through a later branch", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Holder {
             change() {
                 this.later.child.value++
@@ -1435,13 +1607,13 @@ describe("managed invocation", () => {
         managedStateClass(Holder)
         const child = { value: 1 }
         const later = { child }
-        lookupPath(new Chain(later), [])
+        lookupPath(new Chain(later, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
         const holder = new Holder()
         holder.earlier = child
         holder.later = later
-        const chain = new Chain(holder)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         expect(chain._state.value.earlier).to.be(chain._state.value.later.child)
         expect(chain._state.value.earlier).not.to.be(child)
@@ -1450,6 +1622,7 @@ describe("managed invocation", () => {
     })
 
     it("expands a descendant copy through a receiver cycle", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Holder {
             change() {
                 this.child.value++
@@ -1459,10 +1632,10 @@ describe("managed invocation", () => {
         const holder = new Holder()
         const child = { value: 1, parent: holder }
         holder.child = child
-        lookupPath(new Chain(child), [])
-        const chain = new Chain(holder)
+        lookupPath(new Chain(child, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
+        const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         const copy = chain._state.value
         expect(copy).not.to.be(holder)
@@ -1473,6 +1646,7 @@ describe("managed invocation", () => {
     })
 
     it("preserves cycles when a protected receiver is copied", () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Cyclic {
             change() {
                 this.value++
@@ -1482,10 +1656,10 @@ describe("managed invocation", () => {
         const source = new Cyclic()
         source.value = 1
         source.self = source
-        lookupPath(new Chain(source), [])
-        const chain = new Chain(source)
+        lookupPath(new Chain(source, { ...testContext, errorContext: "test Chain initialization" }), [], testContext)
+        const chain = new Chain(source, { ...testContext, errorContext: "test Chain initialization" })
 
-        run(chain, [], "change", [], { mutationScopeDepth: 0 })
+        run(chain, [], "change", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
 
         const copy = chain._state.value
         expect(copy).not.to.be(source)
@@ -1496,6 +1670,7 @@ describe("managed invocation", () => {
     })
 
     it("orders mutations behind pending managed preparation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Counter {
             add(value) {
                 this.value += value
@@ -1505,11 +1680,11 @@ describe("managed invocation", () => {
         managedStateClass(Counter)
         const counter = new Counter()
         counter.value = 0
-        const chain = new Chain(counter)
+        const chain = new Chain(counter, { ...testContext, errorContext: "test Chain initialization" })
         const pending = deferred()
 
-        const first = run(chain, [], "add", [pending.promise], { mutationScopeDepth: 0 })
-        const second = run(chain, [], "add", [1], { mutationScopeDepth: 0 })
+        const first = run(chain, [], "add", [pending.promise], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
+        const second = run(chain, [], "add", [1], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
         pending.resolve(1)
 
         expect(await first).to.be(1)
@@ -1519,6 +1694,7 @@ describe("managed invocation", () => {
     })
 
     it("abandons a late argument after fatal receiver preparation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             read() {}
         }
@@ -1528,20 +1704,21 @@ describe("managed invocation", () => {
         let fail = false
         const broken = new Proxy({}, {
             ownKeys() {
-                if (fail) submitFatal(new Error("receiver failed"))
+                if (fail) submitFatal(testContext, new Error("receiver failed"))
                 return []
             },
         })
-        importValue(broken, "prepared fatal receiver child")
+        importValue(broken, { ...testContext, errorContext: "prepared fatal receiver child" })
         fail = true
         const receiver = new Value()
         receiver.child = receiverValue.promise
         const result = run(
-            new Chain(receiver),
+            new Chain(receiver, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         receiverValue.resolve(broken)
@@ -1557,10 +1734,11 @@ describe("managed invocation", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(receiver).readLeaseCount).to.be(1)
+        expect(metaOf(receiver, testContext).readLeaseCount).to.be(1)
     })
 
     it("abandons late receiver work after fatal argument preparation", async () => {
+        const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Value {
             read() {}
         }
@@ -1570,21 +1748,22 @@ describe("managed invocation", () => {
         let fail = false
         const broken = new Proxy({}, {
             ownKeys() {
-                if (fail) submitFatal(new Error("argument failed"))
+                if (fail) submitFatal(testContext, new Error("argument failed"))
                 return []
             },
         })
-        importValue(broken, "prepared fatal argument")
+        importValue(broken, { ...testContext, errorContext: "prepared fatal argument" })
         fail = true
         const receiver = new Value()
         receiver.child = receiverValue.promise
-        const chain = new Chain(receiver)
+        const chain = new Chain(receiver, { ...testContext, errorContext: "test Chain initialization" })
         const result = run(
             chain,
             [],
             "read",
             [argument.promise],
-            {},
+            { ...testContext, errorContext: "test run" },
+            { repair: false },
         )
 
         argument.resolve(broken)
@@ -1601,9 +1780,9 @@ describe("managed invocation", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(receiver).placementVersions.child.value)
+        expect(metaOf(receiver, testContext).placementVersions.child.value)
             .to.be(receiverValue.promise)
-        expect(metaOf(receiver).readLeaseCount).to.be(1)
-        expect(metaOf(late)).to.be(undefined)
+        expect(metaOf(receiver, testContext).readLeaseCount).to.be(1)
+        expect(metaOf(late, testContext)).to.be(undefined)
     })
 })

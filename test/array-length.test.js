@@ -1,3 +1,4 @@
+import { Execution } from "../src/index.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 import { LengthState } from "../src/array-length.js"
@@ -5,7 +6,7 @@ import { ArrayView } from "../src/array-view.js"
 import { metaOf } from "../src/meta.js"
 import { readLanguageProperty } from "../src/language-properties.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
-import { arrayBacking, testOperationContext, flushMicrotasks } from "./support.js"
+import { arrayBacking, flushMicrotasks, lengthNotificationCount } from "./support.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { createRandom, randomInteger } from "./native-equivalence-support.js"
 
@@ -28,12 +29,12 @@ function countLinkReads(state) {
 describe("captured Array length knowledge", () => {
     for (const created of [false, true]) {
         it(`keeps possible growth logical and preserves earlier questions, created=${created}`, async () => {
-            const context = testOperationContext("possible growth"), storage = [1, 2]
+            const context = { execution: new Execution(), errorContext: "possible growth" }, storage = [1, 2]
             const chain = new runtime.Chain(storage, context), hold = Promise.withResolvers()
             const entry = runtime.enter(chain, [5], context, true, inside => hold.promise.then(() => {
                 if (created) runtime.assignPath(inside, [], 5, context)
             }))
-            const view = ArrayView.projectionOf(chain._state.value, context)
+            const view = chain._state.value
             assert.equal(ArrayView.minimumLength(view, context), 2)
             assert.equal(ArrayView.readyLength(view, context), undefined)
             assert.equal(storage.length, 2)
@@ -59,7 +60,7 @@ describe("captured Array length knowledge", () => {
     }
 
     it("reuses unchanged backing after a no-op entry", async () => {
-        const context = testOperationContext("no-op backing reuse"), storage = [1, 2]
+        const context = { execution: new Execution(), errorContext: "no-op backing reuse" }, storage = [1, 2]
         const chain = new runtime.Chain(storage, context), hold = Promise.withResolvers()
         const entry = runtime.enter(chain, [9], context, true, () => hold.promise)
         assert.equal(storage.length, 2)
@@ -74,7 +75,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("starts new length history without retargeting earlier questions", async () => {
-        const context = testOperationContext("successive length histories"), chain = new runtime.Chain([], context)
+        const context = { execution: new Execution(), errorContext: "successive length histories" }, chain = new runtime.Chain([], context)
         const first = Promise.withResolvers(), second = Promise.withResolvers()
         const earlierEntry = runtime.enter(chain, [5], context, true, () => first.promise)
         const earlierLength = runtime.lookupPath(chain, ["length"], context)
@@ -93,7 +94,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("copies before entering storage shared with another view", async () => {
-        const context = testOperationContext("occupied tail"), storage = [1, 2]
+        const context = { execution: new Execution(), errorContext: "occupied tail" }, storage = [1, 2]
         const chain = new runtime.Chain(storage, context)
         const longer = runtime.run(chain, [], "concat", [[3]], context, {})
         const hold = Promise.withResolvers()
@@ -111,7 +112,7 @@ describe("captured Array length knowledge", () => {
 
     for (const projected of [false, true]) {
         it(`preserves shared backing without a physical tail, projected=${projected}`, () => {
-            const context = testOperationContext("shared equal bounds"), storage = [1, 2]
+            const context = { execution: new Execution(), errorContext: "shared equal bounds" }, storage = [1, 2]
             const chain = new runtime.Chain(storage, context)
             if (projected) runtime.enter(chain, [5], context, true, () => undefined)
             const retained = runtime.run(chain, [], "slice", [], context, {})
@@ -125,7 +126,7 @@ describe("captured Array length knowledge", () => {
     }
 
     it("keeps truncated values absent after indexed mutation and later growth", () => {
-        const context = testOperationContext("shrink then grow"), storage = [1, 2, 3]
+        const context = { execution: new Execution(), errorContext: "shrink then grow" }, storage = [1, 2, 3]
         const chain = new runtime.Chain(storage, context)
         runtime.enter(chain, [5], context, true, () => undefined)
         runtime.assignPath(chain, ["length"], 1, context)
@@ -138,7 +139,7 @@ describe("captured Array length knowledge", () => {
 
     for (const shared of [false, true]) {
         it(`copies only the retained range for length assignment, shared=${shared}`, () => {
-            const context = testOperationContext("bounded resize copy")
+            const context = { execution: new Execution(), errorContext: "bounded resize copy" }
             let discardedReads = 0, subscriptions = 0
             const storage = [1, 2, 3, 4, { then(resolve) { subscriptions++; resolve(5) } }]
             if (!shared) Object.defineProperty(storage, "length", { writable: false })
@@ -162,7 +163,7 @@ describe("captured Array length knowledge", () => {
         })
     }
     it("preserves independent backing and length after COW", async () => {
-        const context = testOperationContext("copied length"), storage = [1, 2]
+        const context = { execution: new Execution(), errorContext: "copied length" }, storage = [1, 2]
         const chain = new runtime.Chain(storage, context), hold = Promise.withResolvers()
         const entry = runtime.enter(chain, [9], context, true, () => hold.promise)
         const earlier = new runtime.Chain(runtime.lookupPath(chain, [], context), context)
@@ -182,7 +183,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("prepares native receiver length after no-growth completion", async () => {
-        const context = testOperationContext("native receiver length")
+        const context = { execution: new Execution(), errorContext: "native receiver length" }
         const chain = new runtime.Chain({ items: [1, 2], size() { return this.items.length } }, context)
         const hold = Promise.withResolvers()
         const entry = runtime.enter(chain, ["items", 9], context, true, () => hold.promise)
@@ -193,7 +194,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("protects imported storage through entry and resize", async () => {
-        const context = testOperationContext("imported tail"), original = [1, 2]
+        const context = { execution: new Execution(), errorContext: "imported tail" }, original = [1, 2]
         let writes = 0
         const source = new Proxy(original, {
             set() { writes++; throw new Error("imported storage was written") },
@@ -212,7 +213,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("keeps sparse traversal bounded beside possible growth", async () => {
-        const context = testOperationContext("sparse pending growth")
+        const context = { execution: new Execution(), errorContext: "sparse pending growth" }
         const storage = new Array(100000)
         storage[0] = 1
         let descriptors = 0
@@ -230,7 +231,7 @@ describe("captured Array length knowledge", () => {
     })
 
     it("commits index growth without a fallible length read after the write", () => {
-        const context = testOperationContext("atomic Array growth")
+        const context = { execution: new Execution(), errorContext: "atomic Array growth" }
         let written = false
         const chain = new runtime.ContextChain({
             make() {
@@ -256,7 +257,7 @@ describe("captured Array length knowledge", () => {
 
     for (const reverse of [false, true]) {
         it(`issues independent element entries without copying or multiplying length work, reverse=${reverse}`, async () => {
-            const count = 256, context = testOperationContext("independent element entries")
+            const count = 256, context = { execution: new Execution(), errorContext: "independent element entries" }
             const chain = new runtime.Chain([], context)
             const holds = Array.from({ length: count }, () => Promise.withResolvers())
             let owned
@@ -268,7 +269,7 @@ describe("captured Array length knowledge", () => {
                 assert.equal(current, owned)
                 return entry
             })
-            const reads = countLinkReads(metaOf(owned, context).arrayView._lengthState)
+            const reads = countLinkReads(metaOf(owned, context).arrayRange.lengthState)
             for (let turn = 0; turn < count; turn++) {
                 const index = reverse ? count - turn - 1 : turn
                 holds[index].resolve()
@@ -284,7 +285,7 @@ describe("captured Array length knowledge", () => {
         const sources = Array.from({ length: count }, (_, index) => state.add(index + 1))
         const reads = countLinkReads(state)
         const captures = Array.from({ length: count }, () => state.capture())
-        assert(sources.every(source => source.nodes.size === 0))
+        assert(sources.every(source => lengthNotificationCount(source) === 0))
         assert(reads() < count * 16, `Captures used ${reads()} link reads`)
         state.grow(count + 1) // Earlier markers must exclude later growth.
         for (const source of sources) source.complete(false)
@@ -295,12 +296,12 @@ describe("captured Array length knowledge", () => {
 
     it("releases passive captures independently from live length questions", async () => {
         const state = new LengthState(0), source = state.add(6)
-        const owner = new OperationOwner(testOperationContext("passive capture lifetime"))
+        const owner = new OperationOwner({ execution: new Execution(), errorContext: "passive capture lifetime" })
         const discarded = state.capture(owner), retained = state.capture()
         const pending = state.resolve(owner, value => value)
         owner.close()
         discarded.release()
-        assert.equal(source.nodes.size, 0)
+        assert.equal(lengthNotificationCount(source), 0)
         source.complete(true)
         assert.equal(retained.read(), 6)
         assert.equal(state.head, undefined)
@@ -336,7 +337,7 @@ describe("captured Array length knowledge", () => {
                     const copy = state.fork()
                     states.push({ state: typeof copy === "number" ? new LengthState(copy) : copy, facts: facts.slice() })
                 } else if (action === 5) {
-                    const work = new OperationOwner(testOperationContext("mixed length questions"))
+                    const work = new OperationOwner({ execution: new Execution(), errorContext: "mixed length questions" })
                     const question = { work, index: pick(2) ? pick(35) : undefined, facts: facts.slice() }
                     state.resolve(work, value => { question.answer = value }, question.index)
                     questions.push(question)
@@ -375,7 +376,7 @@ describe("captured Array length knowledge", () => {
             const largest = largestFirst ? state.add(count + 1) : undefined
             const sources = Array.from({ length: count }, (_, index) => state.add(index + 1))
             const last = largest ?? state.add(count + 1)
-            const work = new OperationOwner(testOperationContext("dominated growth"))
+            const work = new OperationOwner({ execution: new Execution(), errorContext: "dominated growth" })
             const reads = countLinkReads(state)
             last.complete(true)
             assert.equal(state.resolve(work, value => value), count + 1)
@@ -387,7 +388,7 @@ describe("captured Array length knowledge", () => {
                 assert.equal(state.resolve(work, value => value, count + 1), false)
             }
             assert(reads() < count * 64, `Ready reads used ${reads()} link reads`)
-            assert(sources.every(source => source.nodes.size === 0))
+            assert(sources.every(source => lengthNotificationCount(source) === 0))
             work.close()
         })
     }
@@ -396,14 +397,14 @@ describe("captured Array length knowledge", () => {
         it(`settles backwards without rescanning an unaffected prefix, created=${created}`, async () => {
             const count = 1000, state = new LengthState(0)
             const sources = Array.from({ length: count }, (_, index) => state.add(count - index))
-            const work = new OperationOwner(testOperationContext("incremental length settlement"))
+            const work = new OperationOwner({ execution: new Execution(), errorContext: "incremental length settlement" })
             const pending = state.resolve(work, value => value)
             const reads = countLinkReads(state)
             for (let index = count - 1; index >= 0; index--) sources[index].complete(created)
             assert.equal(await pending, created ? count : 0)
             assert(reads() < count * 64, `Settlement used ${reads()} link reads`)
             assert.equal(state.head, undefined)
-            assert(sources.every(source => source.nodes.size === 0))
+            assert(sources.every(source => lengthNotificationCount(source) === 0))
             work.close()
         })
     }
@@ -413,23 +414,23 @@ describe("captured Array length knowledge", () => {
         const sources = Array.from({ length: count }, (_, index) => state.add(index + 1))
         const reads = countLinkReads(state)
         const work = Array.from({ length: count }, () => {
-            const owner = new OperationOwner(testOperationContext("incremental length subscriptions"))
+            const owner = new OperationOwner({ execution: new Execution(), errorContext: "incremental length subscriptions" })
             state.resolve(owner, value => value)
             return owner
         })
         for (let index = count - 1; index >= 0; index--) work[index].close()
         assert(reads() < count * 32, `Subscription changes used ${reads()} link reads`)
-        assert(sources.every(source => source.nodes.size === 0))
+        assert(sources.every(source => lengthNotificationCount(source) === 0))
     })
 
     it("refreshes an unobserved tail without adding its growth to earlier questions", async () => {
         const state = new LengthState(0), earlier = state.add(6), later = state.add(9)
-        const work = new OperationOwner(testOperationContext("partly observed length"))
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "partly observed length" })
         const exact = state.resolve(work, value => value)
         const range = state.resolve(work, value => value, 5)
         const copy = state.fork(), tail = state.add(12)
         tail.complete(true)
-        assert.equal(tail.nodes.size, 0)
+        assert.equal(lengthNotificationCount(tail), 0)
         later.complete(false) // Starts after the still-pending earlier source.
         assert.equal(state.minimum, 12)
         assert.equal(state.maximum, 12)
@@ -450,7 +451,7 @@ describe("captured Array length knowledge", () => {
         const bounds = facts => [Math.max(0, ...facts.map(source => source.value ?? 0)),
             Math.max(0, ...facts.map(source => source.value ?? source.bound))]
         for (let run = 0; run < 600; run++) {
-            const startSeed = seed, context = testOperationContext("branching length oracle")
+            const startSeed = seed, context = { execution: new Execution(), errorContext: "branching length oracle" }
             const states = [{ state: new LengthState(0), facts: [] }], sources = [], questions = [], trace = []
             for (let turn = 0; turn < 55; turn++) {
                 const branch = random(states.length), { state, facts } = states[branch], action = random(6)
@@ -512,7 +513,7 @@ describe("captured Array length knowledge", () => {
             const baseline = state.baseline
             const sources = []
             const questions = []
-            const work = new OperationOwner(testOperationContext("length oracle"))
+            const work = new OperationOwner({ execution: new Execution(), errorContext: "length oracle" })
             function ask(index) {
                 const question = { index, prefix: [...sources] }
                 questions.push(question)
@@ -555,7 +556,7 @@ describe("captured Array length knowledge", () => {
 
     it("answers later dominated captures without crossing an earlier watcher", async () => {
         const state = new LengthState(0)
-        const work = new OperationOwner(testOperationContext("length boundaries"))
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "length boundaries" })
         const source = state.add(6)
         let first
         const pending = state.resolve(work, value => first = value)
@@ -576,7 +577,7 @@ describe("captured Array length knowledge", () => {
 
     it("coalesces settled history behind an unresolved head and releases closed watchers", () => {
         const state = new LengthState(0)
-        const work = new OperationOwner(testOperationContext("length reclamation"))
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "length reclamation" })
         const source = state.add(100000)
         state.resolve(work, value => value)
         for (let length = 1; length <= 10000; length++) state.grow(length)
@@ -593,15 +594,15 @@ describe("captured Array length knowledge", () => {
     it("subscribes captured sequences only while a question needs delivery", async () => {
         const state = new LengthState(0), source = state.add(6)
         const copies = Array.from({ length: 1000 }, () => state.fork())
-        assert.equal(source.nodes.size, 0)
-        const work = new OperationOwner(testOperationContext("fork subscriptions"))
+        assert.equal(lengthNotificationCount(source), 0)
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "fork subscriptions" })
         const pending = copies[0].resolve(work, value => value)
-        assert.equal(source.nodes.size, 1)
+        assert.equal(lengthNotificationCount(source), 1)
         state.grow(8)
         assert.equal(state.minimum, 8)
         source.complete(true)
         assert.equal(await pending, 6)
-        assert.equal(source.nodes.size, 0)
+        assert.equal(lengthNotificationCount(source), 0)
         for (const copy of copies) {
             assert.equal(copy.minimum, 6)
             assert.equal(copy.maximum, 6)
@@ -611,15 +612,85 @@ describe("captured Array length knowledge", () => {
         work.close()
     })
 
+    it("invalidates only retained dependent sequences and releases their counter registrations", () => {
+        const state = new LengthState(0)
+        state.retain()
+        const shared = state.add(6), copy = state.fork()
+        copy.retain()
+        const privateSource = copy.add(9)
+        assert.notEqual(state.outcomes, copy.outcomes)
+        assert.equal(shared.consumers.size, 2)
+        const before = state.outcomes.revision
+        privateSource.complete(false)
+        assert.equal(state.outcomes.revision, before)
+        assert.equal(copy.maximum, 6)
+        copy.release()
+        assert.equal(shared.consumers.size, 1)
+        shared.complete(true)
+        assert.equal(state.minimum, 6)
+        assert.equal(copy.minimum, 6, "Inactive copies read the authoritative outcome when used")
+        copy.retain()
+        assert.equal(copy.maximum, 6)
+        assert.equal(shared.consumers.size, 0)
+        copy.release()
+        state.release()
+    })
+
+    it("keeps independent captures subscribed after their Array's retention ends", async () => {
+        const state = new LengthState(0)
+        state.retain()
+        const source = state.add(6), capture = state.capture()
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "detached shape capture" })
+        const pending = state.resolve(work, value => value)
+        state.release()
+        assert.equal(source.consumers.size, 1)
+        source.complete(false)
+        assert.equal(await pending, 0)
+        assert.equal(capture.read(), 0)
+        assert.equal(state.retentions, 0)
+        assert.equal(source.consumers.size, 0)
+        assert.equal(lengthNotificationCount(source), 0)
+        work.close()
+    })
+
+    for (const capture of [false, true]) it(`retires fork counters and restores captured outcomes: export=${capture}`, async () => {
+        const ctx = { execution: new Execution(), errorContext: "retired length forks" }
+        const source = new runtime.Chain([0], ctx), pause = Promise.withResolvers()
+        const entry = runtime.enter(source, [3], ctx, true, child => pause.promise.then(() => {
+            runtime.assignPath(child, [], 9, ctx)
+        }))
+        const state = metaOf(runtime.lookupPath(source, [], ctx), ctx).arrayRange.lengthState
+        const outcome = state.head.source
+        let retired, captured
+        for (let index = 0; index < 40; index++) {
+            const fork = new runtime.Chain(runtime.lookupPath(source, [], ctx), ctx)
+            runtime.assignPath(fork, [0], index, ctx)
+            retired = runtime.lookupPath(fork, [], ctx)
+            if (capture && index === 39) captured = runtime.export(fork, [], ctx)
+            runtime.assignPath(fork, [], null, ctx)
+            await flushMicrotasks()
+            assert.equal(metaOf(retired, ctx).relationshipsActive, false)
+            assert.equal(outcome.consumers.size, capture && index === 39 ? 2 : 1)
+        }
+        pause.resolve()
+        await entry
+        assert.equal(outcome.consumers.size, 0)
+        if (capture) assert.deepEqual(await captured, [39, , , 9])
+        const restored = new runtime.Chain(runtime.import(retired, ctx), ctx)
+        assert.equal(runtime.lookupPath(restored, ["length"], ctx), 4)
+        assert.deepEqual(await runtime.export(restored, [], ctx), [39, , , 9])
+        verifyRefCounts(ctx, source._state, restored._state)
+    })
+
     it("drops a fork's subscriptions on closure without changing its captured outcomes", () => {
         const state = new LengthState(0), earlier = state.add(3), later = state.add(6)
-        const copy = state.fork(), work = new OperationOwner(testOperationContext("closed fork"))
+        const copy = state.fork(), work = new OperationOwner({ execution: new Execution(), errorContext: "closed fork" })
         copy.resolve(work, value => value)
-        assert.equal(earlier.nodes.size, 1)
-        assert.equal(later.nodes.size, 1)
+        assert.equal(lengthNotificationCount(earlier), 1)
+        assert.equal(lengthNotificationCount(later), 1)
         work.close()
-        assert.equal(earlier.nodes.size, 0)
-        assert.equal(later.nodes.size, 0)
+        assert.equal(lengthNotificationCount(earlier), 0)
+        assert.equal(lengthNotificationCount(later), 0)
         earlier.complete(true)
         assert.equal(copy.minimum, 3)
         assert.equal(copy.maximum, 6)

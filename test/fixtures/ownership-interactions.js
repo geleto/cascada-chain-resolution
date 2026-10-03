@@ -1,73 +1,11 @@
-// Audit witnesses, not a Phase 2 implementation. Run each mode separately:
-// node test/experiments/phase2-interactions.mjs production
-// node test/experiments/phase2-interactions.mjs ownership
-// node test/experiments/phase2-interactions.mjs receiver
-// Use --expose-gc to include source-retention checks; mode arguments trials
-// clearing spent call arguments after preparation starts (bounded cases only).
-// Correctness failures are reported separately and make the runner fail.
-// The ownership hook covers ordinary record writes only; it does not implement
-// retirement, pending handoff, Array storage permission, or generation capture.
-import assert from 'node:assert/strict'
-import { registerHooks } from 'node:module'
-
-const mode = process.argv[2] ?? 'production'
-assert(['production', 'ownership', 'receiver', 'arguments'].includes(mode))
-let parents
-globalThis.__phase2AuditOtherParents = (value, ctx) =>
-    parents.getParentPlacements(value, ctx).length > 1
-if (mode !== 'production') registerHooks({ load(url, ctx, next) {
-    const loaded = next(url, ctx)
-    if (mode === 'arguments') {
-        if (url.endsWith('/src/run.js')) {
-            let source = String(loaded.source)
-            const before = 'return mutation ? operation.finishMutation(result) : operation.finish(result)'
-            assert(source.includes(before))
-            source = source.replace(before, 'args = undefined\n        ' + before)
-            return { ...loaded, source }
-        }
-        if (!url.endsWith('/src/invocation.js')) return loaded
-        let source = String(loaded.source).replace(/\r\n/g, '\n')
-        const before = 'const preparedArguments = methodDescription.prepareArguments()'
-        assert(source.includes(before))
-        source = source.replace(before, before + '\n        invocationWork.args = undefined')
-        const provisional = 'leaseArgumentsUntilReceiverReached() {\n' +
-            '        for (let index = 0; index < this.args.length; index++) {\n' +
-            '            const protection = receiveValue(\n' +
-            '                this.args[index],'
-        assert(source.includes(provisional))
-        source = source.replace(provisional, 'leaseArgumentsUntilReceiverReached() {\n' +
-            '        const args = this.args\n' +
-            '        for (let index = 0; index < args.length && !this.receiverReached; index++) {\n' +
-            '            const protection = receiveValue(\n' +
-            '                args[index],')
-        source = source.replace('this.args[index] = protection', 'args[index] = protection')
-        return { ...loaded, source }
-    }
-    if (mode === 'receiver') {
-        if (!url.endsWith('/src/invocation.js')) return loaded
-        let source = String(loaded.source).replace(/\r\n/g, '\n')
-        const before = 'const preparedArguments = methodDescription.prepareArguments()\n' +
-            '        invocationWork.leaseReceiver(methodDescription.receiverToLease)'
-        assert(source.includes(before))
-        source = source.replace(before, 'invocationWork.leaseReceiver(methodDescription.receiverToLease)\n' +
-            '        const preparedArguments = methodDescription.prepareArguments()')
-        return { ...loaded, source }
-    }
-    if (!url.endsWith('/src/meta.js')) return loaded
-    let source = String(loaded.source).replace(/\r\n/g, '\n')
-    const before = 'return metaOf(value, operationContext)?.shared === true ||\n        hasReadLease(value, operationContext)'
-    assert(source.includes(before))
-    source = source.replace(before,
-        'return metaOf(value, operationContext)?.imported === true ||\n' +
-        '        globalThis.__phase2AuditOtherParents(value, operationContext) || hasReadLease(value, operationContext)')
-    return { ...loaded, source }
-} })
+// Public-operation regressions for ownership, ordering, and source release.
+// Run with --expose-gc to include the pending-source retention checks.
+import assert from "node:assert/strict"
 
 const r = await import('../../src/index.js')
 const metadata = await import('../../src/meta.js')
 const { ChainedThenable } = await import('../ordered-thenable.js')
 const { setImmediate: nextTurn } = await import('node:timers/promises')
-parents = await import('../../src/parent-placements.js')
 const context = () => ({ execution: new r.Execution(() => {}), errorContext: 'interaction audit' })
 const results = []
 async function check(name, run) {
@@ -98,25 +36,38 @@ for (const method of ['includes', 'indexOf', 'lastIndexOf']) {
     })
 }
 
-for (const custom of [false, true]) for (const method of ['at', 'slice', 'includes', 'indexOf', 'lastIndexOf', 'join', 'flat', 'toSorted']) {
-    await check(`${method}: receiver capture before ${custom ? 'synchronous' : 'native'} argument delivery`, async () => {
+for (const custom of [false, true]) for (const method of ['at', 'slice', 'includes', 'indexOf', 'lastIndexOf', 'join', 'flat', 'toSorted', 'concat', 'toSpliced', 'with', 'copyWithin', 'fill', 'sort', 'splice', 'push', 'unshift']) {
+    await check(`${method}: receiver capture before ${custom ? 'ordered' : 'native'} argument delivery`, async () => {
         const ctx = context(), source = new r.Chain([1], ctx), control = new r.Chain({}, ctx)
         const signal = custom ? new ChainedThenable() : Promise.withResolvers()
         const pending = custom ? signal : signal.promise
         const argument = r.continueOperation(pending, ctx, () => r.enter(control, [], ctx, false, () => {
             r.assignPath(source, ['0'], 2, ctx)
-            return method === 'toSorted' ? undefined : method === 'join' ? ',' : 0
+            return ['sort', 'toSorted'].includes(method) ? undefined : method === 'join' ? ',' : 0
         }))
         signal.resolve(0)
-        const args = ['includes', 'indexOf', 'lastIndexOf'].includes(method) ? [1, argument] : [argument]
+        const args = ['includes', 'indexOf', 'lastIndexOf'].includes(method) ? [1, argument] :
+            ['toSpliced', 'with', 'splice'].includes(method) ? [0, argument] : [argument]
         const result = r.run(source, [], method, args, ctx, {})
-        const receiverResult = ['slice', 'flat', 'toSorted'].includes(method)
+        const receiverResult = ['slice', 'flat', 'toSorted', 'concat', 'toSpliced', 'with', 'copyWithin', 'fill', 'sort', 'splice', 'push', 'unshift'].includes(method)
         const holder = receiverResult ? new r.Chain(result, ctx) : undefined
         const actual = receiverResult ? await r.export(holder, [], ctx) : await result
-        const expected = receiverResult ? [1] : method === 'includes' ? true :
+        const expected = ['concat', 'push'].includes(method) ? [1, 0] : method === 'unshift' ? [0, 1] :
+            ['with', 'fill'].includes(method) ? [0] : receiverResult ? [1] : method === 'includes' ? true :
             ['indexOf', 'lastIndexOf'].includes(method) ? 0 : method === 'join' ? '1' : 1
         assert.deepEqual(actual, expected)
         assert.deepEqual(await r.export(source, [], ctx), [2])
+    })
+}
+
+for (const method of ['pop', 'reverse', 'shift', 'toReversed', 'toString']) {
+    await check(method + ': unused arguments stay unconsumed', () => {
+        const ctx = context(), source = new r.Chain([1], ctx)
+        let subscriptions = 0
+        const unused = { then() { subscriptions++; return new Promise(() => {}) } }
+        const result = r.run(source, [], method, [unused], ctx, {})
+        assert(!(result instanceof Promise))
+        assert.equal(subscriptions, 0)
     })
 }
 
@@ -126,7 +77,6 @@ for (const valid of [false, true]) {
         const receiver = new r.Chain(receiverSignal, ctx)
         const argument = r.continueOperation(argumentSignal, ctx, () => {
             receiverSignal.resolve(valid ? r.externalState({ use(a, b) { return a + b } }) : 1)
-            receiverSignal.flush()
             return 3
         })
         argumentSignal.resolve(0)
@@ -140,7 +90,7 @@ for (const valid of [false, true]) {
 // Negative controls: ordinary prepared graph traversal already preserves these
 // sibling captures when an older callback advances the source during delivery.
 for (const custom of [false, true]) for (const operation of ['export', 'hasError', 'getErrors']) {
-    await check(`${operation}: prepared sibling capture with ${custom ? 'synchronous' : 'native'} delivery`, async () => {
+    await check(`${operation}: prepared sibling capture with ${custom ? 'ordered' : 'native'} delivery`, async () => {
         const ctx = context(), signal = custom ? new ChainedThenable() : Promise.withResolvers()
         const pending = custom ? signal : signal.promise
         const source = new r.Chain({ drain: pending, k: 1 }, ctx)
@@ -153,7 +103,7 @@ for (const custom of [false, true]) for (const operation of ['export', 'hasError
     })
 }
 
-if (mode === 'production') for (const method of ['join', 'toString']) {
+for (const method of ['join', 'toString']) {
     await check(`${method}: previously reported false ancestry`, async () => {
         const ctx = context(), signal = Promise.withResolvers()
         let source
@@ -191,4 +141,45 @@ if (global.gc) for (const route of ['exported argument', 'unused argument', 'oth
     })
 }
 
-console.log(JSON.stringify({ mode, results }, null, 2))
+if (global.gc) for (const pendingReceiver of [false, true]) {
+    await check(`delivered argument collection before another root, receiver=${pendingReceiver}`, async () => {
+        const ctx = context(), other = Promise.withResolvers(), receiverSignal = Promise.withResolvers()
+        const receiverValue = r.externalState({ use(first, second) { return first.k + second } })
+        const receiver = new r.Chain(pendingReceiver ? receiverSignal.promise : receiverValue, ctx)
+        function issue() {
+            const argument = Promise.withResolvers(), value = { k: 1 }
+            const result = r.run(receiver, [], 'use', [argument.promise, other.promise], ctx, {})
+            argument.resolve(value)
+            return { weak: new WeakRef(value), result }
+        }
+        const { weak, result } = issue()
+        receiverSignal.resolve(receiverValue)
+        for (let i = 0; i < 20; i++) { await nextTurn(); global.gc() }
+        assert.equal(weak.deref(), undefined, 'Delivery protection ends independently of another pending argument')
+        other.resolve(7)
+        assert.equal(await result, 8)
+    })
+}
+
+if (global.gc) for (const method of ['join', 'toString']) {
+    await check(`${method}: captured receiver collection before nested conversion finishes`, async () => {
+        const ctx = context(), pending = Promise.withResolvers()
+        function issue() {
+            const array = [[pending.promise]], source = new r.Chain(array, ctx)
+            const result = r.run(source, [], method, [], ctx, { repair: false })
+            r.assignPath(source, [], null, ctx)
+            assert.equal(metadata.metaOf(array, ctx).readLeaseCount ?? 0, 0)
+            assert.equal(metadata.metaOf(array, ctx).relationshipsActive, false)
+            return { weak: new WeakRef(array), result, source }
+        }
+        const { weak, result, source } = issue()
+        for (let turn = 0; turn < 20; turn++) { await nextTurn(); global.gc() }
+        const retained = weak.deref() !== undefined
+        pending.resolve(8)
+        assert.equal(await result, '8')
+        assert.equal(r.export(source, [], ctx), null)
+        assert.equal(retained, false, 'Completed placement capture must release its original receiver')
+    })
+}
+
+console.log(JSON.stringify({ results }, null, 2))

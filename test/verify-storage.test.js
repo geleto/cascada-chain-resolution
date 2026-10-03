@@ -2,25 +2,37 @@ import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
+import { verifyLiveness } from "./verify-parents.js"
 
 // Tests reach the storage oracle through verifyRefCounts, the suite's common
 // consistency check, so this also guards that it keeps running there.
-describe("storage verifier", () => {
-    it("rejects a retained backing prefix beyond the logical view length", () => {
+describe("graph consistency verifiers", () => {
+    it("rejects an incoming placement from a retired parent", () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
-        const view = r.run(new r.Chain([1], ctx), [], "push", [], ctx, {})
-        verifyRefCounts(ctx, view)
-        metaOf(view, ctx).retainedPrefixLength = 2
-        assert.throws(() => verifyRefCounts(ctx, view), /Retained backing prefix exceeds its view/)
+        const child = {}, parent = { child }
+        const survivor = new r.Chain(child, ctx), holder = new r.Chain(parent, ctx)
+        r.assignPath(holder, [], null, ctx)
+        metaOf(child, ctx).incomingParents = new Map([[survivor._state, new Set(["value"])], [parent, new Set(["child"])]])
+        assert.throws(() => verifyRefCounts(ctx, survivor._state), /retired parent/)
     })
 
-    it("rejects an unprotected child in a retained backing prefix", () => {
-        const ctx = { execution: new r.Execution(), errorContext: {} }
-        const child = { n: 1 }
-        const view = r.run(new r.Chain([child], ctx), [], "push", [], ctx, {})
-        verifyRefCounts(ctx, view)
-        metaOf(child, ctx).shared = false
-        assert.throws(() => verifyRefCounts(ctx, view), /Retained backing prefix contains an unprotected child/)
+    it("rejects activity inconsistent with independently modeled roots", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }, value = {}
+        const holder = new r.Chain(value, ctx)
+        r.assignPath(holder, [], null, ctx)
+        verifyLiveness(ctx, [value], new Set())
+        metaOf(value, ctx).relationshipsActive = true
+        assert.throws(() => verifyLiveness(ctx, [value], new Set()), /modeled liveness/)
+    })
+
+    for (const fault of ["missing", "extra"]) it("rejects " + fault + " reciprocal counter child links", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }, parent = { child: {} }
+        const holder = new r.Chain(parent, ctx)
+        assert.equal(r.hasError(holder, [], ctx), false)
+        verifyRefCounts(ctx, holder._state)
+        if (fault === "missing") metaOf(parent, ctx).counterChildren.clear()
+        else metaOf(parent, ctx).counterChildren.add(new Map())
+        assert.throws(() => verifyRefCounts(ctx, holder._state), /Counter child links|reciprocal child link/)
     })
 
     it("accepts storage masked by an absent overlay and rejects a false absence fact", async () => {

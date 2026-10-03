@@ -7,7 +7,7 @@ let copies
 const publication = new Set([
     "replacePlacement", "commitPlacementVersion", "commitPromiseVersion",
     "installPlacementGate", "installMutationVersion", "copyPlacement",
-    "prepareInput", "normalizeRawPropertyValue",
+    "prepareInput", "commitPreparedInput", "normalizeRawPropertyValue",
 ])
 const construction = new Set([
     "prepareInput", "copyCompleteGraph", "snapshotExternalValue",
@@ -17,7 +17,7 @@ const construction = new Set([
 
 function count(name) { counters.set(name, (counters.get(name) ?? 0) + 1) }
 function enter(name, args) {
-    if ((name === "runExternalAction" || name === "runSubscription") &&
+    if ((name === "runExternalAction" || name === "thenValue") &&
         stack.some(frame => frame.name === "commitPreparedInput"))
         throw new Error(`Preparation commit invoked ${name}`)
     if (["writeLanguageProperty", "deleteLanguageProperty", "installPlacementVersion", "detachPlacementVersion",

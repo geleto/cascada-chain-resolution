@@ -1,3 +1,4 @@
+import { createMutationOutcome } from "./mutations.js"
 import { ArrayView } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
@@ -7,6 +8,8 @@ import {
     RETURN_RECEIVER,
     PASS_AS_PAYLOAD,
     runArrayStep,
+    toRelativeIndex,
+    searchFromIndex,
 } from "./array-methods.js"
 
 function selectArrayMethodDescription(invocationWork) {
@@ -30,7 +33,7 @@ function selectArrayMethodDescription(invocationWork) {
         receiverToLease: mutation ? undefined : receiver,
         leaseInputsThroughResult: !mutation &&
             methodDefinition.leaseInputsThroughResult,
-        prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueOperation(
+        prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
             prepareArrayMethodArguments(methodDefinition, invocationWork),
             invocationWork.operationContext, args => errorUtils.isPoisonError(args) || !methodDefinition.intrinsic
                 ? args : runArrayStep(invocationWork, () => prepareIntrinsicArrayLength(args, invocationWork)),
@@ -53,32 +56,40 @@ function selectArrayMethodDescription(invocationWork) {
 function prepareIntrinsicArrayLength(args, work) {
     return ArrayView.resolveLength(work.receiver, work, length => {
         work.arrayLength = length
+        // No placement can receive an empty fill's payload. Stop its pending
+        // root preparation before successful invocation transfers other inputs.
+        if (work.method === "fill" &&
+            toRelativeIndex(args[1], length, 0) >= toRelativeIndex(args[2], length, length)) {
+            work.discardArgument(0)
+        }
         return args
     })
 }
 
 function prepareArrayMethodArguments(methodDefinition, invocationWork) {
     const { args } = invocationWork
-    if (methodDefinition.prepare) {
-        return methodDefinition.prepare(invocationWork)
-    }
-
     const inputs = methodDefinition.inputs ?? []
-    const fixedCount = Math.min(inputs.length, args.length)
+    const count = inputs[1] === searchFromIndex && ArrayView.readyLength(invocationWork.receiver, invocationWork.operationContext) === 0
+        ? 1 : methodDefinition.restInput ? args.length : inputs.length
+    invocationWork.prepareArgumentFrontier(count)
     // The prepared length preserves omission and every remaining argument.
-    const prepared = new Array(methodDefinition.remainingArgsAsPayload
+    const prepared = new Array(methodDefinition.restInput
         ? args.length
-        : fixedCount)
+        : Math.min(inputs.length, args.length))
     const readiness = []
-    for (let index = 0; index < fixedCount; index++) {
-        const input = inputs[index]
+    for (let index = 0; index < prepared.length; index++) {
+        const input = inputs[index] ?? methodDefinition.restInput
         if (input === PASS_AS_PAYLOAD) {
-            prepared[index] = invocationWork.receiveArgument(args[index])
+            prepared[index] = args[index]
             continue
         }
         const result = input(args[index], invocationWork)
+        // Scalar, identity and executable conversion capture their source on
+        // reception. Concat retains payloads; a search bound first awaits shape.
+        if (methodDefinition !== ARRAY_METHODS.concat && input !== searchFromIndex)
+            invocationWork.releaseArgument(index)
         readiness.push(
-            internalSteps.continueOperation(
+            internalSteps.continueGraphTransition(
                 result,
                 invocationWork.operationContext,
                 value => {
@@ -91,15 +102,10 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
             ),
         )
     }
-    if (methodDefinition.remainingArgsAsPayload) {
-        for (let index = inputs.length; index < args.length; index++) {
-            prepared[index] = invocationWork.receiveArgument(args[index])
-        }
-    }
     return internalSteps.prepareInputs(
         readiness,
         invocationWork.operationContext,
-        () => prepared,
+        () => methodDefinition.prepare ? methodDefinition.prepare(prepared, invocationWork) : prepared,
         invocationWork,
     )
 }
@@ -111,11 +117,20 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
     const { mutation, operationContext } = invocationWork
     if (methodDefinition.view) {
         const view = methodDefinition.view(preparedArguments, invocationWork)
-        if (view !== undefined) return mutation ? {
-            mutatedValue: view,
-            result: methodDefinition.methodResult(
-                methodDefinition.viewNativeResult(view, invocationWork), invocationWork),
-        } : view
+        if (view !== undefined) {
+            if (!mutation) return invocationWork.retainOutput(view)
+            // Publication already owns the view when consuming the independent
+            // removed element may remain pending or fail during capture.
+            const outcome = createMutationOutcome(view, undefined, operationContext)
+            try {
+                outcome.result = methodDefinition.methodResult(
+                    methodDefinition.viewNativeResult(view, invocationWork), invocationWork)
+                return outcome
+            } catch (failure) {
+                outcome.releasePublication()
+                throw failure
+            }
+        }
     }
     if (methodDefinition.observe) return methodDefinition.observe(preparedArguments, invocationWork)
 
@@ -130,7 +145,7 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
         if (methodDefinition.methodResult === undefined)
             remap = arrayRemaps.resolveDenseRemapPresence(nativeResult, invocationWork)
     }
-    return internalSteps.continueOperation(remap, operationContext,
+    return internalSteps.continueGraphTransition(remap, operationContext,
         remap => runArrayStep(invocationWork, () => {
             if (errorUtils.isPoisonError(remap)) return remap
             // Only intrinsic mutators have a separate native result. Capture
@@ -139,16 +154,16 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
                 ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
             const output = runArrayStep(invocationWork, () =>
                 arrayRemaps.createArrayFromRemap(remap, operationContext))
-            if (!mutation) return output
-            if (methodDefinition.methodResult === RETURN_RECEIVER) result = output
+            if (!mutation) return invocationWork.retainOutput(output)
+            if (methodDefinition.methodResult === RETURN_RECEIVER) result = invocationWork.retainOutput(output)
             else if (errorUtils.isPoisonError(output)) {
                 // Publish receiver failure now; only the independent result waits.
-                result = internalSteps.continueOperation(result, operationContext,
+                result = internalSteps.continueGraphTransition(result, operationContext,
                     value => errorUtils.isPoisonError(value)
                         ? errorUtils.combineErrors([output, value], "Array mutation failed") : output,
                     undefined, invocationWork)
             }
-            return { mutatedValue: output, result }
+            return createMutationOutcome(output, result, operationContext)
         }), undefined, invocationWork)
 }
 

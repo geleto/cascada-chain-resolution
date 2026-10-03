@@ -1,0 +1,277 @@
+- Current functionality and correctness responsibilities
+  - Execution and public integration
+    - Execution isolation
+      - Execution configuration and local graph-state isolation
+      - Chain binding and cross-execution operation rejection
+      - Export-import transfer between executions
+    - Operation contexts
+      - Immutable execution and opaque source-context propagation
+      - Context preservation through nested and deferred work
+    - Public runtime composition
+      - Native ESM loading and public export compatibility
+      - Guarded semantic entry, continuation, and host-action composition
+      - Higher-runtime result admission and single completion ownership
+  - Asynchronous progress and operation completion
+    - Ordered availability
+      - Immediate available progress and non-blocking issuance
+      - FIFO continuations and sequentially equivalent effects
+      - Supported thenable consumption and returned-transition readiness
+      - Error, Function, and admitted-category precedence
+    - Required input coordination
+      - Ordered input capture and complete required-outcome collection
+      - Required completion frontiers versus independent result data
+    - Outward completion
+      - Ready results and pending boundary-processing equivalence
+      - Required publication versus issuance-result completion
+      - Pending fatal-result registration through final settlement
+    - Local work and Promise lifetimes
+      - Idempotent owner closure and nested-resource release
+      - Shared settlement independent of closed local work
+      - Source and aggregate release after last required access
+      - Consumed-source and derived-Promise rejection ownership
+  - Data classification, configuration, and reception
+    - Host declarations
+      - Shallow external identity declarations and precedence
+      - Atomic reachable managed-state declarations
+      - Exact managed-class registration and prototype eligibility
+      - Synchronous validation, idempotence, and declaration conflicts
+    - Identity admission
+      - Execution-local category and admitted-prototype fixation
+      - Conservative structural classification and opaque external fallback
+      - Imported-origin protection and unchanged host storage
+    - Common input preparation
+      - Fresh logical topology before receiver or target waits
+      - Atomic admission, placements, versions, and topology activation
+      - Alias and cycle preservation with borrowed-child protection
+      - Deferred preparation segments and staged publication authority
+      - Prepared-input reuse and unused-root abandonment
+    - Host-result reception
+      - Causal result import and boundary capability validation
+      - Borrowed-result isolation preserving origin and captured state
+  - Language graph access and mutation
+    - Chain roots
+      - Root initialization and retained-holder semantics
+      - Empty-path replacement and ordinary versus entered deletion
+    - Graph properties
+      - Own enumerable data placements and excluded property surfaces
+      - Absent placement versus present undefined
+      - Terminal-value capabilities and broken traversal prefixes
+    - Path selection
+      - Reached-only String and Number validation without coercion or unused-suffix access
+      - Ordered root and intermediate-placement capture
+      - Canonical path rebasing and source-static provenance
+    - Assignment and deletion
+      - Right-hand reception before destination mutation
+      - Final creation, replacement, and deletion without old-value consumption
+      - Selected mutation scope and deterministic failed-prefix placement
+      - Managed and native boundary selection along the path
+  - Logical placement state and publication
+    - Property versions
+      - Captured value, presence, recovery, and insertion position
+      - Independent pending versions and ready logical overlays
+      - Installed authority versus detached captured settlement
+      - Producer publication readiness distinct from source availability
+      - Version copying and independent outstanding-use retention
+    - Managed publication
+      - Own-data-property creation and restricted-storage materialization
+      - Placement-value validation and native Promise-resolution safety
+      - Record insertion order through creation, deletion, and recreation
+      - Atomic storage, parent, index, recovery, and structural updates
+      - Required write failure versus optional physical synchronization
+      - Stale physical fallback exclusion and writer-authority release
+    - Transition gates
+      - Pending mutation privacy and ordered placement access
+      - Pending property-prefix transitions and gate handoff
+  - Managed ownership, retention, and retirement
+    - Owner isolation and copy-on-write
+      - Incoming-owner and protected-ancestor preservation
+      - Imported and recovery-baseline write protection
+      - Shallow path copying with off-path reuse and prototype preservation
+      - Aliases and cycles within one owner versus independent occurrences
+      - Captured generation identity across storage reuse and ancestor changes
+    - Retained uses and handoff
+      - Read leases protecting values without delaying mutation
+      - Holder and pending-writer pins preserving graph liveness
+      - Bounded ready-result delivery and shared fallback release
+      - Direct pending-result reception before producer release
+      - Forwarding and joining independently protected inputs
+      - Unpublished working-root protection and ownership transfer
+      - Detached delivery cleanup in live and failed executions
+    - Complete parent relationships
+      - Root, alias, cycle, and projected Array-backing occurrences
+      - Incremental placement attachment, replacement, and removal
+      - Recovery dependencies and logical versus physical relationships
+    - Retirement and reactivation
+      - Graph-transition batching across nested callbacks and trusted bodies
+      - Synchronous disconnected-region retirement including cycles
+      - Reverse links, backing registrations, destinations, and counter release
+      - Authoritative forward-state restoration without host reinspection
+      - Active-descendant reuse and demand-driven counter rebuilding
+    - Bounded graph work
+      - Selected-input, path, frontier, and dependency work limits
+      - Identity inspection without losing placement occurrences
+      - Incremental maintained facts without active-graph rescans
+  - Errors and recovery
+    - Failure data and attribution
+      - Native Error recognition and poison versus fatal classification
+      - Immutable contextual wrappers and stable semantic failure kinds
+      - Causal source preservation across ready and pending boundaries
+      - Hook-free diagnostics retaining exact compliant causes
+      - Flat compound unions and semantic leaf deduplication
+    - Fatal execution failure
+      - First authoritative fatal commit and best-effort reporting once
+      - Unexpected trusted escapes versus causal external failures
+      - Prompt pending-result failure and settled-result stability
+      - Fatal checkpoints suppressing later graph and host effects
+      - Cross-execution fatal reception and independent live executions
+      - Synchronous external-action re-entry exclusion
+    - Managed scope poison
+      - Ordered baseline retention and failed-working-state discard
+      - Blocked-operation propagation without replacing recovery state
+      - Ordinary Error data versus repairable placement poison
+      - Receiver publication failure and independent result Error preservation
+    - Repair
+      - Managed baseline restoration and failed-publication preservation
+      - Ordered external subtree clearing without native rollback
+      - Ancestor poison, permanent conflict, and readonly repair restrictions
+      - Repair-and-call clearing before new mutation preparation
+  - Error queries and graph presence indexing
+    - Error query results
+      - Existence proofs and early hasError completion
+      - Complete getErrors collection over captured Promise frontiers
+      - Terminal managed guards and opaque external identities
+      - Ordered contextual external poison and binding-conflict queries
+      - Recoverable query reflection failure versus internal traversal fatality
+    - Lazy presence index
+      - Atomic downward-closed index construction and abandonment
+      - Cycle-cut projection preserving language topology
+      - Immediate-placement multiplicity and zero/nonzero propagation
+      - Incremental indexed-child publication and reciprocal edges
+      - Counter-pruned traversal with shared cut-region visitation
+  - Expression extraction
+    - Primitive-only extraction without coercion or descendant traversal
+    - Ready immutable failure containers and pending Error rejection
+    - Expression-failure consumption into ordinary graph Error data
+  - Reference entry
+    - Reference capture
+      - Narrowest selectable anchor with an unconsumed relative suffix
+      - Optional discovery failure at the enclosing placement
+      - Original destination and complete recovery-state transfer
+    - Access protection
+      - Managed mutable gates with ancestor copy-on-write
+      - Readonly captures and contained mutation restrictions
+      - Mixed and external coverage before callback activation
+    - Entry completion
+      - Callback-result reception before protection release
+      - Closure of new issuance with surviving contained and nested work
+      - Private-root publication and holder-mirror detachment
+      - Managed publication independent of external descendant completion
+  - Invocation and language conversion
+    - Call dispatch and inputs
+      - Receiver capabilities, method availability, constructor exclusion, and mode
+      - Declared input consumption, omission, and unused-input abandonment
+      - Receiver protection before callback-capable argument preparation
+      - Clean receiver and argument coordination before dynamic member resolution
+    - Managed receiver preparation
+      - Complete logical capture with aliases, cycles, presence, and shape
+      - Opaque external leaves and full-receiver capability restrictions
+      - Required receiver and argument Error collection
+      - Record own-method and admitted class-prototype selection
+      - Observation materialization from captured logical state
+    - Managed mutation
+      - Complete receiver isolation from baseline and exported arguments
+      - Completed receiver validation and produced-state admission
+      - Receiver finalization independent of method-result admission
+      - Returned receiver publication versus independent imported results
+    - Receiver and exact-input authority through direct method completion
+    - Native Strings
+      - Character-index and intrinsic-length observations with write restrictions
+      - Trusted data-method dispatch and native observation behavior
+      - Exported arguments, native protocols, callbacks, and result admission
+    - Logical scalar conversion
+      - Intrinsic primitive conversion without application coercion hooks
+      - Recursive Array joining with captured ancestry, shape, and complete Errors
+  - Logical Arrays
+    - Controlled methods
+      - Controlled method table and observation-mutation result semantics
+      - Sparse remapping versus dense read-through-hole copying
+      - Retained payload insertion, replacement, and movement
+      - Receiver publication and independent removed-value results
+    - Selection and composition
+      - Indexed sampling with normalized bounds and captured results
+      - Range copying with captured presence and bounded source access
+      - Concatenation spreading and scalar payload retention
+      - Depth-limited flattening with required frontier and cycle handling
+    - Search and sorting
+      - SameValueZero membership and concurrent pending comparisons
+      - Ordered strict-equality searches and early termination
+      - Stable default-key sorting with holes and undefined
+      - Synchronous comparators over one detached shared snapshot
+    - Length and structural ordering
+      - Intrinsic length observations and resize-value conversion
+      - Retained-prefix resizing and truncated-transition exclusion
+      - Committed growth independent of element completion and backing resize
+      - Exact-length and range questions at captured program positions
+      - Captured shape histories and watcher release
+    - Array storage representations
+      - Logical bounds, holes, overlays, and projected storage
+      - Shared-backing derivation and protected endpoint reuse
+      - Eligible in-place storage versus copy or materialization
+  - External state and authority
+    - Static context registration
+      - Finite named-route discovery and managed-endpoint pruning
+      - Direct original placements without thenable discovery
+      - Atomic binding registration and duplicate selected-location rejection
+      - Fixed runtime trees and unchanged compiler-owned input
+    - Context-bound authority
+      - Canonical and entered routes with preserved static provenance
+      - Inert aliases, local off-path rejection, and competing bindings
+      - Fixed resource identities and connecting namespace preservation
+      - Mixed managed-scope rejection with permitted inert-alias retention
+      - Native traversal and receivers excluding managed mutation authority
+      - Reached-prefix validation and deterministic dynamic-selection failure scopes
+    - Hierarchical effect ordering
+      - Overlapping observations and ancestor-descendant mutation conflicts
+      - Issuance-time reservations and fixed managed prerequisites
+      - Bounded reservation frontiers and idempotent completion
+      - Private entry views without dependence on later outside work
+      - Direct-boundary lifetimes and early-failure predecessor draining
+    - Native operations
+      - Ready native traversal with availability only at final results
+      - Ordered property reads and observation-only result import
+      - Export-before-write assignment and native deletion
+      - Prepared native member selection, invocation, and result import
+      - Mutation failure retaining completed host effects
+    - Mutable-property snapshots
+      - Detached ready-only graph copying and completed-copy admission
+      - Logical managed placements and Array shape through native aliases
+      - Snapshot validation and complete discoverable Error collection
+    - External scope poison
+      - Own poison and incremental descendant-presence summaries
+      - Ancestor blockers with healthy sibling availability
+      - Local observation failure without changing mutation poison
+  - Host-ready data export
+    - Detached managed copying with admitted prototypes and exact opaque leaves
+    - Shared aliases and cycles across ordered input batches
+    - Captured placements and structure through pending completion
+    - Complete root Error collection before native effects
+    - Mutation-capability escape prevention across outward routes
+    - Partial-output release independent of required Error collection
+  - Verification and review tooling
+    - Semantic reference models
+      - Independent managed placement, Array, and nested-graph sequences
+      - Input-reception and graph-lifetime models
+      - External scope effects and ordering models
+      - Retirement algorithms against independent forward-root reachability
+      - Native-equivalence comparison of values, effects, and structure
+      - Error attribution, cause, and identity oracles
+    - Structural and lifetime witnesses
+      - Independent parent, storage, counter, and liveness oracles
+      - Publication, construction, admission, and work-bound instrumentation
+      - Garbage-collection and retention witnesses
+    - Execution controls and verification sensitivity
+      - Exhaustive conflict schedules with independent ordering witnesses
+      - Ordered-thenable fixtures preserving the scheduling contract
+      - Safeguard fault injection and witness classification
+      - Deterministic seeds, coverage dimensions, and observer-free controls
+      - Bounded child-process execution and strict rejection handling

@@ -12,11 +12,13 @@ This is the authoritative developer-facing contract for data passed between Java
 
 ## Managed results and receiving boundaries
 
-**Implementation status:** common fresh-input preparation and complete parent indexing are implemented. Bounded delivery, ownership derived from parents, and retirement remain Phase 2 targets in the [runtime evolution plan](runtime-evolution-plan.md). The current runtime still relies on permanent `shared` protection.
+**Implementation status:** common input preparation, complete parent indexing, bounded delivery, parent-derived ownership, and retirement are implemented. The [runtime evolution plan](runtime-evolution-plan.md) tracks subsequent no-op unzipping and export deduplication.
 
 Managed results preserve their logical values through immediate reception by an operation or retention in a Chain or other explicit holder. A raw managed value or Promise is a handoff, not indefinite storage: receive it before an intervening operation can change its source, and protect each delivered input before forwarding or joining readiness. External code receives detached exports. The [integration contract](integration.md#managed-value-reception-and-delivery) specifies these boundaries and temporary Chain release.
 
-Import host data before ordinary Chain initialization or assignment; Cascada-created structures preserve their runtime-owned origin. Every literal evaluation allocates its newly constructed containers afresh; the compiler must not reuse mutable data templates across evaluations or executions. Existing managed references may intentionally recur within one execution, including inside fresh wrappers, so freshness is not required at every reception. Host-owned cached graphs require import; direct cross-execution transfer of managed identities is unsupported and requires export then import. Prepare each fresh input that a call consumes or provisionally retains before receiver waits or selected processing, including its available internal relationships. Native export and method selection remain receiver-first. Reuse completed preparation. Ready rejected calls and inputs known to be unused do not consume arguments. Outward-only writes also prepare fresh managed sources before export; their source relationships are managed facts, while detached output copies have no managed parents.
+Import host data before ordinary Chain initialization or assignment; Cascada-created structures preserve their runtime-owned origin. Every literal evaluation allocates its newly constructed containers afresh; the compiler must not reuse mutable data templates across evaluations or executions. Existing managed references may intentionally recur within one execution, including inside fresh wrappers, so freshness is not required at every reception. Host-owned cached graphs require import; direct cross-execution transfer of managed identities is unsupported and requires export then import. Prepare each fresh input that a call consumes or provisionally retains before receiver waits, mutation-path traversal, or selected processing, including its available internal relationships. Native export and method selection remain receiver-first. Reuse completed preparation. Mutation calls provisionally prepare inputs before walking the receiver path, including calls whose dispatch later rejects. Ready rejected observations leave arguments unconsumed. Outward-only writes also prepare fresh managed sources before export; their source relationships are managed facts, while detached output copies have no managed parents.
+
+Promise delivery does not change ownership: an unimported delivered container is runtime-owned just like a ready one. Import host-owned data to preserve it against mutation; timing alone does not provide that protection.
 
 ## Allowed nondeterminism in Error handling
 
@@ -49,7 +51,7 @@ Cascada graph state consists only of own enumerable string-keyed data properties
 - A successful non-Promise language-data result must be safe under native Promise resolution. Cascada rejects an ordinary callable own `then` placement during assignment and Promise-backed publication. Completed managed mutation applies the same placement-value rule with `InvalidManagedReceiver` and rejects newly encountered stored thenables without subscribing. Validation does not rescan admitted identities' hidden properties or prototype chains. Managed-class declaration and snapshot adoption reject callable or accessor `then` anywhere on the retained prototype chain; that chain must remain safe and stable. Records and Arrays rely on stable standard prototypes. Installing an unsafe native `then` through an accessor, non-enumerable property, Array non-index property, or prototype change is unsupported and carries no diagnostic or recovery guarantee.
 - An exact Function or external identity used as a successful non-Promise language value must have a stable native `then` lookup that safely yields a non-callable value throughout its use, including before admission. Remaining read-only after admission does not establish that initial condition. Function and Error classification still precede availability recognition: classifying a Function without sampling its `then` does not promise supported output for an unsafe Function. Errors retain their separate Error semantics. Unsafe exact values are outside the host contract; Cascada adds no recurring reflection probe, thenability cache, or facade wrapper to support them. A non-callable data `then` remains ordinary. Without these source restrictions, native Promise resolution could invoke the same object only when an operation completed asynchronously, breaking ready/pending equivalence.
 
-Do not place semantic managed state outside graph-visible properties. Cascada may copy or materialize managed data without copying hidden state or preserving traversable identity between operations.
+Do not place semantic managed state outside graph-visible properties. Cascada may copy or materialize managed data without copying hidden state or preserving its physical JavaScript address between operations. Representation-only observation materialization preserves managed logical identity, including a returned receiver, descendant, or alias inside a returned wrapper. Successful identity comparisons and exported aliases must not depend on whether preparation required such a copy or on Promise timing. Native code must not retain an unexported receiver for comparison across calls; arguments still cross their separate export boundary.
 
 ## Proxies in managed storage
 
@@ -91,7 +93,7 @@ host-supplied graph data and remain available.
 - Strings support documented native observations only.
 - Number, Boolean, BigInt, Symbol, `null`, and `undefined` have no methods or property writes.
 - A Promise or supported thenable has no direct operations; the resolved value determines its capabilities.
-- A Promise or supported-thenable input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to a call rejected while its receiver is ready; application code remains responsible for handling its rejection. While receiver selection is pending, explicit arguments may be provisionally consumed and fresh managed structure prepared to preserve borrowed descendants. Such inspection does not make an ultimately unused input a required wait or Error-collection obligation.
+- A Promise or supported-thenable input that an operation does not consume remains host-owned. This includes an unused path segment or an argument to an observational call rejected while its receiver is ready; application code remains responsible for handling its rejection. Before a mutation call walks its receiver path, or while observational receiver selection is pending, explicit arguments may be provisionally consumed and fresh managed structure prepared to preserve borrowed descendants. Such inspection does not make an ultimately unused input a required wait or Error-collection obligation.
 - A language Error has no operations and propagates when consumed.
 
 ## Promises and supported thenables
@@ -109,15 +111,14 @@ custom thenable:
 - delivers callbacks in subscription order, including across settlement: a later
   subscription to an already-settled value cannot overtake an earlier
   subscription whose callback has not yet been delivered;
-- may invoke a callback synchronously when its outcome is already available; and
+- may synchronously invoke only the newly supplied callback when its outcome is already available; it never drains callbacks from earlier subscriptions inside `then`; and
 - returns the callback result directly when it invokes the callback synchronously, or a supported thenable representing that callback's eventual result when delivery is pending.
 
-If a callback delivered before its own subscription returns throws, that throw
-escapes that `then` call synchronously. Once a subscription returns pending, a
-later callback throw rejects its returned chain, including when another
-subscription drains that older callback synchronously. Catching that older
-throw to reject its chain is required; swallowing a throw from the currently
-supplied synchronous callback is unsupported. An implementation that cannot provide this
+If the newly supplied callback runs synchronously and throws, that throw escapes
+its `then` call. Once a subscription returns pending, a later callback throw
+rejects its returned chain. A lazy-flushing implementation must schedule older
+callbacks separately and return pending while preserving FIFO; it cannot flush
+them from a new subscription. An implementation that cannot provide this
 sync-first chain contract should expose a native Promise instead.
 
 A custom thenable delivers a final non-thenable fulfillment value; it owns any
@@ -134,12 +135,11 @@ processed in the same turn; Cascada adds no microtask merely to normalize it.
 The `then` invocation is a trusted scheduling protocol, not a general external-code
 callback: its implementation performs its own subscription, delivery, and
 chaining work, and must not call back into Cascada synchronously except through
-the supplied callbacks. Cascada does not add state merely to diagnose violations
-of that contract. At subscription exit, on return or throw, it checks the
-subscribing operation's execution and propagates any authoritative fatal before
-processing the result. No-op rejection subscriptions use the same boundary;
-their handlers retain rejection ownership after failure. This adds no queue or
-restriction on valid delivery of older pending callbacks.
+the newly supplied callbacks. Cascada does not add state merely to diagnose
+violations of that contract. Synchronous callback failures unwind through their
+ordinary guards; pending failures reject their own chains. No-op rejection
+handlers retain rejection ownership after failure without semantic work or a
+separate subscription-exit check.
 
 After consuming a possible thenable, Cascada derives readiness only from the
 returned transition result. A transition that finishes synchronously returns
@@ -162,7 +162,8 @@ from interleaving before the current stack returns.
 
 Dynamic or throwing `then` getters, Proxy-dependent `then` behavior, changing
 methods, inconsistent outcomes, repeated settlement, insufficient subscription
-support, non-FIFO delivery, and custom fulfillment with another thenable are
+support, non-FIFO delivery, draining older callbacks during subscription, and
+custom fulfillment with another thenable are
 outside the supported data contract. Cascada does not add validation or repair
 machinery for these cases. A failure that ordinary supported-external-action boundary
 handling observes is still classified normally; undetectable ordering violations

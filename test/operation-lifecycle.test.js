@@ -1,3 +1,4 @@
+import { Execution } from "../src/index.js"
 import assert from "node:assert/strict"
 import {
     OperationOwner,
@@ -9,11 +10,11 @@ import {
 } from "../src/internal-step.js"
 import { createPoisonError, ERROR_KIND } from "../src/error.js"
 import { returnOperationResult, isFatalError } from "cascada-chain-resolution"
-import { testOperationContext, deferred, flushMicrotasks } from "./support.js"
+import { deferred, flushMicrotasks } from "./support.js"
 
 describe("operation lifecycle", () => {
     it("treats rejection of a normalized input as an internal failure", async () => {
-        const ctx = testOperationContext()
+        const ctx = { execution: new Execution(), errorContext: "test operation" }
         const source = deferred()
         const error = createPoisonError(new Error("unexpected rejection"), ctx, ERROR_KIND.OperationInputFailed)
         const result = returnOperationResult(ctx, collectInputs(
@@ -29,7 +30,7 @@ describe("operation lifecycle", () => {
                 released.push("resources")
             }
         }
-        const owner = new Owner(testOperationContext())
+        const owner = new Owner({ execution: new Execution(), errorContext: "test operation" })
         const unregister = releaseOnClose(owner, () => released.push("removed"))
         releaseOnClose(owner, () => released.push("registered"))
         unregister()
@@ -42,7 +43,7 @@ describe("operation lifecycle", () => {
     })
 
     it("stops closed operation work before its continuation reads state", async () => {
-        const owner = new OperationOwner(testOperationContext())
+        const owner = new OperationOwner({ execution: new Execution(), errorContext: "test operation" })
         const source = deferred()
         let calls = 0
         const work = continueOperation(
@@ -59,7 +60,7 @@ describe("operation lifecycle", () => {
     })
 
     it("collects all required poison outcomes before completing and releases captures", async () => {
-        const ctx = testOperationContext()
+        const ctx = { execution: new Execution(), errorContext: "test operation" }
         const owner = new OperationOwner(ctx)
         const source = deferred()
         const first = createPoisonError(

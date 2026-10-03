@@ -81,10 +81,12 @@ class FatalError extends Error {
 }
 
 function isPoisonError(error) {
-    return Error.isError(error) && error instanceof PoisonError
+    if (!Error.isError(error)) return false
+    const prototype = Object.getPrototypeOf(error)
+    return prototype === PoisonError.prototype || prototype === CompoundPoisonError.prototype
 }
 function isFatalError(error) {
-    return Error.isError(error) && error instanceof FatalError
+    return Error.isError(error) && Object.getPrototypeOf(error) === FatalError.prototype
 }
 
 function createFatalError(reason, errorContext) {

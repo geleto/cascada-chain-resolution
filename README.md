@@ -196,10 +196,18 @@ Its return behavior matches `assignPath`: success and suspended issuance return
 
 ### `lookupPath(chain, path, operationContext)`
 
-Returns the value captured at `path`. A returned traversable identity gains an
-owner and is marked shared, ensuring later mutation through either owner is
-isolated by copy-on-write. The result is direct unless path traversal crosses a
-Promise.
+Returns the value captured at `path`, directly unless traversal remains pending.
+The result is an immediate handoff: receive it in a Chain or assignment for
+continued managed use, or export it for host retention. A brief delivery lease
+protects this transfer; lookup alone does not create a permanent owner.
+
+```js
+const retained = new Chain(lookupPath(source, ["child"], operationContext), operationContext);
+const detached = exportValue(retained, [], operationContext);
+```
+
+See the [integration contract](docs/integration.md) for receiving and exporting
+ready and pending results.
 
 ### `lookupPathForExpression(chain, path, operationContext)`
 
@@ -328,17 +336,24 @@ Supported receivers are:
   native effects and ownership rules, including rejection of receiver escape.
 
 Controlled Array and native String dispatch rejects unsupported calls before
-preparing arguments. Record and managed-class members are resolved only after
-their required inputs are clean, so poisoned inputs invoke no application
-getter, Proxy trap, or managed-prototype reflection.
+boundary-specific conversion or export. Common ownership preparation is separate:
+mutation calls prepare every argument before receiver-path traversal, and
+observations waiting for a receiver may provisionally prepare arguments too.
+This can inspect fresh surplus inputs or subscribe to pending roots even when
+dispatch later rejects. Ready rejected observations leave arguments unconsumed;
+ultimately unused inputs add no required wait or Error outcome. Method selection
+and boundary-specific conversion/export remain receiver-first. Record and
+managed-class members are resolved only after their required inputs are clean,
+so input failure prevents member getters, Proxy traps, and prototype reflection.
 
 The controlled Array methods are `at`, `concat`, `copyWithin`, `fill`, `flat`,
 `includes`, `indexOf`, `join`, `lastIndexOf`, `pop`, `push`, `reverse`, `shift`,
 `slice`, `sort`, `splice`, `toReversed`, `toSorted`, `toSpliced`, `toString`,
 `unshift`, and `with`. Array callback methods such as `map`, `filter`, `reduce`,
 and `forEach` are not supported. `sort` and `toSorted` support synchronous
-comparators. Controlled methods prepare only the arguments they consume;
-numeric and string positions use Cascada conversion, while retained payloads
+comparators. Selected controlled algorithms consume only their required argument
+positions, independently of provisional ownership preparation. Numeric and
+string positions use Cascada conversion, while retained payloads
 keep their logical values. A comparator receives exported element copies and
 must return a Number. `concat` spreads only logical Arrays and ignores
 `Symbol.isConcatSpreadable`.

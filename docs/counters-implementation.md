@@ -14,8 +14,9 @@ Each indexed traversable identity stores:
 - `parents`: `Map<parent, multiplicity>` for reverse projected edges.
 
 `parents === undefined` means unindexed. An empty map means indexed with no
-projected parent. Shared/import marks describe ownership and are independent of
-these counters.
+projected parent. Ownership uses complete incoming placements, imported
+protection, preservation relationships, and leases independently of these
+counters. There is no permanent shared mark.
 
 ## Property projection
 

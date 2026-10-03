@@ -10,23 +10,19 @@ import {
     transformProperty,
     walkMutationPath,
 } from "./mutations.js"
-import { PathOperation } from "./path-operation.js"
 
-function run(chain, path, method, args, operationContext, facts) {
+function run(chain, path, method, args, operationContext, facts, delivery) {
     return internalSteps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext,
-            facts.mutationScopeDepth, facts.repair, facts.firstDynamicSegment ?? path.length)
+        const operation = new invocation.InvocationWork(chain, path, operationContext, facts, method, [...args])
         path = operation.route.path
-        args = [...args]
+        args = undefined
         const mutation = operation.mutation
         let externalAccess
         const result = invocation.invokeMethod(
-            operationContext,
-            method,
-            mutation,
-            args,
+            operation,
             context => selectMethodDescription(context, externalAccess),
-            invokeWithReceiver => {
+            (invokeWithReceiver, beforeWait) => {
+                operation.beforeWait = beforeWait
                 const native = access => {
                     externalAccess = access
                     return invokeWithReceiver(access.identity, true)
@@ -35,11 +31,12 @@ function run(chain, path, method, args, operationContext, facts) {
                 return operation.mutate((scope, state, privateChain, suffix) => {
                     if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
                     const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
-                    return internalSteps.continueOperation(outcome, operationContext, outcome =>
+                    return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
                         errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
                             ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
                 })
             },
+            delivery,
         )
         return mutation ? operation.finishMutation(result) : operation.finish(result)
     })
@@ -94,7 +91,7 @@ function selectMethodDescription(invocationWork, externalAccess) {
     if (externalAccess) {
         return {
             prepareArguments: () => invocationWork.exportArguments(),
-            invoke: args => externalAccess.call(method, args),
+            invoke: args => externalAccess.call(method, args, invocationWork.retainOutput),
         }
     }
 

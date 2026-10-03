@@ -12,17 +12,11 @@ Ordinary import separately inspects each newly admitted managed identity once. D
 
 Refcount cycle cuts may require a counter-selected walk when maintained counters cannot answer across a cut. All such walks in one operation share one visited set and inspect each identity at most once. Building a missing index may use a separate pass.
 
-## Promise presence
+## Input preparation and retention
 
-`containsPromise` uses one counter-pruned walk:
+Common input preparation establishes a fresh managed input's logical placements once, including pending delivery obligations. Already prepared active data uses its maintained index; retired data restores relationships from authoritative forward state without repeating admission or host inspection. Preparation does not perform a separate Promise-presence walk.
 
-- a Promise proves presence;
-- an untracked or already visited value does not;
-- an indexed node with `promiseCount > 0` proves presence;
-- an indexed node with zero `promiseCount` and zero `cycleCutCount` proves absence; and
-- an unindexed node or indexed node with cuts enumerates its own logical children recursively.
-
-One visited set spans the walk. Counters prune clean indexed subtrees; the fallback covers only the selected input and counter-selected cut regions. The check does not build an index because structural discovery must not create Promise consumers. Exact classification avoids permanently sharing an attachment root that contains no delayed work.
+Root placements and temporary leases preserve received values. Ownership derives from current incoming placements, imported protection, and leases; there is no permanent shared mark. Consumers transfer protection when they have captured the exact versions or identity they need. A scalar conversion or identity comparison therefore need not retain its original input container while an unrelated argument remains pending.
 
 ## Array ranges
 
@@ -34,13 +28,15 @@ Array work is bounded by three shared mechanisms:
 
 All three use the common Promise-origin and placement transitions, preserving holes, ownership, versions, and inherited-setter safety without operation-specific paths.
 
+Pending length sequences have independent revision counters. A growth outcome invalidates only retained sequences containing that contribution; a private fork's completion causes no scan of an unchanged original. Repeated questions reuse current bounds until a relevant outcome changes. Fork construction and subscription attachment or removal visit their own captured frontier. Counter registrations end with the last Array or reader use, and retain no passive sequence or Array through a completed or unrelated source.
+
 ## Controlled Array work
 
-One invocation lifetime covers controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. A final local result closes that work. A late continuation in a live execution still finishes required shared Promise settlement and bookkeeping, but performs no further Array-specific work. A continuation in a fatal execution returns at the common execution check before either kind of work.
+One path-operation owner covers invocation, controlled input preparation, logical conversion, recursive `flat`, search continuations, comparator export, and remap construction. The coordinator closes after required publication and result processing. Component captures and leases release at their own last use. A preparation Error discards success-only assembly while required Error collection continues. A late continuation in a live execution still finishes required shared Promise settlement and bookkeeping, but performs no further operation work after closure. A continuation in a fatal execution returns at the common execution check before either kind of work.
 
 `concat` bounds later work by synchronously capturing each resolved logical Array as a sparse property-placement remap. Sort resolves each present top-level placement once. Default sorting converts each sortable occurrence once; comparator sorting exports one dense snapshot and reuses it for every comparison.
 
-Array-length assignment makes the existing mutation context its explicit guarded-work owner, so ready conversion allocates no additional owner object or release-registry state. Pending conversion normally closes only after its mutation gate publishes. Local sibling closure in a live execution does not suppress required shared property settlement; execution fatality stops a resumed conversion before settlement.
+Array-length assignment uses its existing path-operation owner for guarded conversion; it allocates no second owner. Ready conversion needs no release registry. Conversion drops its source captures after constructing the resize, and the coordinator closes after required publication. Local sibling closure in a live execution does not suppress required shared property settlement; execution fatality stops a resumed conversion before settlement.
 
 ## Detached results
 

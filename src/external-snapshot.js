@@ -13,15 +13,17 @@ function snapshotExternalValue(value, operationContext, admit = true) {
     const visited = new Map()
     const failures = new Set()
     let copies = []
-    const result = walk(value)
-    if (failures.size) return errors.combineErrors(failures, "External property snapshot failed")
-    // Graph lookup adopts the completed copies. Native export transfers those
-    // same independent copies without admission or a second copying pass.
-    if (admit) for (const [copy, type, prototype] of copies)
-        metadata.getOrCreateMeta(copy, operationContext, type, prototype)
-    if (admit) for (const [copy, type] of copies)
-        if (metadata.isTraversableType(type)) initializePlacements(copy, operationContext)
-    return result
+    try {
+        const result = walk(value)
+        if (failures.size) return errors.combineErrors(failures, "External property snapshot failed")
+        // Graph lookup adopts the completed copies. Native export transfers those
+        // same independent copies without admission or a second copying pass.
+        if (admit) for (const [copy, type, prototype] of copies)
+            metadata.getOrCreateMeta(copy, operationContext, type, prototype)
+        if (admit) for (const [copy, type] of copies)
+            if (metadata.isTraversableType(type)) initializePlacements(copy, operationContext)
+        return result
+    } finally { visited.clear(); failures.clear(); copies = value = undefined }
 
     function collect(failure) {
         failures.add(failure)
@@ -45,77 +47,79 @@ function snapshotExternalValue(value, operationContext, admit = true) {
     }
 
     function walk(source) {
-        if (Error.isError(source)) return collect(errors.createPoisonError(
-            source, operationContext, errors.ERROR_KIND.ExternalPropertyReadFailed))
-        if (!metadata.isObjectLike(source)) return source
-        if (typeof source === "function") {
-            if (copies && !metadata.metaOf(source, operationContext))
-                copies.push([source, metadata.TYPE.Function])
-            return source
-        }
-        if (operationContext.execution._externalIdentities.has(source))
-            return collect(externalCapabilityEscapeError(operationContext))
-        if (visited.has(source)) return visited.get(source)
-        visited.set(source, undefined)
-        const meta = metadata.metaOf(source, operationContext)
-        const managed = metadata.isTraversableType(meta?.type)
-        const array = managed ? meta.type === metadata.TYPE.Array : native(() => Array.isArray(source))
-        if (errors.isPoisonError(array)) return array
-        const prototype = managed && !array ? meta.admittedPrototype :
-            array ? Array.prototype : native(() => Object.getPrototypeOf(source))
+        try {
+            if (Error.isError(source)) return collect(errors.createPoisonError(
+                source, operationContext, errors.ERROR_KIND.ExternalPropertyReadFailed))
+            if (!metadata.isObjectLike(source)) return source
+            if (typeof source === "function") {
+                if (copies && !metadata.metaOf(source, operationContext))
+                    copies.push([source, metadata.TYPE.Function])
+                return source
+            }
+            if (operationContext.execution._externalIdentities.has(source))
+                return collect(externalCapabilityEscapeError(operationContext))
+            if (visited.has(source)) return visited.get(source)
+            visited.set(source, undefined)
+            const meta = metadata.metaOf(source, operationContext)
+            const managed = metadata.isTraversableType(meta?.type)
+            const array = managed ? meta.type === metadata.TYPE.Array : native(() => Array.isArray(source))
+            if (errors.isPoisonError(array)) return array
+            const prototype = managed && !array ? meta.admittedPrototype :
+                array ? Array.prototype : native(() => Object.getPrototypeOf(source))
 
-        // Never invoke then, including when it could deliver synchronously.
-        // Logical managed placements override stale physical host values.
-        const then = managed
-            ? inspect(() => readManagedProperty(source, "then", operationContext))
-            : native(() => source.then)
-        if (errors.isPoisonError(then)) collect(then)
-        if (typeof then === "function") {
-            invalid("External snapshots cannot contain thenables")
-            if (!managed) return undefined
-        }
-        // Admitted managed sources have a fixed category and safe, stable
-        // prototype; only new host sources need those probes here.
-        if (!managed && !array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
+            // Never invoke then, including when it could deliver synchronously.
+            // Logical managed placements override stale physical host values.
+            const then = managed
+                ? inspect(() => readManagedProperty(source, "then", operationContext))
+                : native(() => source.then)
+            if (errors.isPoisonError(then)) collect(then)
+            if (typeof then === "function") {
+                invalid("External snapshots cannot contain thenables")
+                if (!managed) return undefined
+            }
+            // Admitted managed sources have a fixed category and safe, stable
+            // prototype; only new host sources need those probes here.
+            if (!managed && !array && !errors.isPoisonError(prototype)) inspectPrototype(prototype)
 
-        const length = array ? (managed
-            ? inspect(() => readManagedProperty(source, "length", operationContext))
-            : native(() => source.length)) : undefined
-        if (errors.isPoisonError(length)) collect(length)
-        else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
-            invalid("External snapshot Array has an invalid length")
-        const plain = !managed && !array && !errors.isPoisonError(prototype) &&
-            native(() => prototype === null || metadata.isPlainObjectPrototype(prototype))
-        const type = managed ? meta.type : array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
-        const copy = copies ? array ? new Array(length) : Object.create(prototype) : undefined
-        visited.set(source, copy)
-        if (copies) copies.push([copy, type, prototype])
-        const keys = managed
-            ? inspect(() => properties.enumerableLanguageKeyCandidates(source, operationContext))
-            : native(() => Reflect.ownKeys(source))
-        if (errors.isPoisonError(keys)) return keys
-        for (const key of keys) {
-            if (typeof key !== "string" || (array && !isArrayIndex(key))) continue
-            let child
-            if (managed) {
-                const placement = inspect(() => capturePlacement(source, key, operationContext))
-                if (placement.present !== true) continue
-                if (placement.sourceVersion?.pendingPresence) {
-                    invalid("External snapshots require settled property presence")
-                    continue
+            const length = array ? (managed
+                ? inspect(() => readManagedProperty(source, "length", operationContext))
+                : native(() => source.length)) : undefined
+            if (errors.isPoisonError(length)) collect(length)
+            else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
+                invalid("External snapshot Array has an invalid length")
+            const plain = !managed && !array && !errors.isPoisonError(prototype) &&
+                native(() => prototype === null || metadata.isPlainObjectPrototype(prototype))
+            const type = managed ? meta.type : array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
+            const copy = copies ? array ? new Array(length) : Object.create(prototype) : undefined
+            visited.set(source, copy)
+            if (copies) copies.push([copy, type, prototype])
+            const keys = managed
+                ? inspect(() => properties.enumerableLanguageKeyCandidates(source, operationContext))
+                : native(() => Reflect.ownKeys(source))
+            if (errors.isPoisonError(keys)) return keys
+            for (const key of keys) {
+                if (typeof key !== "string" || (array && !isArrayIndex(key))) continue
+                let child
+                if (managed) {
+                    const placement = inspect(() => capturePlacement(source, key, operationContext))
+                    if (placement.present !== true) continue
+                    if (placement.sourceVersion?.pendingPresence) {
+                        invalid("External snapshots require settled property presence")
+                        continue
+                    }
+                    child = placement.value
+                } else {
+                    const descriptor = native(() => Object.getOwnPropertyDescriptor(source, key))
+                    if (errors.isPoisonError(descriptor) || !descriptor?.enumerable) continue
+                    child = native(() => source[key])
                 }
-                child = placement.value
-            } else {
-                const descriptor = native(() => Object.getOwnPropertyDescriptor(source, key))
-                if (errors.isPoisonError(descriptor) || !descriptor?.enumerable) continue
-                child = native(() => source[key])
+                const copied = walk(child)
+                if (copies) {
+                    defineCopyProperty(copy, key, copied)
+                }
             }
-            const copied = walk(child)
-            if (copies) {
-                defineCopyProperty(copy, key, copied)
-            }
-        }
-        return copy
+            return copy
+        } finally { source = undefined }
     }
 
     function inspectPrototype(prototype) {

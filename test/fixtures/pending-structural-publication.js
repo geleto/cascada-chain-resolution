@@ -5,13 +5,12 @@ import { verifyRefCounts } from "../verify-refcounts.js"
 
 let cases = 0
 for (const count of [2, 3]) for (const reverse of [false, true]) for (const rejects of [false, true]) {
-    for (const delivery of ["native", "synchronous"]) for (const route of ["entry", "nested", "push", "borrowed", "view", "fork"]) {
+    for (const delivery of ["native", "ordered"]) for (const route of ["entry", "nested", "push", "borrowed", "view", "fork"]) {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const chain = new r.Chain({ list: [1, , 3] }, ctx), expected = [1, , 3]
         const lengths = [2, 4, 1].slice(0, count), sources = [], cause = new Error("length failure")
         for (const length of lengths) {
             const source = delivery === "native" ? Promise.withResolvers() : new OrderedThenable()
-            if (delivery === "synchronous") source.flushOnSubscribe = true
             const promise = delivery === "native" ? source.promise : source
             // A failed predecessor may legitimately leave a later input unused.
             promise.then(() => {}, () => {})

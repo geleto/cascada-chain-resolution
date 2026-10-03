@@ -1,6 +1,6 @@
 # Mutation and observation architecture
 
-Architecture for property operations, method calls, and entry. The [data contract](data-limitations.md) is authoritative. The four mechanisms below have separate jobs: leases and sharing preserve earlier values, COW lets managed writers proceed, and gates order unfinished effects.
+Architecture for property operations, method calls, and entry. The [data contract](data-limitations.md) is authoritative. The four mechanisms below have separate jobs: leases protect temporary use, parent placements identify retained owners, COW lets managed writers proceed, and gates order unfinished effects.
 
 ## Lease: preserve a value temporarily
 
@@ -12,31 +12,31 @@ Use a managed lease for:
 - **Receiver preparation:** while resolving the graph needed by a managed call. This preparation lease ends when the working receiver is isolated; protection of the mutation's pre-operation scope has its own lifetime through publication.
 - **Managed rollback:** temporarily protect the selected scope's captured value while its mutation works privately. Use existing ownership and version mechanisms; release operation-only protection after successful publication or transfer retention to the poisoned placement on failure.
 - **Managed observations:** while a method or controlled operation can still read its captured receiver, including through its direct Promise.
-- **Observation-only managed entry:** while its callback can use the captured value. Lookups through that entry establish lasting sharing when needed.
+- **Observation-only managed entry:** while its callback can use the captured value. Escaping results receive their own bounded delivery protection before entry releases its lease.
 - **Pending managed path selection:** while an unresolved key prevents capture of the final target, protect the longest reached managed prefix. Reuse that protection across further pending keys.
 
 Delayed controlled copying retains both receiver and payload leases until it establishes output ownership. A lease is unnecessary when the required data has already been captured safely. For example, export copies available data immediately and captures pending property versions; a pending output does not require leasing the entire source. Once arguments are exported, using the independent copies needs no source lease.
 
 **External reads need different enforcement.** Temporarily reading a mutable external resource must prevent later writers from changing that exact identity. Observations reserve access through a read gate: readers can overlap, but the next writer waits. A managed lease would merely make runtime writers copy and cannot protect native state. Read gates apply only to resources with mutable external authority; observation-only external identities remain unlocked under their host contract.
 
-## Mark shared: preserve a retained value
+## Parent placements and handoff: preserve retained values
 
-Mark managed data shared when another owner or output may retain it. Later mutation through either owner must preserve the other's logical value. Sharing has no operation-end release.
+Complete incoming parent placements identify every managed owner, including Chain root holders, aliases, cycles, and logical ArrayView placements. Creating another placement establishes ownership; removing it removes that ownership. Mutation derives protection from current ownership and leases, so protection can end when its last holder releases it. Imported storage has its separate read-only rule.
 
-Use sharing for:
+Result delivery bridges the gap between producing a managed value and receiving it:
 
-- **Every public lookup returning managed data**, including after Promise resolution: its result may be retained or passed to another Chain.
-- **Managed method and operation results** that remain reachable from a receiver or another retained value.
-- **Assignment or copying that creates another managed owner**, including children retained by both sides of a copied parent.
-- **Imported managed data**, which runtime writes must preserve.
+- **Pending managed results and ready outputs losing their last hold** receive a brief delivery lease before prior protection ends. A ready lookup still held by its source needs no additional lease; its immediate consumer captures it before any later command can change the source.
+- **Chain initialization and assignment** prepare the received graph and establish its destination placement or retain it through pending publication before the receiving transition finishes.
+- **Arguments and export** keep protection only while they still need managed source values. Detached exported copies need no source protection.
+- **Retaining a result across later commands** requires an explicit holder such as a Chain. A raw result is an immediate handoff, not a permanent owner. Unreceived delivery holds expire at their bounded microtask release.
 
-Primitives and immutable Errors need no sharing flag. External identities are not protected by managed sharing. Internal path traversal, temporary reads, and ownership transfers need not create another owner just because they read a value.
+Primitives and immutable Errors need no managed ownership protection. External identities retain their separate authority and ordering rules. Internal traversal does not create an owner merely by reading a value.
 
-When temporary observation becomes retention, establish sharing before releasing the lease. Preserve all relevant aliases through the ordinary ownership rules; a fresh wrapper around an existing child does not make that child independent.
+Common input preparation establishes the complete topology before publication or delivery capture. In particular, an entry callback returning a fresh wrapper around a borrowed child must prepare that wrapper before releasing entry protection. A wrapper does not make its children independent. Graphs unreachable from holders or active retention are retired, including detached cycles; later reception restores their relationships from maintained logical state.
 
 ## Copy-on-write: preserve other owners during mutation
 
-Before modifying managed data, preserve its selected scope's pre-operation value for automatic rollback as well as values held by other owners. Existing leases, sharing, captured versions, and path COW provide this protection. Working state may be changed in place only when it is already independent of the protected baseline and all other owners.
+Before modifying managed data, preserve its selected scope's pre-operation value for automatic rollback as well as values held by other owners. Current parent placements, leases, captured versions, and path COW provide this protection. Working state may be changed in place only when it is already independent of the protected baseline and all other owners.
 
 Use COW for:
 
@@ -67,13 +67,13 @@ Keep the requested mutation authority, actual receiver/container, and publicatio
 
 An independent result Error does not fail a successful mutation: removing an Error-valued Array element may succeed while returning that Error. Ordinary assignment of Error data remains a data write. A direct native method throw, rejection, returned Error, invalid receiver, or failed required publication is a mutation failure. Keep required result Error collection independent of the receiver's publication lifetime.
 
-Selected mutation completion keeps the state effect separate from the independently delivered result. The publication coordinator applies failure to its applicable owner; validation helpers and failures before selection remain ordinary Error outcomes. A result that retains the published managed identity creates another owner and requires sharing. Derive that alias from the actual values and existing result-import rules rather than recording a second returns-receiver fact.
+Selected mutation completion keeps the state effect separate from the independently delivered result. The publication coordinator applies failure to its applicable owner; validation helpers and failures before selection remain ordinary Error outcomes. A result retaining the published managed identity needs delivery protection until its recipient establishes a placement or its own temporary protection. Derive that alias from the actual values and existing result-import rules rather than recording a second returns-receiver fact.
 
 Repair exposes the retained baseline by clearing scope poison; the failed working receiver is never exposed for user code to reconstruct. A sequence of commands, including an entered callback, is not one rollback unit. Higher-level Cascada guard/recover owns rollback across multiple operations. Exact external resources retain completed native effects on failure.
 
 ## Gate: order access around unfinished work
 
-A mutation gate blocks later dependent observations and mutations until the required change is complete. An external read gate lets observations overlap while making the next mutation wait for them. Gates protect access and publication order; sharing and leases preserve earlier managed values.
+A mutation gate blocks later dependent observations and mutations until the required change is complete. An external read gate lets observations overlap while making the next mutation wait for them. Gates protect access and publication order; parent placements and leases preserve earlier managed values.
 
 Use gates for:
 
@@ -88,7 +88,7 @@ A ready ordinary managed mutation needs no new gate. An independent pending resu
 
 A managed mutation queued at a pending placement owns a new publication version. Predecessor delivery alone cannot expose ready state through that version: the queued mutation must first take its ordered turn and publish its change or install its remaining gate. Keep the source availability signal so supported synchronous thenables can still make immediate progress. Also retain the existing producer Promise while publication is unfinished: a copied version may still expose a settled source signal while its producer waits on another gate. Consumers then wait for the producer, without polling the settled signal or treating it as ready data. Earlier captures continue to follow their own versions; never reconcile them against a later live placement. Selecting a native receiver through managed parents observes those parents and uses external reservations for mutation ordering.
 
-An observation captured through a pending transition may resume after publication has already made its value accessible to later synchronous writers. Record that capture on the version and mark its eventual managed value shared before publishing it. Copies and gate handoffs preserve this retention obligation. The observation boundary requests this protection explicitly; an operation owner's presence or lifetime does not imply ownership. Ordinary source delivery uses its existing FIFO ordering; publication alone, without a retained capture, does not require permanent sharing. Temporary consumers still release leases at their last use, and a closed consumer starts no new capture or local work.
+An observation captured through a pending transition may resume after publication has already made its value accessible to later synchronous writers. Register retention on its exact version before waiting. Publication transfers the complete value-and-recovery obligation to each capture, including recovery introduced later and pending or nested recovery. Copies and gate handoffs retain these obligations independently of the original owner. Capture release detaches every subscription and releases its leases or preservation relationships. An operation owner's presence alone does not retain a value, and a closed consumer starts no new capture or local work.
 
 Placement capture preserves Boolean presence, value or source version, and recovery together. Version construction copies those contents and unfinished source dependencies while retaining separate publication authority and capture obligations for the destination. Publication commits the complete placement through the common storage/index transition and releases finished producer dependencies. Uninstalled staging and detached captures can advance their own state without modifying live storage. Import uses these same mechanics but keeps admission, validation, and abandonment transactional; generic version helpers do not admit import data early.
 
@@ -102,14 +102,14 @@ A selected `!` scope determines the mutation's publication and poison scope; inc
 
 ## How the four mechanisms work together
 
-Suppose a lookup retains `x` while `x.n = 0`, then a mutation will set `x.n = 1` after asynchronous work:
+Suppose a lookup of `x` is immediately received by another Chain while `x.n = 0`, then a mutation through the original owner will set `x.n = 1` after asynchronous work:
 
-1. The lookup marks the retained managed value shared.
+1. The receiving Chain establishes its root placement under the source's existing hold or the pending lookup's delivery lease.
 2. The mutation uses COW to preserve that earlier value.
 3. Its unfinished publication is gated.
 4. A later lookup through the mutated owner waits and sees `1`; the retained earlier value still contains `0`.
 
-Temporary observation uses a lease instead of permanent sharing when its source does not escape. If it returns part of that source, sharing must take over before the lease ends. Observations returning only a number need no lasting receiver protection.
+Temporary observation leases its source until the last read. If it returns part of that source, result delivery protection takes over before the observation lease ends. Observations returning only a number need no lasting receiver protection.
 
 Wait only for the earlier values and effects an operation actually consumes. Reading a ready sibling need not wait for an unrelated pending property. Merely obtaining a managed parent does not require resolving its entire subtree.
 
@@ -159,7 +159,7 @@ A mixed entry also reserves access to external descendants in the tree. Every re
 
 Contained external work uses the same reservation algorithm in an entry-scoped view covered by the outer reservation. It does not wait for later outside work already waiting for the entry. Nested views inherit authority and use the same algorithm, without graph copies, an unrelated scheduler, or ownership of outside reservations. Entry waits for captured predecessors before invoking its callback. Actual contained commands check binding and scope poison; setup does not consume an unused reference. Outer coverage completes after callback closure and required contained external effects. Independently pending results do not extend those effects.
 
-Managed publication remains separate: after callback closure, publish the current private root through existing placement versions. If a contained transition still controls that root's placement, follow its structural completion before publishing; ordinary pending data does not extend that wait. Failed entry publication records present poison and retains the completed placement for repair, including absence, without rolling back earlier contained commands. An already-issued managed child gate or nested entry remains visible at its own path. A ready managed sibling must not wait for unrelated native child effects merely because its parent entry finished issuing commands. Closing a Chain forbids new issuance without cancelling already-issued work.
+Managed publication remains separate: prepare the callback result and capture its delivery protection before releasing the entry lease or private holder, then publish the current private root through existing placement versions. Result-preparation failure produces Error-valued output without undoing completed contained commands. If a contained transition still controls the root's placement, follow its structural completion before publishing; ordinary pending data does not extend that wait. Failed entry publication records present poison and retains the completed placement for repair, including absence, without rolling back earlier contained commands. An already-issued managed child gate or nested entry remains visible at its own path. A ready managed sibling must not wait for unrelated native child effects merely because its parent entry finished issuing commands. Closing a Chain forbids new issuance without cancelling already-issued work.
 
 ## Failure follows the same ownership and ordering
 
@@ -171,7 +171,7 @@ Repair uses the selected placement's ordinary managed ordering and any covered e
 
 ## Implementation boundary
 
-Use managed leases, sharing, COW, property versions, and operation-result ownership together with the common hierarchical external reservations. Mixed entry composes those mechanisms while preserving their distinct lifetime requirements.
+Use complete parent placements, managed leases, COW, property versions, and operation-result ownership together with the common hierarchical external reservations. Mixed entry composes those mechanisms while preserving their distinct lifetime requirements.
 
 The end state uses one external ordering algorithm, owning-placement poison for managed state, and automatic rollback of each failed managed mutation. Hierarchical external scopes add direct/subtree completion frontiers, entry-local ordering state, nested discovery, and Error summaries. Keep borrowed method-result handling where source and result validation differ. Measure copying and retained state as well as code size; do not promise a net line reduction before implementation.
 

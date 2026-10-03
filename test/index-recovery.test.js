@@ -63,7 +63,7 @@ for (const route of ["assignment", "deferred assignment", "imported fulfillment"
 }
 
 describe("index preparation", () => {
-    it("indexes values delivered through nested preparation callbacks", () => {
+    it("indexes values delivered through nested preparation callbacks", async () => {
         const ctx = context()
         const earlier = new OrderedThenable()
         const later = new OrderedThenable()
@@ -78,12 +78,10 @@ describe("index preparation", () => {
                         releaseEarlier: {
                             then(deliverEarlier) {
                                 earlier.resolve(revealed)
-                                earlier.flush()
                                 return deliverEarlier(null)
                             },
                         },
                     })
-                    later.flush()
                     return deliver(null)
                 },
             },
@@ -91,21 +89,20 @@ describe("index preparation", () => {
         // Input preparation follows each delivery before indexing begins; the
         // counter walk only inspects the completed logical placement captures.
         const chain = new runtime.Chain(root, ctx)
-        assert.equal(runtime.getErrors(chain, [], ctx), error)
-        assert.equal(runtime.hasError(chain, [], ctx), true)
+        assert.equal(await runtime.getErrors(chain, [], ctx), error)
+        assert.equal(await runtime.hasError(chain, [], ctx), true)
         assert.notEqual(refcounts.getRefCounter(revealed, ctx), undefined)
         verifyRefCounts(ctx, root)
         assert.equal(ctx.execution.fatalError, null)
     })
 
     for (const indexedFirst of [false, true]) {
-        it("counts captured versions advanced during later subscription" + (indexedFirst ? " in an existing index" : ""), () => {
+        it("counts captured versions delivered after later subscription" + (indexedFirst ? " in an existing index" : ""), async () => {
             const ctx = context()
             const bad = new Error("revealed failure")
             class DeliveredOnSecondSubscription extends OrderedThenable {
                 then(onFulfilled, onRejected) {
                     if (this.subscriptions === 1) {
-                        this.flushOnSubscribe = true
                         this.resolve({ bad })
                     }
                     return super.then(onFulfilled, onRejected)
@@ -118,7 +115,7 @@ describe("index preparation", () => {
             }
             const root = { first, later: source }
             const chain = new runtime.Chain(root, ctx)
-            assert.equal(runtime.hasError(chain, [], ctx), true)
+            assert.equal(await runtime.hasError(chain, [], ctx), true)
             assert.equal(refcounts.getRefCounter(root, ctx).promiseCount, 0)
             verifyRefCounts(ctx, root)
             assert.equal(ctx.execution.fatalError, null)

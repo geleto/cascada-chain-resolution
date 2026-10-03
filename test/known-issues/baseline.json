@@ -1,0 +1,409 @@
+{
+  "tests": 88,
+  "pending": 0,
+  "passes": 36,
+  "cases": [
+    "Phase 4 identity conformance N1 preserves identity after empty entry: native, export",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: native, search",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: ordered, export",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: ordered, search",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: ready, export",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: ready, search",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: synchronous, export",
+    "Phase 4 identity conformance N1 preserves identity after empty entry: synchronous, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=true, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=true, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=false, early=true, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: import, ordered=true, early=true, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=true, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, search",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=true, arguments",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=true, export",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=true, receiver",
+    "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=true, search",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:entry:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:sparse:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:dense:immediate-reentry",
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:sparse:immediate-reentry"
+  ],
+  "failures": [
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:after-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:native:before-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:after-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history host-call:ordered:before-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:after-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:native:before-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:after-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 11,\n      self: [Circular *1]\n    }\n  ],\n  p: 12,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 11,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 45,\n      self: [Circular *1]\n    }\n  ],\n  p: 46,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 45,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:dense:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    },\n    <ref *1> {\n      k: 28,\n      self: [Circular *1]\n    }\n  ],\n  p: 29,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 28,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:sparse:immediate-reentry",
+      "code": "ERR_ASSERTION",
+      "operator": "fail",
+      "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves identity after empty entry: ready, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n{\n  k: 1\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves identity after empty entry: ready, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves identity after empty entry: synchronous, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n{\n  k: 1\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves identity after empty entry: synchronous, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, arguments",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n<ref *1> {\n  k: 1,\n  p: 7,\n  self: [Circular *1]\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, receiver",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=false, early=false, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, arguments",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n<ref *1> {\n  k: 1,\n  p: 7,\n  self: [Circular *1]\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, receiver",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: host call, ordered=true, early=false, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, arguments",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n<ref *1> {\n  k: 1,\n  p: 7,\n  self: [Circular *1]\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, receiver",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=false, early=false, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, arguments",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, export",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "$[\"b\"]: preserve aliases and cycles\n\n<ref *1> {\n  k: 1,\n  p: 7,\n  self: [Circular *1]\n}\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, receiver",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N2 preserves cached result identity: method result, ordered=true, early=false, search",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    }
+  ]
+}

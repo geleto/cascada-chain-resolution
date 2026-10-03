@@ -4,11 +4,7 @@ import * as propertyVersions from "../src/property-versions.js"
 import * as refcounts from "../src/refcounts.js"
 import * as runtime from "../src/index.js"
 import { runInternalStep } from "../src/internal-step.js"
-import {
-    expect,
-    flushMicrotasks,
-    thrownBy,
-} from "./support.js"
+import { expect, flushMicrotasks, thrownBy } from "./support.js"
 
 function operationContext(execution, errorContext) {
     return { execution, errorContext }
@@ -168,13 +164,13 @@ describe("operation context", () => {
         expect(metadata.hasReadLease(value, secondOperationContext)).to.be(false)
         metadata.decrementReadLease(value, firstOperationContext)
 
-        metadata.markShared(value, firstOperationContext)
-        const view = ArrayView.tryAttachTo(value, firstOperationContext)
+        metadata.incrementReadLease(value, firstOperationContext)
+        expect(ArrayView.tryShareStorage(value, firstOperationContext)).to.be(true)
 
         expect(metadata.requiresCopyOnWrite(value, firstOperationContext)).to.be(true)
         expect(metadata.requiresCopyOnWrite(value, secondOperationContext)).to.be(false)
-        expect(ArrayView.projectionOf(value, firstOperationContext)).to.be(view)
-        expect(ArrayView.projectionOf(value, secondOperationContext)).to.be(value)
+        expect(metadata.metaOf(value, firstOperationContext).arrayRange.backing).to.be(value)
+        expect(metadata.metaOf(value, secondOperationContext).arrayRange).to.be(undefined)
     })
 
     it("shares graph facts only between Chains in one execution", () => {

@@ -1,3 +1,4 @@
+import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
@@ -10,7 +11,6 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PlacementConstruction } from "./parent-placements.js"
-import { receiveValue } from "./input-preparations.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { finishContainerCopy } from "./placement-structure.js"
 
@@ -28,11 +28,13 @@ const arraySort = Array.prototype.sort
 // leaseInputsThroughResult protects receiver placements and retained payloads
 // until a delayed observation has captured its output.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
+// inputs and restInput determine both the protected frontier and preparation.
+// Custom preparation receives those outcomes and handles only receiver-dependent work.
 const ARRAY_METHODS = {
     __proto__: null,
-    at: { prepare: prepareAtIndex, observe: observeAt },
+    at: { inputs: [numericInput], prepare: prepareAtIndex, observe: observeAt },
     concat: {
-        prepare: prepareConcatArguments,
+        restInput: concatInput,
         leaseInputsThroughResult: true,
         remap: createConcatRemap,
         view: tryConcatArrayView,
@@ -54,17 +56,20 @@ const ARRAY_METHODS = {
     },
     includes: {
         leaseInputsThroughResult: true,
+        inputs: [identityInput, searchFromIndex],
         prepare: prepareSearchArguments,
         observe: includes,
     },
     indexOf: {
         leaseInputsThroughResult: true,
+        inputs: [identityInput, searchFromIndex],
         prepare: prepareSearchArguments,
         observe: indexOf,
     },
     join: { inputs: [stringInput], observe: join },
     lastIndexOf: {
         leaseInputsThroughResult: true,
+        inputs: [identityInput, searchFromIndex],
         prepare: prepareSearchArguments,
         observe: lastIndexOf,
     },
@@ -76,7 +81,7 @@ const ARRAY_METHODS = {
     },
     push: {
         intrinsic: Array.prototype.push,
-        remainingArgsAsPayload: true,
+        restInput: PASS_AS_PAYLOAD,
         methodResult: plainResult,
         view: tryAppendArrayView,
         viewNativeResult: getViewLength,
@@ -91,61 +96,59 @@ const ARRAY_METHODS = {
         view: tryShiftArrayView,
         viewNativeResult: getFirstElementPlacement,
     },
-    slice: { prepare: prepareSliceBounds, observe: slice },
+    slice: { inputs: [numericInput, numericInput], prepare: prepareSliceBounds, observe: slice },
     sort: {
         leaseInputsThroughResult: true,
-        prepare: prepareSortArguments,
+        inputs: [comparatorInput],
         remap: prepareSortedRemap,
         methodResult: RETURN_RECEIVER,
     },
     splice: {
         inputs: [numericInput, numericInput],
         intrinsic: Array.prototype.splice,
-        remainingArgsAsPayload: true,
+        restInput: PASS_AS_PAYLOAD,
         methodResult: retainArray,
     },
     toReversed: { intrinsic: Array.prototype.toReversed, leaseInputsThroughResult: true },
     toSorted: {
         leaseInputsThroughResult: true,
-        prepare: prepareSortArguments,
+        inputs: [comparatorInput],
         remap: prepareToSortedRemap,
     },
     toSpliced: {
         inputs: [numericInput, numericInput],
         intrinsic: Array.prototype.toSpliced,
-        remainingArgsAsPayload: true,
+        restInput: PASS_AS_PAYLOAD,
         leaseInputsThroughResult: true,
     },
     // No prepared arguments makes join use its default separator.
     toString: { observe: join },
     unshift: {
         intrinsic: Array.prototype.unshift,
-        remainingArgsAsPayload: true,
+        restInput: PASS_AS_PAYLOAD,
         methodResult: plainResult,
     },
     with: {
+        inputs: [numericInput, PASS_AS_PAYLOAD],
         prepare: prepareWithArguments,
         intrinsic: Array.prototype.with,
         leaseInputsThroughResult: true,
     },
 }
 
-function prepareAtIndex(work) {
-    return internalSteps.prepareInputs([numericInput(work.args[0], work)], work.operationContext,
-        ([index = 0]) => runArrayStep(work, () => index < 0
-            ? ArrayView.resolveInRange(work.receiver, -index - 1, work, present => present
-                ? ArrayView.resolveLength(work.receiver, work, length => length + index) : undefined)
-            : index), work)
+function prepareAtIndex([index = 0], work) {
+    return runArrayStep(work, () => index < 0
+        ? ArrayView.resolveInRange(work.receiver, -index - 1, work, present => present
+            ? ArrayView.resolveLength(work.receiver, work, length => length + index) : undefined)
+        : index)
 }
 
-function prepareWithArguments(work) {
-    const replacement = work.receiveArgument(work.args[1])
-    return internalSteps.prepareInputs([numericInput(work.args[0], work)], work.operationContext,
-        ([index = 0]) => runArrayStep(work, () => {
-            const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
-                "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
-            return ArrayView.resolveInRange(work.receiver, index < 0 ? -index - 1 : index, work, finish)
-        }), work)
+function prepareWithArguments([index = 0, replacement], work) {
+    return runArrayStep(work, () => {
+        const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
+            "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
+        return ArrayView.resolveInRange(work.receiver, index < 0 ? -index - 1 : index, work, finish)
+    })
 }
 
 function observeAt(index, invocationWork) {
@@ -194,33 +197,32 @@ function stringInput(value, invocationWork) {
     )
 }
 
-function prepareSliceBounds(work) {
-    return internalSteps.prepareInputs(work.args.slice(0, 2).map(value => numericInput(value, work)),
-        work.operationContext, ([start = 0, end]) => runArrayStep(work, () => {
-            // Relative bounds with the same sign preserve their ordering at
-            // every length. These empty ranges consume no receiver placements.
-            if (start === Infinity || end === -Infinity ||
-                end !== undefined && (start < 0) === (end < 0) && start >= end) return [0, 0]
-            const exact = () => ArrayView.resolveLength(work.receiver, work, length => {
-                const first = toRelativeIndex(start, length, 0)
-                return [first, Math.max(first, toRelativeIndex(end, length, length))]
-            })
-            return start >= 0 ? ArrayView.resolveInRange(work.receiver, start, work, present => {
-                if (!present) return [0, 0]
-                return end >= 0 && Number.isFinite(end)
-                    ? ArrayView.resolveInRange(work.receiver, end - 1, work, covered => covered ? [start, end] : exact())
-                    : exact()
-            }) : exact()
-        }), work)
+function prepareSliceBounds([start = 0, end], work) {
+    return runArrayStep(work, () => {
+        // Relative bounds with the same sign preserve their ordering at
+        // every length. These empty ranges consume no receiver placements.
+        if (start === Infinity || end === -Infinity ||
+            end !== undefined && (start < 0) === (end < 0) && start >= end) return [0, 0]
+        const exact = () => ArrayView.resolveLength(work.receiver, work, length => {
+            const first = toRelativeIndex(start, length, 0)
+            return [first, Math.max(first, toRelativeIndex(end, length, length))]
+        })
+        return start >= 0 ? ArrayView.resolveInRange(work.receiver, start, work, present => {
+            if (!present) return [0, 0]
+            return end >= 0 && Number.isFinite(end)
+                ? ArrayView.resolveInRange(work.receiver, end - 1, work, covered => covered ? [start, end] : exact())
+                : exact()
+        }) : exact()
+    })
 }
 
 function slice([start, end], invocationWork) {
     const thisValue = invocationWork.receiver
-    return tryDeriveArrayView(start, end, invocationWork) ??
+    return invocationWork.retainOutput(tryDeriveArrayView(start, end, invocationWork) ??
         arrayRemaps.createArrayFromRemap(
             arrayRemaps.createRemap(thisValue, invocationWork.operationContext, start, end),
             invocationWork.operationContext,
-        )
+        ))
 }
 
 function plainResult(value) {
@@ -228,7 +230,7 @@ function plainResult(value) {
 }
 
 function retainArray(remap, invocationWork) {
-    return arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext)
+    return invocationWork.retainOutput(arrayRemaps.createArrayFromRemap(remap, invocationWork.operationContext))
 }
 
 // pop/shift/at hand this element to the caller: reject a registered mutable
@@ -237,14 +239,13 @@ function retainElement(element, invocationWork) {
     const result = propertyVersions.isPropertyPlacement(element)
         ? element.resolveValue()
         : element
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         result,
         invocationWork.operationContext,
         value => {
             if (invocationWork.operationContext.execution._externalIdentities.has(value))
                 return externalCapabilityEscapeError(invocationWork.operationContext)
-            metadata.markShared(value, invocationWork.operationContext)
-            return value
+            return invocationWork.retainOutput(value)
         },
         undefined,
         invocationWork,
@@ -286,27 +287,17 @@ function runArrayStep(invocationWork, work) {
     )
 }
 
-function prepareConcatArguments(invocationWork) {
-    const parts = invocationWork.args.map(item =>
-        receiveValue(
-            item,
-            invocationWork.operationContext,
-            errorUtils.ERROR_KIND.OperationInputFailed,
-            value =>
-                runArrayStep(invocationWork, () => {
-                    if (errorUtils.isPoisonError(value)) return value
-                    invocationWork.leaseArgument(value)
-                    return isLogicalArray(value, invocationWork.operationContext)
-                        ? captureRemap(value, invocationWork)
-                        : [value]
-                }),
-            invocationWork,
-        ),
-    )
-    return internalSteps.prepareInputs(
-        parts,
+function concatInput(value, invocationWork) {
+    return internalSteps.continueGraphTransition(
+        value,
         invocationWork.operationContext,
-        values => values,
+        value => runArrayStep(invocationWork, () => {
+            if (errorUtils.isPoisonError(value)) return value
+            return isLogicalArray(value, invocationWork.operationContext)
+                ? captureRemap(value, invocationWork)
+                : [value]
+        }),
+        undefined,
         invocationWork,
     )
 }
@@ -319,7 +310,7 @@ function captureRemap(array, work) {
 }
 
 function createConcatRemap(parts, invocationWork) {
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         captureRemap(invocationWork.receiver, invocationWork),
         invocationWork.operationContext,
         remap => invocation.invokeFunction(arrayConcat, remap, parts, invocationWork.operationContext),
@@ -330,7 +321,7 @@ function createConcatRemap(parts, invocationWork) {
 
 function prepareFlatRemap([depth = 1], invocationWork) {
     depth = Math.max(depth, 0)
-    return internalSteps.continueOperation(
+    return internalSteps.continueGraphTransition(
         prepareFlatArray(
             invocationWork.receiver,
             depth,
@@ -356,7 +347,7 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
     return runArrayStep(invocationWork, () => {
         if (
             depth === Infinity &&
-            hasArrayAncestor(ancestry, array)
+            hasArrayAncestor(ancestry, array, invocationWork.operationContext)
         ) {
             return errorUtils.validationError(
                 "Cannot flat an Array cycle to unlimited depth",
@@ -369,7 +360,7 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
         const shape = { length: ArrayView.captureLength(array, invocationWork.operationContext, invocationWork) }
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
-            ? { array, parent: ancestry }
+            ? { identity: captureIdentity(array, invocationWork.operationContext), parent: ancestry }
             : undefined
         const parts = keys.map(key =>
             prepareFlatProperty(
@@ -398,7 +389,7 @@ function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
     return runArrayStep(invocationWork, () => {
         if (errorUtils.isPoisonError(placement)) return placement
         if (depth === 0) return placement.resolvePresence()
-        return internalSteps.continueOperation(
+        return internalSteps.continueGraphTransition(
             placement.resolveValue(),
             invocationWork.operationContext,
             value => isLogicalArray(value, invocationWork.operationContext)
@@ -410,41 +401,48 @@ function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
     })
 }
 
-function prepareSearchArguments(invocationWork) {
-    const { args } = invocationWork
-    const searchResult = internalSteps.consumeValue(
-        args[0],
+function identityInput(value, invocationWork) {
+    return internalSteps.consumeValue(
+        value,
         invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
-        value => value,
+        value => captureIdentity(value, invocationWork.operationContext),
         invocationWork,
     )
-    const fromResult = args.length > 1
-        ? conversion.toIntegerOrInfinity(args[1], invocationWork)
-        : undefined
-    return internalSteps.prepareInputs(
-        [searchResult, fromResult],
-        invocationWork.operationContext,
-        readyValues => {
-            const backwards = invocationWork.method === "lastIndexOf"
-            const [searchValue, fromIndex = backwards ? Infinity : 0] = readyValues
-            const at = start => ({ searchValue, start })
-            const capture = () => ArrayView.resolveLength(invocationWork.receiver, invocationWork,
-                length => at(backwards ? normalizeBackwardStart(fromIndex, length) : normalizeForwardStart(fromIndex, length)))
-            return runArrayStep(invocationWork, () => {
-                // Absolute forward starts need no length. An absolute backward
-                // start needs only proof that the position is in range.
-                if (fromIndex >= 0) return backwards
-                    ? ArrayView.resolveInRange(invocationWork.receiver, fromIndex, invocationWork,
-                        present => present ? at(fromIndex) : capture())
-                    : at(fromIndex)
-                if (!backwards) return fromIndex === -Infinity ? at(0) : capture()
-                return ArrayView.resolveInRange(invocationWork.receiver, -fromIndex - 1, invocationWork,
-                    present => present ? capture() : at(-1))
-            })
-        },
-        invocationWork,
-    )
+}
+
+function searchFromIndex(value, work) {
+    return runArrayStep(work, () => ArrayView.resolveInRange(work.receiver, 0, work, present => {
+        try {
+            if (!present) {
+                work.discardArgument(1)
+                return undefined
+            }
+            const result = conversion.toIntegerOrInfinity(value, work)
+            work.releaseArgument(1)
+            return result
+        } finally { value = undefined }
+    }))
+}
+
+function prepareSearchArguments(args, invocationWork) {
+    invocationWork.releaseArgumentLeases()
+    const backwards = invocationWork.method === "lastIndexOf"
+    const [searchValue, fromIndex = backwards ? Infinity : 0] = args
+    const at = start => ({ searchValue, start })
+    const capture = () => ArrayView.resolveLength(invocationWork.receiver, invocationWork,
+        length => at(backwards ? normalizeBackwardStart(fromIndex, length) : normalizeForwardStart(fromIndex, length)))
+    return runArrayStep(invocationWork, () => {
+        // Absolute forward starts need no length. An absolute backward
+        // start needs only proof that the position is in range.
+        if (fromIndex >= 0) return backwards
+            ? ArrayView.resolveInRange(invocationWork.receiver, fromIndex, invocationWork,
+                present => present ? at(fromIndex) : capture())
+            : at(fromIndex)
+        if (!backwards) return fromIndex === -Infinity ? at(0) : capture()
+        return ArrayView.resolveInRange(invocationWork.receiver, -fromIndex - 1, invocationWork,
+            present => present ? capture() : at(-1))
+    })
 }
 
 function join([separator], invocationWork) {
@@ -456,11 +454,9 @@ function join([separator], invocationWork) {
     )
 }
 
-function prepareSortArguments(invocationWork) {
-    const { args } = invocationWork
-    if (args[0] === undefined) return undefined
+function comparatorInput(value, invocationWork) {
     return internalSteps.consumeValue(
-        args[0],
+        value,
         invocationWork.operationContext,
         errorUtils.ERROR_KIND.OperationInputFailed,
         value => {
@@ -477,11 +473,11 @@ function prepareSortArguments(invocationWork) {
     )
 }
 
-function prepareToSortedRemap(comparator, invocationWork) {
-    return prepareSortedRemap(comparator, invocationWork, true)
+function prepareToSortedRemap(args, invocationWork) {
+    return prepareSortedRemap(args, invocationWork, true)
 }
 
-function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
+function prepareSortedRemap([comparator], invocationWork, denseOutput = false) {
     const thisValue = invocationWork.receiver
     const source = arrayRemaps.createRemap(thisValue, invocationWork.operationContext, 0, undefined,
         action => runArrayStep(invocationWork, action))
@@ -495,7 +491,7 @@ function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
         }
         records.push(
             runArrayStep(invocationWork, () =>
-                internalSteps.continueOperation(
+                internalSteps.continueGraphTransition(
                     placement.resolveValue(),
                     invocationWork.operationContext,
                     value => ({ placement, value }),
@@ -507,7 +503,7 @@ function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
     }
     // Failed captures remain inputs to conversion/export, alongside successfully
     // resolved records. Only that complete preparation may decide to stop sorting.
-    return internalSteps.collectInputs(
+    const result = internalSteps.collectInputs(
         records,
         invocationWork.operationContext,
         ready => {
@@ -521,6 +517,7 @@ function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
                     sortable.push(record)
                 }
             }
+            invocationWork.discardPreparedOutput = discardOutput
             if (sortable.length < 2) {
                 return errorUtils.isPoisonError(sortable[0]) ? sortable[0] : finish(sortable)
             }
@@ -535,9 +532,23 @@ function prepareSortedRemap(comparator, invocationWork, denseOutput = false) {
                     source.length,
                 )
             }
+
+            function discardOutput() {
+                source.length = undefinedPlacements.length = 0
+                shape.length?.release?.()
+                for (const record of sortable) {
+                    if (!errorUtils.isPoisonError(record)) record.placement = record.exported = undefined
+                }
+            }
         },
         invocationWork,
     )
+    return internalSteps.continueGraphTransition(result, invocationWork.operationContext, remap => {
+        invocationWork.discardPreparedOutput?.()
+        invocationWork.discardPreparedOutput = undefined
+        records.length = source.length = 0
+        return remap
+    }, undefined, invocationWork)
 }
 
 function prepareAndSortRecords(
@@ -549,8 +560,10 @@ function prepareAndSortRecords(
     if (comparator === undefined) {
         const records = sortable.map(record => {
             if (errorUtils.isPoisonError(record)) return record
-            return internalSteps.continueOperation(
-                conversion.toStringValue(record.value, undefined, invocationWork),
+            const converted = conversion.toStringValue(record.value, undefined, invocationWork)
+            record.value = undefined
+            return internalSteps.continueGraphTransition(
+                converted,
                 invocationWork.operationContext,
                 key => {
                     if (errorUtils.isPoisonError(key)) return key
@@ -580,8 +593,11 @@ function prepareAndSortRecords(
     const snapshot = sortable.map(record =>
         errorUtils.isPoisonError(record) ? record : record.value,
     )
-    return internalSteps.continueOperation(
-        exportManyValues(snapshot, invocationWork),
+    for (const record of sortable) if (!errorUtils.isPoisonError(record)) record.value = undefined
+    const exportedSnapshot = exportManyValues(snapshot, invocationWork)
+    snapshot.length = 0
+    return internalSteps.continueGraphTransition(
+        exportedSnapshot,
         invocationWork.operationContext,
         exported => {
             if (errorUtils.isPoisonError(exported)) return exported
@@ -657,7 +673,7 @@ function compareExported(comparator, left, right, operationContext) {
     )
     if (errorUtils.isPoisonError(pending)) throw pending
     if (pending) {
-        const observed = internalSteps.continueOperation(
+        const observed = internalSteps.continueGraphTransition(
             result,
             operationContext,
             () => undefined,
@@ -681,7 +697,7 @@ function compareExported(comparator, left, right, operationContext) {
 }
 
 function includes({ searchValue, start }, invocationWork) {
-    const thisValue = invocationWork.receiver
+    let thisValue = invocationWork.receiver
     const operationContext = invocationWork.operationContext
     // Scanning is one unfinished branch; each pending comparison adds another.
     // Any match can finish while scanning still awaits growth or other values.
@@ -695,13 +711,13 @@ function includes({ searchValue, start }, invocationWork) {
         const failure = runArrayStep(invocationWork, () => {
             const end = ArrayView.minimumLength(thisValue, operationContext)
             for (; index < end; index++) {
-                const branch = internalSteps.continueOperation(
-                    propertyVersions.resolvePropertyValueAtKey(thisValue, String(index), operationContext),
+                const branch = internalSteps.continueGraphTransition(
+                    propertyVersions.resolvePropertyIdentityAtKey(thisValue, String(index), operationContext),
                     operationContext, matches, undefined, invocationWork,
                 )
                 if (languageValues.isPending(branch, operationContext)) {
                     remaining++
-                    const wait = internalSteps.continueOperation(branch, operationContext, finish, undefined, invocationWork)
+                    const wait = internalSteps.continueGraphTransition(branch, operationContext, finish, undefined, invocationWork)
                     markPromiseHandled(wait, operationContext)
                 } else if (branch) return finish(true)
             }
@@ -710,6 +726,7 @@ function includes({ searchValue, start }, invocationWork) {
                 // All property versions are captured. Their pending values no
                 // longer need the receiver, just as with an initially ready shape.
                 invocationWork.releaseReceiverLeases()
+                thisValue = undefined
                 finish(false)
             })
             markPromiseHandled(wait, operationContext)
@@ -721,6 +738,8 @@ function includes({ searchValue, start }, invocationWork) {
         if (outcome !== undefined) return
         if (!found && --remaining !== 0) return
         outcome = found
+        thisValue = undefined
+        invocationWork.releaseReceiverLeases()
         if (result) {
             invocationWork.close()
             result.resolve(found)
@@ -764,16 +783,16 @@ function orderedIndexSearch(
                 if (!placement) continue
                 const value = placement.resolveValue()
                 if (languageValues.isPending(value, invocationWork.operationContext)) {
-                    return internalSteps.continueOperation(
+                    return internalSteps.continueGraphTransition(
                         value,
                         invocationWork.operationContext,
                         resolved => placement.present !== false &&
-                            resolved === searchValue ? current : next(),
+                            placement.identity === searchValue ? current : next(),
                         undefined,
                         invocationWork,
                     )
                 }
-                if (placement.present !== false && value === searchValue) return current
+                if (placement.present !== false && placement.identity === searchValue) return current
             }
             return backwards ? -1 : ArrayView.resolveInRange(thisValue, index, invocationWork,
                 present => present ? next() : -1)
@@ -801,7 +820,6 @@ function toRelativeIndex(value, length, defaultValue) {
 }
 
 function tryShiftArrayView(_args, invocationWork) {
-    const thisValue = invocationWork.receiver
     const length = invocationWork.arrayLength
     return tryDeriveArrayView(
         Math.min(1, length),
@@ -811,7 +829,6 @@ function tryShiftArrayView(_args, invocationWork) {
 }
 
 function tryPopArrayView(_args, invocationWork) {
-    const thisValue = invocationWork.receiver
     const length = invocationWork.arrayLength
     return tryDeriveArrayView(
         0,
@@ -823,12 +840,11 @@ function tryPopArrayView(_args, invocationWork) {
 function tryDeriveArrayView(start, end, invocationWork) {
     const { operationContext, receiver: thisValue } = invocationWork
     if (start === end) return arrayRemaps.createArrayFromRemap([], operationContext)
-    const projection = ArrayView.tryAttachTo(thisValue, operationContext)
-    if (!projection) return undefined
+    if (!ArrayView.tryShareStorage(thisValue, operationContext)) return undefined
 
-    const view = new ArrayView(projection, operationContext, start, end)
+    const view = new ArrayView(thisValue, operationContext, start, end)
     return PlacementConstruction.initializeAndPublish(view, operationContext, view => {
-        propertyVersions.prepareRetainedArrayProperties(
+        propertyVersions.copyArrayOverlays(
             thisValue,
             view,
             operationContext,
@@ -862,4 +878,4 @@ function tryAppendArrayView(suffix, invocationWork) {
     )
 }
 
-export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep }
+export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep, toRelativeIndex, searchFromIndex }

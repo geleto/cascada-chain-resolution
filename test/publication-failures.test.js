@@ -225,9 +225,11 @@ describe("complete publication failures", () => {
             else assert(runtime.isPoisonError(work))
             const result = await work
             const graph = await runtime.lookupPath(chain, ["parent", "receiver"], ctx)
+            // Ready and pending runtime-owned parents use the same storage path.
             assert.deepEqual(causes(result), new Set(expected))
             assert.deepEqual(causes(graph), new Set(expected))
-            assert.equal(leaves(result).length, 3)
+            assert.equal(leaves(result).length, expected.length)
+            assert.equal(targetFailed, true)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state)
         })

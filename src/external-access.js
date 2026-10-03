@@ -25,7 +25,7 @@ class ExternalAccess {
         }
     }
 
-    read(forExport = false) {
+    read(forExport = false, capture = value => value) {
         const value = this.walkPrefix(this.path.length)
         if (errors.isPoisonError(value)) return value
         return this.consumeResult(value, errors.ERROR_KIND.ExternalPropertyReadFailed,
@@ -33,13 +33,13 @@ class ExternalAccess {
                 if (errors.isPoisonError(ready)) return ready
                 if (this.operationContext.execution._externalIdentities.has(ready))
                     return externalCapabilityEscapeError(this.operationContext)
-                if (this.boundary) return snapshotExternalValue(ready, this.operationContext, !forExport)
+                if (this.boundary) return capture(snapshotExternalValue(ready, this.operationContext, !forExport))
                 const imported = imports.importExternalProperty(ready, this.operationContext)
-                return forExport ? exportValue(imported, this.operation) : imported
+                return forExport ? exportValue(imported, this.operation) : capture(imported)
             })
     }
 
-    call(method, args) {
+    call(method, args, capture) {
         const receiver = this.selectReceiver(this.path.length, errors.ERROR_KIND.InvocationFailed)
         if (errors.isPoisonError(receiver)) return receiver
         const callable = this.native(errors.ERROR_KIND.InvocationFailed, () => receiver?.[method])
@@ -52,6 +52,7 @@ class ExternalAccess {
             const failures = this.operation.mutation ? { capabilityErrors: new Set() } : undefined
             const imported = imports.importReadyMethodResult(ready, this.operationContext,
                 failures, this.boundary ? receiver : undefined)
+            capture(imported)
             return this.operation.mutation ? {
                 mutatedValue: failures.capabilityErrors.size ? errors.combineErrors(failures.capabilityErrors, "External capability escaped") : receiver,
                 result: imported,
@@ -155,7 +156,7 @@ class ExternalAccess {
     consumeResult(value, kind, onValue) {
         const accept = value => onValue(Error.isError(value)
             ? errors.createPoisonError(value, this.operationContext, kind) : value)
-        return steps.continueOperation(value, this.operationContext, accept,
+        return steps.continueGraphTransition(value, this.operationContext, accept,
             reason => accept(errors.createPoisonError(reason, this.operationContext, kind)))
     }
     requireReady(value, managed = false) {

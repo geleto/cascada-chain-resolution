@@ -1,4 +1,4 @@
-import { ArrayView } from "./array-view.js"
+import { captureIdentity, visitRepresentation } from "./captured-identity.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
 import { exportValue } from "./export.js"
@@ -7,54 +7,51 @@ import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as refcounts from "./refcounts.js"
 import * as metadata from "./meta.js"
-import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { PathOperation } from "./path-operation.js"
 import * as externalTree from "./external-mutation-tree.js"
 
-class ErrorQueryWork extends operationLifecycle.OperationOwner {
-    constructor(operationContext, collect = false) {
-        super(operationContext)
+class ErrorQueryWork extends PathOperation {
+    constructor(chain, path, operationContext, firstDynamicSegment, collect = false) {
+        super(chain, path, operationContext, undefined, false, firstDynamicSegment)
         if (collect) this.errors = new Set()
     }
     release() {
+        super.release()
         if (this.externalReadiness) markPromiseHandled(this.externalReadiness, this.operationContext)
         this.externalReadiness = undefined
         this.errors = undefined
         this.resolveOutcome = undefined
         this.visited = undefined
     }
-    run(chain, path, firstDynamicSegment = path.length) {
-        return internalSteps.runInternalStep(this.operationContext, () => {
-            const operation = new PathOperation(chain, path, this.operationContext, undefined, false, firstDynamicSegment)
-            const node = operation.route.externalTreeNode
-            operation.reserveExternal(node)
-            const inspect = value => {
-                if (errorUtils.isPoisonError(value) || !node) return this.inspectValue(value)
-                const effect = operation.externalEffect
-                // External metadata capture has its own last use. Managed
-                // Error collection may finish earlier, or continue much longer.
-                operation.externalEffect = undefined
-                const captured = internalSteps.continueOperation(effect.readiness, this.operationContext, () => {
-                    if (this.open) {
-                        const blocker = operation.externalBlocker(false)
-                        if (blocker) this.found(blocker)
-                        else for (const error of externalTree.collectPoison(node)) this.found(error)
-                    }
-                    effect.complete()
-                })
-                if (languageValues.isPending(captured, this.operationContext)) this.externalReadiness = captured
-                return this.open ? this.inspectValue(value) : this.result
-            }
-            const result = operation.observe(inspect,
-                access => access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false),
-                error => this.finish(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
-            return operation.finish(internalSteps.continueOperation(result, this.operationContext,
-                value => this.open && errorUtils.isPoisonError(value) ? this.inspectValue(value) : value))
-        })
+    run() {
+        const node = this.route.externalTreeNode
+        this.reserveExternal(node)
+        const inspect = value => {
+            if (errorUtils.isPoisonError(value) || !node) return this.inspectValue(value)
+            const effect = this.externalEffect
+            // External metadata capture has its own last use. Managed
+            // Error collection may finish earlier, or continue much longer.
+            this.externalEffect = undefined
+            const captured = internalSteps.continueGraphTransition(effect.readiness, this.operationContext, () => {
+                if (this.open) {
+                    const blocker = this.externalBlocker(false)
+                    if (blocker) this.found(blocker)
+                    else for (const error of externalTree.collectPoison(node)) this.found(error)
+                }
+                effect.complete()
+            })
+            if (languageValues.isPending(captured, this.operationContext)) this.externalReadiness = captured
+            return this.open ? this.inspectValue(value) : this.result
+        }
+        const result = this.observe(inspect,
+            access => access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false),
+            error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
+        return internalSteps.continueGraphTransition(result, this.operationContext,
+            value => this.open && errorUtils.isPoisonError(value) ? this.inspectValue(value) : value)
     }
     inspectValue(value) {
-        if (errorUtils.isPoisonError(value)) return this.finish(this.errors ? value : true)
+        if (errorUtils.isPoisonError(value)) return this.settle(this.errors ? value : true)
         const readiness = languageValues.isTraversable(value, this.operationContext)
             ? collectFencedErrorWaits(value, this) : undefined
         return this.complete(readiness, () => {
@@ -65,12 +62,13 @@ class ErrorQueryWork extends operationLifecycle.OperationOwner {
     found(error) {
         if (!this.open) return
         if (this.errors) this.errors.add(error)
-        else this.finish(true)
+        else this.settle(true)
     }
-    finish(result) {
+    settle(result) {
         if (!this.open) return this.result
         this.result = result
         const resolve = this.resolveOutcome
+        this.completeExternalEffect()
         this.close()
         resolve?.(result)
         return result
@@ -82,33 +80,32 @@ class ErrorQueryWork extends operationLifecycle.OperationOwner {
             this.externalReadiness = undefined
         }
         if (!languageValues.isPending(readiness, this.operationContext))
-            return this.finish(result())
+            return this.settle(result())
         const outcome = new Promise(resolve => {
             this.resolveOutcome = resolve
         })
-        const completed = internalSteps.continueOperation(
+        const completed = internalSteps.continueGraphTransition(
             readiness,
             this.operationContext,
-            () => this.finish(result()),
+            () => this.settle(result()),
             undefined,
             this,
         )
-        // finish owns both early completion and traversal exhaustion.
+        // settle owns both early completion and traversal exhaustion.
         markPromiseHandled(completed, this.operationContext)
         return outcome
     }
 }
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
-function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length) {
+function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length, delivery) {
     return internalSteps.runInternalStep(operationContext, () => {
         const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
         const retain = value => {
-            metadata.markShared(value, operationContext)
-            return value
+            return delivery ? delivery.capture(value, true) : value
         }
         return operation.finish(operation.observe(retain, access =>
-            internalSteps.continueOperation(access.read(), operationContext, retain)))
+            access.read(false, value => delivery ? delivery.capture(value) : value)))
     })
 }
 
@@ -132,7 +129,7 @@ function lookupPathForExpression(chain, path, operationContext, firstDynamicSegm
             }
         }
         return operation.finish(operation.observe(validate, access =>
-            internalSteps.continueOperation(access.read(), operationContext, validate)))
+            internalSteps.continueGraphTransition(access.read(), operationContext, validate)))
     })
 }
 
@@ -149,14 +146,14 @@ function exportPath(chain, path, operationContext, firstDynamicSegment = path.le
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
-    const queryWork = new ErrorQueryWork(operationContext)
-    return queryWork.run(chain, path, firstDynamicSegment)
+    return internalSteps.runInternalStep(operationContext, () =>
+        new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment).run())
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
-    const queryWork = new ErrorQueryWork(operationContext, true)
-    return queryWork.run(chain, path, firstDynamicSegment)
+    return internalSteps.runInternalStep(operationContext, () =>
+        new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, true).run())
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
@@ -164,16 +161,18 @@ function getErrors(chain, path, operationContext, firstDynamicSegment = path.len
 // same walk through the operation-wide visited set.
 function collectFencedErrorWaits(value, queryWork) {
     const waits = []
-    errorUtils.catchExternalThrow(
-        () => {
-            refcounts.buildRefIndex(value, queryWork.operationContext)
-            queryWork.visited ??= new WeakSet()
-            walk(value)
-        },
-        queryWork.operationContext,
-        errorUtils.ERROR_KIND.QueryReflectionFailed,
-        failure => queryWork.finish(failure),
-    )
+    try {
+        errorUtils.catchExternalThrow(
+            () => {
+                refcounts.buildRefIndex(value, queryWork.operationContext)
+                queryWork.visited ??= new WeakMap()
+                walk(value)
+            },
+            queryWork.operationContext,
+            errorUtils.ERROR_KIND.QueryReflectionFailed,
+            failure => queryWork.settle(failure),
+        )
+    } finally { value = undefined }
     // A synchronous Error proof abandons observed waits, not an aggregate.
     if (!queryWork.open) {
         for (const wait of waits) markPromiseHandled(wait, queryWork.operationContext)
@@ -182,8 +181,8 @@ function collectFencedErrorWaits(value, queryWork) {
     return waits.length > 1 ? Promise.all(waits) : waits[0]
 
     function walk(node) {
-        if (!queryWork.open || queryWork.visited.has(node)) return
-        queryWork.visited.add(node)
+        const identity = captureIdentity(node, queryWork.operationContext)
+        if (!queryWork.open || !visitRepresentation(node, identity, queryWork.visited)) return
 
         const counter = refcounts.getRequiredRefCounter(node, queryWork.operationContext)
         // hasError needs only this proof; getErrors needs Error identities.
@@ -250,91 +249,10 @@ function hasErrorSearchWork(counter) {
         counter.cycleCutCount > 0
 }
 
-// Observational path resolution follows raw logical values.
-function walkObservationPath(
-    chain,
-    path,
-    operationContext,
-    onResolved,
-    onUserCodeFailure = undefined,
-    reflectionKind = errorUtils.ERROR_KIND.LookupReflectionFailed,
-    { onExternal, externalDepth = Infinity, owner } = {},
-) {
-    const rootState = chain._state
-    const targetPath = ["value", ...path]
-    return runTraversal(() => walkFromParent(rootState, 0))
-
-    function walkFromParent(parent, index) {
-        const key = languageProperties.normalizePathSegment(
-            targetPath[index],
-            operationContext,
-        )
-        if (errorUtils.isPoisonError(key)) {
-            languageValues.admitReadyValue(key, operationContext)
-            return onResolved(key, false)
-        }
-        return readPlacement(parent, key, index)
-    }
-
-    function readPlacement(parent, key, index) {
-        if (languageProperties.classifyLanguageProperty(parent, key, operationContext) === languageProperties.ARRAY_LENGTH)
-            return ArrayView.resolveLength(parent, owner, value => runTraversal(() => walkValue(value, index, true)))
-        const { value, present, sourceVersion: version } =
-            languageProperties.readLanguagePlacement(parent, key, operationContext)
-        if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present)
-        return propertyVersions.observePromiseVersion(
-            value, version, operationContext,
-            propertyValue => runTraversal(() => walkValue(propertyValue, index, version.present !== false)), owner,
-        )
-    }
-
-    function walkValue(value, index, present) {
-        if (onExternal && !errorUtils.isPoisonError(value) &&
-            (index === externalDepth || metadata.metaOf(value, operationContext)?.type === languageValues.TYPE.External))
-            return onExternal(value, path.slice(index))
-        if (
-            index === targetPath.length - 1 ||
-            errorUtils.isPoisonError(value)
-        ) {
-            return onResolved(value, present)
-        }
-        if (typeof value === "string") {
-            const key = languageProperties.normalizePathSegment(
-                targetPath[index + 1],
-                operationContext,
-            )
-            if (errorUtils.isPoisonError(key)) {
-                languageValues.admitReadyValue(key, operationContext)
-                return onResolved(key, false)
-            }
-            if (languageProperties.hasLanguageProperty(value, key, operationContext)) {
-                return walkFromParent(value, index + 1)
-            }
-        }
-        if (!languageValues.isTraversable(value, operationContext)) {
-            const failure = errorUtils.pathAccessError(value, operationContext)
-            languageValues.admitReadyValue(failure, operationContext)
-            return onResolved(failure, false)
-        }
-        return walkFromParent(value, index + 1)
-    }
-
-    function runTraversal(traverse) {
-        if (owner && !owner.open) return undefined
-        return errorUtils.catchExternalThrow(
-            traverse,
-            operationContext,
-            reflectionKind,
-            onUserCodeFailure,
-        )
-    }
-}
-
 export {
     exportPath,
     getErrors,
     hasError,
     lookupPath,
     lookupPathForExpression,
-    walkObservationPath,
 }

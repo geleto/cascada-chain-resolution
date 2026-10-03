@@ -25,17 +25,29 @@ const product = (...lists) => lists.reduce((combinations, list) =>
 const harnessModes = ["harness:observed", "harness:verified", "harness:bare"]
 
 describe("generated operation sequences", () => {
-    it("preserves shared input across overlapping preparation and draining delivery", function () {
+    it("preserves shared input across fresh and already prepared reception", function () {
         this.timeout(60000)
-        const { programs, runs, coverage } = runFixture("preparation-sequences.js", 55000)
-        assert.equal(programs, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 8)
+        const { programs, runs, jointPrograms, seededPrograms, lifetimePrograms, lifetimeRuns, jointCoverage, coverage } =
+            runFixture("preparation-sequences.js", 55000)
+        assert.equal(jointPrograms, 128)
+        assert.equal(seededPrograms, Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 8)
+        assert.equal(programs, jointPrograms + seededPrograms)
         assert.equal(runs, programs * 3)
+        assert.equal(lifetimePrograms * 8, seededPrograms)
+        assert.equal(lifetimeRuns, lifetimePrograms * 3)
+        const requiredJoint = product(["import", "chain", "assignment", "method-result"],
+            ["fresh", "already prepared"], ["ready", "synchronous", "native", "ordered"],
+            ["record", "array"], ["direct", "nested"])
+        assert.equal(jointCoverage.length, requiredJoint.length)
+        for (const combination of requiredJoint) assert(jointCoverage.includes(combination), `missing joint ${combination}`)
         for (const combination of [
             ...harnessModes,
             ...product(["boundary"], ["import", "chain", "assignment", "method-result"]),
             ...product(["array", "nested"], [false, true]),
-            ...product(["drain"], ["before", "during"]),
-            ...product(["delivery"], ["ready", "native", "ordered"]),
+            ...product(["preparation"], ["already prepared", "fresh"]),
+            ...product(["delivery"], ["ready", "synchronous", "native", "ordered"]),
+            ...product(["lifetime"], ["clear-all", "release-holder", "cached-reentry", "array", "record"]),
+            ...product(["generation"], ["assignment", "entry"]),
         ]) assert(coverage.includes(combination), `missing ${combination}`)
     })
 
@@ -65,7 +77,7 @@ describe("generated operation sequences", () => {
             ...product(["observe"], ["includes", "indexOf", "lastIndexOf", "at", "slice", "with", "concat"], ["direct", "entry", "snapshot"]),
             ...product(["observe"], ["direct", "entry", "snapshot"], ["before-release", "after-release", "after-settle"]),
             ...product(["delivery"], ["native", "ordered"]),
-            "length", "read", "settle",
+            "length", "read", "settle", "owners:1", "owners:2", "owner:0", "owner:1", "multi-owner:pending-mutation",
         ]
         for (const combination of required) assert(coverage.includes(combination), `missing ${combination}`)
         // Conflict steps combine one hold, one queued command, and one no-op entry.

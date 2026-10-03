@@ -1,11 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { mayBeThenable, runSubscription } from "./thenable-subscription.js"
-
-const {
-    TYPE,
-    isTraversableType,
-} = metadata
+import { mayBeThenable } from "./thenable-subscription.js"
 
 // Only normalized transition results and logical placements use this test.
 function isPending(value, operationContext) {
@@ -41,21 +36,11 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
         return callback(result)
     }
     try {
-        return runSubscription(operationContext, () =>
-            Reflect.apply(then, value, [
-                deliver(onFulfilled),
-                deliver(onRejected),
-            ]),
-        )
+        return Reflect.apply(then, value, [deliver(onFulfilled), deliver(onRejected)])
     } catch (reason) {
         if (continuationStarted) throw reason
-        return onRejected(
-            errorUtils.createPoisonError(
-                reason,
-                operationContext,
-                errorUtils.ERROR_KIND.ThenInvocationFailed,
-            ),
-        )
+        return onRejected(errorUtils.createPoisonError(
+            reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationFailed))
     }
 }
 
@@ -77,23 +62,23 @@ function admitReadyValue(
 }
 
 function typeOf(value, operationContext) {
-    if (typeof value === "string") return TYPE.String
-    if (!metadata.isObjectLike(value)) return TYPE.Primitive
+    if (typeof value === "string") return metadata.TYPE.String
+    if (!metadata.isObjectLike(value)) return metadata.TYPE.Primitive
     const type = metadata.metaOf(value, operationContext)?.type
     if (type === undefined) throw new TypeError("Value was not admitted")
     return type
 }
 
 function isTraversable(value, operationContext) {
-    return isTraversableType(metadata.metaOf(value, operationContext)?.type)
+    return metadata.isTraversableType(metadata.metaOf(value, operationContext)?.type)
 }
 
 export {
-    TYPE,
     admitReadyValue,
     isPending,
     isTraversable,
-    isTraversableType,
     thenValue,
     typeOf,
 }
+
+export { TYPE, isTraversableType } from "./meta.js"

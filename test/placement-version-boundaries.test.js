@@ -3,13 +3,39 @@ import * as runtime from "cascada-chain-resolution"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
-import { capturePlacement, commitPlacementVersion, createVersionFromPlacement, getPlacementVersion, installMutationVersion, installPlacementVersion } from "../src/property-versions.js"
+import { capturePlacement, commitPlacementVersion, createVersionFromPlacement, getPlacementVersion, installMutationVersion, installPlacementVersion, observePlacementCapture } from "../src/property-versions.js"
 import { metaOf } from "../src/meta.js"
 import { fixture } from "./trace-state.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 
 describe("placement versions across representation boundaries", () => {
+    for (const nested of [false, true]) for (const detached of [false, true]) {
+        it(`notifies an independent capture of later pending recovery, nested=${nested}, detached=${detached}`, async () => {
+            const ctx = context(), pending = new OrderedThenable(), hold = Promise.withResolvers()
+            const chain = new runtime.Chain({ then: pending }, ctx), child = { k: 1 }
+            if (nested) runtime.assignPath(chain, ["then"], () => {}, ctx)
+            const entry = runtime.enter(chain, ["then"], ctx, true, entered => {
+                runtime.assignPath(entered, [], () => {}, ctx)
+                return hold.promise
+            })
+            // Observe independently: other pending consumers may temporarily
+            // protect child and conceal a missing notification from public reads.
+            const received = new Set()
+            const detach = observePlacementCapture(capturePlacement(chain._state.value, "then", ctx),
+                value => received.add(value))
+            hold.resolve()
+            await entry
+            if (detached) detach()
+            pending.resolve(child)
+            pending.flush()
+            await new Promise(setImmediate)
+            assert.equal(received.has(child), !detached)
+            detach()
+            verifyRefCounts(ctx, chain._state)
+        })
+    }
+
     it("captures and prepares an entry without repeating its storage check", () => {
         const ctx = context()
         let reads = 0
@@ -373,7 +399,7 @@ describe("placement versions across representation boundaries", () => {
 
     for (const action of ["assign", "delete"]) {
         for (const indexed of [false, true]) {
-            it(`failed ${action} preserves an aliased fixed Error, indexed=${indexed}`, () => {
+            it(`${action} copies an aliased fixed Error before touching restricted storage, indexed=${indexed}`, () => {
                 const introduced = context()
                 const later = context(introduced.execution)
                 const cause = new Error("original input")
@@ -388,7 +414,8 @@ describe("placement versions across representation boundaries", () => {
                 const result = action === "assign"
                     ? runtime.assignPath(chain, ["left", "value"], 9, later)
                     : runtime.deletePath(chain, ["left", "value"], later)
-                assert.equal(result.cause, failure)
+                assert.equal(result, undefined)
+                assert.equal(runtime.lookupPath(chain, ["left", "value"], later), action === "assign" ? 9 : undefined)
                 assert.equal(runtime.lookupPath(chain, ["right", "value"], later), original)
                 assert.equal(original.errorContext, introduced.errorContext)
                 assert.equal(child.value, cause)
@@ -425,7 +452,7 @@ describe("placement versions across representation boundaries", () => {
     for (const action of ["assign", "delete"]) {
         for (const indexed of [false, true]) {
             for (const delivery of ["ready", "synchronous", "pending"]) {
-                it(`failed ${action} preserves a ${delivery} aliased placement, indexed=${indexed}`, async () => {
+                it(`${action} isolates a ${delivery} placement from native receiver aliases, indexed=${indexed}`, async () => {
                     const ctx = context()
                     const pending = Promise.withResolvers()
                     const cause = new Error("storage write failed")
@@ -455,17 +482,13 @@ describe("placement versions across representation boundaries", () => {
                     const result = action === "assign"
                         ? runtime.assignPath(chain, ["left", "value"], 9, ctx)
                         : runtime.deletePath(chain, ["left", "value"], ctx)
-                    assert.equal(result.cause, cause)
-                    assert.equal(result.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+                    assert.equal(result, undefined)
+                    assert.equal(runtime.lookupPath(chain, ["left", "value"], ctx), action === "assign" ? 9 : undefined)
                     const retained = runtime.lookupPath(chain, ["right", "value"], ctx)
                     fail = false
                     verifyRefCounts(ctx, chain._state)
-                    if (delivery === "pending") {
-                        pending.reject(rejected)
-                        const error = await retained
-                        assert.equal(error.cause, rejected)
-                        assert.equal(error.errorContext, ctx.errorContext)
-                    } else assert.equal(retained, 4)
+                    if (delivery === "pending") pending.resolve(5)
+                    assert.equal(retained, 4)
                     assert.equal(ctx.execution.fatalError, null)
                     runtime.assignPath(chain, ["right", "value"], 8, ctx)
                     assert.equal(runtime.lookupPath(chain, ["right", "value"], ctx), 8)

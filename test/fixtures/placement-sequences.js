@@ -56,7 +56,6 @@ for (let index = 0; index < seedCount; index++) {
         function input(value, delayed) {
             if (!delayed) return value
             const source = delivery === "native" ? Promise.withResolvers() : new OrderedThenable()
-            if (delivery === "ordered") source.flushOnSubscribe = true
             sources.push({ source, value })
             return delivery === "native" ? source.promise : source
         }
@@ -70,9 +69,9 @@ for (let index = 0; index < seedCount; index++) {
                 return
             }
             const result = route === "capture" ? r.lookupPath(chain, ["item"], ctx) : r.export(chain, ["item"], ctx)
-            const retained = route === "capture" ? keep(result).then(value => new r.Chain(value, ctx)) : undefined
+            const retained = route === "capture" ? new r.Chain(result, ctx) : undefined
             if (retained) {
-                const checked = retained.then(captured => r.export(captured, [], ctx)).then(actual => check(actual, expected))
+                const checked = keep(r.export(retained, [], ctx)).then(actual => check(actual, expected))
                 keep(checked)
                 // A lookup can contain pending logical properties. Re-export
                 // this same retained graph after later writes, not just its copy.

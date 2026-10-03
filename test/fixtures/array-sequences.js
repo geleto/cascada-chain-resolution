@@ -4,7 +4,7 @@ import { createRandom, randomInteger } from "../native-equivalence-support.js"
 import { OrderedThenable } from "../ordered-thenable.js"
 import { verifyRefCounts } from "../verify-refcounts.js"
 
-// Seeded programs on one Array: element entries, direct element commands,
+// Seeded programs on one or two independently mutated Array owners: element entries, direct commands,
 // failure and repair, length assignment, structural methods, and observations
 // issued directly, inside delayed read-only entries, or later on lookup
 // snapshots. Holds are released between commands, so issuance happens before,
@@ -107,7 +107,11 @@ function generate(random) {
         steps.at(-1).release = random() < 0.5
         steps.at(-1).turns = randomInteger(random, 4)
     }
-    return { initial, delivery, steps }
+    // Keep single-owner controls as well as branches mutating while either has
+    // unfinished work. Choose owners last to preserve operation coverage.
+    const ownerCount = random() < 0.5 ? 1 : 2
+    for (const step of steps) step.owner = randomInteger(random, ownerCount)
+    return { initial, delivery, ownerCount, steps }
 }
 
 function observation(random, pick) {
@@ -150,7 +154,7 @@ async function describeOutcome(value, ctx) {
     return display(result)
 }
 
-async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
+async function runProgram({ initial, delivery, ownerCount, steps }, seed, mode, coverage) {
     const observed = mode === "observed", instrumented = mode !== "bare"
     coverage.add(`harness:${mode}`)
     const random = createRandom(seed ^ 0x5bd1e995)
@@ -158,12 +162,18 @@ async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
     for (let index = 0; index < initial.length; index++) if (!(index in initial)) delete slots[index]
     const ctx = { execution: new r.Execution(), errorContext: {} }
     const chain = new r.Chain({ a: structuredClone(initial) }, ctx)
+    const owners = [{ chain, slots }]
+    if (ownerCount === 2) owners.push({
+        chain: new r.Chain({ a: r.run(chain, ["a"], "slice", [], ctx, {}) }, ctx),
+        slots: structuredClone(slots),
+    })
+    coverage.add(`owners:${ownerCount}`)
     if (instrumented) r.hasError(chain, [], ctx)
-    const holds = [], checks = [], snapshots = [], roots = [chain]
+    const holds = [], checks = [], snapshots = [], roots = owners.map(owner => owner.chain)
     let phase = "before-release"
-    const hold = () => {
+    const hold = owner => {
         const held = Promise.withResolvers()
-        holds.push({ release: () => held.resolve() })
+        holds.push({ owner, release: () => held.resolve() })
         return held.promise
     }
     // Pending payloads use native Promises or ordered custom thenables.
@@ -188,6 +198,7 @@ async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
         return undefined
     }
     const keep = (value, expected, label) => {
+        roots.push(new r.Chain(value, ctx))
         if (value instanceof Promise) value.catch(() => {})
         if (expected !== undefined) checks.push({ got: value, want: expected, label })
         return value
@@ -218,12 +229,16 @@ async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
         } while (holds.length)
     }
     for (const step of steps) {
+        const { chain, slots } = owners[step.owner]
+        coverage.add(`owner:${step.owner}`)
+        if (["entry", "direct", "structural", "length", "conflict"].includes(step.kind) &&
+            holds.some(held => held.owner && held.owner !== chain)) coverage.add("multi-owner:pending-mutation")
         const after = phase
         if (step.kind === "entry") {
             coverage.add(`entry:${step.effect}:${step.delayed ? "delayed" : "ready"}`)
             applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
             const act = inside => element(inside, [], step.effect, step.value)
-            keep(r.enter(chain, ["a", step.index], ctx, true, inside => step.delayed ? hold().then(() => act(inside)) : act(inside)))
+            keep(r.enter(chain, ["a", step.index], ctx, true, inside => step.delayed ? hold(chain).then(() => act(inside)) : act(inside)))
         } else if (step.kind === "direct") {
             coverage.add(`direct:${step.effect}`)
             applyElement(slots, step.index, step.effect === "pending" ? "set" : step.effect, step.value)
@@ -251,12 +266,12 @@ async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
             const expected = expectedObservation(slots, step)
             const label = `${step.route} ${step.method}(${step.args.map(display)})`
             if (step.route === "direct") keep(r.run(chain, ["a"], step.method, step.args, ctx, {}), expected, label)
-            else if (step.route === "entry") keep(r.enter(chain, ["a"], ctx, false, inside => hold().then(() => r.run(inside, [], step.method, step.args, ctx, {}))), expected, label)
+            else if (step.route === "entry") keep(r.enter(chain, ["a"], ctx, false, inside => hold(chain).then(() => r.run(inside, [], step.method, step.args, ctx, {}))), expected, label)
             else snapshots.push({ snapshot: keep(r.lookupPath(chain, ["a"], ctx)), step, expected, label })
         } else if (step.kind === "conflict") {
             coverage.add(`conflict:${step.predecessor}:${step.first}:${step.nested ? "nested" : "ready"}`)
             for (const effect of [step.predecessor, step.first]) applyElement(slots, step.index, effect, step.value)
-            keep(r.enter(chain, ["a", step.index], ctx, true, inside => hold().then(() => element(inside, [], step.predecessor, step.value))))
+            keep(r.enter(chain, ["a", step.index], ctx, true, inside => hold(chain).then(() => element(inside, [], step.predecessor, step.value))))
             keep(element(chain, ["a", step.index], step.first, step.value))
             keep(step.nested
                 ? r.enter(chain, ["a"], ctx, true, inside => r.enter(inside, [step.index], ctx, true, () => undefined))
@@ -297,14 +312,18 @@ async function runProgram({ initial, delivery, steps }, seed, mode, coverage) {
         const actual = await describeOutcome(got, ctx)
         if (actual !== want) errors.push(`${label}: got ${actual} want ${want}`)
     }
-    const final = await describeOutcome(r.export(chain, ["a"], ctx), ctx)
-    const expectedFinal = display(values(slots))
-    if (final !== expectedFinal) errors.push(`final: got ${final} want ${expectedFinal}`)
-    const length = await outcome(r.lookupPath(chain, ["a", "length"], ctx))
-    if (length.result !== slots.length) errors.push(`final length: got ${length.result} want ${slots.length}`)
+    const finals = []
+    for (const [index, { chain, slots }] of owners.entries()) {
+        const final = await describeOutcome(r.export(chain, ["a"], ctx), ctx)
+        const expectedFinal = display(values(slots))
+        if (final !== expectedFinal) errors.push(`owner ${index} final: got ${final} want ${expectedFinal}`)
+        const length = await outcome(r.lookupPath(chain, ["a", "length"], ctx))
+        if (length.result !== slots.length) errors.push(`owner ${index} final length: got ${length.result} want ${slots.length}`)
+        finals.push(final)
+    }
     verify()
     assert.equal(ctx.execution.fatalError, null)
-    return { errors, final }
+    return { errors, final: finals.join("|") }
 }
 
 const programs = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6

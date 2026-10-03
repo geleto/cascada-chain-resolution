@@ -97,8 +97,9 @@ async function runProgram({ container, steps }, seed, mode, coverage) {
     const ctx = { execution: new r.Execution(), errorContext: {} }
     const host = INITIAL(), hostBefore = display(host)
     const chain = new r.Chain(container === "imported" ? { a: r.import(host.a, ctx) } : INITIAL(), ctx)
-    const checks = []
+    const checks = [], retained = []
     const keep = (value, want, label) => {
+        retained.push(new r.Chain(value, ctx))
         if (value instanceof Promise) value.catch(() => {})
         if (want !== undefined) checks.push({ got: value, want, label })
         return value
@@ -115,7 +116,7 @@ async function runProgram({ container, steps }, seed, mode, coverage) {
         holds.push(held)
         return held.promise
     }
-    const verify = () => { if (instrumented) verifyRefCounts(ctx, chain._state) }
+    const verify = () => { if (instrumented) verifyRefCounts(ctx, chain._state, ...retained.map(holder => holder._state)) }
     let phase = "before-release"
     for (const step of steps) {
         const { kind, path } = step

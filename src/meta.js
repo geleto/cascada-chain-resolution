@@ -1,3 +1,5 @@
+import { reconsider } from "./ownership.js"
+import { activateRelationships, visitParentPlacements } from "./parent-placements.js"
 import * as errorUtils from "./error.js"
 
 const TYPE = Object.freeze({
@@ -140,8 +142,11 @@ function requireMeta(value, operationContext) {
 }
 
 function requiresCopyOnWrite(value, operationContext) {
-    return metaOf(value, operationContext)?.shared === true ||
-        hasReadLease(value, operationContext)
+    const meta = metaOf(value, operationContext)
+    if (meta?.imported || meta?.readLeaseCount || meta?.preservationParents?.size) return true
+    let count = 0
+    visitParentPlacements(value, operationContext, () => ++count < 2)
+    return count > 1
 }
 
 function isTraversableType(type) {
@@ -158,6 +163,7 @@ function incrementReadLease(value, operationContext) {
     if (!isObjectLike(value)) return false
     const meta = requireMeta(value, operationContext)
     if (!isTraversableType(meta.type)) return false
+    activateRelationships(value, operationContext)
     meta.readLeaseCount = (meta.readLeaseCount ?? 0) + 1
     return true
 }
@@ -171,21 +177,12 @@ function decrementReadLease(value, operationContext) {
     }
     if (count === 1) delete meta.readLeaseCount
     else meta.readLeaseCount = count - 1
-}
-
-function markShared(value, operationContext) {
-    if (!isObjectLike(value)) return value
-    if (errorUtils.isFatalError(value)) throw value
-    if (Error.isError(value)) return value
-    const meta = requireMeta(value, operationContext)
-    if (isTraversableType(meta.type)) meta.shared = true
-    return value
+    reconsider(value, operationContext)
 }
 
 function markImported(value, operationContext) {
     const meta = requireMeta(value, operationContext)
     meta.imported = true
-    if (isTraversableType(meta.type)) meta.shared = true
 }
 
 function isImported(value, operationContext) {
@@ -209,7 +206,6 @@ export {
     isPlainObjectPrototype,
     isTraversableType,
     markImported,
-    markShared,
     metaOf,
     requireMeta,
     requiresCopyOnWrite,

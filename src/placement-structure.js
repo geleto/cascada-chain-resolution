@@ -61,7 +61,7 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     }
 }
 
-function preparePlacementStructure(owner, key, placement, structure, operationContext, writeBack, before) {
+function preparePlacementStructure(owner, key, placement, structure, operationContext, before) {
     if (placement.pendingPresence) return () => {}
     if (structure) return structure.prepare(placement)
     const present = placement.present !== false
@@ -77,9 +77,9 @@ function preparePlacementStructure(owner, key, placement, structure, operationCo
     if (order) placement.position = present ? placement.position < Infinity ? placement.position : order.clock.next++ : Infinity
     else if (!array) placement.position = present ? -1 : Infinity
     const commitGrowth = created && array
-        ? ArrayView.prepareIndexCreation(owner, key, operationContext, writeBack) : undefined
-    return () => {
-        commitGrowth?.()
+        ? ArrayView.prepareIndexCreation(owner, key, operationContext) : undefined
+    return wroteStorage => {
+        commitGrowth?.(wroteStorage)
         if (order) {
             if (!present || placement.position === -1) order.positions.delete(key)
             else order.positions.set(key, { position: placement.position })

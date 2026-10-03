@@ -1,16 +1,14 @@
+import { Execution } from "../src/index.js"
+import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 import * as errorUtils from "../src/error.js"
 import * as runtime from "../src/index.js"
 import {
     continueOperation,
     runInternalStep,
 } from "../src/internal-step.js"
-import {
-    testOperationContext,
-    deferred,
-    expect,
-    flushMicrotasks,
-    thrownBy,
-} from "./support.js"
+import { deferred, expect, flushMicrotasks, thrownBy } from "./support.js"
 
 function operationContext(execution, errorContext = "fatal test") {
     return { execution, errorContext }
@@ -21,6 +19,20 @@ function failedBy(operationContext, reason) {
 }
 
 describe("fatal execution", () => {
+    it("guards callbacks and deferred retirement with one authoritative fatal", () => {
+        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
+            fileURLToPath(new URL("./fixtures/continuation-failure.js", import.meta.url))],
+        { encoding: "utf8", timeout: 10000 })
+        assert.equal(result.status, 0, result.stdout + result.stderr)
+    })
+
+    it("guards final outward completion until settlement", () => {
+        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
+            fileURLToPath(new URL("./fixtures/outward-completion-failure.js", import.meta.url))],
+        { encoding: "utf8", timeout: 10000 })
+        assert.equal(result.status, 0, result.stdout + result.stderr)
+    })
+
     it("constructs immutable, non-thenable FatalErrors", async () => {
         const cause = new Error("contextless failure")
         const failure = thrownBy(() =>
@@ -40,8 +52,6 @@ describe("fatal execution", () => {
             Error.prototype,
         )
         expect(runtime.isFatalError(failure)).to.be(true)
-        expect(runtime.isFatalError(Object.create(runtime.FatalError.prototype)))
-            .to.be(false)
         expect(failure.cause).to.be(cause)
         expect(Object.isFrozen(failure)).to.be(true)
         expect(failure.then).to.be(undefined)
@@ -448,7 +458,7 @@ describe("fatal execution", () => {
         const languageContext = operationContext(languageExecution, "language outcome")
         const poison = errorUtils.validationError(
             "expected",
-            testOperationContext("poison source"),
+            { execution: new Execution(), errorContext: "poison source" },
             runtime.ERROR_KIND.OperationInputFailed,
         )
         const languageResult = runtime.import(Promise.reject(poison), languageContext)

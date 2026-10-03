@@ -1,6 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as internalSteps from "./internal-step.js"
-import { prepareInput } from "./input-preparations.js"
+import { prepareInput, receiveValue } from "./input-preparations.js"
 
 const IMPORT_POLICY = {
     Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed, imported: true },
@@ -8,12 +8,12 @@ const IMPORT_POLICY = {
     ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, externalRoot: true, imported: true },
 }
 
-function importValue(value, operationContext) {
-    return importData(value, operationContext, IMPORT_POLICY.Context)
+function importValue(value, operationContext, delivery) {
+    return importData(value, operationContext, IMPORT_POLICY.Context, delivery)
 }
 
-function importMethodResult(value, operationContext) {
-    return importData(value, operationContext, IMPORT_POLICY.MethodResult)
+function importMethodResult(value, operationContext, delivery) {
+    return importData(value, operationContext, IMPORT_POLICY.MethodResult, delivery)
 }
 
 function importExternalProperty(value, operationContext) {
@@ -29,45 +29,13 @@ function importReadyMethodResult(value, operationContext, failures, receiver) {
     }, undefined, failures)
 }
 
-function importContext(value, operationContext, externalMutationTreeSetup) {
-    return importData(
-        value,
-        operationContext,
-        IMPORT_POLICY.Context,
-        externalMutationTreeSetup,
-    )
-}
-
-function importData(
-    value,
-    operationContext,
-    policy,
-    externalMutationTreeSetup,
-) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        try {
-            return internalSteps.continueOperation(
-                value,
-                operationContext,
-                root => prepareInput(
-                    root,
-                    operationContext,
-                    policy,
-                    // Thenable delivery supplies a different root, even when ready.
-                    root === value ? externalMutationTreeSetup : undefined,
-                ),
-                reason => errorUtils.createPoisonError(reason, operationContext, policy.kind),
-            )
-        } finally {
-            // Deferred import needs neither the original root nor discovery inputs.
-            value = externalMutationTreeSetup = undefined
-        }
-    })
+function importData(value, operationContext, policy, delivery) {
+    return internalSteps.runInternalStep(operationContext, () =>
+        receiveValue(value, operationContext, policy, delivery?.capture))
 }
 
 export {
     importValue as import,
-    importContext,
     importMethodResult,
     importExternalProperty,
     importReadyMethodResult,

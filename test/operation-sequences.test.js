@@ -196,6 +196,7 @@ describe("observations across scope publication", () => {
                         : { n: 0, bump: Receiver.prototype.bump, read: Receiver.prototype.read })
                     for (let i = 0; i < before; i++) await Promise.resolve()
                     const captured = observe(chain, ctx)
+                    const retained = name === "lookup" ? new r.Chain(captured, ctx) : undefined
                     for (let i = 0; i < after; i++) await Promise.resolve()
                     const query = name === "hasError" || name === "getErrors" || name === "rootErrors"
                     const next = query ? new Error("later Error") : 50
@@ -209,7 +210,7 @@ describe("observations across scope publication", () => {
                         : name === "rootExport" ? value.item.n : value
                     assert.equal(result, expected, `${change}, before=${before}, after=${after}`)
                     await first
-                    // Delivery must not end a retained lookup's protection.
+                    // Explicit reception keeps the lookup after its handoff interval.
                     r.assignPath(chain, ["item", "n"], 60, ctx)
                     if (name === "export" || name === "lookup") assert.equal(value.n, expected)
                     if (name === "rootExport") assert.equal(value.item.n, expected)
@@ -383,7 +384,9 @@ describe("bounded external ordering sequences", () => {
         assert.deepStrictEqual(expectedProgress(sequence, new Set([0])), { starts: [0, 1, 2], ends: [0] })
     })
     for (const entered of [false, true]) {
-        it(`matches an independent conflict model, entered=${entered}`, async () => {
+        it(`matches an independent conflict model, entered=${entered}`, async function () {
+            // Each test exhausts command triples and their settlement orders.
+            this.timeout(10000)
             for (const sequence of sequences(commands, 3).filter(sequence => sequence.length === 3)) {
                 for (const order of releaseOrders) {
                     const ctx = { execution: new r.Execution(), errorContext: {} }
@@ -548,7 +551,9 @@ describe("mixed entry and native ordering", () => {
     }
 })
 
-describe("structural Array command sequences", () => {
+describe("structural Array command sequences", function () {
+    // Each case executes 216 programs through four different entry routes.
+    this.timeout(15000)
     it("matches native Array methods queued behind indexed element entry", async () => {
         const methods = [
             ["push", [8], true], ["pop", [], true], ["shift", [], true],

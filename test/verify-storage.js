@@ -7,7 +7,6 @@ import * as errorUtils from "../src/error.js"
 import * as metadata from "../src/meta.js"
 import * as languageProperties from "../src/language-properties.js"
 import * as languageValues from "../src/language-values.js"
-import { ArrayView, isArrayView } from "../src/array-view.js"
 
 function verifyStorage(operationContext, ...roots) {
     const seen = new Set()
@@ -18,10 +17,6 @@ function verifyStorage(operationContext, ...roots) {
         seen.add(node)
         const meta = metadata.metaOf(node, operationContext)
         const versions = meta.placementVersions ?? {}
-        if (meta.retainedPrefixLength !== undefined &&
-            (!isArrayView(node, operationContext) || meta.retainedPrefixLength > ArrayView.minimumLength(node, operationContext))) {
-            fatal("Retained backing prefix exceeds its view", operationContext)
-        }
         for (const key of Object.keys(versions)) {
             const version = versions[key]
             if (version.storageAbsent === true &&
@@ -32,11 +27,6 @@ function verifyStorage(operationContext, ...roots) {
         }
         for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
             const child = languageProperties.readLanguageProperty(node, key, operationContext)
-            if (Number(key) < meta.retainedPrefixLength && !versions[key] &&
-                languageValues.isTraversable(child, operationContext) &&
-                !metadata.metaOf(child, operationContext).shared) {
-                fatal("Retained backing prefix contains an unprotected child", operationContext)
-            }
             visit(child)
         }
     }

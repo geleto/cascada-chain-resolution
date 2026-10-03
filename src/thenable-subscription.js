@@ -9,32 +9,7 @@ function mayBeThenable(value, operationContext) {
         !Error.isError(value) && !metaOf(value, operationContext)
 }
 
-function runSubscription(operationContext, subscribe) {
-    let result
-    try {
-        result = subscribe()
-    } finally {
-        // Delivery of an older pending callback can fail this execution without
-        // throwing from the current subscription: its own chain receives it.
-        const fatal = operationContext.execution.fatalError
-        if (fatal !== null) {
-            try {
-                observeRejection(result, operationContext)
-            } finally {
-                // The committed fatal supersedes a subscription or observation
-                // exception already unwinding through either finally block.
-                throw fatal
-            }
-        }
-    }
-    return result
-}
-
 function markPromiseHandled(promise, operationContext) {
-    runSubscription(operationContext, () => { observeRejection(promise, operationContext) })
-}
-
-function observeRejection(promise, operationContext) {
     // No-op handlers own rejection even after fatality. They cannot throw or
     // assimilate a payload, so their returned chain needs no recursive observer.
     if (mayBeThenable(promise, operationContext) && typeof promise.then === "function") {
@@ -42,4 +17,4 @@ function observeRejection(promise, operationContext) {
     }
 }
 
-export { mayBeThenable, runSubscription, markPromiseHandled }
+export { mayBeThenable, markPromiseHandled }

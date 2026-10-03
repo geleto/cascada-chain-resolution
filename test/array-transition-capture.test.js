@@ -33,6 +33,7 @@ describe("Array methods capture unfinished placements", () => {
                 }))
                 const earlier = captures ? r.export(chain, ["list"], ctx) : undefined
                 const result = r.run(chain, ["list"], method, args, ctx, { mutationScopeDepth: 1 })
+                const resultHolder = new r.Chain(result, ctx)
                 const label = `${method}(${args}); ${representation}; index=${index}; ${action}; captures=${captures}`
                 // The new shape is known even if a removed-element result or a
                 // transferred element still depends on the open entry.
@@ -122,13 +123,14 @@ describe("Array methods capture unfinished placements", () => {
         const entry = r.enter(chain, [0], ctx, true, inside => hold.promise.then(() =>
             r.assignPath(inside, ["missing", "child"], 1, ctx)))
         const result = r.run(chain, [], "reverse", [], ctx, { mutationScopeDepth: 0 })
+        const resultHolder = new r.Chain(result, ctx)
         assert.equal(r.lookupPath(chain, [0], ctx), 20)
         const repair = r.repairPath(chain, [1], ctx)
         hold.resolve()
         await entry
         await repair
         assert.deepEqual(await r.export(chain, [], ctx), [20, 10])
-        assert.equal((await r.export(new r.Chain(result, ctx), [], ctx)).kind, r.ERROR_KIND.ScalarLookup)
+        assert.equal((await r.export(resultHolder, [], ctx)).kind, r.ERROR_KIND.ScalarLookup)
         verifyRefCounts(ctx, chain._state)
     })
 

@@ -61,15 +61,16 @@ function isDataPlacement(descriptor) {
 // A language container may be a Proxy, so the physical property operations
 // below can invoke its traps even though accessors never run as graph values.
 function getLanguagePropertyDescriptor(parent, key, operationContext) {
-    key = String(key)
-    if (classifyLanguageProperty(parent, key, operationContext) === INVALID_ARRAY_KEY) {
-        return undefined
-    }
-    parent = ArrayView.projectionOf(parent, operationContext)
-    return isArrayView(parent, operationContext)
-        ? parent.descriptor(key, operationContext)
-        : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
-          )
+    try {
+        key = String(key)
+        if (classifyLanguageProperty(parent, key, operationContext) === INVALID_ARRAY_KEY) {
+            return undefined
+        }
+        return metadata.metaOf(parent, operationContext)?.arrayRange
+            ? ArrayView.descriptor(parent, key, operationContext)
+            : errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key),
+              )
+    } finally { parent = undefined }
 }
 
 function getLanguagePlacementDescriptor(parent, key, operationContext) {
@@ -83,10 +84,10 @@ function requiresRepresentationCopyForPropertyMutation(
     operationContext,
     mode = PROPERTY_MUTATION_MODE.Assign,
 ) {
-    if (ArrayView.requiresMaterialization(parent, operationContext)) return true
-    const projected = ArrayView.projectionOf(parent, operationContext)
+    if (ArrayView.requiresMaterialization(parent, operationContext, key) ||
+        ArrayView.hasOtherStorageUse(parent, key, operationContext)) return true
     key = String(key)
-    const descriptor = getLanguagePropertyDescriptor(projected, key, operationContext)
+    const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
 
     if (mode === PROPERTY_MUTATION_MODE.Delete) {
         return isDataPlacement(descriptor) && !descriptor.configurable
@@ -96,26 +97,27 @@ function requiresRepresentationCopyForPropertyMutation(
             mode === PROPERTY_MUTATION_MODE.AssignOrDelete && !descriptor.configurable
     }
 
-    const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(projected),
+    const extensible = errorUtils.runExternalAction(operationContext, () =>
+        Object.isExtensible(metadata.metaOf(parent, operationContext)?.arrayRange?.backing ?? parent),
     )
     if (!extensible) return true
-    if (!Array.isArray(projected) || !isArrayIndex(key)) {
+    if (!Array.isArray(parent) || !isArrayIndex(key)) {
         return false
     }
-    const length = getLanguagePropertyDescriptor(projected, "length", operationContext)
-    return Number(key) >= ArrayView.minimumLength(projected, operationContext) &&
+    const length = getStorageDescriptor(parent, "length", operationContext)
+    return Number(key) >= ArrayView.minimumLength(parent, operationContext) &&
         length?.writable !== true
+}
+
+function getStorageDescriptor(parent, key, operationContext) {
+    // A native Array may have an attached logical length projection. Storage
+    // preflight needs its actual slot, without traversing pending length history.
+    return isArrayView(parent, operationContext) ? ArrayView.descriptor(parent, String(key), operationContext) :
+        errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key))
 }
 
 // These assertions guard internal commits after the owning transition has
 // selected a writable representation.
-function getStorageDescriptor(parent, key, operationContext) {
-    // A native Array may have an attached logical length projection. Storage
-    // preflight needs its actual slot, without traversing pending length history.
-    return isArrayView(parent, operationContext) ? parent.descriptor(String(key), operationContext) :
-        errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key))
-}
-
 function assertCanSetLanguageProperty(parent, key, operationContext) {
     const descriptor = getStorageDescriptor(parent, key, operationContext)
     if (!descriptor) return
@@ -142,9 +144,8 @@ function assertCanDeleteLanguageProperty(parent, key, operationContext) {
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
 function writeLanguageProperty(parent, key, value, operationContext, descriptor) {
-    parent = ArrayView.projectionOf(parent, operationContext)
-    if (isArrayView(parent, operationContext)) {
-        const target = parent.mutationTarget(String(key), operationContext, true)
+    if (metadata.metaOf(parent, operationContext)?.arrayRange) {
+        const target = ArrayView.mutationTarget(parent, String(key), operationContext, true)
         parent = target.parent
         key = target.key
     }
@@ -205,9 +206,8 @@ function hasLanguageProperty(parent, key, operationContext) {
 }
 
 function deleteLanguageProperty(parent, key, operationContext, descriptor) {
-    parent = ArrayView.projectionOf(parent, operationContext)
-    if (isArrayView(parent, operationContext)) {
-        const target = parent.mutationTarget(String(key), operationContext, false)
+    if (metadata.metaOf(parent, operationContext)?.arrayRange) {
+        const target = ArrayView.mutationTarget(parent, String(key), operationContext, false)
         if (!target) return key !== "length"
         parent = target.parent
         key = target.key
@@ -222,33 +222,37 @@ function deleteLanguageProperty(parent, key, operationContext, descriptor) {
 // Proxy descriptor cannot hide later siblings from complete Error collection.
 function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end,
     type = metadata.metaOf(value, operationContext)?.type) {
-    const array = type === metadata.TYPE.Array
-    const keys = array
-        ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
-        : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
-    const meta = metadata.metaOf(value, operationContext)
-    const versions = meta?.placementVersions
-    if (!versions) return array ? keys : keys.filter(key => typeof key === "string")
-    const candidates = Object.create(null)
-    for (const key of keys) if (typeof key === "string") candidates[key] = true
-    for (const key of Object.keys(versions)) {
-        if (!array || Number(key) >= start && (end === undefined || Number(key) < end)) {
-            candidates[key] = true
+    try {
+        const array = type === metadata.TYPE.Array
+        const keys = array
+            ? ArrayView.physicalKeyCandidates(value, operationContext, start, end)
+            : errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(value))
+        const meta = metadata.metaOf(value, operationContext)
+        const versions = meta?.placementVersions
+        if (!versions) return array ? keys : keys.filter(key => typeof key === "string")
+        const candidates = Object.create(null)
+        for (const key of keys) if (typeof key === "string") candidates[key] = true
+        for (const key of Object.keys(versions)) {
+            if (!array || Number(key) >= start && (end === undefined || Number(key) < end)) {
+                candidates[key] = true
+            }
         }
-    }
-    return orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
+        return orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
+    } finally { value = undefined }
 }
 
 // Complete collectors guard both listing and each presence check. Keep the
 // keys captured before a listing failure and continue past failed descriptors.
 function enumerableLanguageKeys(value, operationContext, start = 0, end, inspect = action => action()) {
     const placements = []
-    inspect(() => {
-        for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
-            if (inspect(() => hasLanguageProperty(value, key, operationContext)) === true) placements.push(key)
-        }
-    })
-    return placements
+    try {
+        inspect(() => {
+            for (const key of enumerableLanguageKeyCandidates(value, operationContext, start, end)) {
+                if (inspect(() => hasLanguageProperty(value, key, operationContext)) === true) placements.push(key)
+            }
+        })
+        return placements
+    } finally { value = undefined }
 }
 
 export {
