@@ -1,5 +1,17 @@
-const externalThrows = new WeakMap()
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor
+
+// A private control Error carries a throw from one exact host action to the
+// owning boundary. It is never a language result or an execution's fatal state.
+class ActionThrowError extends Error {
+    constructor(reason) {
+        super("Host action threw", { cause: reason })
+        this.name = "ActionThrowError"
+    }
+}
+
+function isActionThrowError(reason) {
+    return Error.isError(reason) && Object.getPrototypeOf(reason) === ActionThrowError.prototype
+}
 
 const ERROR_KIND = Object.freeze({
     ChainValueFailed: "ChainValueFailed",
@@ -114,7 +126,7 @@ function runWithFatalGuard(operationContext, work, value) {
     } catch (reason) {
         failExecution(
             operationContext,
-            externalThrows.has(reason) ? externalThrows.get(reason) : reason,
+            isActionThrowError(reason) ? reason.cause : reason,
         )
     }
 }
@@ -140,9 +152,7 @@ function runExternalAction(operationContext, action) {
     if (fatal !== null) throw fatal
     if (!failed) return result
     if (isFatalError(failure)) failExecution(operationContext, failure)
-    const marker = {}
-    externalThrows.set(marker, failure)
-    throw marker
+    throw new ActionThrowError(failure)
 }
 
 // Host configuration has no execution to fail or synchronous activity to track.
@@ -152,21 +162,19 @@ function runDeclarationAction(action) {
         return action()
     } catch (reason) {
         if (isFatalError(reason)) throw reason
-        const marker = {}
-        externalThrows.set(marker, reason)
-        throw marker
+        throw new ActionThrowError(reason)
     }
 }
 
-// Consume only the exact-action producers' private escape marker. An ordinary internal throw
+// Consume only the private ActionThrowError from an exact action. An ordinary internal throw
 // passes through unchanged to the fatal guard, even when it is a PoisonError.
 function catchExternalAction(work, onFailure) {
     let failure
     try {
         return work()
     } catch (reason) {
-        if (!externalThrows.has(reason)) throw reason
-        failure = externalThrows.get(reason)
+        if (!isActionThrowError(reason)) throw reason
+        failure = reason.cause
     }
     // The owning transition's classification and failure effect are outside
     // recovery. A defect in either must escape to the fatal envelope.
