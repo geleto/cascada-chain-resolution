@@ -51,6 +51,8 @@ Runtime-owned backing accepts valid length changes under the [managed-storage co
 
 The representation supplies `descriptor` and `mutationTarget` operations on an explicit logical owner. The common language-property boundary performs physical writes and deletions; representation metadata gives no permission to bypass ownership or placement publication. Logical consumers call `readLanguageProperty`, `hasLanguageProperty`, and `enumerableLanguageKeys` with the logical owner. Complete collectors use `enumerableLanguageKeyCandidates` or pass a per-key `inspect` guard to `enumerableLanguageKeys` so a failed descriptor does not hide other candidates. The guarded enumeration also preserves keys captured before a listing failure. Optional Array ranges filter stored and version candidates together.
 
+Bounded physical ranges capture their numeric bounds immediately and stream candidate indexes; iteration itself neither reads nor retains backing storage. Captured overlay keys merge in numeric order without allocating a set containing every hole. Broad native ranges still capture stored keys immediately, while bounded views inspect only their own range. This bounds intermediate allocation; a sparse bounded range still requires a range scan to preserve the reflection and complete-Error-collection contract.
+
 ## Derivation
 
 A derivation is allowed only when the receiver is not imported.

@@ -248,9 +248,9 @@ class ArrayView {
             }
             return Object.keys(keys)
         }
-        const keys = []
-        for (let index = start; index < end; index++) keys.push(String(index - offset))
-        return keys
+        // Capture the bounds now without allocating one key per hole. Iteration
+        // itself reads no storage, so descriptor failures cannot lose candidates.
+        return indexKeys(start - offset, end - offset)
     }
 
     static descriptor(array, key, operationContext) {
@@ -310,6 +310,10 @@ class ArrayView {
     static #physicalLength(array, operationContext) {
         return errorUtils.runExternalAction(operationContext, () => array.length)
     }
+}
+
+function* indexKeys(start, end) {
+    for (let index = start; index < end; index++) yield String(index)
 }
 
 function isArrayView(value, operationContext) {

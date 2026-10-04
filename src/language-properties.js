@@ -229,15 +229,27 @@ function enumerableLanguageKeyCandidates(value, operationContext, start = 0, end
         const meta = metadata.metaOf(value, operationContext)
         const versions = meta?.placementVersions
         if (!versions) return array ? keys : keys.filter(key => typeof key === "string")
+        if (array) return mergeArrayKeys(keys, Object.keys(versions).filter(
+            key => Number(key) >= start && (end === undefined || Number(key) < end)))
         const candidates = Object.create(null)
         for (const key of keys) if (typeof key === "string") candidates[key] = true
         for (const key of Object.keys(versions)) {
-            if (!array || Number(key) >= start && (end === undefined || Number(key) < end)) {
-                candidates[key] = true
-            }
+            candidates[key] = true
         }
         return orderRecordKeys(Object.keys(candidates), meta.recordOrder?.positions)
     } finally { value = undefined }
+}
+
+// Both lists are captured in numeric order. Merge overlays without expanding
+// a bounded sparse range into an intermediate set of every possible index.
+function* mergeArrayKeys(physical, overlays) {
+    let next = 0
+    for (const key of physical) {
+        while (next < overlays.length && Number(overlays[next]) < Number(key)) yield overlays[next++]
+        if (overlays[next] === key) next++
+        yield key
+    }
+    while (next < overlays.length) yield overlays[next++]
 }
 
 // Complete collectors guard both listing and each presence check. Keep the

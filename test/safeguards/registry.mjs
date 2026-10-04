@@ -12,6 +12,27 @@ const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
     {
+        id: "leased-input-restores-relationships",
+        guards: "A lease on a retired cached graph restores its borrowed descendants' protection before later work.",
+        faults: [edit("src/meta.js", "    activateRelationships(value, operationContext)\n    meta.readLeaseCount",
+            "    meta.readLeaseCount")],
+        witnesses: ["bounded graph ownership restores a leased cached argument"],
+    },
+    {
+        id: "bounded-array-candidates-stream",
+        guards: "Capturing a bounded sparse range allocates no candidate key per hole.",
+        faults: [edit("src/array-view.js", "return indexKeys(start - offset, end - offset)",
+            "const keys = []; for (let index = start; index < end; index++) keys.push(String(index - offset)); return keys")],
+        witnesses: ["bounded graph ownership verifies array-enumeration-work"],
+    },
+    {
+        id: "array-overlay-merge-streams",
+        guards: "Merging captured overlays does not eagerly expand a bounded sparse range.",
+        faults: [edit("src/language-properties.js", "if (array) return mergeArrayKeys(keys, Object.keys(versions).filter(",
+            "if (array) return mergeArrayKeys([...keys], Object.keys(versions).filter(")],
+        witnesses: ["bounded graph ownership verifies array-enumeration-work"],
+    },
+    {
         id: "displaced-writers-retain-capture",
         guards: "A detached queued writer cannot use another owner's sole placement as mutation permission.",
         faults: [edit("src/property-versions.js",

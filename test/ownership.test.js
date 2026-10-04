@@ -12,6 +12,74 @@ import { createRandom, randomInteger } from "./native-equivalence-support.js"
 const context = () => ({ execution: new runtime.Execution(), errorContext: "ownership" })
 
 describe("bounded graph ownership", () => {
+    for (const offset of [0, 2]) for (const route of ["concat", "assign"]) {
+        it(`keeps removed backing slots absent during sparse ${route}, offset=${offset}`, () => {
+            const ctx = context()
+            const backing = new runtime.Chain([...Array(offset).fill(0), 1, 2, 3], ctx)
+            const source = offset
+                ? new runtime.Chain(runtime.run(backing, [], "slice", [offset], ctx, {}), ctx) : backing
+            if (offset) runtime.assignPath(backing, [], null, ctx)
+            const prefix = new runtime.Chain(runtime.run(source, [], "slice", [0, 1], ctx, {}), ctx)
+            runtime.run(source, [], "pop", [], ctx, { mutationScopeDepth: 0 })
+            const expected = [1, 2]
+            expected.length = 4
+            let result = source
+            if (route === "concat")
+                result = new runtime.Chain(runtime.run(source, [], "concat", [new Array(2)], ctx, {}), ctx)
+            else {
+                runtime.assignPath(source, [3], 9, ctx)
+                expected[3] = 9
+            }
+            assert.deepEqual(runtime.export(result, [], ctx), expected)
+            assert.deepEqual(runtime.export(prefix, [], ctx), [1])
+            verifyRefCounts(ctx, backing._state, source._state, prefix._state, result._state)
+        })
+    }
+
+    for (const array of [false, true]) {
+        it(`restores a leased cached argument before its borrowed child changes, array=${array}`, async () => {
+            const ctx = context(), child = { k: 1 }
+            const alias = new runtime.Chain(child, ctx)
+            const cached = array ? [child] : { child }
+            const prior = new runtime.Chain(runtime.import(cached, ctx), ctx)
+            runtime.assignPath(prior, [], null, ctx)
+            assert.equal(metaOf(cached, ctx).relationshipsActive, false)
+            const receiver = Promise.withResolvers()
+            const call = runtime.run(new runtime.Chain(receiver.promise, ctx), [], "read",
+                [runtime.import(cached, ctx)], ctx, {})
+            runtime.assignPath(alias, ["k"], 2, ctx)
+            receiver.resolve(runtime.externalState({ read(value) { return (array ? value[0] : value.child).k } }))
+            assert.equal(await call, 1)
+            assert.equal(runtime.lookupPath(alias, ["k"], ctx), 2)
+            await new Promise(setImmediate)
+            assert.equal(metaOf(cached, ctx).relationshipsActive, false)
+            verifyRefCounts(ctx, prior._state, alias._state)
+        })
+    }
+
+    for (const removal of ["clear", "replace", "delete"]) {
+        it(`retires a backing owner without inspecting or trimming host storage on ${removal}`, () => {
+            const ctx = context()
+            let actions = 0
+            const backing = new Proxy([{ k: 1 }, { k: 2 }, { k: 3 }], {
+                get(target, key, receiver) { actions++; return Reflect.get(target, key, receiver) },
+                set(target, key, value, receiver) { actions++; return Reflect.set(target, key, value, receiver) },
+                ownKeys(target) { actions++; return Reflect.ownKeys(target) },
+                getOwnPropertyDescriptor(target, key) { actions++; return Reflect.getOwnPropertyDescriptor(target, key) },
+                deleteProperty(target, key) { actions++; return Reflect.deleteProperty(target, key) },
+            })
+            const source = new runtime.Chain({ items: backing }, ctx)
+            const prefix = new runtime.Chain(runtime.run(source, ["items"], "slice", [0, 1], ctx, {}), ctx)
+            actions = 0
+            if (removal === "clear") runtime.assignPath(source, [], null, ctx)
+            else if (removal === "replace") runtime.assignPath(source, ["items"], [], ctx)
+            else runtime.deletePath(source, ["items"], ctx)
+            assert.equal(actions, 0, "Retirement uses maintained relationships, never host storage")
+            assert.deepEqual(runtime.export(prefix, [], ctx), [{ k: 1 }])
+            verifyRefCounts(ctx, source._state, prefix._state)
+        })
+    }
+
     for (const route of ["then", "await", "async-return", "adoption", "join"]) {
         it("protects pending delivery through " + route, async () => {
             const ctx = context(), pending = Promise.withResolvers(), pause = Promise.withResolvers()
@@ -475,7 +543,7 @@ describe("bounded graph ownership", () => {
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })
 
-    for (const fixture of ["ownership-destinations", "array-point-work"]) {
+    for (const fixture of ["ownership-destinations", "array-point-work", "array-enumeration-work"]) {
         it("verifies " + fixture, function () {
             this.timeout(30000)
             const result = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
