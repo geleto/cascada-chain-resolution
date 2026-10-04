@@ -149,11 +149,14 @@ function expireReadyDeliveries(execution) {
 }
 
 function releaseDetached(operationContext, release) {
-    if (operationContext.execution.fatalError !== null) { release(); return }
-    try { runGraphTransition(operationContext, release) }
+    try {
+        if (operationContext.execution.fatalError !== null) { release(); return }
+        runGraphTransition(operationContext, release)
+    }
     catch (failure) {
         // The common transition has committed the authoritative fatal.
-        // A detached cleanup reaction must not throw it into the host queue.
+        // A detached cleanup reaction must not throw into the host queue,
+        // including a further cleanup defect after an earlier fatal commit.
         if (operationContext.execution.fatalError === null) throw failure
     }
 }

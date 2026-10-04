@@ -31,6 +31,8 @@ import {
     managedStateClass,
 } from "./data-declarations.js"
 
+// Public commands enter the fatal and graph-transition boundary here. Core
+// helpers share that entry; deferred work keeps its own resumption guards.
 function importValue(value, operationContext) {
     return runManagedOperation(operationContext, delivery => importCore(value, operationContext, delivery))
 }

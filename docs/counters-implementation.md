@@ -1,16 +1,15 @@
 # Graph presence summaries
 
 Presence summaries are a lazy index over an acyclic projection of the logical
-graph. They identify reachable pending Promises, Errors, and cycle cuts without
-counting paths through aliases.
+graph. They identify Error presence and whether pending Promises or cycle cuts require
+further query traversal, without counting paths through aliases.
 
 ## Metadata
 
 Each indexed traversable identity stores:
 
-- `promiseCount`: immediate placements contributing pending-Promise presence;
-- `errorCount`: immediate placements contributing Error presence;
-- `cycleCutCount`: immediate placements contributing cycle-cut reachability; and
+- `frontierCount`: immediate placements contributing pending-Promise or cycle-cut reachability;
+- `errorCount`: immediate placements contributing Error presence; and
 - `parents`: `Map<parent, multiplicity>` for reverse projected edges.
 
 `parents === undefined` means unindexed. An empty map means indexed with no
@@ -22,8 +21,8 @@ counters. There is no permanent shared mark.
 
 | Logical property | Contribution | Counted child |
 | --- | --- | --- |
-| Pending Promise | One Promise | None |
-| Cycle cut | One cycle cut | None |
+| Pending Promise | One frontier | None |
+| Cycle cut | One frontier | None |
 | Error | One Error | None |
 | Indexed traversable value | One for each nonzero child summary | The value |
 | Other value | None | None |
@@ -32,7 +31,8 @@ Every raw-reachable traversable value beneath an indexed root is indexed. Cuts
 separate that raw graph into projected components; their targets have
 independent counters.
 
-Each placement contributes at most one to each summary. An indexed child with
+Each placement contributes at most one to each summary. A child containing both
+pending Promises and cycle cuts contributes one frontier through each parent key. An indexed child with
 one Error and a child with many paths to an Error contribute equally through
 one parent key. Several keys referencing that child contribute their actual
 local edge multiplicity. Counts are bounded by the node's immediate placements;
@@ -137,8 +137,10 @@ checks the existing parent DAG before committing.
 
 ## Consumers and verification
 
-`hasError` and `getErrors` fence their walks with all three counters. At a cut,
-they continue from its independently indexed target. Export instead walks the
+`hasError` and `getErrors` fence their walks with both counters. `errorCount`
+can prove `hasError` immediately; `frontierCount` requires further traversal.
+The ordinary traversable-child walk also follows cut targets, using their
+independent indexes and the query's visited set. Export instead walks the
 raw graph and never builds or reads counters. Contextual Error queries also
 observe selected mutable-external scope metadata through its ordered phase;
 a zero managed summary cannot prune those required static-tree locations.

@@ -78,8 +78,9 @@ a minimum cut set.
 ## Observations
 
 A cut stops count propagation only across its property. Its target has an
-independent index. Error queries use `cycleCutCount` to find cut placements and
-continue from their targets with one operation-local visited set.
+independent index. The combined `frontierCount` keeps pending work and cut
+reachability visible to Error queries. Their ordinary child traversal continues
+from cut targets with one operation-local visited set.
 
 Closing one Error query stops its further cut traversal without affecting another query or shared Promise publication. `hasError` closes on its first proved Error; `getErrors` keeps its visited set until the complete captured frontier has been searched.
 
@@ -88,7 +89,7 @@ reconstructs the actual graph.
 
 ## Verification
 
-`test/verify-refcounts.js` independently checks all three counts, cut shape,
+`test/verify-refcounts.js` independently checks both counts, cut shape,
 raw-reachable index closure, reverse-edge multiplicity, Promise version shape,
 and acyclicity of the projected parent graph.
 

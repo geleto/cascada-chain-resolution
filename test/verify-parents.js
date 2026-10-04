@@ -89,7 +89,7 @@ function verifyParents(context, ...roots) {
         if (!meta.placementsInitialized) fail("Published managed container has incomplete parent preparation")
         if (!meta.relationshipsActive) {
             if (meta.incomingParents || meta.preservationParents || meta.parents || meta.counterChildren ||
-                meta.promiseCount !== undefined || meta.errorCount !== undefined || meta.cycleCutCount !== undefined ||
+                meta.frontierCount !== undefined || meta.errorCount !== undefined ||
                 meta.cycleCuts || meta.destination?.owner || meta.backingRecord?.owners.has(node))
                 fail("Retired container retains active ownership state")
             for (const child of forward(node).values()) walk(child)

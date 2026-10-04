@@ -7,6 +7,7 @@ import * as metadata from "./meta.js"
 import { exportValue } from "./export.js"
 import { externalCapabilityEscapeError, validateExternalAccess } from "./external-operation.js"
 import { readManagedProperty, snapshotExternalValue } from "./external-snapshot.js"
+import { readCallableThen } from "./thenable-subscription.js"
 
 class ExternalAccess {
     constructor(identity, path, boundary, operation) {
@@ -77,15 +78,17 @@ class ExternalAccess {
         const kind = deleting ? errors.ERROR_KIND.ExternalPropertyDeleteFailed : errors.ERROR_KIND.ExternalPropertyWriteFailed
         const branch = !deleting && key === "length" && externalTree.findBranch(this.boundary, this.path.slice(0, -1))
         if (branch) {
+            const array = this.native(kind, () => Array.isArray(receiver))
+            if (errors.isPoisonError(array)) return array
+            const descriptor = array ? this.native(kind, () => Object.getOwnPropertyDescriptor(receiver, "length")) : undefined
+            if (errors.isPoisonError(descriptor)) return descriptor
             // Let the native intrinsic convert and validate once, before it can
             // remove bindings. Write the resulting length without re-coercion.
-            const length = this.native(kind, () => {
-                if (!Array.isArray(receiver) || !Object.getOwnPropertyDescriptor(receiver, "length").writable)
-                    return undefined
+            const length = descriptor?.writable ? this.native(kind, () => {
                 const array = []
                 array.length = value
                 return array.length
-            })
+            }) : undefined
             if (errors.isPoisonError(length)) return length
             if (length !== undefined) {
                 if (externalTree.truncatesLocations(branch, length)) return properties.propertyValidationError(
@@ -161,9 +164,13 @@ class ExternalAccess {
     }
     requireReady(value, managed = false) {
         if (value === null || typeof value !== "object" || Error.isError(value) || metadata.metaOf(value, this.operationContext)) return undefined
-        const then = this.native(errors.ERROR_KIND.ExternalPropertyReadFailed, () => value.then)
-        if (errors.isPoisonError(then)) return then
-        if (typeof then === "function") return managed ? this.invalidSnapshotError() : this.pathPromiseError()
+        const thenable = errors.catchExternalThrow(
+            () => readCallableThen(value, this.operationContext),
+            this.operationContext,
+            errors.ERROR_KIND.ExternalPropertyReadFailed,
+        )
+        if (errors.isPoisonError(thenable)) return thenable
+        if (thenable) return managed ? this.invalidSnapshotError() : this.pathPromiseError()
     }
     pathPromiseError() {
         return errors.validationError("Native paths require ready intermediate values", this.operationContext,

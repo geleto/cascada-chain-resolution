@@ -9,6 +9,7 @@ import {
     runInternalStep,
 } from "../src/internal-step.js"
 import { deferred, expect, flushMicrotasks, thrownBy } from "./support.js"
+import { OrderedThenable } from "./ordered-thenable.js"
 
 function operationContext(execution, errorContext = "fatal test") {
     return { execution, errorContext }
@@ -19,6 +20,35 @@ function failedBy(operationContext, reason) {
 }
 
 describe("fatal execution", () => {
+    for (const delivery of ["native", "ordered"])
+    for (const outcome of ["raw", "poison"])
+    it(`fails all pending results on ${outcome} internal-result rejection, ${delivery}`, async () => {
+        const reports = []
+        const ctx = operationContext(new runtime.Execution(error => reports.push(error)), "higher-runtime completion")
+        const chain = new runtime.Chain({ value: 1 }, ctx)
+        const source = delivery === "native" ? deferred() : new OrderedThenable()
+        const cause = outcome === "raw" ? new Error("internal completion defect")
+            : runtime.createPoisonError(new Error("unexpected poison escape"), ctx, runtime.ERROR_KIND.OperationInputFailed)
+        // A higher-runtime operation owns its normalized result through this
+        // public boundary; its rejection is an implementation failure.
+        const result = runtime.returnOperationResult(ctx, source.promise ?? source)
+        const sibling = runtime.import(new Promise(() => {}), ctx)
+        const outcomes = []
+        for (const [index, pending] of [result, sibling].entries())
+            pending.then(value => { outcomes[index] = { value } }, error => { outcomes[index] = { error } })
+
+        source.reject(cause)
+        await flushMicrotasks()
+
+        const fatal = ctx.execution.fatalError
+        assert(runtime.isFatalError(fatal))
+        assert.equal(fatal.cause, cause)
+        assert.equal(fatal.errorContext, ctx.errorContext)
+        assert.deepEqual(outcomes, [{ error: fatal }, { error: fatal }])
+        assert.deepEqual(reports, [fatal])
+        assert.throws(() => runtime.assignPath(chain, ["value"], 2, ctx), error => error === fatal)
+    })
+
     it("guards callbacks and deferred retirement with one authoritative fatal", () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/continuation-failure.js", import.meta.url))],

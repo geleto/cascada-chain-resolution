@@ -12,7 +12,8 @@ import {
 } from "../src/index.js"
 import { failExecution as submitFatal, ERROR_KIND } from "../src/error.js"
 import { consumeValue, continueOperation, runInternalStep } from "../src/internal-step.js"
-import { buildRefIndex, getRefCounter, hasCycleCut } from "../src/refcounts.js"
+import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { metaOf } from "../src/meta.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import * as path from "path"
@@ -446,12 +447,12 @@ describe("Promise versions and lookupPath", () => {
 
         continueOperation(pending.promise, testContext, () => {
             publishedCycleCut = hasCycleCut(root, "value", testContext)
-            const { promiseCount, errorCount, cycleCutCount } = getRefCounter(root, testContext)
-            countsAfterPublication = { promiseCount, errorCount, cycleCutCount }
+            const { frontierCount, errorCount } = getRefCounter(root, testContext)
+            countsAfterPublication = { frontierCount, errorCount }
         }, () => {
             publishedCycleCut = hasCycleCut(root, "value", testContext)
-            const { promiseCount, errorCount, cycleCutCount } = getRefCounter(root, testContext)
-            countsAfterPublication = { promiseCount, errorCount, cycleCutCount }
+            const { frontierCount, errorCount } = getRefCounter(root, testContext)
+            countsAfterPublication = { frontierCount, errorCount }
         })
 
         pending.resolve(root)
@@ -461,9 +462,8 @@ describe("Promise versions and lookupPath", () => {
         expect(readPath(new Chain(root, testContext), ["value"], testContext)).to.be(root)
         expect(publishedCycleCut).to.be(true)
         expect(countsAfterPublication).to.eql({
-            promiseCount: 0,
+            frontierCount: 1,
             errorCount: 0,
-            cycleCutCount: 1,
         })
         expect(hasCycleCut(root, "value", testContext)).to.be(true)
         verifyRefCounts(testContext, root)
@@ -1331,7 +1331,7 @@ describe("Promise versions and lookupPath", () => {
         expect(resolved.again).to.be(pending.promise)
         expect(readPath(new Chain(resolved, testContext), ["again"], testContext)).to.be(resolved)
         expect(hasCycleCut(resolved, "again", testContext)).to.be(true)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1363,7 +1363,7 @@ describe("Promise versions and lookupPath", () => {
             hasCycleCut(firstValue, "next", testContext) ||
             hasCycleCut(secondValue, "back", testContext),
         ).to.be(true)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 })

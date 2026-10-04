@@ -15,8 +15,9 @@ never modified; explicit external mutation changes only its authorized owner. Re
 a rejected data Promise poisons the affected value without stopping unrelated
 work. Each language failure records its causal source operation and kind.
 
-The package is native ESM, requires Node.js 24 or newer, and needs no build
-step.
+The package is native ESM and needs no build step. Its implementation uses
+standard JavaScript APIs and relative imports, so it can load directly in
+browsers with native `Error.isError`. Node.js use requires version 24 or newer.
 
 See [`docs/data-limitations.md`](docs/data-limitations.md) before passing application data or host APIs to Cascada. It consolidates the supported graph shape, managed-method restrictions, Array limitations, and external-state ownership rules.
 

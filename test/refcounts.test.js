@@ -9,7 +9,8 @@ import {
     import as importValue,
     Execution,
 } from "../src/index.js"
-import { buildRefIndex, getRefCounter, hasCycleCut } from "../src/refcounts.js"
+import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { metaOf } from "../src/meta.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { errorCause, expect, readPath, deferred, flushMicrotasks, expectCounts, thrownBy } from "./support.js"
@@ -158,8 +159,8 @@ describe("graph presence summaries", () => {
             expect(original.self).to.be(undefined)
             buildRefIndex(successor, testContext)
             expect(hasCycleCut(successor, "self", testContext)).to.be(false)
-            expectCounts(testContext, successor, 0, 0, 0)
-            expectCounts(testContext, original, 0, 0, 0)
+            expectCounts(testContext, successor, 0, 0)
+            expectCounts(testContext, original, 0, 0)
             verifyRefCounts(testContext, chain._state)
         })
     }
@@ -187,7 +188,7 @@ describe("graph presence summaries", () => {
             expect(hasCycleCut(root, "value", testContext)).to.be(false)
             buildRefIndex(root, testContext)
             expect(hasCycleCut(root, "value", testContext)).to.be(true)
-            expectCounts(testContext, root, 0, 0, 1)
+            expectCounts(testContext, root, 1, 0)
             verifyRefCounts(testContext, root)
         }
     })
@@ -204,7 +205,7 @@ describe("graph presence summaries", () => {
 
         expect(root.value).to.be(root)
         expect(hasCycleCut(root, "value", testContext)).to.be(true)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         expect(getRefCounter(root, testContext).parents.size).to.be(0)
         verifyRefCounts(testContext, root)
     })
@@ -235,16 +236,16 @@ describe("graph presence summaries", () => {
         buildRefIndex(indexedRoot, testContext)
 
         expect(hasCycleCut(publishedRoot, "value", testContext)).to.be(true)
-        expectCounts(testContext, publishedRoot, 0, 0, 1)
+        expectCounts(testContext, publishedRoot, 1, 0)
         expect(hasCycleCut(indexedValue, "back", testContext)).to.be(true)
-        expectCounts(testContext, indexedRoot, 0, 1, 1)
+        expectCounts(testContext, indexedRoot, 1, 1)
         expect(errorCause(getErrors(new Chain(publishedRoot, testContext), [], testContext))).to.be(publishedError)
         expect(errorCause(getErrors(new Chain(indexedRoot, testContext), [], testContext))).to.be(indexedError)
 
         deletePath(new Chain(publishedRoot, testContext), ["value", "back"], testContext)
 
         expect(hasCycleCut(publishedRoot, "value", testContext)).to.be(true)
-        expectCounts(testContext, publishedRoot, 0, 0, 1)
+        expectCounts(testContext, publishedRoot, 1, 0)
         expect(errorCause(getErrors(new Chain(publishedRoot, testContext), [], testContext))).to.be(publishedError)
         verifyRefCounts(testContext, publishedRoot, indexedRoot)
     })
@@ -341,7 +342,7 @@ describe("graph presence summaries", () => {
 
         expect(rootSymbols.length).to.be(0)
         expect(getRefCounter(root, testContext)).to.be(rootMeta)
-        expect(rootMeta.promiseCount).to.be(1)
+        expect(rootMeta.frontierCount).to.be(1)
 
         const chain = new Chain(root, testContext)
         assignPath(chain, ["added"], true, testContext)
@@ -478,9 +479,9 @@ describe("graph presence summaries", () => {
         expect(root.branch).to.be(imported)
         expect(imported.child).to.be(cycle)
         expect(cycle.next.back).to.be(cycle)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         expect(getRefCounter(imported, testContext).errorCount).to.be(0)
-        expect(getRefCounter(imported, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(imported, testContext).frontierCount).to.be(1)
         verifyRefCounts(testContext, root)
     })
 
@@ -508,8 +509,8 @@ describe("graph presence summaries", () => {
 
         buildRefIndex(second, testContext)
 
-        expectCounts(testContext, second, 1, 0, 1)
-        expectCounts(testContext, first, 1, 0, 1)
+        expectCounts(testContext, second, 1, 0)
+        expectCounts(testContext, first, 2, 0)
         expect(getRefCounter(first, testContext).parents.get(second)).to.be(1)
         expect(getRefCounter(second, testContext).parents.size).to.be(0)
         verifyRefCounts(testContext, first, second)
@@ -528,9 +529,9 @@ describe("graph presence summaries", () => {
 
         buildRefIndex(first, testContext)
 
-        expectCounts(testContext, first, 0, 0, 1)
-        expectCounts(testContext, second, 0, 0, 2)
-        expectCounts(testContext, third, 0, 0, 1)
+        expectCounts(testContext, first, 1, 0)
+        expectCounts(testContext, second, 2, 0)
+        expectCounts(testContext, third, 1, 0)
         expect(getRefCounter(first, testContext).parents.size).to.be(0)
         expect(getRefCounter(second, testContext).parents.get(first)).to.be(1)
         expect(getRefCounter(third, testContext).parents.get(second)).to.be(1)
@@ -556,8 +557,8 @@ describe("graph presence summaries", () => {
         await flushMicrotasks()
 
         expect(hasCycleCut(destination, "slot", testContext)).to.be(true)
-        expectCounts(testContext, destination, 0, 0, 1)
-        expectCounts(testContext, target, 0, 0, 1)
+        expectCounts(testContext, destination, 1, 0)
+        expectCounts(testContext, target, 1, 0)
         expect(getErrors(new Chain(destination, testContext), [], testContext)).to.be(null)
         verifyRefCounts(testContext, destination, target)
     })
@@ -571,8 +572,8 @@ describe("graph presence summaries", () => {
 
         buildRefIndex(root, testContext)
 
-        expectCounts(testContext, cyclic, 0, 0, 1)
-        expectCounts(testContext, root, 0, 0, 2)
+        expectCounts(testContext, cyclic, 1, 0)
+        expectCounts(testContext, root, 2, 0)
         expect(getRefCounter(cyclic, testContext).parents.get(root)).to.be(2)
         expect(hasError(new Chain(root, testContext), [], testContext)).to.be(false)
         verifyRefCounts(testContext, root)
@@ -590,13 +591,13 @@ describe("graph presence summaries", () => {
 
         expect(metaOf(child, testContext).cycleCuts.has("back")).to.be(true)
         expect(metaOf(wrapper, testContext).cycleCuts).to.be(undefined)
-        expectCounts(testContext, wrapper, 1, 0, 1)
+        expectCounts(testContext, wrapper, 2, 0)
         verifyRefCounts(testContext, wrapper, child)
 
         pending.resolve("done")
         await flushMicrotasks()
 
-        expectCounts(testContext, wrapper, 0, 0, 1)
+        expectCounts(testContext, wrapper, 1, 0)
         verifyRefCounts(testContext, wrapper, child)
     })
 
@@ -610,9 +611,9 @@ describe("graph presence summaries", () => {
         const chain = new Chain(imported, testContext)
         buildRefIndex(chain._state, testContext)
 
-        expectCounts(testContext, cyclic, 0, 0, 1)
-        expectCounts(testContext, imported, 0, 0, 1)
-        expectCounts(testContext, chain._state, 0, 0, 1)
+        expectCounts(testContext, cyclic, 1, 0)
+        expectCounts(testContext, imported, 1, 0)
+        expectCounts(testContext, chain._state, 1, 0)
 
         const pending = deferred()
         assignPath(chain, ["branch", "self"], pending.promise, testContext)
@@ -620,19 +621,19 @@ describe("graph presence summaries", () => {
 
         expect(next).not.to.be(imported)
         expect(next.branch).not.to.be(cyclic)
-        expectCounts(testContext, next.branch, 1, 0, 0)
-        expectCounts(testContext, next, 1, 0, 0)
-        expectCounts(testContext, chain._state, 1, 0, 0)
-        expectCounts(testContext, imported, 0, 0, 1)
+        expectCounts(testContext, next.branch, 1, 0)
+        expectCounts(testContext, next, 1, 0)
+        expectCounts(testContext, chain._state, 1, 0)
+        expectCounts(testContext, imported, 1, 0)
         verifyRefCounts(testContext, chain._state, imported)
 
         pending.resolve("settled")
         await flushMicrotasks()
 
-        expectCounts(testContext, next.branch, 0, 0, 0)
-        expectCounts(testContext, next, 0, 0, 0)
-        expectCounts(testContext, chain._state, 0, 0, 0)
-        expectCounts(testContext, imported, 0, 0, 1)
+        expectCounts(testContext, next.branch, 0, 0)
+        expectCounts(testContext, next, 0, 0)
+        expectCounts(testContext, chain._state, 0, 0)
+        expectCounts(testContext, imported, 1, 0)
         verifyRefCounts(testContext, chain._state, imported)
     })
 
@@ -657,7 +658,7 @@ describe("graph presence summaries", () => {
         wrongCount.self = wrongCount
         importValue(wrongCount, { ...testContext, errorContext: "wrong cut count" })
         buildRefIndex(wrongCount, testContext)
-        getRefCounter(wrongCount, testContext).cycleCutCount = 0
+        getRefCounter(wrongCount, testContext).frontierCount = 0
         expect(thrownBy(() => verifyRefCounts(testContext, wrongCount)).message).to.be(
             "Counter totals are inconsistent",
         )

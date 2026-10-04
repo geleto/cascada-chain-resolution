@@ -116,7 +116,7 @@ describe("index preparation", () => {
             const root = { first, later: source }
             const chain = new runtime.Chain(root, ctx)
             assert.equal(await runtime.hasError(chain, [], ctx), true)
-            assert.equal(refcounts.getRefCounter(root, ctx).promiseCount, 0)
+            assert.equal(refcounts.getRefCounter(root, ctx).frontierCount, 0)
             verifyRefCounts(ctx, root)
             assert.equal(ctx.execution.fatalError, null)
         })

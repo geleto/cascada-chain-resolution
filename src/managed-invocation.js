@@ -14,6 +14,7 @@ import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { initializePlacements } from "./parent-placements.js"
 import { captureIdentity } from "./captured-identity.js"
+import { readCallableThen } from "./thenable-subscription.js"
 
 function selectManagedMethodDescription(invocationWork) {
     const { mutation, receiver } = invocationWork
@@ -199,9 +200,8 @@ function selectManagedClassMethod(receiver, invocationWork) {
     ).admittedPrototype
     while (
         prototype !== null &&
-        !errorUtils.runExternalAction(operationContext, () =>
-            metadata.isPlainObjectPrototype(prototype),
-        )
+        !metadata.isPlainObjectPrototype(prototype, action =>
+            errorUtils.runExternalAction(operationContext, action))
     ) {
         const descriptor = errorUtils.runExternalAction(
             operationContext,
@@ -384,8 +384,7 @@ function validateReceiver(receiver, operationContext) {
         if (!meta) {
             // Recognize new stored thenables without subscribing. Admitted
             // values keep their category; native surface stability is a host contract.
-            const thenable = inspect(() => errorUtils.runExternalAction(operationContext,
-                () => typeof value.then === "function"))
+            const thenable = inspect(() => readCallableThen(value, operationContext))
             if (errorUtils.isPoisonError(thenable)) return
             if (thenable) {
                 errors.add(errorUtils.validationError(

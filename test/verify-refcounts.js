@@ -27,9 +27,8 @@ function verifyReachable(node, seen, operationContext) {
 
     const counter = getRefCounter(node, operationContext)
     if (counter) {
-        let promiseCount = 0
+        let frontierCount = 0
         let errorCount = 0
-        let cycleCutCount = 0
         const childEdges = new Map()
 
         for (const key of languageProperties.enumerableLanguageKeys(
@@ -45,17 +44,15 @@ function verifyReachable(node, seen, operationContext) {
                 fatal("Ref-indexed parent contains non-ref-indexed child", operationContext)
             }
 
-            promiseCount += state.promiseCount
+            frontierCount += state.frontierCount
             errorCount += state.errorCount
-            cycleCutCount += state.cycleCutCount
             if (getRefCounter(child, operationContext)) {
                 childEdges.set(child, (childEdges.get(child) ?? 0) + 1)
             }
         }
 
-        if (counter.promiseCount !== promiseCount ||
-            counter.errorCount !== errorCount ||
-            counter.cycleCutCount !== cycleCutCount) {
+        if (counter.frontierCount !== frontierCount ||
+            counter.errorCount !== errorCount) {
             fatal("Counter totals are inconsistent", operationContext)
         }
         for (const [child, count] of childEdges) {
@@ -181,9 +178,8 @@ function verifyParentGraph(node, states, operationContext) {
 function recountProperty(node, key, operationContext) {
     const promiseVersion = propertyVersions.getPromiseVersion(node, key, operationContext)
     let child = readPropertyForRecount(node, key, operationContext)
-    let promiseCount = 0
+    let frontierCount = 0
     let errorCount = 0
-    let cycleCutCount = 0
     if (languageValues.isPending(child, operationContext)) {
         if (!promiseVersion) {
             fatal("Indexed promise property has no Promise version", operationContext)
@@ -192,21 +188,20 @@ function recountProperty(node, key, operationContext) {
             fatal("Pending Promise property also has a cycle cut", operationContext)
         }
         child = undefined
-        promiseCount = 1
+        frontierCount = 1
     } else if (metadata.metaOf(node, operationContext)?.cycleCuts?.has(key)) {
         child = undefined
-        cycleCutCount = 1
+        frontierCount = 1
     } else if (errorUtils.isPoisonError(child)) {
         errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
         const counter = getRefCounter(child, operationContext)
         if (counter) {
-            promiseCount = counter.promiseCount === 0 ? 0 : 1
+            frontierCount = counter.frontierCount === 0 ? 0 : 1
             errorCount = counter.errorCount === 0 ? 0 : 1
-            cycleCutCount = counter.cycleCutCount === 0 ? 0 : 1
         }
     }
-    return { child, promiseCount, errorCount, cycleCutCount }
+    return { child, frontierCount, errorCount }
 }
 
 function readPropertyForRecount(node, key, operationContext) {

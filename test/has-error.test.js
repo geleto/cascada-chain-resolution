@@ -82,7 +82,7 @@ describe("hasError", () => {
 
         expect(hasError(new Chain(root, testContext), ["branch"], testContext)).to.be(false)
         expect(getRefCounter(branch, testContext).errorCount).to.be(0)
-        expect(getRefCounter(branch, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(branch, testContext).frontierCount).to.be(1)
         expect(branch.self).to.be(branch)
     })
 
@@ -121,8 +121,7 @@ describe("hasError", () => {
 
         const counter = getRefCounter(branch, testContext)
         expect(counter.errorCount).to.be(0)
-        expect(counter.promiseCount).to.be(1)
-        expect(counter.cycleCutCount).to.be(1)
+        expect(counter.frontierCount).to.be(2)
 
         const promiseVersion = metaOf(branch, testContext).placementVersions.pending
         let versionValue = promiseVersion.value
@@ -169,9 +168,9 @@ describe("hasError", () => {
         const pendingResult = hasError(new Chain(pending, testContext), [], testContext)
         expect(hasError(new Chain(bad, testContext), [], testContext)).to.be(true)
 
-        expect(getRefCounter(pending, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(pending, testContext).frontierCount).to.be(1)
         expect(await pendingResult).to.be(false)
-        expect(getRefCounter(pending, testContext).promiseCount).to.be(0)
+        expect(getRefCounter(pending, testContext).frontierCount).to.be(0)
         expect(pending.pending instanceof Promise).to.be(true)
         expect(readPath(new Chain(pending, testContext), ["pending"], testContext)).to.be(1)
         verifyRefCounts(testContext, clean, pending, bad)
@@ -230,13 +229,13 @@ describe("hasError", () => {
 
         const result = hasError(new Chain(wrapper, testContext), [], testContext)
 
-        expect(getRefCounter(wrapper, testContext).promiseCount).to.be(1)
-        expect(getRefCounter(child, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(wrapper, testContext).frontierCount).to.be(1)
+        expect(getRefCounter(child, testContext).frontierCount).to.be(1)
 
         pending.resolve("done")
 
         expect(await result).to.be(false)
-        expect(getRefCounter(wrapper, testContext).promiseCount).to.be(0)
+        expect(getRefCounter(wrapper, testContext).frontierCount).to.be(0)
         expect(child.pending).to.be("done")
         expect(readPath(new Chain(child, testContext), ["pending"], testContext)).to.be("done")
         verifyRefCounts(testContext, wrapper)
@@ -265,14 +264,14 @@ describe("hasError", () => {
         }
 
         expect(hasError(new Chain(root, testContext), [], testContext)).to.be(true)
-        expect(getRefCounter(root, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(root, testContext).frontierCount).to.be(1)
         expect(getRefCounter(root, testContext).errorCount).to.be(1)
 
         pending.resolve({ ok: true })
         await flushMicrotasks()
 
         expect(root.pending).to.eql({ ok: true })
-        expect(getRefCounter(root, testContext).promiseCount).to.be(0)
+        expect(getRefCounter(root, testContext).frontierCount).to.be(0)
         expect(getRefCounter(root, testContext).errorCount).to.be(1)
         verifyRefCounts(testContext, root)
     })
@@ -362,9 +361,9 @@ describe("hasError", () => {
         expect(await result).to.be(true)
 
         const resolved = root.branch.outer
-        expect(getRefCounter(root.branch, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(root.branch, testContext).frontierCount).to.be(1)
         expect(getRefCounter(root.branch, testContext).errorCount).to.be(1)
-        expect(getRefCounter(resolved, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(resolved, testContext).frontierCount).to.be(1)
         expect(getRefCounter(resolved, testContext).errorCount).to.be(1)
         expect(getRefCounter(resolved.nested, testContext).errorCount).to.be(1)
         verifyRefCounts(testContext, root, resolved)
@@ -474,7 +473,7 @@ describe("hasError", () => {
 
         expect(outcome).to.be(false)
         expect(settled).to.be(true)
-        expect(getRefCounter(root.branch, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(root.branch, testContext).frontierCount).to.be(1)
         expect(root.branch.clean.later).to.be(later.promise)
 
         later.resolve({ ok: true })

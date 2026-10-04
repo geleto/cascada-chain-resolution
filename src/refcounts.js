@@ -3,7 +3,7 @@ import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 
-const COUNT_FIELDS = ["promiseCount", "errorCount", "cycleCutCount"]
+const COUNT_FIELDS = ["frontierCount", "errorCount"]
 
 function getRefCounter(node, operationContext) {
     const meta = metadata.metaOf(node, operationContext)
@@ -18,17 +18,10 @@ function getRequiredRefCounter(node, operationContext) {
     return counter
 }
 
-function hasCycleCut(parent, key, operationContext) {
-    return metadata.metaOf(parent, operationContext)
-        ?.cycleCuts?.has(key) === true
-}
-
 function getValueRefState(child, operationContext, cycleCut = false) {
-    const state = { promiseCount: 0, errorCount: 0, cycleCutCount: 0 }
-    if (languageValues.isPending(child, operationContext)) {
-        state.promiseCount = 1
-    } else if (cycleCut) {
-        state.cycleCutCount = 1
+    const state = { frontierCount: 0, errorCount: 0 }
+    if (languageValues.isPending(child, operationContext) || cycleCut) {
+        state.frontierCount = 1
     } else if (errorUtils.isPoisonError(child)) {
         state.errorCount = 1
     } else if (languageValues.isTraversable(child, operationContext)) {
@@ -69,9 +62,8 @@ function buildRefIndex(value, operationContext) {
         const existing = getRefCounter(node, operationContext) ?? staged.get(node)?.counter
         if (existing) return existing
         const counter = {
-            promiseCount: 0,
+            frontierCount: 0,
             errorCount: 0,
-            cycleCutCount: 0,
             parents: new Map(),
         }
         const children = []
@@ -80,12 +72,12 @@ function buildRefIndex(value, operationContext) {
         for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
             const child = languageProperties.readLanguageProperty(node, key, operationContext)
             if (languageValues.isPending(child, operationContext))
-                counter.promiseCount++
+                counter.frontierCount++
             else if (errorUtils.isPoisonError(child)) counter.errorCount++
             else if (languageValues.isTraversable(child, operationContext)) {
                 if (active.has(child)) {
                     updateCycleCut(counter, key, true)
-                    counter.cycleCutCount++
+                    counter.frontierCount++
                 } else {
                     const childCounter = visit(child)
                     for (const field of COUNT_FIELDS)
@@ -227,7 +219,6 @@ export {
     buildRefIndex,
     getRefCounter,
     getRequiredRefCounter,
-    hasCycleCut,
     indexValueIfSourceIndexed,
     prepareCounterUpdate,
 }

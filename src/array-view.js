@@ -203,6 +203,7 @@ class ArrayView {
         if (ArrayView.readyLength(source, operationContext) === undefined) return
         // Check tail availability before attaching a new logical owner.
         // An empty extension needs no physical write.
+        let nextPhysicalLength
         if (count > 0) {
             const length = ArrayView.#physicalLength(backing, operationContext)
             if (range && range.start + ArrayView.minimumLength(source, operationContext) !== length) return
@@ -216,12 +217,13 @@ class ArrayView {
             const descriptor = errorUtils.runExternalAction(operationContext, () =>
                 Object.getOwnPropertyDescriptor(backing, "length"))
             if (descriptor?.writable !== true) return
+            nextPhysicalLength = length + count
         }
         if (!ArrayView.tryShareStorage(source, operationContext)) return
         const next = new ArrayView(source, operationContext, 0, ArrayView.minimumLength(source, operationContext) + count)
         return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
             copyArrayOverlays(source, next, operationContext)
-            if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length += count })
+            if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
             populate?.(next)
         })
     }

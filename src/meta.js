@@ -54,43 +54,30 @@ function getOrCreateMeta(
 // traps. If it cannot identify managed structure, preserving the exact value
 // as external is always safe.
 function inspectAdmissionMetaFacts(value, operationContext) {
-    const execution = operationContext.execution
-    const previousExternalActionActive = execution._externalActionActive
-    let facts
-    let fatal
-    execution._externalActionActive = true
-    try {
-        facts = classifyTypeFacts(value)
-    } catch (reason) {
-        if (errorUtils.isFatalError(reason)) fatal = reason
-        else facts = { type: TYPE.External }
-    } finally {
-        execution._externalActionActive = previousExternalActionActive
-    }
-    if (execution.fatalError !== null) throw execution.fatalError
-    if (fatal) errorUtils.failExecution(operationContext, fatal)
-    return facts
+    return errorUtils.catchExternalAction(
+        () => classifyTypeFacts(value, action =>
+            errorUtils.runExternalAction(operationContext, action)),
+        () => ({ type: TYPE.External }),
+    )
 }
 
 function inspectDeclarationMetaFacts(value) {
-    try {
-        return classifyTypeFacts(value)
-    } catch (reason) {
-        if (errorUtils.isFatalError(reason)) throw reason
-        return { type: TYPE.External }
-    }
+    return errorUtils.catchExternalAction(
+        () => classifyTypeFacts(value, errorUtils.runDeclarationAction),
+        () => ({ type: TYPE.External }),
+    )
 }
 
-function classifyTypeFacts(value) {
+function classifyTypeFacts(value, reflect) {
     // This order is the admission-precedence contract.
     if (Error.isError(value)) return { type: TYPE.Error }
     if (typeof value === "function") return { type: TYPE.Function }
     const declaration = IDENTITY_DECLARATIONS.get(value)
     if (declaration === DECLARATION_EXTERNAL) return { type: TYPE.External }
-    if (Array.isArray(value)) return { type: TYPE.Array }
+    if (reflect(() => Array.isArray(value))) return { type: TYPE.Array }
 
-    const admittedPrototype = Object.getPrototypeOf(value)
-    if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype))
+    const admittedPrototype = reflect(() => Object.getPrototypeOf(value))
+    if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype, reflect))
         return { type: TYPE.Record, admittedPrototype }
 
     return declaration === DECLARATION_MANAGED ||
@@ -99,19 +86,19 @@ function classifyTypeFacts(value) {
         : { type: TYPE.External, admittedPrototype }
 }
 
-function isPlainObjectPrototype(prototype) {
+function isPlainObjectPrototype(prototype, reflect) {
     if (prototype === Object.prototype) return true
     if (prototype === null) return false
-    if (Object.getPrototypeOf(prototype) !== null) return false
-    const constructor = Object.getOwnPropertyDescriptor(
+    if (reflect(() => Object.getPrototypeOf(prototype)) !== null) return false
+    const constructor = reflect(() => Object.getOwnPropertyDescriptor(
         prototype,
         "constructor",
-    )?.value
+    ))?.value
     return typeof constructor === "function" &&
-        Object.getOwnPropertyDescriptor(
+        reflect(() => Object.getOwnPropertyDescriptor(
             constructor,
             "prototype",
-        )?.value === prototype
+        ))?.value === prototype
 }
 
 function identityDeclarationOf(value) {

@@ -12,34 +12,32 @@ import {
 } from "./mutations.js"
 
 function run(chain, path, method, args, operationContext, facts, delivery) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        const operation = new invocation.InvocationWork(chain, path, operationContext, facts, method, [...args])
-        path = operation.route.path
-        args = undefined
-        const mutation = operation.mutation
-        let externalAccess
-        const result = invocation.invokeMethod(
-            operation,
-            context => selectMethodDescription(context, externalAccess),
-            (invokeWithReceiver, beforeWait) => {
-                operation.beforeWait = beforeWait
-                const native = access => {
-                    externalAccess = access
-                    return invokeWithReceiver(access.identity, true)
-                }
-                if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
-                return operation.mutate((scope, state, privateChain, suffix) => {
-                    if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
-                    const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
-                    return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
-                        errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
-                            ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
-                })
-            },
-            delivery,
-        )
-        return mutation ? operation.finishMutation(result) : operation.finish(result)
-    })
+    const operation = new invocation.InvocationWork(chain, path, operationContext, facts, method, [...args])
+    path = operation.route.path
+    args = undefined
+    const mutation = operation.mutation
+    let externalAccess
+    const result = invocation.invokeMethod(
+        operation,
+        context => selectMethodDescription(context, externalAccess),
+        (invokeWithReceiver, beforeWait) => {
+            operation.beforeWait = beforeWait
+            const native = access => {
+                externalAccess = access
+                return invokeWithReceiver(access.identity, true)
+            }
+            if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
+            return operation.mutate((scope, state, privateChain, suffix) => {
+                if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
+                const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
+                return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
+                    errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
+                        ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
+            })
+        },
+        delivery,
+    )
+    return mutation ? operation.finishMutation(result) : operation.finish(result)
 }
 
 function runMutation(chain, path, operationContext, invokeWithReceiver) {

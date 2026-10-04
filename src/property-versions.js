@@ -99,7 +99,10 @@ function trackVersionPublication(version, publication, operationContext) {
     if (!languageValues.isPending(publication, operationContext)) return false
     version.promiseBacked = true
     version.publication ??= publication
-    markPromiseHandled(publication, operationContext)
+    // Storage and captures can keep following the original host Promise. Own
+    // internal publication rejection even when nobody consumes this version.
+    markPromiseHandled(internalSteps.continueOperation(
+        publication, operationContext, () => undefined), operationContext)
     return true
 }
 
@@ -345,7 +348,11 @@ function continueCapturedPromiseVersion(promise, promiseVersion, operationContex
         unregister = promise = promiseVersion = onValue = undefined
         release()
     }
-    const resume = signal => internalSteps.continueGraphTransition(signal, operationContext, deliver, deliver, operation)
+    // A raw source only notifies us: its earlier publisher has classified its
+    // rejection into the captured version. Publication readiness is already an
+    // internal result, so an unexpected rejection must reach the fatal guard.
+    const resume = signal => internalSteps.continueGraphTransition(signal, operationContext, deliver,
+        signal === promiseVersion.publication ? undefined : deliver, operation)
     function deliver() {
         const value = promiseVersion.value
         if (languageValues.isPending(value, operationContext))

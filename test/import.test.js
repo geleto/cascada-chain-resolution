@@ -11,7 +11,8 @@ import {
     import as importValue,
     Execution,
 } from "../src/index.js"
-import { getRefCounter, buildRefIndex, hasCycleCut } from "../src/refcounts.js"
+import { getRefCounter, buildRefIndex } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 import assert from "node:assert/strict"
@@ -569,7 +570,7 @@ describe("import", () => {
         expect(imported).to.be(root)
         expect(indexed).to.be(root)
         expect(getRefCounter(root, testContext).errorCount).to.be(0)
-        expect(getRefCounter(root, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(root, testContext).frontierCount).to.be(1)
         expect(metaOf(root, testContext).cycleCuts.has("self")).to.be(true)
         expect(root.self).to.be(root)
     })
@@ -626,9 +627,9 @@ describe("import", () => {
         const wrapper = importValue({ branch: left }, { ...testContext, errorContext: "marked reuse" })
         buildRefIndex(wrapper, testContext)
         expect(metaOf(right, testContext).cycleCuts.has("left")).to.be(true)
-        expectCounts(testContext, left, 0, 0, 1)
-        expectCounts(testContext, right, 0, 0, 2)
-        expectCounts(testContext, wrapper, 0, 0, 1)
+        expectCounts(testContext, left, 1, 0)
+        expectCounts(testContext, right, 2, 0)
+        expectCounts(testContext, wrapper, 1, 0)
         verifyRefCounts(testContext, wrapper, left, right)
     })
 
@@ -654,7 +655,7 @@ describe("import", () => {
         buildRefIndex(b, testContext)
 
         expect(metaOf(d, testContext).cycleCuts).to.be(undefined)
-        expectCounts(testContext, b, 0, 0, 2)
+        expectCounts(testContext, b, 2, 0)
         expect(hasError(new Chain(b, testContext), [], testContext)).to.be(false)
         expect(getErrors(new Chain(b, testContext), [], testContext)).to.be(null)
         verifyRefCounts(testContext, b, x)
@@ -806,7 +807,7 @@ describe("import", () => {
         await flushMicrotasks()
 
         buildRefIndex(destination, testContext)
-        expectCounts(testContext, destination, 0, 0, 1)
+        expectCounts(testContext, destination, 1, 0)
         expect(hasError(chain, [], testContext)).to.be(false)
         expect(getErrors(chain, [], testContext)).to.be(null)
 
@@ -841,7 +842,7 @@ describe("import", () => {
 
         buildRefIndex(destination, testContext)
         await flushMicrotasks()
-        expectCounts(testContext, destination, 0, 0, 1)
+        expectCounts(testContext, destination, 1, 0)
         expect(hasError(chain, [], testContext)).to.be(false)
         expect(getErrors(chain, [], testContext)).to.be(null)
 
@@ -1001,7 +1002,7 @@ describe("import", () => {
         buildRefIndex(frozen, testContext)
 
         expect(metaOf(frozen, testContext).cycleCuts.has("self")).to.be(true)
-        expectCounts(testContext, frozen, 0, 0, 1)
+        expectCounts(testContext, frozen, 1, 0)
         const exported = exportValue(new Chain(frozen, testContext), [], testContext)
         expect(exported).not.to.be(frozen)
         expect(exported.self).to.be(exported)
@@ -1020,8 +1021,8 @@ describe("import", () => {
         const copy = exportValue(chain, [], testContext)
         expect(copy).not.to.be(root)
         expect(copy.child.self).to.be(copy.child)
-        expectCounts(testContext, root, 0, 0, 1)
-        expectCounts(testContext, child, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
+        expectCounts(testContext, child, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1049,9 +1050,9 @@ describe("import", () => {
         expect(metaOf(child, testContext).imported).to.be(true)
         expect(metaOf(child, testContext).cycleCuts.has("self")).to.be(true)
         expect(getRefCounter(root, testContext).errorCount).to.be(0)
-        expect(getRefCounter(root, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(root, testContext).frontierCount).to.be(1)
         expect(getRefCounter(child, testContext).errorCount).to.be(0)
-        expect(getRefCounter(child, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(child, testContext).frontierCount).to.be(1)
     })
 
     it("reuses an existing imported identity without another resolver", async () => {
@@ -1084,8 +1085,8 @@ describe("import", () => {
         buildRefIndex(parent, testContext)
 
         expect(metaOf(child, testContext).cycleCuts.has("back")).to.be(true)
-        expectCounts(testContext, parent, 0, 0, 1)
-        expectCounts(testContext, child, 0, 0, 1)
+        expectCounts(testContext, parent, 1, 0)
+        expectCounts(testContext, child, 1, 0)
         verifyRefCounts(testContext, parent, child)
     })
 
@@ -1116,7 +1117,7 @@ describe("import", () => {
 
         expect(hasError(chain, [], testContext)).to.be(false)
         expect(getRefCounter(root, testContext).errorCount).to.be(0)
-        expect(getRefCounter(root, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(root, testContext).frontierCount).to.be(1)
 
         deletePath(chain, ["self"], testContext)
         const repaired = chain._state.value
@@ -1221,7 +1222,7 @@ describe("import", () => {
         buildRefIndex(array, testContext)
 
         expect(metaOf(array, testContext).cycleCuts.has("0")).to.be(true)
-        expectCounts(testContext, array, 1, 1, 1)
+        expectCounts(testContext, array, 2, 1)
         expect(hasError(new Chain(array, testContext), [], testContext)).to.be(true)
 
         const result = getErrors(new Chain(array, testContext), [], testContext)
@@ -1363,7 +1364,7 @@ describe("import", () => {
         )
         expect(root.__proto__).to.be(root)
         expect(Object.getPrototypeOf(root)).to.be(Object.prototype)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1797,13 +1798,13 @@ describe("import", () => {
         expect(root.nested.value).to.be(deferredValue.promise)
         expect(readPath(new Chain(root, testContext), ["nested", "value"], testContext)).to.be(root)
         expect(hasCycleCut(root.nested, "value", testContext)).to.be(true)
-        expectCounts(testContext, root, 1, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
 
         pendingSibling.resolve("done")
         await flushMicrotasks()
 
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1829,7 +1830,7 @@ describe("import", () => {
         expect(hasCycleCut(root.nested, "value", testContext)).to.be(true)
         expect(requiresCopyOnWrite(resolved, testContext)).to.be(true)
         expect(metaOf(resolved, testContext).imported).to.be(true)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1856,7 +1857,7 @@ describe("import", () => {
         expect(child.pending).to.be(root)
         buildRefIndex(root, testContext)
         expect(hasCycleCut(child, "pending", testContext)).to.be(true)
-        expectCounts(testContext, root, 0, 0, 1)
+        expectCounts(testContext, root, 1, 0)
         verifyRefCounts(testContext, root)
     })
 
@@ -1875,7 +1876,7 @@ describe("import", () => {
 
         expect(child.pending).to.be(root)
         expect(hasCycleCut(child, "pending", testContext)).to.be(true)
-        expectCounts(testContext, root, 0, 1, 1)
+        expectCounts(testContext, root, 1, 1)
         verifyRefCounts(testContext, root)
     })
 
@@ -1977,7 +1978,7 @@ describe("import", () => {
         pending.resolve(copy)
         await flushMicrotasks()
 
-        expectCounts(testContext, copy, 0, 0, 1)
+        expectCounts(testContext, copy, 1, 0)
         expect(hasCycleCut(copy, "pending", testContext)).to.be(true)
         expect(copy.pending).to.be(copy)
         expect(readPath(new Chain(copy, testContext), ["pending"], testContext)).to.be(copy)

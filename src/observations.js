@@ -99,61 +99,53 @@ class ErrorQueryWork extends PathOperation {
 
 // --- lookupPath :  = a.k.y --------------------------------------------------
 function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length, delivery) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
-        const retain = value => {
-            return delivery ? delivery.capture(value, true) : value
-        }
-        return operation.finish(operation.observe(retain, access =>
-            access.read(false, value => delivery ? delivery.capture(value) : value)))
-    })
+    const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+    const retain = value => {
+        return delivery ? delivery.capture(value, true) : value
+    }
+    return operation.finish(operation.observe(retain, access =>
+        access.read(false, value => delivery ? delivery.capture(value) : value)))
 }
 
 function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
-        const validate = value => {
-            if (errorUtils.isPoisonError(value)) return value
-            switch (typeof value) {
-                case "string":
-                case "number":
-                case "boolean":
-                case "bigint":
-                    return value
-                default:
-                    return errorUtils.validationError(
-                        "Expression lookup requires a string, number, boolean, or bigint",
-                        operationContext,
-                        errorUtils.ERROR_KIND.InvalidExpressionValue,
-                    )
-            }
+    const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+    const validate = value => {
+        if (errorUtils.isPoisonError(value)) return value
+        switch (typeof value) {
+            case "string":
+            case "number":
+            case "boolean":
+            case "bigint":
+                return value
+            default:
+                return errorUtils.validationError(
+                    "Expression lookup requires a string, number, boolean, or bigint",
+                    operationContext,
+                    errorUtils.ERROR_KIND.InvalidExpressionValue,
+                )
         }
-        return operation.finish(operation.observe(validate, access =>
-            internalSteps.continueGraphTransition(access.read(), operationContext, validate)))
-    })
+    }
+    return operation.finish(operation.observe(validate, access =>
+        internalSteps.continueGraphTransition(access.read(), operationContext, validate)))
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------
 function exportPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return internalSteps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
-        return operation.finish(operation.observe(
-            value => exportValue(value, operation),
-            access => access.read(true),
-        ))
-    })
+    const operation = new PathOperation(chain, path, operationContext, undefined, false, firstDynamicSegment)
+    return operation.finish(operation.observe(
+        value => exportValue(value, operation),
+        access => access.read(true),
+    ))
 }
 
 // --- hasError : query whether a path or branch contains an Error -------------
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return internalSteps.runInternalStep(operationContext, () =>
-        new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment).run())
+    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment).run()
 }
 
 // --- getErrors : collect every distinct Error in a path branch ---------------
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return internalSteps.runInternalStep(operationContext, () =>
-        new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, true).run())
+    return new ErrorQueryWork(chain, path, operationContext, firstDynamicSegment, true).run()
 }
 
 // The fenced walk follows only nodes whose counters contain relevant
@@ -192,7 +184,6 @@ function collectFencedErrorWaits(value, queryWork) {
         }
         if (!hasErrorSearchWork(counter)) return
 
-        const hasCycleCuts = counter.cycleCutCount > 0
         for (const key of languageProperties.enumerableLanguageKeys(
             node,
             queryWork.operationContext,
@@ -204,12 +195,7 @@ function collectFencedErrorWaits(value, queryWork) {
                 queryWork.operationContext,
             )
 
-            if (
-                hasCycleCuts &&
-                refcounts.hasCycleCut(node, key, queryWork.operationContext)
-            ) {
-                walk(child)
-            } else if (errorUtils.isPoisonError(child)) {
+            if (errorUtils.isPoisonError(child)) {
                 queryWork.found(child)
             } else if (languageValues.isPending(child, queryWork.operationContext)) {
                 const wait = collectPromiseErrors(node, key, child)
@@ -244,9 +230,7 @@ function collectFencedErrorWaits(value, queryWork) {
 }
 
 function hasErrorSearchWork(counter) {
-    return counter.promiseCount > 0 ||
-        counter.errorCount > 0 ||
-        counter.cycleCutCount > 0
+    return counter.frontierCount > 0 || counter.errorCount > 0
 }
 
 export {

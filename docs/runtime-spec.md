@@ -289,7 +289,7 @@ container is cut exactly when the maintained reverse-parent graph shows that it
 would close a cycle.
 
 - Finite lookup and mutation paths follow the raw value.
-- Ref-indexing contributes one `cycleCutCount` and installs no reverse parent
+- Ref-indexing contributes one `frontierCount` and installs no reverse parent
   edge through the cut, then indexes its target as an independent component.
 - `hasError` and `getErrors` report only ordinary Errors, including those
   reached beyond a cut through that component's counters.
@@ -661,8 +661,9 @@ such edge. Initial DFS back edges and later cycle-closing publications become
 cuts, so the reverse-parent projection remains acyclic. Export does not use
 subtree counters.
 
-Each indexed node stores `promiseCount`, `errorCount`, and `cycleCutCount`
-as counts of immediate contributing placements. An indexed child contributes
+Each indexed node stores `frontierCount` and `errorCount` as counts of immediate
+contributing placements. The frontier summary combines pending-Promise and
+cycle-cut reachability; a child containing both contributes once per parent key. An indexed child contributes
 one per nonzero summary through each parent key. Later transitions propagate
 zero/nonzero changes with exact local parent multiplicity, never descendant-path
 multipliers. These summaries are bounded by immediate storage. A missing counter anywhere in an

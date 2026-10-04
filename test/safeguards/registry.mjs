@@ -149,7 +149,7 @@ export const SAFEGUARDS = [
         id: "retirement-drops-summaries",
         guards: "Retired nodes lose counter summaries and cycle cuts, which no longer receive updates.",
         faults: [edit("src/parent-placements.js",
-            "    for (const field of [\"parents\", \"promiseCount\", \"errorCount\", \"cycleCutCount\", \"cycleCuts\", \"counterChildren\"])\n        delete meta[field]\n")],
+            "    for (const field of [\"parents\", \"frontierCount\", \"errorCount\", \"cycleCuts\", \"counterChildren\"])\n        delete meta[field]\n")],
         witnesses: [
             "ArrayView forks retained Promise versions for each derived value",
         ],

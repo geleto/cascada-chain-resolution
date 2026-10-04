@@ -17,6 +17,7 @@ import { externalLocationError } from "./external-operation.js"
 import { createEmptyContainer, defineCopyProperty, prepareContainerStructureCopy } from "./placement-structure.js"
 import { PlacementConstruction } from "./parent-placements.js"
 import { exportValue } from "./export.js"
+import { receiveValue } from "./input-preparations.js"
 
 function mustPreserveValue(value, attachmentRoot, operationContext) {
     return attachmentRoot !== undefined ||
@@ -218,7 +219,9 @@ function assignManagedPath(
 
     function assignArrayLength(target) {
         let array = target.receiver
-        const changing = internalSteps.continueGraphTransition(conversion.toNumberValue(value, operation), operationContext,
+        const converted = propertyVersions.resolvePlacement(placement, operationContext,
+            resolved => conversion.toNumberValue(resolved.value, operation))
+        const changing = internalSteps.continueGraphTransition(converted, operationContext,
             number => {
                 if (errorUtils.isPoisonError(number)) return number
                 const length = number >>> 0
@@ -612,41 +615,40 @@ function deletePath(chain, path, operationContext, mutationScopeDepth = path.len
 
 function mutatePath(chain, path, placement, operationContext, depth, dynamic, deleting) {
     let value = placement?.value
-    return internalSteps.runInternalStep(operationContext, () => {
-        if (errorUtils.isFatalError(value)) throw value
-        const replaceScope = depth === path.length
-        // A property write consumes its container, not the old final value.
-        const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
-        const external = Boolean(operation.route.externalScope)
-        path = operation.route.path
-        if (!deleting && !operation.routeFailure && !external) {
-            placement = propertyVersions.prepareInputPlacement(value, operationContext, errorUtils.ERROR_KIND.AssignmentValueFailed)
-            operation.retainInput(placement)
-        }
-        const outward = !deleting && !operation.routeFailure && external
-            ? exportValue(value, operation)
-            : undefined
-        if (external) markPromiseHandled(outward, operationContext)
-        const result = external
-            ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() :
-                internalSteps.continueGraphTransition(outward, operationContext, value => access.write(value), undefined, operation)))
-            : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
-                if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
-                    "A mutable external namespace cannot be replaced or deleted", operationContext)
-                if (deleting && (path.length || chain._rootKey !== undefined) && suffix.length === 0)
-                    return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
-                const action = deleting
-                    ? deleteManagedPath(privateChain, suffix, operationContext)
-                    : assignManagedPath(privateChain, suffix, placement, operation)
-                return internalSteps.continueGraphTransition(action, operationContext, result => {
-                    if (errorUtils.isPoisonError(result)) return result
-                    return captureMutationResult(privateChain, result, operationContext)
-                })
-            }, replaceScope, deleting))
-        if (!languageValues.isPending(result, operationContext)) return result
-        markPromiseHandled(result, operationContext)
-        return undefined
-    })
+    if (errorUtils.isFatalError(value)) throw value
+    const replaceScope = depth === path.length
+    // A property write consumes its container, not the old final value.
+    const operation = new PathOperation(chain, path, operationContext, depth, false, dynamic, Math.max(0, path.length - 1))
+    const external = Boolean(operation.route.externalScope)
+    path = operation.route.path
+    if (!deleting && !operation.routeFailure && !external) {
+        placement = propertyVersions.prepareInputPlacement(value, operationContext, errorUtils.ERROR_KIND.AssignmentValueFailed)
+        operation.retainInput(placement)
+    }
+    const outward = !deleting && !operation.routeFailure && external
+        ? receiveValue(value, operationContext, { kind: errorUtils.ERROR_KIND.OperationInputFailed },
+            value => exportValue(value, operation), operation)
+        : undefined
+    if (external) markPromiseHandled(outward, operationContext)
+    const result = external
+        ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() :
+            internalSteps.continueGraphTransition(outward, operationContext, value => access.write(value), undefined, operation)))
+        : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
+            if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
+                "A mutable external namespace cannot be replaced or deleted", operationContext)
+            if (deleting && (path.length || chain._rootKey !== undefined) && suffix.length === 0)
+                return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
+            const action = deleting
+                ? deleteManagedPath(privateChain, suffix, operationContext)
+                : assignManagedPath(privateChain, suffix, placement, operation)
+            return internalSteps.continueGraphTransition(action, operationContext, result => {
+                if (errorUtils.isPoisonError(result)) return result
+                return captureMutationResult(privateChain, result, operationContext)
+            })
+        }, replaceScope, deleting))
+    if (!languageValues.isPending(result, operationContext)) return result
+    markPromiseHandled(result, operationContext)
+    return undefined
 }
 
 export {

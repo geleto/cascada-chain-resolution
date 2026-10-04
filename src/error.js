@@ -119,8 +119,8 @@ function runWithFatalGuard(operationContext, work, value) {
     }
 }
 
-// Only this exact-action producer creates the private escape marker. The owning
-// operation supplies classification after shared graph helpers unwind.
+// Exact-action producers share one private escape protocol. Their consumers
+// supply classification after surrounding runtime helpers unwind.
 function runExternalAction(operationContext, action) {
     const execution = operationContext.execution
     const previousExternalActionActive = execution._externalActionActive
@@ -145,14 +145,22 @@ function runExternalAction(operationContext, action) {
     throw marker
 }
 
-// Consume only runExternalAction's private escape marker. An ordinary internal throw
+// Host configuration has no execution to fail or synchronous activity to track.
+// Preserve a fatal unchanged; ordinary reflection failure uses the same escape.
+function runDeclarationAction(action) {
+    try {
+        return action()
+    } catch (reason) {
+        if (isFatalError(reason)) throw reason
+        const marker = {}
+        externalThrows.set(marker, reason)
+        throw marker
+    }
+}
+
+// Consume only the exact-action producers' private escape marker. An ordinary internal throw
 // passes through unchanged to the fatal guard, even when it is a PoisonError.
-function catchExternalThrow(
-    work,
-    operationContext,
-    kind,
-    onFailure = value => value,
-) {
+function catchExternalAction(work, onFailure) {
     let failure
     try {
         return work()
@@ -160,9 +168,19 @@ function catchExternalThrow(
         if (!externalThrows.has(reason)) throw reason
         failure = externalThrows.get(reason)
     }
-    // Contextualization and the owning transition's failure effect are outside
+    // The owning transition's classification and failure effect are outside
     // recovery. A defect in either must escape to the fatal envelope.
-    return onFailure(createPoisonError(failure, operationContext, kind))
+    return onFailure(failure)
+}
+
+function catchExternalThrow(
+    work,
+    operationContext,
+    kind,
+    onFailure = value => value,
+) {
+    return catchExternalAction(work, failure =>
+        onFailure(createPoisonError(failure, operationContext, kind)))
 }
 
 // A complete language-result boundary also contextualizes returned native Errors.
@@ -282,6 +300,7 @@ export {
     ERROR_KIND,
     FatalError,
     PoisonError,
+    catchExternalAction,
     catchExternalThrow,
     combineErrors,
     createPoisonError,
@@ -290,6 +309,7 @@ export {
     isFatalError,
     isPoisonError,
     pathAccessError,
+    runDeclarationAction,
     runExternalAction,
     runExternalBoundary,
     runWithFatalGuard,

@@ -28,7 +28,9 @@ class ArgumentInput {
                 this.pendingDelivery = false
                 if (!this.retained) this.close()
             }))
-            markPromiseHandled(languageValues.thenValue(result, delivered, delivered, operationContext), operationContext)
+            // Reception already normalized host rejection. This lifetime
+            // observer also guards payloads retained without immediate consumption.
+            markPromiseHandled(internalSteps.continueGraphTransition(result, operationContext, delivered), operationContext)
         } else this.pendingDelivery = false
         return result
     }
@@ -191,15 +193,9 @@ function invokeMethod(
     ) {
         invocationWork.leaseArgumentsUntilReceiverReached()
     }
-    return internalSteps.continueGraphTransition(
-        result,
-        operationContext,
-        finish,
-        reason => {
-            if (!errorUtils.isPoisonError(reason)) throw reason
-            return finish(reason)
-        },
-    )
+    // Host failures already fulfill with poison. An internal rejection, even
+    // with poison, must use the common fatal guard rather than completion.
+    return internalSteps.continueGraphTransition(result, operationContext, finish)
 
     function finish(value) {
         if (mutation && !errorUtils.isPoisonError(value)) {

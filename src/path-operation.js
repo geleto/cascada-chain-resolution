@@ -204,31 +204,29 @@ class PathOperation extends OperationOwner {
 }
 
 function repairPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return steps.runInternalStep(operationContext, () => {
-        const operation = new PathOperation(chain, path, operationContext, path.length, true, firstDynamicSegment)
-        if (operation.routeFailure) {
-            // Invalid source selection is a failed mutation of its known
-            // prefix, not permission to repair the dynamically chosen scope.
-            return operation.finishMutation(operation.mutate(() => operation.routeFailure))
-        }
-        if (operation.route.externalScope) return operation.finish(operation.observe(value => value, () => undefined))
-        const node = operation.route.externalTreeNode
-        // Restoration selects exactly the requested placement. It neither
-        // creates working state nor widens an absent Array index to its owner.
-        const result = walkMutationPath(chain, operation.route.path, operationContext, target => {
-            if (target.propertyKind !== properties.ORDINARY_PROPERTY)
-                return { mutatedValue: undefined, result: undefined }
-            return transformProperty(target, operationContext, (value, state) =>
-                steps.continueGraphTransition(operation.externalEffect?.readiness, operationContext, () =>
-                    operation.externalBlocker(false) ?? operation.routeFailure ??
-                    { mutatedValue: value, result: undefined, placement: state.baseline }),
-            { repair: true })
-        }, { preserveOnFailure: true })
-        return operation.finishMutation(steps.continueGraphTransition(result, operationContext, outcome => {
-            if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) externalTree.clearPoison(node)
-            return outcome
-        }))
-    })
+    const operation = new PathOperation(chain, path, operationContext, path.length, true, firstDynamicSegment)
+    if (operation.routeFailure) {
+        // Invalid source selection is a failed mutation of its known
+        // prefix, not permission to repair the dynamically chosen scope.
+        return operation.finishMutation(operation.mutate(() => operation.routeFailure))
+    }
+    if (operation.route.externalScope) return operation.finish(operation.observe(value => value, () => undefined))
+    const node = operation.route.externalTreeNode
+    // Restoration selects exactly the requested placement. It neither
+    // creates working state nor widens an absent Array index to its owner.
+    const result = walkMutationPath(chain, operation.route.path, operationContext, target => {
+        if (target.propertyKind !== properties.ORDINARY_PROPERTY)
+            return { mutatedValue: undefined, result: undefined }
+        return transformProperty(target, operationContext, (value, state) =>
+            steps.continueGraphTransition(operation.externalEffect?.readiness, operationContext, () =>
+                operation.externalBlocker(false) ?? operation.routeFailure ??
+                { mutatedValue: value, result: undefined, placement: state.baseline }),
+        { repair: true })
+    }, { preserveOnFailure: true })
+    return operation.finishMutation(steps.continueGraphTransition(result, operationContext, outcome => {
+        if (!errors.isPoisonError(outcome) && !errors.isPoisonError(outcome.result)) externalTree.clearPoison(node)
+        return outcome
+    }))
 }
 
 // Observational path resolution follows raw logical values.

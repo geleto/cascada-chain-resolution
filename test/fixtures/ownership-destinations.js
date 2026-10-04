@@ -105,7 +105,7 @@ for (const before of [false, true]) for (const reject of [false, true]) {
     const survivor = new r.Chain(child, ctx), parent = { child }, holder = new r.Chain(parent, ctx)
     const query = r.hasError(holder, [], ctx)
     r.assignPath(holder, [], null, ctx)
-    assert.equal(metaOf(parent, ctx).promiseCount, undefined)
+    assert.equal(metaOf(parent, ctx).frontierCount, undefined)
     pending.reject(new Error("late failure"))
     assert.equal(await query, true)
     const again = new r.Chain(parent, ctx)

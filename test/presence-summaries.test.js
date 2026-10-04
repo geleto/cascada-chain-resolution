@@ -21,6 +21,29 @@ function orderedRoot(branch, survivor, reverse) {
 }
 
 describe("bounded presence propagation", () => {
+    it("counts each aliased mixed frontier once as pending work settles", async () => {
+        const testContext = { execution: new Execution(), errorContext: "mixed frontier" }
+        const pending = deferred()
+        const child = { pending: pending.promise }
+        child.self = child
+        const root = { left: child, right: child }
+        const chain = new Chain(root, testContext)
+        const collected = getErrors(chain, [], testContext)
+
+        // Two child placements require traversal, but each parent alias
+        // contributes one regardless of the kinds of work beneath it.
+        assert.equal(getRefCounter(child, testContext).frontierCount, 2)
+        assert.equal(getRefCounter(root, testContext).frontierCount, 2)
+        verifyRefCounts(testContext, root)
+
+        pending.resolve(null)
+        assert.equal(await collected, null)
+        assert.equal(getRefCounter(child, testContext).frontierCount, 1)
+        assert.equal(getRefCounter(root, testContext).frontierCount, 2)
+        assert.equal(hasError(chain, [], testContext), false)
+        verifyRefCounts(testContext, root)
+    })
+
     for (const reverse of [false, true]) {
         it(`retains an independent Error after removing aliased contributions, reverse=${reverse}`, () => {
             const testContext = { execution: new Execution(), errorContext: "test operation" }
@@ -52,13 +75,13 @@ describe("bounded presence propagation", () => {
             const root = orderedRoot(branch, remaining.promise, reverse)
             const chain = new Chain(root, testContext)
             const captured = getErrors(chain, [], testContext)
-            assert.equal(getRefCounter(root, testContext).promiseCount, 2)
+            assert.equal(getRefCounter(root, testContext).frontierCount, 2)
             for (let iteration = 0; iteration < 3; iteration++) {
                 deletePath(chain, ["branch"], testContext)
-                assert.equal(getRefCounter(root, testContext).promiseCount, 1)
+                assert.equal(getRefCounter(root, testContext).frontierCount, 1)
                 verifyRefCounts(testContext, root, branch)
                 assignPath(chain, ["branch"], branch, testContext)
-                assert.equal(getRefCounter(root, testContext).promiseCount, 2)
+                assert.equal(getRefCounter(root, testContext).frontierCount, 2)
                 verifyRefCounts(testContext, root, branch)
             }
             deletePath(chain, ["branch"], testContext)
@@ -90,14 +113,14 @@ describe("bounded presence propagation", () => {
             const root = orderedRoot(branch, back, reverse)
             const chain = new Chain(root, testContext)
             assert.equal(getErrors(chain, [], testContext), survivor)
-            assert.equal(getRefCounter(root, testContext).cycleCutCount, 2)
+            assert.equal(getRefCounter(root, testContext).frontierCount, 2)
             for (let iteration = 0; iteration < 3; iteration++) {
                 deletePath(chain, ["branch"], testContext)
                 assert.equal(hasError(chain, [], testContext), true)
                 assert.equal(getErrors(chain, [], testContext), survivor)
                 verifyRefCounts(testContext, root, branch)
                 assignPath(chain, ["branch"], branch, testContext)
-                assert.equal(getRefCounter(root, testContext).cycleCutCount, 2)
+                assert.equal(getRefCounter(root, testContext).frontierCount, 2)
                 verifyRefCounts(testContext, root, branch)
             }
         })
@@ -111,16 +134,16 @@ describe("bounded presence propagation", () => {
         const left = { a: leaf, b: leaf }, right = { child: leaf }, root = { left, right }
         const chain = new Chain(root, testContext)
         const collected = getErrors(chain, [], testContext)
-        assert.equal(getRefCounter(root, testContext).promiseCount, 2)
+        assert.equal(getRefCounter(root, testContext).frontierCount, 2)
         one.reject(first)
         await flushMicrotasks()
         assert.equal(getRefCounter(left, testContext).errorCount, 2)
         assert.equal(getRefCounter(root, testContext).errorCount, 2)
-        assert.equal(getRefCounter(root, testContext).promiseCount, 2)
+        assert.equal(getRefCounter(root, testContext).frontierCount, 2)
         two.reject(second)
         pending.resolve(0)
         assert.deepEqual(new Set((await collected).errors), new Set([first, second]))
-        assert.equal(getRefCounter(root, testContext).promiseCount, 0)
+        assert.equal(getRefCounter(root, testContext).frontierCount, 0)
         verifyRefCounts(testContext, root)
         deletePath(chain, ["left", "a"], testContext)
         assert.equal(getRefCounter(left, testContext).errorCount, 1)

@@ -97,9 +97,8 @@ function requiresRepresentationCopyForPropertyMutation(
             mode === PROPERTY_MUTATION_MODE.AssignOrDelete && !descriptor.configurable
     }
 
-    const extensible = errorUtils.runExternalAction(operationContext, () =>
-        Object.isExtensible(metadata.metaOf(parent, operationContext)?.arrayRange?.backing ?? parent),
-    )
+    const storage = metadata.metaOf(parent, operationContext)?.arrayRange?.backing ?? parent
+    const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(storage))
     if (!extensible) return true
     if (!Array.isArray(parent) || !isArrayIndex(key)) {
         return false

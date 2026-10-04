@@ -219,7 +219,7 @@ function retireRelationships(owner, operationContext) {
     for (const [key, placement] of meta.outgoingPlacements ?? [])
         if (placement.present !== false) unlinkParent(placement.value, owner, key, operationContext)
     for (const parents of meta.counterChildren ?? []) parents.delete(owner)
-    for (const field of ["parents", "promiseCount", "errorCount", "cycleCutCount", "cycleCuts", "counterChildren"])
+    for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "counterChildren"])
         delete meta[field]
 }
 

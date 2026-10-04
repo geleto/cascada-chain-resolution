@@ -6,6 +6,7 @@ import { capturePlacement } from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
 import { defineCopyProperty } from "./placement-structure.js"
 import { initializePlacements } from "./parent-placements.js"
+import { readCallableThen } from "./thenable-subscription.js"
 
 // External snapshots are ready-only transactions. Sources keep their admission
 // and logical storage; only a completely successful output graph is admitted.
@@ -41,6 +42,11 @@ function snapshotExternalValue(value, operationContext, admit = true) {
         return inspect(() => errors.runExternalAction(operationContext, action))
     }
 
+    function isPlainPrototype(prototype) {
+        return inspect(() => metadata.isPlainObjectPrototype(prototype,
+            action => errors.runExternalAction(operationContext, action)))
+    }
+
     function invalid(message) {
         return collect(errors.validationError(message, operationContext,
             errors.ERROR_KIND.InvalidExternalSnapshot))
@@ -71,7 +77,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             // Logical managed placements override stale physical host values.
             const then = managed
                 ? inspect(() => readManagedProperty(source, "then", operationContext))
-                : native(() => source.then)
+                : inspect(() => readCallableThen(source, operationContext))
             if (errors.isPoisonError(then)) collect(then)
             if (typeof then === "function") {
                 invalid("External snapshots cannot contain thenables")
@@ -88,7 +94,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             else if (array && (!Number.isInteger(length) || length < 0 || length > 0xffffffff))
                 invalid("External snapshot Array has an invalid length")
             const plain = !managed && !array && !errors.isPoisonError(prototype) &&
-                native(() => prototype === null || metadata.isPlainObjectPrototype(prototype))
+                (prototype === null || isPlainPrototype(prototype))
             const type = managed ? meta.type : array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
             const copy = copies ? array ? new Array(length) : Object.create(prototype) : undefined
             visited.set(source, copy)
@@ -124,7 +130,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
 
     function inspectPrototype(prototype) {
         for (let current = prototype; current !== null;) {
-            const plain = native(() => metadata.isPlainObjectPrototype(current))
+            const plain = isPlainPrototype(current)
             if (plain === true || errors.isPoisonError(plain)) return
             const descriptor = native(() => Object.getOwnPropertyDescriptor(current, "then"))
             if (errors.isPoisonError(descriptor)) return

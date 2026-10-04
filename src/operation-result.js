@@ -68,11 +68,11 @@ function returnPendingResult(operationContext, result, onFulfilled) {
         // The executor owns an escaping subscription failure as well as normal
         // delivery, so the outward Promise cannot be rejected and then lost.
         try {
+            // Normalized internal rejection uses the common fatal guard.
             const bridge = continueGraphTransition(
                 result,
                 operationContext,
                 value => onFulfilled(value, fulfill, rejectResult),
-                rejectResult,
             )
             markPromiseHandled(bridge, operationContext)
         } catch (failure) {

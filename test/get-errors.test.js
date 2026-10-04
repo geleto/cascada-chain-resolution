@@ -10,7 +10,8 @@ import {
     export as exportValue,
     Execution,
 } from "../src/index.js"
-import { buildRefIndex, getRefCounter, hasCycleCut } from "../src/refcounts.js"
+import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 import { countPromiseRegistrations, deferred, errorCause, expect, flushMicrotasks, readPath } from "./support.js"

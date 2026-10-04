@@ -12,7 +12,8 @@ import {
     managedStateClass,
     Execution,
 } from "../src/index.js"
-import { buildRefIndex, getRefCounter, hasCycleCut } from "../src/refcounts.js"
+import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 import { expect, errorCause, readPath, deferred, flushMicrotasks } from "./support.js"
@@ -184,11 +185,11 @@ describe("export", () => {
 
         expect(getRefCounter(branch, testContext)).to.be(undefined)
         buildRefIndex(branch, testContext)
-        expect(getRefCounter(branch, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(branch, testContext).frontierCount).to.be(1)
 
         pending.resolve({ done: true })
         expect(await result).to.eql({ pending: { done: true } })
-        expect(getRefCounter(branch, testContext).promiseCount).to.be(0)
+        expect(getRefCounter(branch, testContext).frontierCount).to.be(0)
         verifyRefCounts(testContext, branch)
     })
 
@@ -1174,7 +1175,7 @@ describe("export", () => {
         expect(metaOf(branch, testContext)).to.be(branchMeta)
         expect(branchMeta.imported).to.be(true)
         expect(getRefCounter(branch, testContext).errorCount).to.be(0)
-        expect(getRefCounter(branch, testContext).cycleCutCount).to.be(1)
+        expect(getRefCounter(branch, testContext).frontierCount).to.be(1)
     })
 
     it("does not pin a synchronous Error found in a cyclic import", () => {
@@ -1242,7 +1243,7 @@ describe("export", () => {
 
         importValue(sealed, { ...testContext, errorContext: "indexed sealed export" })
         buildRefIndex(sealed, testContext)
-        expect(getRefCounter(sealed, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(sealed, testContext).frontierCount).to.be(1)
 
         const exported = exportValue(new Chain(sealed, testContext), [], testContext)
         pending.resolve({ done: true })
@@ -1252,7 +1253,7 @@ describe("export", () => {
         expect(readPath(new Chain(sealed, testContext), ["pending"], testContext)).to.eql({
             done: true,
         })
-        expect(getRefCounter(sealed, testContext).promiseCount).to.be(0)
+        expect(getRefCounter(sealed, testContext).frontierCount).to.be(0)
         verifyRefCounts(testContext, sealed)
     })
 
@@ -1283,7 +1284,7 @@ describe("export", () => {
         const exported = exportValue(new Chain(frozen, testContext), [], testContext)
 
         expect(getRefCounter(frozen, testContext)).to.be(undefined)
-        expect(getRefCounter(child, testContext).promiseCount).to.be(1)
+        expect(getRefCounter(child, testContext).frontierCount).to.be(1)
         pending.resolve("done")
         expect(await exported).to.eql({ child: { pending: "done" } })
         // Existing admission keeps child runtime-owned rather than importing it.

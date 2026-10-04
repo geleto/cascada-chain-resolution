@@ -1,6 +1,6 @@
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { mayBeThenable } from "./thenable-subscription.js"
+import { mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 
 // Only normalized transition results and logical placements use this test.
 function isPending(value, operationContext) {
@@ -12,15 +12,10 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
         errorUtils.failExecution(operationContext, value)
     if (!mayBeThenable(value, operationContext)) return onFulfilled(value)
 
-    const then = errorUtils.runExternalBoundary(
+    const then = errorUtils.catchExternalThrow(
+        () => readCallableThen(value, operationContext),
         operationContext,
         errorUtils.ERROR_KIND.ThenAccessFailed,
-        () => {
-            const candidate = value.then
-            if (errorUtils.isFatalError(candidate)) throw candidate
-            // A non-callable Error is a successful protocol probe, not a language result.
-            return typeof candidate === "function" ? candidate : undefined
-        },
     )
     if (errorUtils.isPoisonError(then)) return onRejected(then)
     if (then === undefined) return onFulfilled(value)

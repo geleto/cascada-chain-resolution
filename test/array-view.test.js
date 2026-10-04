@@ -13,7 +13,8 @@ import {
     enter,
     Execution,
 } from "../src/index.js"
-import { buildRefIndex, hasCycleCut } from "../src/refcounts.js"
+import { buildRefIndex } from "../src/refcounts.js"
+import { hasCycleCut } from "./support.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 import {

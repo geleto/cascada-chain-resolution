@@ -1,5 +1,4 @@
 import * as errorUtils from "./error.js"
-import * as internalSteps from "./internal-step.js"
 import { prepareInput, receiveValue } from "./input-preparations.js"
 
 const IMPORT_POLICY = {
@@ -9,15 +8,15 @@ const IMPORT_POLICY = {
 }
 
 function importValue(value, operationContext, delivery) {
-    return importData(value, operationContext, IMPORT_POLICY.Context, delivery)
+    return receiveValue(value, operationContext, IMPORT_POLICY.Context, delivery?.capture)
 }
 
 function importMethodResult(value, operationContext, delivery) {
-    return importData(value, operationContext, IMPORT_POLICY.MethodResult, delivery)
+    return receiveValue(value, operationContext, IMPORT_POLICY.MethodResult, delivery?.capture)
 }
 
 function importExternalProperty(value, operationContext) {
-    return importData(value, operationContext, IMPORT_POLICY.ExternalProperty)
+    return receiveValue(value, operationContext, IMPORT_POLICY.ExternalProperty)
 }
 
 function importReadyMethodResult(value, operationContext, failures, receiver) {
@@ -27,11 +26,6 @@ function importReadyMethodResult(value, operationContext, failures, receiver) {
         ...IMPORT_POLICY.MethodResult,
         receiver,
     }, undefined, failures)
-}
-
-function importData(value, operationContext, policy, delivery) {
-    return internalSteps.runInternalStep(operationContext, () =>
-        receiveValue(value, operationContext, policy, delivery?.capture))
 }
 
 export {

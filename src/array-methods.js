@@ -1,7 +1,7 @@
 import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
-import { markPromiseHandled } from "./thenable-subscription.js"
+import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-subscription.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
@@ -36,6 +36,7 @@ const ARRAY_METHODS = {
     concat: {
         restInput: concatInput,
         leaseInputsThroughResult: true,
+        prepare: prepareConcatArguments,
         remap: createConcatRemap,
         view: tryConcatArrayView,
     },
@@ -165,10 +166,9 @@ function observeAt(index, invocationWork) {
 }
 
 function numericInput(value, invocationWork) {
-    return internalSteps.consumeValue(
+    return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
-        errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
@@ -177,15 +177,15 @@ function numericInput(value, invocationWork) {
                 ? undefined
                 : conversion.toIntegerOrInfinity(resolved, invocationWork)
         },
+        undefined,
         invocationWork,
     )
 }
 
 function stringInput(value, invocationWork) {
-    return internalSteps.consumeValue(
+    return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
-        errorUtils.ERROR_KIND.OperationInputFailed,
         resolved => {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
@@ -193,6 +193,7 @@ function stringInput(value, invocationWork) {
                 ? undefined
                 : conversion.toStringValue(resolved, undefined, invocationWork)
         },
+        undefined,
         invocationWork,
     )
 }
@@ -305,15 +306,39 @@ function concatInput(value, invocationWork) {
 function captureRemap(array, work) {
     const operationContext = work.operationContext
     const remap = arrayRemaps.createRemap(array, operationContext)
-    remap.forEach(placement => placement?.ensureCaptured())
+    for (const key of Object.keys(remap)) remap[key]?.ensureCaptured()
     return ArrayView.resolveLength(array, work, length => { remap.length = length; return remap })
 }
 
-function createConcatRemap(parts, invocationWork) {
+function prepareConcatArguments(parts, work) {
+    return runArrayStep(work, () => {
+        const length = ArrayView.readyLength(work.receiver, work.operationContext)
+        if (length !== undefined) return finish(length)
+        // Capture available placements before waiting for structural work.
+        // Publication must reuse those versions rather than later backing state.
+        return internalSteps.continueGraphTransition(captureRemap(work.receiver, work),
+            work.operationContext, remap => finish(remap.length, remap), undefined, work)
+
+        function finish(length, receiverRemap) {
+            for (const part of parts) length += part.length
+            return length > 0xffffffff ? invalidArrayLength(work) : { parts, receiverRemap }
+        }
+    })
+}
+
+function invalidArrayLength(work) {
+    return errorUtils.validationError(
+        "Invalid Array length",
+        work.operationContext,
+        errorUtils.ERROR_KIND.InvalidArrayLength,
+    )
+}
+
+function createConcatRemap({ parts, receiverRemap }, invocationWork) {
     return internalSteps.continueGraphTransition(
-        captureRemap(invocationWork.receiver, invocationWork),
+        receiverRemap ?? captureRemap(invocationWork.receiver, invocationWork),
         invocationWork.operationContext,
-        remap => invocation.invokeFunction(arrayConcat, remap, parts, invocationWork.operationContext),
+        remap => Reflect.apply(arrayConcat, remap, parts),
         undefined,
         invocationWork,
     )
@@ -331,12 +356,7 @@ function prepareFlatRemap([depth = 1], invocationWork) {
         invocationWork.operationContext,
         prepared => {
             if (errorUtils.isPoisonError(prepared)) return prepared
-            return invocation.invokeFunction(
-                arrayFlat,
-                prepared,
-                [depth],
-                invocationWork.operationContext,
-            )
+            return Reflect.apply(arrayFlat, prepared, [depth])
         },
         undefined,
         invocationWork,
@@ -402,11 +422,11 @@ function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
 }
 
 function identityInput(value, invocationWork) {
-    return internalSteps.consumeValue(
+    return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
-        errorUtils.ERROR_KIND.OperationInputFailed,
         value => captureIdentity(value, invocationWork.operationContext),
+        undefined,
         invocationWork,
     )
 }
@@ -455,10 +475,9 @@ function join([separator], invocationWork) {
 }
 
 function comparatorInput(value, invocationWork) {
-    return internalSteps.consumeValue(
+    return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
-        errorUtils.ERROR_KIND.OperationInputFailed,
         value => {
             if (errorUtils.isPoisonError(value)) return value
 
@@ -469,6 +488,7 @@ function comparatorInput(value, invocationWork) {
                 errorUtils.ERROR_KIND.NotAFunction,
             )
         },
+        undefined,
         invocationWork,
     )
 }
@@ -624,12 +644,18 @@ function prepareAndSortRecords(
 
 function sortRecords(sortable, compare, operationContext, finish) {
     // The records and native sort are runtime-owned. Only the comparator's
-    // explicit poison escape aborts sorting recoverably; internal throws are fatal.
-    let sorted
+    // explicit poison outcome aborts sorting recoverably; internal throws are fatal.
+    let sorted, comparatorFailure
+    const compareRecords = (left, right) => {
+        const result = compare(left, right)
+        if (!errorUtils.isPoisonError(result)) return result
+        comparatorFailure = result
+        throw result
+    }
     try {
-        sorted = Reflect.apply(arraySort, sortable, [compare])
+        sorted = Reflect.apply(arraySort, sortable, [compareRecords])
     } catch (reason) {
-        if (!errorUtils.isPoisonError(reason)) throw reason
+        if (comparatorFailure === undefined || reason !== comparatorFailure) throw reason
         return reason
     }
     return finish(sorted)
@@ -665,13 +691,13 @@ function compareExported(comparator, left, right, operationContext) {
         operationContext,
         errorUtils.ERROR_KIND.ControlledCallbackFailed,
     )
-    if (errorUtils.isPoisonError(result)) throw result
-    const pending = errorUtils.runExternalBoundary(
+    if (errorUtils.isPoisonError(result)) return result
+    const pending = mayBeThenable(result, operationContext) && errorUtils.catchExternalThrow(
+        () => readCallableThen(result, operationContext),
         operationContext,
         errorUtils.ERROR_KIND.ThenAccessFailed,
-        () => languageValues.isPending(result, operationContext),
     )
-    if (errorUtils.isPoisonError(pending)) throw pending
+    if (errorUtils.isPoisonError(pending)) return pending
     if (pending) {
         const observed = internalSteps.continueGraphTransition(
             result,
@@ -680,14 +706,14 @@ function compareExported(comparator, left, right, operationContext) {
             () => undefined,
         )
         markPromiseHandled(observed, operationContext)
-        throw errorUtils.validationError(
+        return errorUtils.validationError(
             "Promise-returning Array sort comparators are unsupported",
             operationContext,
             errorUtils.ERROR_KIND.InvalidCallbackResult,
         )
     }
     if (typeof result !== "number") {
-        throw errorUtils.validationError(
+        return errorUtils.validationError(
             "Array sort comparator must return a Number",
             operationContext,
             errorUtils.ERROR_KIND.InvalidCallbackResult,
@@ -855,13 +881,11 @@ function tryDeriveArrayView(start, end, invocationWork) {
     })
 }
 
-function tryConcatArrayView(parts, invocationWork) {
-    const suffix = invocation.invokeFunction(
-        arrayConcat,
-        [],
-        parts,
-        invocationWork.operationContext,
-    )
+function tryConcatArrayView({ parts, receiverRemap }, invocationWork) {
+    if (receiverRemap !== undefined) return undefined
+    // Common preparation checked the complete output length before either
+    // private intrinsic call or backing extension can run.
+    const suffix = Reflect.apply(arrayConcat, [], parts)
     return tryAppendArrayView(suffix, invocationWork)
 }
 

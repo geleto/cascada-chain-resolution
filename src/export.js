@@ -6,7 +6,6 @@ import * as languageValues from "./language-values.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import { walkManagedProperties } from "./managed-traversal.js"
 import { createEmptyContainer, defineCopyProperty, captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
-import { receiveValue } from "./input-preparations.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -17,7 +16,8 @@ function exportManyValues(values, owner) {
     return exportValues(values, owner, values => values)
 }
 
-// All roots belong to one required frontier. Aliases share both inspection and
+// Prepared roots belong to one required frontier. Their internal availability
+// never creates a new input-failure boundary. Aliases share both inspection and
 // copies; one Error accumulator survives discarded output until every wait ends.
 function exportValues(values, owner, onResult) {
     const operationContext = owner.operationContext
@@ -28,16 +28,16 @@ function exportValues(values, owner, onResult) {
     const shapes = new Set()
     let unregister
     const readiness = values.map((value, position) =>
-        receiveValue(
+        internalSteps.continueGraphTransition(
             value,
             operationContext,
-            { kind: errorUtils.ERROR_KIND.OperationInputFailed },
             resolved => {
                 const identity = captureIdentity(resolved, operationContext)
                 const readiness = walk(resolved)
                 if (copies) outputs[position] = outputOf(resolved, identity)
                 return readiness
             },
+            undefined,
             owner,
         ),
     )

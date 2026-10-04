@@ -61,11 +61,14 @@ export function countPromiseRegistrations(promise) {
     return () => count
 }
 
-export function expectCounts(operationContext, value, promiseCount, errorCount, cycleCutCount = 0) {
+export function hasCycleCut(parent, key, operationContext) {
+    return metadata.metaOf(parent, operationContext)?.cycleCuts?.has(key) === true
+}
+
+export function expectCounts(operationContext, value, frontierCount, errorCount) {
     const counter = getRefCounter(value, operationContext)
-    expect(counter.promiseCount).to.be(promiseCount)
+    expect(counter.frontierCount).to.be(frontierCount)
     expect(counter.errorCount).to.be(errorCount)
-    expect(counter.cycleCutCount).to.be(cycleCutCount)
 }
 
 export function thrownBy(fn) {
