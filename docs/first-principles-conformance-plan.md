@@ -8,10 +8,10 @@ Historical phase identifiers in the completed sections are retained. References 
 
 | Former phase | Current location |
 | --- | --- |
-| 9F-D: copy identity and redundant-copy elimination | New plan phases [1](runtime-evolution-plan.md#phase-1-preserve-incoming-parent-relationships), [2](runtime-evolution-plan.md#phase-2-replace-permanent-sharing-with-maintained-ownership), [3](runtime-evolution-plan.md#phase-3-unzip-unchanged-mutation-copies), and [4](runtime-evolution-plan.md#phase-4-resolve-copy-identity-and-deduplicate-exports) |
-| 10: Promise-valued paths | [Phase 5](runtime-evolution-plan.md#phase-5-support-promise-valued-path-segments) |
-| 11: imported-Promise settlement preservation | [Phase 6](runtime-evolution-plan.md#phase-6-review-imported-promise-settlement-ownership) |
-| 13: Cascada integration | [Phase 7](runtime-evolution-plan.md#phase-7-cut-cascada-over-to-the-execution-error-architecture) |
+| 9F-D: copy identity and redundant-copy elimination | New plan phases [1](runtime-evolution-plan.md#phase-1-preserve-incoming-parent-relationships), [2](runtime-evolution-plan.md#phase-2-replace-permanent-sharing-with-maintained-ownership), [3](runtime-evolution-plan.md#phase-3-establish-write-based-identity-and-searches), [4](runtime-evolution-plan.md#phase-4-resolve-copy-identity-and-deduplicate-exports), with physical reuse retired in [5](runtime-evolution-plan.md#phase-5-retired-physical-reuse) |
+| 10: Promise-valued paths | [Phase 6](runtime-evolution-plan.md#phase-6-support-promise-valued-path-segments) |
+| 11: imported-Promise settlement preservation | [Phase 7](runtime-evolution-plan.md#phase-7-review-imported-promise-settlement-ownership) |
+| 13: Cascada integration | [Phase 8](runtime-evolution-plan.md#phase-8-cut-cascada-over-to-the-execution-error-architecture) |
 
 [AGENTS.md](../AGENTS.md) and the [data contract](data-limitations.md) describe settled contracts; source and tests establish implemented mechanisms. The new plan owns target revisions and unfinished verification, including the remaining identity/topology gaps referenced by 9F-C.
 

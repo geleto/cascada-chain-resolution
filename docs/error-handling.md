@@ -321,7 +321,7 @@ Cascada also creates failures during expression evaluation. Those producers use 
 
 Error inspection stays successful: getErrors returns or fulfills with null when healthy, the unchanged leaf for one distinct Error, or a CompoundPoisonError for several after complete collection. It creates no PoisonedValue and does not reject because Errors were found. Query failure is a separate ordinary Error result. hasError is existence-only and may finish early. A caller explicitly propagating a non-null completed result uses the ready failure factory or direct pending rejection, without combining it again. Diagnostic views remain immutable safe data. A query result used in an expression crosses primitive extraction through a Chain; direct JavaScript truthiness of a query Error or PoisonedValue would incorrectly turn failure into success. Final script delivery completes export first and converts a failed exported result to native rejection at the higher-runtime outward boundary. After their distinct validation or export prerequisites, these boundaries return a container only for synchronous failure and reject an existing pending result directly with its ordinary Error. The [integration recipe](integration.md) specifies ready and pending conversion without exposing managed objects to expressions or changing fatal ownership.
 
-Phase 9D-B supplies this public contract; [Phase 7](runtime-evolution-plan.md#phase-7-cut-cascada-over-to-the-execution-error-architecture) changes the Cascada compiler and runtime consumers. The source implementation status is recorded in the plan.
+Phase 9D-B supplies this public contract; [Phase 8](runtime-evolution-plan.md#phase-8-cut-cascada-over-to-the-execution-error-architecture) changes the Cascada compiler and runtime consumers. The source implementation status is recorded in the plan.
 
 ### Publication and complete collection
 
@@ -380,6 +380,8 @@ A mutation selects one poison owner covering its required logical effects. A man
 | External subtree has poison, without an ancestor blocker | Whole-subtree work consumes its complete Error union and skips native work; healthy sibling scopes remain usable |
 | Valid repair-only | Clear selected managed scope poison to expose its baseline, and covered external subtree poison without native rollback; return undefined |
 | Repair-and-call | Clear first, then prepare and invoke under the same reservation; a new failure poisons again |
+
+The selected write-based identity integration consumes the committed scope outcome after these rules have run. Committed poison or restored recovery state is a publication; a blocked operation or failed repair preserving the original placement is not. Keep an independent result Error separate from that decision. The existing scope coordinator owns the effect, and shared gate/version completion resolves its identity before exposing readiness; storage transfer alone does not classify it. See the [publication completion experiment](runtime-evolution-plan.md#integration-experiment-publication-completion).
 
 #### Managed rollback and scope poison
 

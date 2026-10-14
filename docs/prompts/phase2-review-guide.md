@@ -79,7 +79,7 @@ Do not report these as defects without new evidence. Each is a deliberate plan d
 - Validation copies of imported nodes keep imported protection and accept the extra copying that causes.
 - Root clearing still happens at the final live scope exit.
 - Reverse liveness proofs pay for relevant ancestry across separate commands; constant-time release is not promised.
-- Deleting an absent property below the first path level can advance ancestor generations, and copy shared ancestors, before the absence is known. Phases 3 and 4 own no-op equivalence.
+- Deleting an absent property below the first path level can advance ancestor generations, and copy shared ancestors, before the absence is known. Phases 3 and 4 own protection-copy identity inheritance. The selected write-based contract keeps every semantic publication effective, including an equal-value write; only nonpublishing commands preserve identity.
 - A supported thenable's `then` may synchronously invoke only its newly supplied callback. Draining older callbacks inside `then` is unsupported; see [data-limitations.md](../data-limitations.md).
 - Cleanup within a live execution is required. Retirement and its interactions are therefore the highest-risk area, not an optional feature.
 

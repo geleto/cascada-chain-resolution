@@ -1,5 +1,5 @@
 // Strict conformance witnesses for the deferred N1/N2 findings. Run explicitly
-// with Mocha; they intentionally fail until Phase 4 supplies the identity proof.
+// with Mocha; they retain strict expectations until Phases 3/4 integrate publication identity.
 // Keep ready/pending controls and never assert today's incorrect result.
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
@@ -10,6 +10,27 @@ const context = () => ({ execution: new r.Execution(), errorContext: "deferred i
 const turn = () => new Promise(setImmediate)
 
 describe("Phase 4 identity conformance", () => {
+    for (const timing of ["ready", "synchronous", "native", "ordered"])
+    for (const method of ["join", "toString"])
+    for (const command of ["none", "empty entry", "effective write"]) {
+        it(`N1 preserves cyclic conversion: ${timing}, ${method}, ${command}`, async () => {
+            const ctx = context(), initial = ["x"]
+            initial.push(initial)
+            const pending = timing === "native" ? Promise.withResolvers()
+                : timing === "ordered" ? new OrderedThenable() : undefined
+            const input = timing === "synchronous" ? ready(initial) : pending?.promise ?? pending ?? initial
+            const source = new r.Chain(input, ctx)
+            const entry = command === "none" ? undefined : r.enter(source, [0], ctx, true, () => undefined)
+            if (command === "effective write") r.assignPath(source, [0], "y", ctx)
+            const result = r.run(source, [], method, [], ctx, {})
+            pending?.resolve(initial)
+            await entry
+            // A real write separates the outer Array from the preserved cycle;
+            // protection alone must not add another traversal of that cycle.
+            assert.equal(await result, command === "effective write" ? "y,x," : "x,")
+        })
+    }
+
     for (const timing of ["ready", "synchronous", "native", "ordered"])
     for (const consumer of ["search", "export"]) {
         it(`N1 preserves identity after empty entry: ${timing}, ${consumer}`, async () => {

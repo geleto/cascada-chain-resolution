@@ -1,8 +1,32 @@
 {
-  "tests": 88,
+  "tests": 406,
   "pending": 0,
-  "passes": 36,
+  "passes": 262,
   "cases": [
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, join, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, join, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, join, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, toString, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, toString, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: native, toString, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, join, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, join, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, join, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, toString, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, toString, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ordered, toString, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, join, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, join, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, join, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, toString, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, toString, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: ready, toString, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, join, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, join, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, join, none",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, toString, effective write",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, toString, empty entry",
+    "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, toString, none",
     "Phase 4 identity conformance N1 preserves identity after empty entry: native, export",
     "Phase 4 identity conformance N1 preserves identity after empty entry: native, search",
     "Phase 4 identity conformance N1 preserves identity after empty entry: ordered, export",
@@ -90,7 +114,301 @@
     "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:dense:immediate-reentry",
     "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:direct:sparse:immediate-reentry",
     "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:dense:immediate-reentry",
-    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:sparse:immediate-reentry"
+    "deferred cached boundary histories N2 preserves cached graph history method-result:ordered:before-delivery:entry:sparse:immediate-reentry",
+    "write-based identity conformance absent deletion: native, entered=false",
+    "write-based identity conformance absent deletion: native, entered=true",
+    "write-based identity conformance absent deletion: ordered, entered=false",
+    "write-based identity conformance absent deletion: ordered, entered=true",
+    "write-based identity conformance absent deletion: ready, entered=false",
+    "write-based identity conformance absent deletion: ready, entered=true",
+    "write-based identity conformance absent deletion: synchronous, entered=false",
+    "write-based identity conformance absent deletion: synchronous, entered=true",
+    "write-based identity conformance already sorted: native, entered=false",
+    "write-based identity conformance already sorted: native, entered=true",
+    "write-based identity conformance already sorted: ordered, entered=false",
+    "write-based identity conformance already sorted: ordered, entered=true",
+    "write-based identity conformance already sorted: ready, entered=false",
+    "write-based identity conformance already sorted: ready, entered=true",
+    "write-based identity conformance already sorted: synchronous, entered=false",
+    "write-based identity conformance already sorted: synchronous, entered=true",
+    "write-based identity conformance assignment separates its owner without separating the stored reference",
+    "write-based identity conformance change then restore: native, entered=false",
+    "write-based identity conformance change then restore: native, entered=true",
+    "write-based identity conformance change then restore: ordered, entered=false",
+    "write-based identity conformance change then restore: ordered, entered=true",
+    "write-based identity conformance change then restore: ready, entered=false",
+    "write-based identity conformance change then restore: ready, entered=true",
+    "write-based identity conformance change then restore: synchronous, entered=false",
+    "write-based identity conformance change then restore: synchronous, entered=true",
+    "write-based identity conformance controlled fill waits for argument before classifying writes: start=0",
+    "write-based identity conformance controlled fill waits for argument before classifying writes: start=2",
+    "write-based identity conformance delayed entry settles actual publication: publish=false",
+    "write-based identity conformance delayed entry settles actual publication: publish=true",
+    "write-based identity conformance deletion decides presence after earlier gate: create=false",
+    "write-based identity conformance deletion decides presence after earlier gate: create=true",
+    "write-based identity conformance empty fill range: native, entered=false",
+    "write-based identity conformance empty fill range: native, entered=true",
+    "write-based identity conformance empty fill range: ordered, entered=false",
+    "write-based identity conformance empty fill range: ordered, entered=true",
+    "write-based identity conformance empty fill range: ready, entered=false",
+    "write-based identity conformance empty fill range: ready, entered=true",
+    "write-based identity conformance empty fill range: synchronous, entered=false",
+    "write-based identity conformance empty fill range: synchronous, entered=true",
+    "write-based identity conformance empty pop writes length: native, entered=false",
+    "write-based identity conformance empty pop writes length: native, entered=true",
+    "write-based identity conformance empty pop writes length: ordered, entered=false",
+    "write-based identity conformance empty pop writes length: ordered, entered=true",
+    "write-based identity conformance empty pop writes length: ready, entered=false",
+    "write-based identity conformance empty pop writes length: ready, entered=true",
+    "write-based identity conformance empty pop writes length: synchronous, entered=false",
+    "write-based identity conformance empty pop writes length: synchronous, entered=true",
+    "write-based identity conformance empty push writes length: native, entered=false",
+    "write-based identity conformance empty push writes length: native, entered=true",
+    "write-based identity conformance empty push writes length: ordered, entered=false",
+    "write-based identity conformance empty push writes length: ordered, entered=true",
+    "write-based identity conformance empty push writes length: ready, entered=false",
+    "write-based identity conformance empty push writes length: ready, entered=true",
+    "write-based identity conformance empty push writes length: synchronous, entered=false",
+    "write-based identity conformance empty push writes length: synchronous, entered=true",
+    "write-based identity conformance empty shift writes length: native, entered=false",
+    "write-based identity conformance empty shift writes length: native, entered=true",
+    "write-based identity conformance empty shift writes length: ordered, entered=false",
+    "write-based identity conformance empty shift writes length: ordered, entered=true",
+    "write-based identity conformance empty shift writes length: ready, entered=false",
+    "write-based identity conformance empty shift writes length: ready, entered=true",
+    "write-based identity conformance empty shift writes length: synchronous, entered=false",
+    "write-based identity conformance empty shift writes length: synchronous, entered=true",
+    "write-based identity conformance empty sort: native, entered=false",
+    "write-based identity conformance empty sort: native, entered=true",
+    "write-based identity conformance empty sort: ordered, entered=false",
+    "write-based identity conformance empty sort: ordered, entered=true",
+    "write-based identity conformance empty sort: ready, entered=false",
+    "write-based identity conformance empty sort: ready, entered=true",
+    "write-based identity conformance empty sort: synchronous, entered=false",
+    "write-based identity conformance empty sort: synchronous, entered=true",
+    "write-based identity conformance empty splice writes length: native, entered=false",
+    "write-based identity conformance empty splice writes length: native, entered=true",
+    "write-based identity conformance empty splice writes length: ordered, entered=false",
+    "write-based identity conformance empty splice writes length: ordered, entered=true",
+    "write-based identity conformance empty splice writes length: ready, entered=false",
+    "write-based identity conformance empty splice writes length: ready, entered=true",
+    "write-based identity conformance empty splice writes length: synchronous, entered=false",
+    "write-based identity conformance empty splice writes length: synchronous, entered=true",
+    "write-based identity conformance empty unshift writes length: native, entered=false",
+    "write-based identity conformance empty unshift writes length: native, entered=true",
+    "write-based identity conformance empty unshift writes length: ordered, entered=false",
+    "write-based identity conformance empty unshift writes length: ordered, entered=true",
+    "write-based identity conformance empty unshift writes length: ready, entered=false",
+    "write-based identity conformance empty unshift writes length: ready, entered=true",
+    "write-based identity conformance empty unshift writes length: synchronous, entered=false",
+    "write-based identity conformance empty unshift writes length: synchronous, entered=true",
+    "write-based identity conformance entry forwards the identity captured inside its final prefix: publish=false",
+    "write-based identity conformance entry forwards the identity captured inside its final prefix: publish=true",
+    "write-based identity conformance equal elements reverse: native, entered=false",
+    "write-based identity conformance equal elements reverse: native, entered=true",
+    "write-based identity conformance equal elements reverse: ordered, entered=false",
+    "write-based identity conformance equal elements reverse: ordered, entered=true",
+    "write-based identity conformance equal elements reverse: ready, entered=false",
+    "write-based identity conformance equal elements reverse: ready, entered=true",
+    "write-based identity conformance equal elements reverse: synchronous, entered=false",
+    "write-based identity conformance equal elements reverse: synchronous, entered=true",
+    "write-based identity conformance equal length assignment: native, entered=false",
+    "write-based identity conformance equal length assignment: native, entered=true",
+    "write-based identity conformance equal length assignment: ordered, entered=false",
+    "write-based identity conformance equal length assignment: ordered, entered=true",
+    "write-based identity conformance equal length assignment: ready, entered=false",
+    "write-based identity conformance equal length assignment: ready, entered=true",
+    "write-based identity conformance equal length assignment: synchronous, entered=false",
+    "write-based identity conformance equal length assignment: synchronous, entered=true",
+    "write-based identity conformance equal nested write scope 0: native, entered=false",
+    "write-based identity conformance equal nested write scope 0: native, entered=true",
+    "write-based identity conformance equal nested write scope 0: ordered, entered=false",
+    "write-based identity conformance equal nested write scope 0: ordered, entered=true",
+    "write-based identity conformance equal nested write scope 0: ready, entered=false",
+    "write-based identity conformance equal nested write scope 0: ready, entered=true",
+    "write-based identity conformance equal nested write scope 0: synchronous, entered=false",
+    "write-based identity conformance equal nested write scope 0: synchronous, entered=true",
+    "write-based identity conformance equal nested write scope 1: native, entered=false",
+    "write-based identity conformance equal nested write scope 1: native, entered=true",
+    "write-based identity conformance equal nested write scope 1: ordered, entered=false",
+    "write-based identity conformance equal nested write scope 1: ordered, entered=true",
+    "write-based identity conformance equal nested write scope 1: ready, entered=false",
+    "write-based identity conformance equal nested write scope 1: ready, entered=true",
+    "write-based identity conformance equal nested write scope 1: synchronous, entered=false",
+    "write-based identity conformance equal nested write scope 1: synchronous, entered=true",
+    "write-based identity conformance equal nested write scope 2: native, entered=false",
+    "write-based identity conformance equal nested write scope 2: native, entered=true",
+    "write-based identity conformance equal nested write scope 2: ordered, entered=false",
+    "write-based identity conformance equal nested write scope 2: ordered, entered=true",
+    "write-based identity conformance equal nested write scope 2: ready, entered=false",
+    "write-based identity conformance equal nested write scope 2: ready, entered=true",
+    "write-based identity conformance equal nested write scope 2: synchronous, entered=false",
+    "write-based identity conformance equal nested write scope 2: synchronous, entered=true",
+    "write-based identity conformance equal scalar assignment: native, entered=false",
+    "write-based identity conformance equal scalar assignment: native, entered=true",
+    "write-based identity conformance equal scalar assignment: ordered, entered=false",
+    "write-based identity conformance equal scalar assignment: ordered, entered=true",
+    "write-based identity conformance equal scalar assignment: ready, entered=false",
+    "write-based identity conformance equal scalar assignment: ready, entered=true",
+    "write-based identity conformance equal scalar assignment: synchronous, entered=false",
+    "write-based identity conformance equal scalar assignment: synchronous, entered=true",
+    "write-based identity conformance equal value fill: native, entered=false",
+    "write-based identity conformance equal value fill: native, entered=true",
+    "write-based identity conformance equal value fill: ordered, entered=false",
+    "write-based identity conformance equal value fill: ordered, entered=true",
+    "write-based identity conformance equal value fill: ready, entered=false",
+    "write-based identity conformance equal value fill: ready, entered=true",
+    "write-based identity conformance equal value fill: synchronous, entered=false",
+    "write-based identity conformance equal value fill: synchronous, entered=true",
+    "write-based identity conformance failed equal assignment that publishes poison is effective",
+    "write-based identity conformance failed repair with no publication preserves identity: gated=false",
+    "write-based identity conformance failed repair with no publication preserves identity: gated=true",
+    "write-based identity conformance healthy repair: native, entered=false",
+    "write-based identity conformance healthy repair: native, entered=true",
+    "write-based identity conformance healthy repair: ordered, entered=false",
+    "write-based identity conformance healthy repair: ordered, entered=true",
+    "write-based identity conformance healthy repair: ready, entered=false",
+    "write-based identity conformance healthy repair: ready, entered=true",
+    "write-based identity conformance healthy repair: synchronous, entered=false",
+    "write-based identity conformance healthy repair: synchronous, entered=true",
+    "write-based identity conformance hole deletion: native, entered=false",
+    "write-based identity conformance hole deletion: native, entered=true",
+    "write-based identity conformance hole deletion: ordered, entered=false",
+    "write-based identity conformance hole deletion: ordered, entered=true",
+    "write-based identity conformance hole deletion: ready, entered=false",
+    "write-based identity conformance hole deletion: ready, entered=true",
+    "write-based identity conformance hole deletion: synchronous, entered=false",
+    "write-based identity conformance hole deletion: synchronous, entered=true",
+    "write-based identity conformance hole filled with undefined: native, entered=false",
+    "write-based identity conformance hole filled with undefined: native, entered=true",
+    "write-based identity conformance hole filled with undefined: ordered, entered=false",
+    "write-based identity conformance hole filled with undefined: ordered, entered=true",
+    "write-based identity conformance hole filled with undefined: ready, entered=false",
+    "write-based identity conformance hole filled with undefined: ready, entered=true",
+    "write-based identity conformance hole filled with undefined: synchronous, entered=false",
+    "write-based identity conformance hole filled with undefined: synchronous, entered=true",
+    "write-based identity conformance hole-only copyWithin: native, entered=false",
+    "write-based identity conformance hole-only copyWithin: native, entered=true",
+    "write-based identity conformance hole-only copyWithin: ordered, entered=false",
+    "write-based identity conformance hole-only copyWithin: ordered, entered=true",
+    "write-based identity conformance hole-only copyWithin: ready, entered=false",
+    "write-based identity conformance hole-only copyWithin: ready, entered=true",
+    "write-based identity conformance hole-only copyWithin: synchronous, entered=false",
+    "write-based identity conformance hole-only copyWithin: synchronous, entered=true",
+    "write-based identity conformance hole-only reverse: native, entered=false",
+    "write-based identity conformance hole-only reverse: native, entered=true",
+    "write-based identity conformance hole-only reverse: ordered, entered=false",
+    "write-based identity conformance hole-only reverse: ordered, entered=true",
+    "write-based identity conformance hole-only reverse: ready, entered=false",
+    "write-based identity conformance hole-only reverse: ready, entered=true",
+    "write-based identity conformance hole-only reverse: synchronous, entered=false",
+    "write-based identity conformance hole-only reverse: synchronous, entered=true",
+    "write-based identity conformance hole-only sort: native, entered=false",
+    "write-based identity conformance hole-only sort: native, entered=true",
+    "write-based identity conformance hole-only sort: ordered, entered=false",
+    "write-based identity conformance hole-only sort: ordered, entered=true",
+    "write-based identity conformance hole-only sort: ready, entered=false",
+    "write-based identity conformance hole-only sort: ready, entered=true",
+    "write-based identity conformance hole-only sort: synchronous, entered=false",
+    "write-based identity conformance hole-only sort: synchronous, entered=true",
+    "write-based identity conformance native publication covers receiver descendants and path ancestors: writes=false, pending=false",
+    "write-based identity conformance native publication covers receiver descendants and path ancestors: writes=false, pending=true",
+    "write-based identity conformance native publication covers receiver descendants and path ancestors: writes=true, pending=false",
+    "write-based identity conformance native publication covers receiver descendants and path ancestors: writes=true, pending=true",
+    "write-based identity conformance nested absent deletion: native, entered=false",
+    "write-based identity conformance nested absent deletion: native, entered=true",
+    "write-based identity conformance nested absent deletion: ordered, entered=false",
+    "write-based identity conformance nested absent deletion: ordered, entered=true",
+    "write-based identity conformance nested absent deletion: ready, entered=false",
+    "write-based identity conformance nested absent deletion: ready, entered=true",
+    "write-based identity conformance nested absent deletion: synchronous, entered=false",
+    "write-based identity conformance nested absent deletion: synchronous, entered=true",
+    "write-based identity conformance nested entry forwards only inner publication: publish=false",
+    "write-based identity conformance nested entry forwards only inner publication: publish=true",
+    "write-based identity conformance nested healthy repair: native, entered=false",
+    "write-based identity conformance nested healthy repair: native, entered=true",
+    "write-based identity conformance nested healthy repair: ordered, entered=false",
+    "write-based identity conformance nested healthy repair: ordered, entered=true",
+    "write-based identity conformance nested healthy repair: ready, entered=false",
+    "write-based identity conformance nested healthy repair: ready, entered=true",
+    "write-based identity conformance nested healthy repair: synchronous, entered=false",
+    "write-based identity conformance nested healthy repair: synchronous, entered=true",
+    "write-based identity conformance no command: native, entered=false",
+    "write-based identity conformance no command: native, entered=true",
+    "write-based identity conformance no command: ordered, entered=false",
+    "write-based identity conformance no command: ordered, entered=true",
+    "write-based identity conformance no command: ready, entered=false",
+    "write-based identity conformance no command: ready, entered=true",
+    "write-based identity conformance no command: synchronous, entered=false",
+    "write-based identity conformance no command: synchronous, entered=true",
+    "write-based identity conformance ordinary Promise settlement completes a captured version without a new write",
+    "write-based identity conformance overwritten pending assignment remains effective: different",
+    "write-based identity conformance overwritten pending assignment remains effective: equal",
+    "write-based identity conformance overwritten pending assignment remains effective: never",
+    "write-based identity conformance overwritten pending assignment remains effective: reject",
+    "write-based identity conformance present undefined deletion: native, entered=false",
+    "write-based identity conformance present undefined deletion: native, entered=true",
+    "write-based identity conformance present undefined deletion: ordered, entered=false",
+    "write-based identity conformance present undefined deletion: ordered, entered=true",
+    "write-based identity conformance present undefined deletion: ready, entered=false",
+    "write-based identity conformance present undefined deletion: ready, entered=true",
+    "write-based identity conformance present undefined deletion: synchronous, entered=false",
+    "write-based identity conformance present undefined deletion: synchronous, entered=true",
+    "write-based identity conformance protection copy inherits an already pending identity: publish=false",
+    "write-based identity conformance protection copy inherits an already pending identity: publish=true",
+    "write-based identity conformance ready sibling write cannot be overwritten by earlier identity completion: publish=false",
+    "write-based identity conformance ready sibling write cannot be overwritten by earlier identity completion: publish=true",
+    "write-based identity conformance same managed reference assignment: native, entered=false",
+    "write-based identity conformance same managed reference assignment: native, entered=true",
+    "write-based identity conformance same managed reference assignment: ordered, entered=false",
+    "write-based identity conformance same managed reference assignment: ordered, entered=true",
+    "write-based identity conformance same managed reference assignment: ready, entered=false",
+    "write-based identity conformance same managed reference assignment: ready, entered=true",
+    "write-based identity conformance same managed reference assignment: synchronous, entered=false",
+    "write-based identity conformance same managed reference assignment: synchronous, entered=true",
+    "write-based identity conformance same positions copyWithin: native, entered=false",
+    "write-based identity conformance same positions copyWithin: native, entered=true",
+    "write-based identity conformance same positions copyWithin: ordered, entered=false",
+    "write-based identity conformance same positions copyWithin: ordered, entered=true",
+    "write-based identity conformance same positions copyWithin: ready, entered=false",
+    "write-based identity conformance same positions copyWithin: ready, entered=true",
+    "write-based identity conformance same positions copyWithin: synchronous, entered=false",
+    "write-based identity conformance same positions copyWithin: synchronous, entered=true",
+    "write-based identity conformance shared entry identity completes after a search short-circuits: publish=false",
+    "write-based identity conformance shared entry identity completes after a search short-circuits: publish=true",
+    "write-based identity conformance sibling entries preserve ordered captures: left=false, right=false, first=left",
+    "write-based identity conformance sibling entries preserve ordered captures: left=false, right=false, first=right",
+    "write-based identity conformance sibling entries preserve ordered captures: left=false, right=true, first=left",
+    "write-based identity conformance sibling entries preserve ordered captures: left=false, right=true, first=right",
+    "write-based identity conformance sibling entries preserve ordered captures: left=true, right=false, first=left",
+    "write-based identity conformance sibling entries preserve ordered captures: left=true, right=false, first=right",
+    "write-based identity conformance sibling entries preserve ordered captures: left=true, right=true, first=left",
+    "write-based identity conformance sibling entries preserve ordered captures: left=true, right=true, first=right",
+    "write-based identity conformance singleton reverse: native, entered=false",
+    "write-based identity conformance singleton reverse: native, entered=true",
+    "write-based identity conformance singleton reverse: ordered, entered=false",
+    "write-based identity conformance singleton reverse: ordered, entered=true",
+    "write-based identity conformance singleton reverse: ready, entered=false",
+    "write-based identity conformance singleton reverse: ready, entered=true",
+    "write-based identity conformance singleton reverse: synchronous, entered=false",
+    "write-based identity conformance singleton reverse: synchronous, entered=true",
+    "write-based identity conformance singleton sort writes its position: native, entered=false",
+    "write-based identity conformance singleton sort writes its position: native, entered=true",
+    "write-based identity conformance singleton sort writes its position: ordered, entered=false",
+    "write-based identity conformance singleton sort writes its position: ordered, entered=true",
+    "write-based identity conformance singleton sort writes its position: ready, entered=false",
+    "write-based identity conformance singleton sort writes its position: ready, entered=true",
+    "write-based identity conformance singleton sort writes its position: synchronous, entered=false",
+    "write-based identity conformance singleton sort writes its position: synchronous, entered=true",
+    "write-based identity conformance successful repair publishes even when it restores pre-failure contents",
+    "write-based identity conformance zero count copyWithin: native, entered=false",
+    "write-based identity conformance zero count copyWithin: native, entered=true",
+    "write-based identity conformance zero count copyWithin: ordered, entered=false",
+    "write-based identity conformance zero count copyWithin: ordered, entered=true",
+    "write-based identity conformance zero count copyWithin: ready, entered=false",
+    "write-based identity conformance zero count copyWithin: ready, entered=true",
+    "write-based identity conformance zero count copyWithin: synchronous, entered=false",
+    "write-based identity conformance zero count copyWithin: synchronous, entered=true"
   ],
   "failures": [
     {
@@ -286,6 +604,30 @@
       "message": "search-includes: Expected values to be strictly equal:\n\nfalse !== true\n\n\nsearch-indexOf: Expected values to be strictly equal:\n\n-1 !== 0\n\n\nsearch-lastIndexOf: Expected values to be strictly equal:\n\n-1 !== 1\n\n\ncombined: $[\"second\"]: preserve aliases and cycles\n\n<ref *2> {\n  items: [\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    },\n    <1 empty item>,\n    <ref *1> {\n      k: 62,\n      self: [Circular *1]\n    }\n  ],\n  p: 63,\n  self: [Circular *2]\n}\n\n\nreceiver: Expected values to be strictly equal:\n\nfalse !== true\n\n\nnative-batch: Expected values to be strictly equal:\n\nfalse !== true\n\n\nordered-effects: pending batch precedes later ready external effect\n+ actual - expected\n\n  [\n    {\n      cycles: true,\n      k: 62,\n+     same: false,\n-     same: true,\n      seq: 1\n    },\n    {\n      seq: 2\n    }\n"
     },
     {
+      "fullTitle": "Phase 4 identity conformance N1 preserves cyclic conversion: ready, join, empty entry",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\n'x,x,' !== 'x,'\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves cyclic conversion: ready, toString, empty entry",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\n'x,x,' !== 'x,'\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, join, empty entry",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\n'x,x,' !== 'x,'\n"
+    },
+    {
+      "fullTitle": "Phase 4 identity conformance N1 preserves cyclic conversion: synchronous, toString, empty entry",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "Expected values to be strictly equal:\n\n'x,x,' !== 'x,'\n"
+    },
+    {
       "fullTitle": "Phase 4 identity conformance N1 preserves identity after empty entry: ready, export",
       "code": "ERR_ASSERTION",
       "operator": "strictEqual",
@@ -404,6 +746,534 @@
       "code": "ERR_ASSERTION",
       "operator": "deepStrictEqual",
       "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   false,\n+   -1,\n+   -1\n-   true,\n-   0,\n-   0\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance controlled fill waits for argument before classifying writes: start=2",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   actual: false,\n-   actual: true,\n    settledEarly: false\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance delayed entry settles actual publication: publish=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   actual: false,\n+   settledEarly: true\n-   actual: true,\n-   settledEarly: false\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance delayed entry settles actual publication: publish=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n    actual: false,\n+   settledEarly: true\n-   settledEarly: false\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance deletion decides presence after earlier gate: create=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty fill range: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance empty sort: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance failed repair with no publication preserves identity: gated=false",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "An independent Error result is not a publication\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance failed repair with no publication preserves identity: gated=true",
+      "code": "ERR_ASSERTION",
+      "operator": "strictEqual",
+      "message": "An independent Error result is not a publication\n\nfalse !== true\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance healthy repair: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only copyWithin: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only reverse: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance hole-only sort: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested entry forwards only inner publication: publish=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n... Skipped lines\n\n  [\n    {\n      alias: true,\n      answer: true,\n      i: 0,\n...\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 3,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 3,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 3,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 3,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 3,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 3,\n      method: 'lastIndexOf'\n    },\n    {\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance nested healthy repair: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance protection copy inherits an already pending identity: publish=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance ready sibling write cannot be overwritten by earlier identity completion: publish=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance shared entry identity completes after a search short-circuits: publish=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=false, right=false, first=left",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=false, right=false, first=right",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 2,\n      method: 'lastIndexOf'\n    },\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=false, right=true, first=left",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=false, right=true, first=right",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n\n  [\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 0,\n      j: 1,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 0,\n      j: 1,\n      method: 'lastIndexOf'\n    },\n    {\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=true, right=false, first=left",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n... Skipped lines\n\n  [\n    {\n      alias: false,\n      answer: false,\n      i: 0,\n...\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance sibling entries preserve ordered captures: left=true, right=false, first=right",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export follow the ordered publication partition\n+ actual - expected\n... Skipped lines\n\n  [\n    {\n      alias: false,\n      answer: false,\n      i: 0,\n...\n    {\n+     alias: false,\n+     answer: false,\n-     alias: true,\n-     answer: true,\n      i: 1,\n      j: 2,\n      method: 'includes'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'indexOf'\n    },\n    {\n+     alias: false,\n+     answer: -1,\n-     alias: true,\n-     answer: 0,\n      i: 1,\n      j: 2,\n      method: 'lastIndexOf'\n    }\n  ]\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance singleton reverse: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: native, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: native, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: ordered, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: ordered, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: ready, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: ready, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: synchronous, entered=false",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
+    },
+    {
+      "fullTitle": "write-based identity conformance zero count copyWithin: synchronous, entered=true",
+      "code": "ERR_ASSERTION",
+      "operator": "deepStrictEqual",
+      "message": "Search and export must follow actual publication\n+ actual - expected\n\n  {\n+   alias: false,\n-   alias: true,\n    searches: [\n+     false,\n+     -1,\n+     -1\n-     true,\n-     0,\n-     0\n    ]\n  }\n"
     }
   ]
 }

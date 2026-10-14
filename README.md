@@ -1,5 +1,7 @@
 # Cascada chain resolution
 
+The selected [Phase 3 identity contract](docs/data-limitations.md#managed-identity) is write-based: even an equal-value write separates identity; only commands that publish nothing are no-ops. Protection and representation copies inherit identity. Searches and export will use settled publication outcomes, without comparison-evidence machinery. This integration remains planned; see the [runtime evolution plan](docs/runtime-evolution-plan.md).
+
 ## Introduction
 
 Cascada is a runtime kernel for an implicitly asynchronous data language. A
@@ -278,7 +280,7 @@ Every path operation accepts an optional final `firstDynamicSegment` argument,
 defaulting to `path.length` (fully static). `run` carries it in its facts object.
 The compiler supplies the index of the first computed key, even when that key
 already holds a string or number. Every selected registered resource path must precede that index; computed unregistered native suffixes and ordinary managed paths remain supported.
-Promise-valued path keys are separate work in [Phase 5](docs/runtime-evolution-plan.md#phase-5-support-promise-valued-path-segments).
+Promise-valued path keys are separate work in [Phase 6](docs/runtime-evolution-plan.md#phase-6-support-promise-valued-path-segments).
 
 Pass the original target to `enter`. It captures a selectable anchor and retains any unavailable, intrinsic, or native suffix as the reference path, without consuming unused data. See the [entry handoff](docs/integration.md#entry-target-selection).
 

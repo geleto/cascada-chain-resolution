@@ -122,13 +122,21 @@ An argument retained as Array payload is not preparation input. `push`, `unshift
 
 `sort` and `toSorted` retain the logical values and follow Sort comparison. `sort` leaves holes after explicit `undefined`; `toSorted` follows its standard read-through-holes result. Intrinsic Array `toString` uses intrinsic logical joining. Non-index string properties are outside the Cascada Array surface.
 
+### Mutation identity
+
+The planned [write-based identity contract](data-limitations.md#managed-identity) classifies controlled Array calls by their logical writes. An empty `fill` range, zero-count `copyWithin`, and `reverse` with fewer than two elements publish nothing. Nonempty equal-value `fill`, copying present positions onto themselves, and reversing two equal present elements are effective. `sort` writes present elements, including a singleton; all-hole sorting publishes nothing. `push`, `unshift`, `pop`, `shift`, and `splice` explicitly write length and are effective even for empty or zero-item calls. These are logical algorithm writes, independent of physical view/remap shortcuts. An explicit equal length assignment is effective. Allocation of a view or copying for protection is representation work, not an additional semantic write. A native mutating call publishes every managed node in its adopted receiver graph and separates affected path ancestors, including apparently untouched descendants and a method that writes nothing. Unrelated branches retain identity. Completed contents are not compared.
+
+The selected implementation reuses the captured baseline for a nonwriting Array mutation instead of materializing a replacement receiver. Derive its footprint during required argument/presence/remap work, with no second scan; retain required reads, validation, and Error processing. The existing mutation outcome carries this contribution to scope completion, which still accounts for repair or fallback publication. Receiver publication, an independent method result, and any pending gate keep their separate completion rules.
+
 ### Identity-sensitive searches
 
-`includes`, `indexOf`, and `lastIndexOf` never export Array elements. `includes` uses SameValueZero and treats holes as `undefined`; `indexOf` and `lastIndexOf` use strict equality and skip holes. Length capture, `fromIndex`, direction, and early termination match JavaScript. Tracked values compare by current identity; a copy-on-write version differs from its source, and structural comparison is never used. Error elements are ordinary comparable values.
+`includes`, `indexOf`, and `lastIndexOf` never export Array elements. `includes` uses SameValueZero and treats holes as `undefined`; `indexOf` and `lastIndexOf` use strict equality and skip holes. Length capture, `fromIndex`, direction, and early termination match JavaScript. Tracked values compare by captured logical identity, never structural equality. Phase 2 still separates some protection copies; the selected Phase 3 contract makes protection/representation copies inherit identity and every semantic write separate it, including an equal-value write. Error elements are ordinary comparable values.
 
 `indexOf` and `lastIndexOf` traverse in search order. At a pending element they capture and resolve that property version, compare it, and continue only after a miss. Promise elements beyond the first match are never registered.
 
 `includes` first compares every direct value and consumes each reached possible Promise through the common helper at its logical position. A ready custom thenable therefore contributes its comparison synchronously. Only returned pending branches enter the outstanding set; they are compared as they resolve. The operation settles on the first match and makes remaining registrations cleanup-only, and returns `false` only after every candidate misses. A synchronous match or absence of returned pending branches returns directly.
+
+The [search-completion contract](data-limitations.md#search-completion) also applies when Phase 3 integrates settled publication outcomes. Searches may wait for unresolved comparisons rather than combine possible future results to deduce that some candidate must match. A known match still lets `includes` finish immediately; the linked contract gives an example of the permitted wait.
 
 ## Path and operation readiness
 
