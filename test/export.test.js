@@ -372,7 +372,7 @@ describe("export", () => {
         expectExportErrors(await result, [reflection, hidden])
     })
 
-    it("continues the Error scan when output allocation fails", () => {
+    it("continues the Error scan when captured Array shape fails", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const reflection = new Error("Array length failed")
         const nested = new Error("inside Array")
@@ -380,7 +380,7 @@ describe("export", () => {
         let fail = false
         const array = new Proxy([nested], {
             get(target, key, receiver) {
-                if (fail && key === "length" && lengthReads++ === 0) {
+                if (fail && key === "length" && lengthReads++ === 1) {
                     throw reflection
                 }
                 return Reflect.get(target, key, receiver)

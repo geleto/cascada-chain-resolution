@@ -3,6 +3,8 @@ import { ArrayView } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as errorUtils from "./error.js"
+import * as languageValues from "./language-values.js"
+import { inheritIdentity, IdentityPublication } from "./captured-identity.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
@@ -135,19 +137,50 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
     if (methodDefinition.observe) return methodDefinition.observe(preparedArguments, invocationWork)
 
     let remap, nativeResult
+    const { method, arrayLength: length } = invocationWork
+    let published = true, touches
+    if (mutation && method === "fill") {
+        published = toRelativeIndex(preparedArguments[1], length, 0) <
+            toRelativeIndex(preparedArguments[2], length, length)
+        if (!published) return unchanged()
+    } else if (mutation && method === "reverse") {
+        published = false
+        touches = index => index !== length - index - 1
+    } else if (mutation && method === "copyWithin") {
+        const target = toRelativeIndex(preparedArguments[0], length, 0)
+        const start = toRelativeIndex(preparedArguments[1], length, 0)
+        const end = toRelativeIndex(preparedArguments[2], length, length)
+        const count = Math.min(end - start, length - target)
+        if (count <= 0) return unchanged()
+        published = false
+        touches = index => index >= start && index < start + count || index >= target && index < target + count
+    }
     if (methodDefinition.remap) {
         remap = methodDefinition.remap(preparedArguments, invocationWork)
     } else {
-        remap = arrayRemaps.createRemap(invocationWork.receiver, operationContext, 0, invocationWork.arrayLength)
+        remap = arrayRemaps.createRemap(invocationWork.receiver, operationContext, 0, length, undefined,
+            touches && ((placement, index) => {
+                if (published === true || !touches(index)) return
+                const wait = internalSteps.continueGraphTransition(placement.resolvePresence(), operationContext,
+                    () => placement.present !== false)
+                if (languageValues.isPending(wait, operationContext)) {
+                    if (published === false) published = new IdentityPublication(operationContext)
+                    published.addPending(wait)
+                } else if (wait) {
+                    if (published !== false) published.finish(true)
+                    published = true
+                }
+            }))
         nativeResult = Reflect.apply(methodDefinition.intrinsic, remap, preparedArguments)
         // Dense observations consume only the placements selected by the native
-        // mapping. Overwritten and removed inputs create no presence dependency.
+        // mapping. Removed inputs create no presence dependency.
         if (methodDefinition.methodResult === undefined)
             remap = arrayRemaps.resolveDenseRemapPresence(nativeResult, invocationWork)
     }
     return internalSteps.continueGraphTransition(remap, operationContext,
         remap => runArrayStep(invocationWork, () => {
             if (errorUtils.isPoisonError(remap)) return remap
+            if (mutation && (method === "sort" ? !invocationWork.arrayPublished : !published)) return unchanged()
             // Only intrinsic mutators have a separate native result. Capture
             // removed placements before materializing the new receiver.
             let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
@@ -155,6 +188,15 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
             const output = runArrayStep(invocationWork, () =>
                 arrayRemaps.createArrayFromRemap(remap, operationContext))
             if (!mutation) return invocationWork.retainOutput(output)
+            if (published instanceof IdentityPublication) {
+                if (errorUtils.isPoisonError(output)) published.finish(true)
+                else {
+                    inheritIdentity(invocationWork.receiver, output, operationContext)
+                    published.capture(output)
+                    published.finish()
+                }
+                published = published.outcome()
+            }
             if (methodDefinition.methodResult === RETURN_RECEIVER) result = invocationWork.retainOutput(output)
             else if (errorUtils.isPoisonError(output)) {
                 // Publish receiver failure now; only the independent result waits.
@@ -163,8 +205,13 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
                         ? errorUtils.combineErrors([output, value], "Array mutation failed") : output,
                     undefined, invocationWork)
             }
-            return createMutationOutcome(output, result, operationContext)
+            return createMutationOutcome(output, result, operationContext, published)
         }), undefined, invocationWork)
+
+    function unchanged() {
+        return createMutationOutcome(invocationWork.receiver,
+            invocationWork.retainOutput(invocationWork.receiver), operationContext, false)
+    }
 }
 
 function validateArrayOperation(args, { arrayLength: length, method, operationContext }) {

@@ -1,5 +1,5 @@
 import { createLeaseLedger } from "./ownership.js"
-import { advanceIdentity } from "./captured-identity.js"
+import { inheritIdentity, IdentityPublication } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
@@ -28,9 +28,10 @@ function shallowCopyPathContainer(source, operationContext) {
     const destination = createEmptyContainer(source, operationContext)
     const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
     languageValues.admitReadyValue(destination, operationContext, type, admittedPrototype)
+    inheritIdentity(source, destination, operationContext)
     PlacementConstruction.initializeAndPublish(destination, operationContext, destination => {
-        // Copy only language-visible own enumerable string keys. Identity metadata
-        // stays with the source; captured structural state is transferred below.
+        // Copy only language-visible own enumerable string keys. Captured
+        // identity and structure survive protection-only materialization.
         // Both containers retain every copied child until replacement, including
         // when a path operation does nothing or its child is still pending.
         for (const key of languageProperties.enumerableLanguageKeys(
@@ -52,10 +53,10 @@ function shallowCopyPathContainer(source, operationContext) {
     return destination
 }
 
-function createMutationOutcome(mutatedValue, result, operationContext) {
+function createMutationOutcome(mutatedValue, result, operationContext, published = true) {
     const publication = createLeaseLedger(operationContext)
     publication.acquire(mutatedValue)
-    return { mutatedValue, result, releasePublication: publication.release }
+    return { mutatedValue, result, published, releasePublication: publication.release }
 }
 
 function transformProperty(target, operationContext, transform, { replace = false, repair = false, beforeWait } = {}) {
@@ -76,7 +77,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
         baseline = placement
         let current = baseline.value
         if (!replace && errorUtils.isPoisonError(current)) {
-            if (!repair || !baseline.recovery) return { mutatedValue: current, result: current, placement: baseline }
+            if (!repair || !baseline.recovery) return { mutatedValue: current, result: current, placement: baseline, published: false }
             baseline = baseline.recovery
             current = baseline.value
         }
@@ -92,6 +93,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
     const failure = errorUtils.catchExternalThrow(() => {
         const captured = propertyVersions.capturePlacement(parent, key, operationContext, target.sourceVersion)
         gate = propertyVersions.installPlacementGate(parent, key, operationContext, captured, target.sourceVersion)
+        target.publication.suspend()
     }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
     if (errorUtils.isPoisonError(failure)) {
         if (!repair) target.replaceReceiver(failure)
@@ -108,11 +110,14 @@ function transformProperty(target, operationContext, transform, { replace = fals
         if (errorUtils.isPoisonError(outcome)) outcome = { mutatedValue: outcome, result: outcome }
         if (!outcome.placement && errorUtils.isPoisonError(outcome.mutatedValue)) {
             outcome.placement = { value: outcome.mutatedValue, present: true, recovery: baseline }
+            outcome.published = true
         }
         return outcome
     }
     function publish(outcome) {
-        const placement = outcome.placement ?? { value: outcome.mutatedValue, present: true }
+        const placement = outcome.published === false ? baseline :
+            outcome.placement ?? { value: outcome.mutatedValue, present: true }
+        let published = baseline !== originalPlacement ? true : outcome.published ?? placement !== originalPlacement
         // Result holders and assigned inputs are different placements. Only
         // this destination's preceding presence determines its insertion order.
         const publication = { ...placement, position: originalPlacement.present ? originalPlacement.position : Infinity }
@@ -130,17 +135,23 @@ function transformProperty(target, operationContext, transform, { replace = fals
             const restoring = repair && placement === baseline
             outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
             if (restoring) {
+                published = false
                 // A failed repair leaves the original poison and recovery intact.
                 if (destinationVersion) propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
                     originalPlacement, operationContext, false, structure)
             } else if (destinationVersion) propertyVersions.publishPlacementFailure(parent, key, destinationVersion,
                 poison, baseline, operationContext, structure)
             else target.publishFailure(poison, baseline, outcome)
+            if (!restoring) published = true
         }
+        target.publication.record(published)
         return finish(outcome)
     }
     function finish(outcome) {
-        gate?.resolve()
+        if (gate) {
+            target.publication.finish()
+            gate.resolve()
+        }
         releasePublication?.()
         if (leased) metadata.decrementReadLease(baseline.value, operationContext)
         target = parent = transform = baseline = originalPlacement = gate = releasePublication = beforeWait = undefined
@@ -161,7 +172,17 @@ function includePublicationFailure(result, publishedValue, operationContext) {
 
 function captureMutationResult(chain, result, operationContext) {
     const placement = propertyVersions.capturePlacement(chain._state, "value", operationContext)
-    return { mutatedValue: placement.value, placement, result }
+    chain._publication.finish()
+    return { mutatedValue: placement.value, placement, result, published: chain._publication.outcome() }
+}
+
+function prepareAssignment(placement, key, operationContext) {
+    const validate = resolved => languageProperties.validatePropertyValue(key, resolved.value, operationContext) ?? resolved
+    // Only callable-then validation consumes assignment availability. Other
+    // pending values publish now, without extending the mutation lifetime.
+    return key === "then"
+        ? propertyVersions.resolvePlacement(placement, operationContext, validate, errorUtils.ERROR_KIND.AssignmentValueFailed)
+        : validate(placement)
 }
 
 // --- assignPath :  a.k.y = 1 -----------------------------------------------
@@ -186,20 +207,23 @@ function assignManagedPath(
                     target.propertyKind ===
                     languageProperties.ORDINARY_PROPERTY
                 ) {
-                    const logicalKey = path.length ? target.key : chain._rootKey
-                    const publish = resolved => {
-                        const failure = languageProperties.validatePropertyValue(logicalKey, resolved.value, operationContext)
-                        if (failure) return failure
-                        const result = propertyVersions.transferPlacement(resolved, target.parent, target.key, operationContext)
-                        return result
-                    }
-                    // This destination needs its value to prove assignment is
-                    // valid. Keep that work inside the mutation's rollback and
-                    // publication lifetime; other pending data publishes now.
-                    return logicalKey === "then"
-                        ? propertyVersions.resolvePlacement(placement, operationContext, publish,
-                            errorUtils.ERROR_KIND.AssignmentValueFailed)
-                        : publish(placement)
+                    // Replacement needs the preceding structural outcome, not
+                    // the old payload: deletion makes this a new insertion.
+                    return propertyVersions.resolvePlacementTransition(
+                        propertyVersions.capturePlacement(target.parent, target.key, operationContext),
+                        operationContext, before => {
+                            const position = before.present ? before.position : Infinity
+                            return internalSteps.continueGraphTransition(prepareAssignment(placement, target.key, operationContext),
+                                operationContext, resolved => {
+                                    if (errorUtils.isPoisonError(resolved)) return resolved
+                                    const result = errorUtils.catchExternalThrow(
+                                        () => propertyVersions.transferPlacement({ ...resolved, position },
+                                            target.parent, target.key, operationContext),
+                                        operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
+                                    target.publication.published = true
+                                    return result
+                                })
+                        })
                 }
                 if (
                     target.propertyKind ===
@@ -295,6 +319,8 @@ function walkMutationPath(
     } = {},
 ) {
     const rootState = chain._state
+    const publication = new IdentityPublication(operationContext,
+        chain._publication ?? metadata.metaOf(rootState, operationContext)?.entryGate?.publication)
     const targetPath = ["value", ...path]
     let attachmentRoot
     let pathSelectionComplete = false
@@ -302,7 +328,12 @@ function walkMutationPath(
     let publicationValue
     // Each path copy attaches in this graph transition; pending publication
     // has its own writer hold. No read lease spans the rest of the walk.
-    return walk(rootState, 0, () => {})
+    const outcome = walk(rootState, 0, () => {})
+    if (languageValues.isPending(outcome, operationContext)) publication.suspend()
+    return internalSteps.continueGraphTransition(outcome, operationContext, result => {
+        publication.finish()
+        return result
+    })
 
     // Target callbacks return a mutation outcome, poison, or no result. Keep
     // an independent result inside its outcome when reconstruction also fails;
@@ -316,6 +347,12 @@ function walkMutationPath(
 
     function combinePathFailure(failure) {
         return propertyVersions.combinePublicationErrors(publicationValue, operationResult?.mutatedValue, failure)
+    }
+
+    function fail(writeBack, failure) {
+        if (preserveOnFailure) return failure
+        publication.published = true
+        return complete(writeBack, failure, includePathFailure(failure))
     }
 
     // Completion follows synchronous reconstruction through every enclosing
@@ -338,7 +375,8 @@ function walkMutationPath(
         let nextReceiver = target.receiver
         const result = onTarget({
             ...target,
-            replaceReceiver(next) { nextReceiver = next },
+            publication,
+            replaceReceiver(next) { nextReceiver = next; publication.published = true },
             publishFailure(failure, baseline, outcome) {
                 // Preserve both outcomes before fallible copying/reconstruction.
                 operationResult = outcome
@@ -346,7 +384,9 @@ function walkMutationPath(
                 // preserve them while replacing only this path's failed scope.
                 const owner = target.parent === rootState ? rootState :
                     shallowCopyPathContainer(target.parent, operationContext)
+                if (owner !== rootState) publication.capture(owner)
                 propertyVersions.publishPlacementFailure(owner, target.key, undefined, failure, baseline, operationContext)
+                publication.published = true
                 nextReceiver = owner
             },
         })
@@ -355,7 +395,7 @@ function walkMutationPath(
         return complete(writeBack, nextReceiver, result)
     }
 
-    function walk(value, index, writeBack, placement = undefined, advancedIdentities) {
+    function walk(value, index, writeBack, placement = undefined) {
         if (placement) {
             const publish = writeBack
             const version = placement.sourceVersion ?? propertyVersions.getPlacementVersion(placement.parent, placement.key, operationContext)
@@ -368,18 +408,17 @@ function walkMutationPath(
             }
         }
         try { return errorUtils.catchExternalThrow(
-            () => walkReady(value, index, writeBack, placement, advancedIdentities),
+            () => walkReady(value, index, writeBack, placement),
             operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed,
             failure => {
                 const failedValue = combinePathFailure(failure)
-                if (preserveOnFailure) return failedValue
-                return complete(writeBack, failedValue, includePathFailure(failedValue))
+                return fail(writeBack, failedValue)
             },
         ) } finally { value = placement = writeBack = undefined }
     }
 
-    function walkReady(value, index, writeBack, placement, advancedIdentities) {
+    function walkReady(value, index, writeBack, placement) {
         if (errorUtils.isPoisonError(value)) {
             return complete(writeBack, value)
         }
@@ -389,15 +428,14 @@ function walkMutationPath(
             const external = metadata.metaOf(value, operationContext)?.type === languageValues.TYPE.External
             const failure = external ? externalLocationError(operationContext) : errorUtils.pathAccessError(value, operationContext)
             if (external) onExternalFailure?.(failure)
-            return complete(writeBack, failure)
+            return fail(writeBack, failure)
         }
         const key = languageProperties.normalizePathSegment(
             targetPath[index],
             operationContext,
         )
         if (errorUtils.isPoisonError(key)) {
-            languageValues.admitReadyValue(key, operationContext)
-            return complete(writeBack, key, key)
+            return fail(writeBack, key)
         }
         const atTarget = index === targetPath.length - 1
         if (atTarget && deletesTarget && languageValues.isTraversable(value, operationContext) &&
@@ -423,11 +461,7 @@ function walkMutationPath(
                 "Arrays support only indexes and length",
                 operationContext,
             )
-            return complete(
-                writeBack,
-                error,
-                error,
-            )
+            return fail(writeBack, error)
         }
         if (propertyKind !== languageProperties.ORDINARY_PROPERTY) {
             if (atTarget) {
@@ -445,11 +479,10 @@ function walkMutationPath(
                 index + 1,
                 () => writeBack(value),
                 { parent: value, key },
-                advancedIdentities,
             )
         }
         if (!languageValues.isTraversable(value, operationContext)) {
-            return complete(writeBack, errorUtils.pathAccessError(value, operationContext))
+            return fail(writeBack, errorUtils.pathAccessError(value, operationContext))
         }
 
         let parent = value
@@ -459,9 +492,7 @@ function walkMutationPath(
         if (observeTarget && preserveParent) attachmentRoot ??= value
         if (!observeTarget) {
             prepareParent()
-            // Reuse ancestor work along this ready path. Pending descent starts
-            // a fresh set; weak keys do not retain ancestors after capture ends.
-            advanceIdentity(parent, operationContext, advancedIdentities ??= new WeakSet())
+            if (index > 0) publication.capture(parent)
         }
         if (atTarget) {
             return completeTarget({
@@ -480,36 +511,44 @@ function walkMutationPath(
             // Native selection captures managed state; its external reservation
             // owns ordering. Only managed mutation installs a publication version.
             const source = propertyVersions.requirePromiseVersion(parent, key, operationContext)
-            const onValue = (propertyValue, promiseVersion, structure) => walk(
-                propertyValue,
-                index + 1,
-                (next, recovery) => {
-                    if (next !== propertyValue && next !== promiseVersion.value) {
-                        publicationValue = next
-                        // This version is runtime-owned: ordinary mutation
-                        // copies imported parents before descent; external
-                        // prefixes wait only at runtime scope gates because
-                        // initial authority paths are directly ready.
-                        const publicationFailure = errorUtils.catchExternalThrow(
-                            () => propertyVersions.transferPlacement({ value: next, present: true, recovery },
-                                parent, key, operationContext, promiseVersion,
-                                errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure),
-                            operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
-                        if (errorUtils.isPoisonError(publicationFailure) || errorUtils.isPoisonError(promiseVersion.value)) {
-                            const failure = combinePathFailure(publicationFailure ?? promiseVersion.value)
-                            const baseline = recovery ?? { value: propertyValue, present }
-                            propertyVersions.publishPlacementFailure(parent, key, promiseVersion,
-                                failure, baseline, operationContext, structure, promiseVersion.position)
-                            operationResult = includePathFailure(failure)
+            const onValue = (propertyValue, promiseVersion, structure) => {
+                const result = walk(
+                    propertyValue,
+                    index + 1,
+                    (next, recovery) => {
+                        if (next !== propertyValue && next !== promiseVersion.value) {
+                            publicationValue = next
+                            // This version is runtime-owned: ordinary mutation
+                            // copies imported parents before descent; external
+                            // prefixes wait only at runtime scope gates because
+                            // initial authority paths are directly ready.
+                            const publicationFailure = errorUtils.catchExternalThrow(
+                                () => propertyVersions.transferPlacement({ value: next, present: true, recovery },
+                                    parent, key, operationContext, promiseVersion,
+                                    errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure),
+                                operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
+                            if (errorUtils.isPoisonError(publicationFailure) || errorUtils.isPoisonError(promiseVersion.value)) {
+                                publication.published = true
+                                const failure = combinePathFailure(publicationFailure ?? promiseVersion.value)
+                                const baseline = recovery ?? { value: propertyValue, present }
+                                propertyVersions.publishPlacementFailure(parent, key, promiseVersion,
+                                    failure, baseline, operationContext, structure, promiseVersion.position)
+                                operationResult = includePathFailure(failure)
+                            }
                         }
-                    }
-                },
-                { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false, structure },
-            )
+                    },
+                    { parent, key, sourceVersion: promiseVersion, present: promiseVersion.present !== false, structure },
+                )
+                // Finish identity in the same transition as the resumed path,
+                // before its ready placement can reach an earlier observer.
+                if (!languageValues.isPending(result, operationContext)) publication.finish()
+                return result
+            }
             const pending = observeTarget
                 ? propertyVersions.continueCapturedPromiseVersion(child, source, operationContext, value => onValue(value, source))
                 : propertyVersions.installMutationVersion(parent, key, source, operationContext, onValue)
             if (!pathSelectionComplete) writeBack(parent)
+            if (languageValues.isPending(pending, operationContext)) publication.suspend()
             return pending
         }
 
@@ -529,13 +568,15 @@ function walkMutationPath(
                     return
                 }
                 publicationValue = next
-                if (observeTarget) prepareParent()
+                if (observeTarget) {
+                    prepareParent()
+                    if (index > 0) publication.capture(parent)
+                }
                 if (recovery) propertyVersions.transferPlacement({ value: next, present: true, recovery }, parent, key, operationContext)
                 else propertyVersions.assignProperty(parent, key, next, operationContext)
                 writeBack(parent)
             },
             { parent, key, present },
-            advancedIdentities,
         )
 
         function prepareParent() {
@@ -544,6 +585,7 @@ function walkMutationPath(
                 const growth = Number(key) + 1 - ArrayView.minimumLength(value, operationContext)
                 const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth, operationContext)
                 if (extended) {
+                    inheritIdentity(value, extended, operationContext)
                     parent = extended
                     attachmentRoot ??= parent
                     refcounts.indexValueIfSourceIndexed(value, parent, operationContext)
@@ -571,16 +613,11 @@ function deleteManagedPath(
     return internalSteps.runInternalStep(operationContext, () => {
         chain._assertOperationContext(operationContext)
         const preparedPath = [...path]
-        const deletesRoot = preparedPath.length === 0
         return walkMutationPath(
             chain,
             preparedPath,
             operationContext,
             target => {
-                if (deletesRoot) {
-                    propertyVersions.assignProperty(target.parent, target.key, null, operationContext)
-                    return undefined
-                }
                 if (
                     target.propertyKind !==
                     languageProperties.ORDINARY_PROPERTY
@@ -593,14 +630,16 @@ function deleteManagedPath(
                     return error
                 }
 
-                propertyVersions.deleteProperty(
-                    target.parent,
-                    target.key,
-                    operationContext,
-                )
-                return undefined
+                // Absence is ready immediately. Only identity depends on whether
+                // the preceding transition left anything for this delete to write.
+                const presence = propertyVersions.resolvePlacementTransition(
+                    propertyVersions.capturePlacement(target.parent, target.key, operationContext),
+                    operationContext, placement => placement.present)
+                propertyVersions.deleteProperty(target.parent, target.key, operationContext)
+                if (languageValues.isPending(presence, operationContext)) target.publication.addPending(presence)
+                else target.publication.record(presence)
             },
-            deletesRoot ? undefined : { deletesTarget: true },
+            { deletesTarget: true },
         )
     })
 }
@@ -633,11 +672,17 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
     const result = external
         ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() :
             internalSteps.continueGraphTransition(outward, operationContext, value => access.write(value), undefined, operation)))
-        : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix) => {
-            if (externalTree.findBranch(privateChain._externalMutationTree, suffix)) return languageProperties.propertyValidationError(
+        : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix, node) => {
+            if (externalTree.findBranch(node, suffix)) return languageProperties.propertyValidationError(
                 "A mutable external namespace cannot be replaced or deleted", operationContext)
-            if (deleting && (path.length || chain._rootKey !== undefined) && suffix.length === 0)
-                return { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false } }
+            if (suffix.length === 0) {
+                if (deleting) return state.key !== undefined
+                    ? { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false }, published: state.present }
+                    : { mutatedValue: null, result: undefined, published: true }
+                return internalSteps.continueGraphTransition(prepareAssignment(placement, state.key, operationContext),
+                    operationContext, assigned => errorUtils.isPoisonError(assigned) ? assigned :
+                        { mutatedValue: assigned.value, placement: assigned, result: undefined, published: true })
+            }
             const action = deleting
                 ? deleteManagedPath(privateChain, suffix, operationContext)
                 : assignManagedPath(privateChain, suffix, placement, operation)

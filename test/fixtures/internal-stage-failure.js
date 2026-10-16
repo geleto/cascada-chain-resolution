@@ -8,6 +8,7 @@ const sites = {
     indexing: ["refcounts.js", "function buildRefIndex(value, operationContext) {"],
     publication: ["parent-placements.js", "function recordLogicalPlacement(owner, key, before, after, operationContext, wasOverlay) {"],
     copying: ["placement-structure.js", "function createEmptyContainer(source, operationContext) {"],
+    assembly: ["managed-capture.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
     length: ["array-view.js", "static captureLength(array, operationContext, owner) {"],
     remap: ["array-remap.js", "function createArrayFromRemap(\n    remap,\n    operationContext,\n    refIndexSource = undefined,\n) {"],
     isolation: ["mutations.js", "function shallowCopyPathContainer(source, operationContext) {"],
@@ -28,17 +29,24 @@ registerHooks({ load(url, context, next) {
     for (const [site, [file, marker]] of Object.entries(sites)) {
         if (url !== root + file) continue
         assert(source.includes(marker), `Internal ${site} fault anchor needs updating`)
-        source = source.replace(marker, marker + ` globalThis.internalStageFault("${site}", operationContext);`)
+        source = source.replace(marker, marker + (site === "assembly"
+            ? ` if (capture.roots.length) globalThis.internalStageFault("${site}", capture.owner.operationContext);`
+            : ` globalThis.internalStageFault("${site}", operationContext);`))
         return { ...result, source }
     }
     return result
 } })
 const r = await import("../../src/index.js")
+function inspectReceiver() { return this.item }
 const routes = {
+    "receiver-observation": { site: "assembly", receiver: true, value: { item: 1 },
+        invoke: (c, p, ctx) => r.run(c, p, "inspect", [], ctx, {}) },
+    "receiver-mutation": { site: "assembly", receiver: true, value: { item: 1 },
+        invoke: (c, p, ctx) => r.run(c, p, "inspect", [], ctx, { mutationScopeDepth: 1 }) },
     hasError: { site: "indexing", value: { item: 1 }, invoke: (c, p, ctx) => r.hasError(c, p, ctx, 0) },
     getErrors: { site: "indexing", value: { item: 1 }, invoke: (c, p, ctx) => r.getErrors(c, p, ctx, 0) },
     publication: { site: "publication", value: { item: 1 }, invoke: (c, p, ctx) => r.assignPath(c, [...p, "item"], 2, ctx, 2, 0) },
-    export: { site: "copying", value: { item: 1 }, invoke: (c, p, ctx) => r.export(c, p, ctx, 0) },
+    export: { site: "assembly", value: { item: 1 }, invoke: (c, p, ctx) => r.export(c, p, ctx, 0) },
     join: { site: "length", value: [1, 2], invoke: (c, p, ctx) => r.run(c, p, "join", [","], ctx, { firstDynamicSegment: 0 }) },
     flat: { site: "remap", value: [[1], 2], invoke: (c, p, ctx) => r.run(c, p, "flat", [1], ctx, { firstDynamicSegment: 0 }) },
     isolation: { site: "isolation", value: { item: 1 }, invoke: (c, p, ctx) => r.assignPath(c, [...p, "item"], 2, ctx, 2, 0) },
@@ -58,6 +66,7 @@ for (const reason of ["raw", "poison", "undefined", "fatal"]) {
         : delivery === "ordered" ? new OrderedThenable()
             : delivery === "chained" ? new ChainedThenable() : undefined
     const input = structuredClone(route.value)
+    if (route.receiver) input.inspect = inspectReceiver
     const branch = delivery === "ready" ? input : delivery === "synchronous"
         ? ready(input) : source.promise ?? source
     const original = { branch }
@@ -103,7 +112,7 @@ for (const reason of ["raw", "poison", "undefined", "fatal"]) {
     assert.equal(execution._graphDepth, 0, label)
     assert.throws(() => r.lookupPath(unrelated, ["value"], context), error => error === fatal, label)
     assert.equal(original.branch, branch, label)
-    assert.deepEqual(input, route.value, label)
+    assert.deepEqual(input, route.receiver ? { ...route.value, inspect: inspectReceiver } : route.value, label)
     count++
 }
 console.log(`${count} ${selectedRoute} stage failures preserve fatality, context, and input protection`)

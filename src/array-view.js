@@ -1,4 +1,5 @@
-import { captureIdentity } from "./captured-identity.js"
+import { captureIdentity, compareIdentities } from "./captured-identity.js"
+import { continueGraphTransition } from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -331,12 +332,22 @@ function isArrayIndex(key) {
     return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key
 }
 
-function hasArrayAncestor(ancestry, array, operationContext) {
-    const identity = captureIdentity(array, operationContext)
-    for (let current = ancestry; current; current = current.parent) {
-        if (current.identity === identity) return true
+function hasArrayAncestor(ancestry, array, operation) {
+    const identity = captureIdentity(array, operation.operationContext)
+    return next(ancestry)
+
+    function next(current) {
+        for (; current; current = current.parent) {
+            const equal = compareIdentities(current.identity, identity, operation)
+            if (languageValues.isPending(equal, operation.operationContext)) {
+                const parent = current.parent
+                return continueGraphTransition(equal, operation.operationContext,
+                    equal => equal || next(parent), undefined, operation)
+            }
+            if (equal) return true
+        }
+        return false
     }
-    return false
 }
 
 export { ArrayView, ArrayBacking, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }

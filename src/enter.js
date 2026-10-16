@@ -12,27 +12,34 @@ import { shallowCopyPathContainer } from "./mutations.js"
 import * as versions from "./property-versions.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { receiveValue } from "./input-preparations.js"
+import { IdentityPublication } from "./captured-identity.js"
 
 // Selection consumes no unavailable suffix. The same anchor/rebased reference
 // represents missing, poisoned, pending, intrinsic, and native destinations.
 function captureReference(chain, route, mutable, operationContext) {
     const staticDepth = route.dynamicDepth - (chain._contextOrigin?.depth ?? 0)
+    const publication = mutable ? new IdentityPublication(operationContext,
+        metadata.metaOf(chain._state, operationContext)?.entryGate?.publication) : undefined
     return capture(chain._state, "value", versions.capturePlacement(chain._state, "value", operationContext), 0)
 
     function capture(parent, key, placement, depth) {
         let value = placement.value
         if (metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External) {
             const scope = externalTree.tracePath(chain._externalMutationTree, route.path, staticDepth).externalScope
-            if (scope) return {
-                placement: { value: scope[externalTree.TREE_NODE].identity, present: true },
-                depth: scope[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0),
-                node: scope,
+            if (scope) {
+                publication?.finish(false)
+                return {
+                    placement: { value: scope[externalTree.TREE_NODE].identity, present: true },
+                    depth: scope[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0),
+                    node: scope,
+                }
             }
         }
         const segment = route.path[depth]
         if (!values.isPending(value, operationContext) && values.isTraversable(value, operationContext) &&
             !(route.externalBoundary && depth >= staticDepth) && depth < route.path.length &&
             (typeof segment === "string" || typeof segment === "number")) {
+            const capturedAncestors = publication?.captures.length
             const selected = errors.catchExternalThrow(() => {
                 const nextKey = String(segment)
                 if (properties.classifyLanguageProperty(value, nextKey, operationContext) !== properties.ORDINARY_PROPERTY) return
@@ -47,13 +54,21 @@ function captureReference(chain, route, mutable, operationContext) {
                     value = copy
                     next = versions.capturePlacement(copy, nextKey, operationContext)
                 }
+                publication?.capture(value)
                 // Keep child gate preparation inside discovery's guard too.
                 // A supported read failure leaves this enclosing reference usable.
                 return capture(value, nextKey, next, depth + 1)
             }, operationContext, errors.ERROR_KIND.LookupReflectionFailed, () => undefined)
             if (selected) return selected
+            // Failed optional discovery selects this enclosing placement. Its
+            // value belongs to the private prefix, not the public ancestor future.
+            if (publication) publication.captures.length = capturedAncestors
         }
         const gate = mutable ? versions.installPlacementGate(parent, key, operationContext, placement) : undefined
+        if (gate) {
+            gate.publication = publication
+            publication.suspend()
+        }
         return { key, placement, depth, gate,
             node: externalTree.findBranch(chain._externalMutationTree, route.path.slice(0, depth)) }
     }

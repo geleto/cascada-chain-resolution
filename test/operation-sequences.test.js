@@ -5,6 +5,7 @@ import * as r from "../src/index.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import { metaOf } from "../src/meta.js"
+import { OrderedThenable, ready } from "./ordered-thenable.js"
 
 // Bounded command sequences use native property semantics as an independent
 // oracle. Each prefix is a separate scenario, so intermediate exports cannot
@@ -1023,4 +1024,146 @@ describe("scope boundary regressions", () => {
         assert.deepStrictEqual(Object.keys(metaOf(chain._state.value, ctx).placementVersions ?? {}), [])
         verifyRefCounts(ctx, chain._state.value)
     })
+})
+
+// Publication is modeled from commands and presence, independently of runtime
+// identities. Capture all observations before releasing the unfinished history.
+describe("publication partitions across command sequences", () => {
+    for (const array of [false, true]) for (const present of [false, true])
+    for (const imported of [false, true]) for (const nested of [false, true]) {
+        it(`models writes: Array=${array}, present=${present}, imported=${imported}, nested=${nested}`, async () => {
+            for (const timing of ["ready", "synchronous", "native", "ordered"])
+            for (const first of ["none", "assign", "delete"])
+            for (const second of ["none", "assign", "delete", "repair"])
+            for (const scope of [0, 1, 2]) {
+                const label = JSON.stringify({ timing, first, second, scope })
+                const ctx = { execution: new r.Execution(), errorContext: label }
+                const key = array ? 0 : "k", box = array ? new Array(2) : {}
+                if (present) box[key] = 1
+                const source = new r.Chain(imported ? r.import({ box, sibling: 9 }, ctx) : { box, sibling: 9 }, ctx)
+                const read = chain => r.lookupPath(chain, [], ctx)
+                const capture = chain => new r.Chain(read(chain), ctx)
+                const captures = [capture(source)]
+                const gate = timing === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+                const apply = (chain, path, action, depth = path.length) => {
+                    if (action === "assign") return r.assignPath(chain, path, 1, ctx, depth)
+                    if (action === "delete") return r.deletePath(chain, path, ctx, depth)
+                    if (action === "repair") return r.repairPath(chain, path, ctx)
+                }
+                let entry
+                const issue = target => {
+                    entry = r.enter(target, ["box", key], ctx, true, leaf => {
+                        const change = () => apply(leaf, [], first)
+                        if (timing === "ready") return change()
+                        return (timing === "synchronous" ? ready() : gate.promise ?? gate).then(change)
+                    })
+                    captures.push(capture(target))
+                    apply(target, ["box", key], second, scope)
+                    if (second === "delete") assert.equal(r.lookupPath(target, ["sibling"], ctx), 9, label)
+                    captures.push(capture(target))
+                }
+                const outer = nested ? r.enter(source, [], ctx, true, issue) : issue(source)
+                const roots = captures.map(read)
+                const output = r.export(new r.Chain(roots, ctx), [], ctx)
+                const checks = []
+                for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) {
+                    const list = new r.Chain([roots[j]], ctx)
+                    for (const method of ["includes", "indexOf", "lastIndexOf"])
+                        checks.push({ i, j, method, result: r.run(list, [], method, [roots[i]], ctx, {}) })
+                }
+                let exists = present, generation = 0
+                const states = [], groups = []
+                for (const action of ["none", first, second]) {
+                    if (action === "assign" || action === "delete" && exists) generation++
+                    if (action === "assign") exists = true
+                    if (action === "delete") exists = false
+                    const box = array ? new Array(2) : {}
+                    if (exists) box[key] = 1
+                    states.push({ box, sibling: 9 }); groups.push(generation)
+                }
+                gate.resolve()
+                if (timing === "ordered") gate.flush()
+                const [exported, ...answers] = await Promise.all([output, ...checks.map(c => c.result), entry, outer])
+                assert.deepStrictEqual(exported, states, label)
+                for (let k = 0; k < checks.length; k++) {
+                    const { i, j, method } = checks[k], same = groups[i] === groups[j]
+                    assert.equal(answers[k], method === "includes" ? same : same ? 0 : -1, label)
+                    assert.equal(exported[i] === exported[j], same, label)
+                }
+                verifyRefCounts(ctx, source._state, ...captures.map(c => c._state))
+            }
+        })
+    }
+})
+
+
+describe("scope placement and record order", () => {
+    for (const pending of [false, true]) for (const nested of [false, true])
+    for (const scope of [0, 1, 2, 3]) {
+        it(`does not treat an absent deletion prefix as its target: pending=${pending}, nested=${nested}, scope=${scope}`, async () => {
+            const ctx = { execution: new r.Execution(), errorContext: "absent prefix" }, gate = Promise.withResolvers()
+            const source = new r.Chain({ a: {} }, ctx)
+            let entry, failure
+            const issue = chain => {
+                entry = r.enter(chain, ["a", "k"], ctx, true, () => pending ? gate.promise : undefined)
+                r.deletePath(chain, ["a", "k", "q"], ctx, scope)
+                failure = r.lookupPath(chain, ["a", "k", "q"], ctx)
+            }
+            const outer = nested ? r.enter(source, [], ctx, true, issue) : issue(source)
+            gate.resolve()
+            await Promise.all([entry, outer])
+            const error = await failure
+            assert(r.isPoisonError(error))
+            // A missing-prefix failure must be published, not just produced by
+            // the subsequent read. The selected scope determines its location.
+            assert.equal(await r.hasError(source, [], ctx), true)
+            assert.equal(error.kind, r.ERROR_KIND.NullLookup)
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, source._state)
+        })
+    }
+
+    for (const imported of [false, true]) for (const nested of [false, true])
+    for (const scope of [0, 1]) for (const action of ["none", "delete", "recreate"]) {
+        it(`preserves insertion order after an entered key: imported=${imported}, nested=${nested}, scope=${scope}, ${action}`, async () => {
+            for (const timing of ["ready", "synchronous", "native", "ordered"])
+            for (const pendingValue of [false, true]) {
+                const ctx = { execution: new r.Execution(), errorContext: "key order" }
+                const gate = timing === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+                const payload = Promise.withResolvers()
+                const source = new r.Chain(imported ? r.import({ a: 1, b: 2 }, ctx) : { a: 1, b: 2 }, ctx)
+                const before = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+                let entry, output
+                const issue = chain => {
+                    entry = r.enter(chain, ["a"], ctx, true, leaf => {
+                        const change = () => {
+                            if (action !== "none") r.deletePath(leaf, [], ctx)
+                            if (action === "recreate") r.assignPath(leaf, [], 4, ctx)
+                        }
+                        if (timing === "ready") return change()
+                        return (timing === "synchronous" ? ready() : gate.promise ?? gate).then(change)
+                    })
+                    r.assignPath(chain, ["c"], 5, ctx)
+                    r.assignPath(chain, ["a"], pendingValue ? payload.promise : 3, ctx, scope)
+                    r.assignPath(chain, ["d"], 6, ctx)
+                    output = r.export(chain, [], ctx)
+                }
+                const outer = nested ? r.enter(source, [], ctx, true, issue) : issue(source)
+                gate.resolve()
+                if (timing === "ordered") gate.flush()
+                await Promise.all([entry, outer])
+                // Replacing a payload remains independent of its availability.
+                payload.resolve(3)
+                const actual = await output
+                const expected = { a: 1, b: 2 }
+                if (action !== "none") delete expected.a
+                if (action === "recreate") expected.a = 4
+                expected.c = 5; expected.a = 3; expected.d = 6
+                assert.deepStrictEqual(actual, expected, timing)
+                assert.deepStrictEqual(Object.keys(actual), Object.keys(expected), timing)
+                assert.deepStrictEqual(Object.keys(await r.export(before, [], ctx)), ["a", "b"])
+                verifyRefCounts(ctx, source._state, before._state)
+            }
+        })
+    }
 })

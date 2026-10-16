@@ -7,12 +7,15 @@ let copies
 const publication = new Set([
     "replacePlacement", "commitPlacementVersion", "commitPromiseVersion",
     "installPlacementGate", "installMutationVersion", "copyPlacement",
+    // A resumed no-op writer can discard an absent overlay after publication.
+    // The physical slot is already absent, so this cleanup changes no edge.
+    "detachAbsentVersion",
     "prepareInput", "commitPreparedInput", "normalizeRawPropertyValue",
 ])
 const construction = new Set([
-    "prepareInput", "copyCompleteGraph", "snapshotExternalValue",
+    "prepareInput", "assembleCapturedGraph", "snapshotExternalValue",
     "shallowCopyPathContainer", "createArrayFromRemap", "validateReceiver",
-    "createRemap", "exportValues", "exportCopy", "fixture",
+    "createRemap", "exportValues", "fixture",
 ])
 
 function count(name) { counters.set(name, (counters.get(name) ?? 0) + 1) }
@@ -28,10 +31,6 @@ function enter(name, args) {
     count(name)
 }
 function leave() { stack.pop() }
-function exportCopy(write, ...args) {
-    enter("exportCopy", args)
-    try { return write(...args) } finally { leave() }
-}
 function fixture(write, ...args) {
     enter("fixture", args)
     try { return write(...args) } finally { leave() }
@@ -48,4 +47,4 @@ function counts() { return Object.fromEntries(counters) }
 function trackCopies() { return copies = [] }
 function allocated(value) { copies?.push(new WeakRef(value)) }
 
-export { enter, leave, exportCopy, fixture, count, admission, enable, enabled, reset, counts, trackCopies, allocated }
+export { enter, leave, fixture, count, admission, enable, enabled, reset, counts, trackCopies, allocated }

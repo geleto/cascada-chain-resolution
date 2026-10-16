@@ -1,4 +1,4 @@
-import { captureIdentity } from "./captured-identity.js"
+import { captureIdentity, compareIdentities } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor } from "./array-view.js"
 import * as internalSteps from "./internal-step.js"
 import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-subscription.js"
@@ -12,7 +12,6 @@ import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { PlacementConstruction } from "./parent-placements.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { finishContainerCopy } from "./placement-structure.js"
 
 const RETURN_RECEIVER = Symbol()
 const PASS_AS_PAYLOAD = Symbol()
@@ -364,11 +363,10 @@ function prepareFlatRemap([depth = 1], invocationWork) {
 }
 
 function prepareFlatArray(array, depth, ancestry, invocationWork) {
-    return runArrayStep(invocationWork, () => {
-        if (
-            depth === Infinity &&
-            hasArrayAncestor(ancestry, array, invocationWork.operationContext)
-        ) {
+    return runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
+        depth === Infinity && hasArrayAncestor(ancestry, array, invocationWork),
+        invocationWork.operationContext, cycle => runArrayStep(invocationWork, () => {
+        if (cycle) {
             return errorUtils.validationError(
                 "Cannot flat an Array cycle to unlimited depth",
                 invocationWork.operationContext,
@@ -377,7 +375,6 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
         }
         const source = arrayRemaps.createRemap(array, invocationWork.operationContext, 0, undefined,
             action => runArrayStep(invocationWork, action))
-        const shape = { length: ArrayView.captureLength(array, invocationWork.operationContext, invocationWork) }
         const keys = Object.keys(source)
         const nestedAncestry = depth === Infinity
             ? { identity: captureIdentity(array, invocationWork.operationContext), parent: ancestry }
@@ -394,15 +391,16 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
             parts,
             invocationWork.operationContext,
             values => {
-                const output = new Array(source.length)
+                // Every prepared level is flattened, so holes contribute no
+                // output and need neither their positions nor final length.
+                const output = []
                 for (let index = 0; index < keys.length; index++)
-                    if (source[keys[index]].present !== false) output[keys[index]] = values[index]
-                finishContainerCopy(output, shape)
+                    if (source[keys[index]].present !== false) output.push(values[index])
                 return output
             },
             invocationWork,
         )
-    })
+    }), undefined, invocationWork))
 }
 
 function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
@@ -425,7 +423,7 @@ function identityInput(value, invocationWork) {
     return internalSteps.continueGraphTransition(
         value,
         invocationWork.operationContext,
-        value => captureIdentity(value, invocationWork.operationContext),
+        value => errorUtils.isPoisonError(value) ? value : captureIdentity(value, invocationWork.operationContext),
         undefined,
         invocationWork,
     )
@@ -544,13 +542,10 @@ function prepareSortedRemap([comparator], invocationWork, denseOutput = false) {
             return prepareAndSortRecords(sortable, comparator, invocationWork, finish)
 
             function finish(sorted) {
-                finishContainerCopy(source, shape)
-                return finishSortedRemap(
-                    sorted,
-                    undefinedPlacements,
-                    denseOutput,
-                    source.length,
-                )
+                invocationWork.arrayPublished = sorted.length + undefinedPlacements.length > 0
+                return internalSteps.continueGraphTransition(shape.length?.read ? shape.length.read() : shape.length,
+                    invocationWork.operationContext, length =>
+                        finishSortedRemap(sorted, undefinedPlacements, denseOutput, length), undefined, invocationWork)
             }
 
             function discardOutput() {
@@ -773,7 +768,7 @@ function includes({ searchValue, start }, invocationWork) {
     }
 
     function matches(value) {
-        return value === searchValue || Object.is(value, searchValue)
+        return compareIdentities(value, searchValue, invocationWork, true)
     }
 }
 
@@ -807,18 +802,19 @@ function orderedIndexSearch(
                     invocationWork.operationContext,
                 )
                 if (!placement) continue
-                const value = placement.resolveValue()
-                if (languageValues.isPending(value, invocationWork.operationContext)) {
+                const comparison = internalSteps.continueGraphTransition(placement.resolveValue(captureIdentity),
+                    invocationWork.operationContext, identity => placement.present !== false &&
+                        compareIdentities(identity, searchValue, invocationWork), undefined, invocationWork)
+                if (languageValues.isPending(comparison, invocationWork.operationContext)) {
                     return internalSteps.continueGraphTransition(
-                        value,
+                        comparison,
                         invocationWork.operationContext,
-                        resolved => placement.present !== false &&
-                            placement.identity === searchValue ? current : next(),
+                        equal => equal ? current : next(),
                         undefined,
                         invocationWork,
                     )
                 }
-                if (placement.present !== false && placement.identity === searchValue) return current
+                if (comparison) return current
             }
             return backwards ? -1 : ArrayView.resolveInRange(thisValue, index, invocationWork,
                 present => present ? next() : -1)

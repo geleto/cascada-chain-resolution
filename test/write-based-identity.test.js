@@ -1,8 +1,7 @@
-// Selected Phase 3/4 contract, exercised against the unmodified public runtime.
-// Failures remain explicit deferred debt; do not change expectations to match it.
+// Write-based publication identity through the public runtime.
 import assert from "node:assert/strict"
-import * as r from "../../src/index.js"
-import { OrderedThenable, ready } from "../ordered-thenable.js"
+import * as r from "../src/index.js"
+import { OrderedThenable, ready } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "write-based identity" })
 const value = (chain, ctx) => r.lookupPath(chain, [], ctx)
@@ -12,6 +11,22 @@ const call = (method, args) => (chain, ctx) =>
     r.run(chain, [], method, args, ctx, { mutationScopeDepth: 0 })
 
 const retain = (chain, ctx) => new r.Chain(value(chain, ctx), ctx)
+
+for (const timing of ["native", "ordered"]) for (const method of ["includes", "indexOf", "lastIndexOf"]) {
+    it(`captures ${method} identity at ${timing} delivery before a queued writer`, async () => {
+        const ctx = context(), needle = { k: 1 }
+        const pending = timing === "native" ? Promise.withResolvers() : new OrderedThenable()
+        const source = new r.Chain([pending.promise ?? pending], ctx)
+        const search = r.run(source, [], method, [needle], ctx, {})
+        const mutation = r.assignPath(source, [0, "k"], 2, ctx)
+        pending.resolve(needle)
+        if (timing === "ordered") pending.flush()
+        assert.equal(await search, method === "includes" ? true : 0)
+        await mutation
+        assert.deepEqual(await r.export(source, [], ctx), [{ k: 2 }])
+        assert.equal(await r.run(source, [], method, [needle], ctx, {}), method === "includes" ? false : -1)
+    })
+}
 
 // Issue consumers before releasing producers. Expected partitions come from
 // the commands in each test, not runtime tokens or physical representations.
@@ -101,6 +116,116 @@ const cases = [
 ]
 
 describe("write-based identity conformance", () => {
+    for (const publishes of [false, true])
+    it(`keeps enclosing identity pending for an independently returned nested entry: publishes=${publishes}`, async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        const source = new r.Chain({ box: { leaf: 0 } }, ctx), before = retain(source, ctx)
+        let nested
+        r.enter(source, ["box"], ctx, true, box => {
+            nested = r.enter(box, ["leaf"], ctx, true, async leaf => {
+                await gate.promise
+                if (publishes) r.assignPath(leaf, [], 0, ctx)
+            })
+        })
+        const after = retain(source, ctx)
+        const comparison = r.run(new r.Chain([value(after, ctx)], ctx), [], "includes", [value(before, ctx)], ctx, {})
+        assert(comparison instanceof Promise)
+        gate.resolve()
+        await nested
+        assert.equal(await comparison, !publishes)
+    })
+    it("settles an enclosing write while another contained entry remains pending", async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        const source = new r.Chain({ box: { left: 0, right: 0 } }, ctx), before = retain(source, ctx)
+        r.enter(source, ["box"], ctx, true, box => {
+            r.enter(box, ["left"], ctx, true, () => new Promise(() => {}))
+            r.enter(box, ["right"], ctx, true, async right => {
+                await gate.promise
+                r.assignPath(right, [], 0, ctx)
+            })
+        })
+        const comparison = r.run(new r.Chain([value(source, ctx)], ctx), [], "includes", [value(before, ctx)], ctx, {})
+        gate.resolve()
+        assert.equal(await comparison, false)
+        assert.equal(r.lookupPath(source, ["box", "right"], ctx), 0)
+    })
+    for (const order of ["oldest", "newest"]) for (let pattern = 0; pattern < 64; pattern++)
+    it(`agrees with publication partitions across six entries: ${order}, ${pattern}`, async () => {
+        const ctx = context(), source = new r.Chain({ a: 0, b: 0 }, ctx)
+        const captures = [retain(source, ctx)], groups = [0], gates = [], entries = []
+        let generation = 0
+        for (let index = 0; index < 6; index++) {
+            const gate = Promise.withResolvers(), publishes = Boolean(pattern & (1 << index))
+            gates.push(gate)
+            entries.push(r.enter(source, [index % 2 ? "b" : "a"], ctx, true, async inside => {
+                await gate.promise
+                if (publishes) r.assignPath(inside, [], 0, ctx)
+            }))
+            captures.push(retain(source, ctx))
+            groups.push(publishes ? ++generation : generation)
+        }
+        const verify = observeVersions(captures, ctx, groups, captures.map(() => ({ a: 0, b: 0 })))
+        for (const holder of [source, ...captures]) r.assignPath(holder, [], null, ctx)
+        for (const gate of order === "oldest" ? gates : gates.reverse()) gate.resolve()
+        await Promise.all(entries)
+        await verify()
+    })
+    for (const create of [false, true]) for (const nested of [false, true])
+    it(`removal of undecided presence keeps value access independent: create=${create}, nested=${nested}`, async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        const source = new r.Chain(nested ? { items: [, 7, ,] } : [, 7, ,], ctx)
+        const path = nested ? ["items"] : []
+        const before = retain(source, ctx)
+        const entry = r.enter(source, [...path, 0], ctx, true, async inside => {
+            await gate.promise
+            if (create) r.assignPath(inside, [], 9, ctx)
+        })
+        r.run(source, path, "copyWithin", [0, 2, 3], ctx, { mutationScopeDepth: path.length })
+        assert.equal(r.lookupPath(source, [...path, 0], ctx), undefined)
+        assert.equal(r.lookupPath(source, [...path, 1], ctx), 7)
+        const after = retain(source, ctx)
+        const list = new r.Chain([value(after, ctx)], ctx)
+        const comparison = r.run(list, [], "includes", [value(before, ctx)], ctx, {})
+        assert(comparison instanceof Promise)
+        const exported = r.export(new r.Chain([value(before, ctx), value(after, ctx)], ctx), [], ctx)
+        assert(exported instanceof Promise)
+        // Identity-only work must not delay required Error completion.
+        const failure = r.validationError("required", ctx, r.ERROR_KIND.OperationInputFailed)
+        assert.equal(r.export(new r.Chain([value(after, ctx), failure], ctx), [], ctx), failure)
+        gate.resolve()
+        await entry
+        assert.equal(await comparison, !create)
+        const copies = await exported
+        assert.deepEqual(copies[0], copies[1])
+        assert.equal(copies[0] === copies[1], !create)
+    })
+    for (const nested of [false, true])
+    it(`one present destination settles a sparse remap's publication: nested=${nested}`, async () => {
+        const ctx = context(), first = Promise.withResolvers(), second = Promise.withResolvers()
+        const source = new r.Chain(nested ? { items: new Array(4) } : new Array(4), ctx)
+        const path = nested ? ["items"] : []
+        const before = retain(source, ctx)
+        const creates = r.enter(source, [...path, 0], ctx, true, async inside => {
+            await first.promise
+            r.assignPath(inside, [], 9, ctx)
+        })
+        const unused = r.enter(source, [...path, 1], ctx, true, () => second.promise)
+        r.run(source, path, "copyWithin", [0, 2, 4], ctx, { mutationScopeDepth: path.length })
+        const after = retain(source, ctx)
+        assert.equal(r.lookupPath(after, [...path, 0], ctx), undefined)
+        assert.equal(r.lookupPath(after, [...path, 1], ctx), undefined)
+        let comparison = "pending", output = "pending"
+        const compared = Promise.resolve(r.run(new r.Chain([value(after, ctx)], ctx), [],
+            "includes", [value(before, ctx)], ctx, {})).then(result => { comparison = result })
+        const exported = Promise.resolve(r.export(after, [], ctx)).then(result => { output = result })
+        first.resolve()
+        await creates
+        await new Promise(setImmediate)
+        assert.equal(comparison, false, "One write decides identity while the other presence stays pending")
+        assert.deepEqual(output, nested ? { items: new Array(4) } : new Array(4))
+        second.resolve()
+        await Promise.all([unused, compared, exported])
+    })
     for (const timing of ["ready", "synchronous", "native", "ordered"])
     for (const entered of [false, true])
     for (const spec of cases) {

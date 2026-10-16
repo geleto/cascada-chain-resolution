@@ -5,6 +5,65 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import { OrderedThenable } from "./ordered-thenable.js"
 
 describe("managed receiver capture", () => {
+    for (const mutation of [false, true]) for (const lateReceiverError of [false, true]) for (const lateArgumentError of [false, true]) {
+        it(`finishes failed joint preparation without argument identity: mutation=${mutation}, lateReceiverError=${lateReceiverError}, lateArgumentError=${lateArgumentError}`, async () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: "joint preparation" }
+            const gate = Promise.withResolvers(), receiverError = Promise.withResolvers(), argumentError = Promise.withResolvers()
+            const argument = new runtime.Chain(new Array(2), ctx)
+            const entered = runtime.enter(argument, [0], ctx, true, () => gate.promise)
+            runtime.run(argument, [], "copyWithin", [0, 1, 2], ctx, { mutationScopeDepth: 0 })
+            const first = new Error("receiver"), second = new Error("argument")
+            let calls = 0
+            const receiver = new runtime.Chain({ bad: lateReceiverError ? receiverError.promise : first,
+                read() { calls++; return 1 } }, ctx)
+            const args = [runtime.lookupPath(argument, [], ctx)]
+            if (lateArgumentError) args.push(argumentError.promise)
+            const result = runtime.run(receiver, [], "read", args, ctx, mutation ? { mutationScopeDepth: 0 } : {})
+            let settled = false, error
+            Promise.resolve(result).then(value => { settled = true; error = value })
+            try {
+                if (!lateReceiverError && !lateArgumentError) assert(runtime.isPoisonError(result),
+                    "Complete Error capture must return synchronously")
+                if (lateReceiverError || lateArgumentError) {
+                    await new Promise(setImmediate)
+                    assert.equal(settled, false, "Required Error collection must finish")
+                }
+                receiverError.resolve(first)
+                if (lateArgumentError) argumentError.reject(second)
+                // Only the Error-bearing inputs settle; the argument's identity
+                // stays undecided until the independent entry is released.
+                for (let turn = 0; turn < 5 && !settled; turn++) await new Promise(setImmediate)
+                assert.equal(settled, true, "Failed preparation must skip every identity-only wait")
+                assert(runtime.isPoisonError(error))
+                assert.deepEqual(new Set((error.errors ?? [error]).map(e => e.cause)),
+                    new Set(lateArgumentError ? [first, second] : [first]))
+                assert.equal(calls, 0)
+                assert.equal(ctx.execution.fatalError, null)
+            } finally {
+                gate.resolve()
+                await entered
+                await result
+            }
+            verifyRefCounts(ctx, argument._state, receiver._state)
+        })
+    }
+
+    it("prepares a lone argument without waiting for its identity", async () => {
+        const ctx = { execution: new runtime.Execution(), errorContext: "successful joint preparation" }
+        const gate = Promise.withResolvers(), argument = new runtime.Chain(new Array(2), ctx)
+        const entered = runtime.enter(argument, [0], ctx, true, () => gate.promise)
+        runtime.run(argument, [], "copyWithin", [0, 1, 2], ctx, { mutationScopeDepth: 0 })
+        let calls = 0
+        const receiver = new runtime.Chain({ read(value) { calls++; return value.length } }, ctx)
+        const result = runtime.run(receiver, [], "read", [runtime.lookupPath(argument, [], ctx)], ctx, {})
+        assert.equal(result, 2)
+        assert.equal(calls, 1)
+        gate.resolve()
+        assert.equal(await result, 2)
+        await entered
+        assert.equal(calls, 1)
+    })
+
     it("allocates one capture per logical node across multiple representations", () => {
         const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
             "test/fixtures/managed-capture-work.js"], { encoding: "utf8", timeout: 30000 })
@@ -119,11 +178,10 @@ describe("managed receiver capture", () => {
                     assert.equal(this.self, this)
                     assert.equal(this.left, this.right)
                     assert.equal(this.left, this.items[0])
-                    assert.equal(this.left, sibling, "An unchanged observation child keeps its identity")
                     assert.equal(Array.isArray(this.items), true)
                     assert.equal(this.items.length, 2)
                     assert.equal(1 in this.items, false)
-                    return this.left.n + this.value
+                    return { sum: this.left.n + this.value, child: this.left }
                 },
             }, {
                 ownKeys(target) { receiverLists++; return Reflect.ownKeys(target) },
@@ -133,9 +191,12 @@ describe("managed receiver capture", () => {
             receiverLists = siblingLists = 0
             const result = runtime.run(chain, [], "inspect", [], ctx, {})
             if (pending) later.resolve(5)
-            assert.equal(await result, 12)
+            const retained = new runtime.Chain(result, ctx)
+            assert.equal(await runtime.lookupPath(retained, ["sum"], ctx), 12)
             assert.equal(receiverLists, 1)
             assert.equal(siblingLists, 1)
+            assert.equal(await runtime.run(new runtime.Chain([sibling], ctx), [], "includes",
+                [runtime.lookupPath(retained, ["child"], ctx)], ctx, {}), true)
             verifyRefCounts(ctx, chain._state, array._state)
         })
     }

@@ -1,6 +1,5 @@
 import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isLogicalArray, hasArrayAncestor } from "./array-view.js"
-import { finishContainerCopy } from "./placement-structure.js"
 import * as internalSteps from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as languageProperties from "./language-properties.js"
@@ -53,15 +52,13 @@ function toPrimitiveValue(value, ancestry, operation) {
             if (errorUtils.isPoisonError(resolved)) return resolved
 
             if (isLogicalArray(resolved, operation.operationContext)) {
-                if (hasArrayAncestor(ancestry, resolved, operation.operationContext)) {
-                    return ""
-                }
-                return joinLogicalArray(
+                return internalSteps.continueGraphTransition(hasArrayAncestor(ancestry, resolved, operation),
+                    operation.operationContext, cycle => cycle ? "" : joinLogicalArray(
                     resolved,
                     ",",
                     { identity: captureIdentity(resolved, operation.operationContext), parent: ancestry },
                     operation,
-                )
+                ), undefined, operation)
             }
             if (
                 resolved === null ||
@@ -135,27 +132,27 @@ function joinLogicalArray(array, separator = ",", ancestry = undefined, operatio
         }
     }, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed, failure => conversions.push(failure))
     array = undefined
-    return internalSteps.prepareInputs(conversions, operationContext, values => {
-        const joined = []
-        finishContainerCopy(joined, shape)
-        for (let index = 0; index < keys.length; index++) {
-            const key = keys[index]
-            if (Number(key) >= joined.length) continue
-            const value = values[index]
-            joined[key] = value
-        }
-        // Entries and separator are converted strings; no host code remains.
-        // No standard API exposes the engine's string-size limit. The native
-        // join's only expected exception here is a string-size RangeError.
-        let failure
-        try {
-            return Reflect.apply(arrayJoin, joined, [separator])
-        } catch (reason) {
-            failure = reason
-        }
-        if (!(failure instanceof RangeError)) throw failure
-        return errorUtils.createPoisonError(failure, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed)
-    }, operation)
+    return internalSteps.prepareInputs(conversions, operationContext, values =>
+        internalSteps.continueGraphTransition(shape.length?.read ? shape.length.read() : shape.length,
+            operationContext, length => {
+                const joined = new Array(length)
+                for (let index = 0; index < keys.length; index++) {
+                    const key = keys[index]
+                    if (Number(key) >= joined.length) continue
+                    joined[key] = values[index]
+                }
+                // Entries and separator are converted strings; no host code remains.
+                // No standard API exposes the engine's string-size limit. The native
+                // join's only expected exception here is a string-size RangeError.
+                let failure
+                try {
+                    return Reflect.apply(arrayJoin, joined, [separator])
+                } catch (reason) {
+                    failure = reason
+                }
+                if (!(failure instanceof RangeError)) throw failure
+                return errorUtils.createPoisonError(failure, operationContext, errorUtils.ERROR_KIND.ScalarConversionFailed)
+            }, undefined, operation), operation)
 }
 
 export {

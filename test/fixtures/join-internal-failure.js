@@ -17,7 +17,7 @@ registerHooks({ load(url, context, next) {
     const source = String(result.source)
     const marker = "const arrayJoin = Array.prototype.join"
     assert(source.includes(marker), "Join fault anchor needs updating")
-    const preparation = "finishContainerCopy(joined, shape)"
+    const preparation = "const joined = new Array(length)"
     assert(source.includes(preparation), "Join preparation fault anchor needs updating")
     const stringConversion = "const stringConcat = String.prototype.concat"
     assert(source.includes(stringConversion), "String conversion fault anchor needs updating")

@@ -19,7 +19,8 @@ describe("complete incoming placements", () => {
         for (let i = 0; i < 100; i++) assert.equal(r.run(chain, [], "read", [], ctx, {}), 1)
         assert.equal(pairs(child, ctx).length, baseline)
         const escaped = r.run(chain, [], "self", [], ctx, {})
-        assert(pairs(child, ctx).some(p => p.parent === escaped && p.key === "child"))
+        assert(pairs(escaped.child, ctx).some(p => p.parent === escaped && p.key === "child"))
+        assert.equal(pairs(child, ctx).length, baseline)
         verifyRefCounts(ctx, receiver, escaped)
     })
 

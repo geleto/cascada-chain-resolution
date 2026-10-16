@@ -1,4 +1,4 @@
-// Phase 2 safeguard witness registry. Each entry removes one safeguard with an
+// Runtime safeguard witness registry. Each entry removes one safeguard with an
 // in-memory source fault; run.mjs runs the normal suite and requires a listed
 // witness test to fail. One entry per safeguard: extend or update an entry
 // instead of adding a parallel fault, and delete it with the safeguard.
@@ -11,6 +11,129 @@
 const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
+    {
+        id: "captured-shape-completion",
+        guards: "Deleted pending placements can leave independent growth; captured output waits for its own prefix.",
+        faults: [edit("src/array-length.js", "read: () => answer ?? promise", "read: () => answer ?? 0")],
+        witnesses: ["finishes deleted growth independently:"],
+    },
+    {
+        id: "nonwriting-array-ancestor-identity",
+        guards: "Nested Array no-ops preserve every affected ancestor identity.",
+        faults: [edit("src/array-invocation.js", "invocationWork.retainOutput(invocationWork.receiver), operationContext, false)",
+            "invocationWork.retainOutput(invocationWork.receiver), operationContext, true)")],
+        witnesses: ["preserves ancestor identity for nested nonwriting"],
+    },
+    {
+        id: "pending-cycle-comparison",
+        guards: "A pending same-lineage comparison is not a proved Array cycle.",
+        faults: [edit("src/array-view.js", "if (languageValues.isPending(equal, operation.operationContext)) {",
+            "if (!languageValues.isPending(equal, operation.operationContext)) {")],
+        witnesses: ["resolves same-lineage cycle checks"],
+    },
+    {
+        id: "closed-comparison-detaches-both-endpoints",
+        guards: "A closed comparison is removed from each pending endpoint, without waiting for publication.",
+        faults: [edit("src/captured-identity.js", "this.left?.queries?.delete(this)")],
+        witnesses: ["bounded graph ownership verifies identity-work"],
+    },
+    {
+        id: "completed-publication-adoption",
+        guards: "Adoption retains an outcome that completed after it was captured but before it was recorded.",
+        faults: [edit("src/captured-identity.js", "this.published ||= published.published", "this.published &&= published.published")],
+        witnesses: ["bounded graph ownership verifies identity-work"],
+    },
+    {
+        id: "entry-discovery-private-anchor",
+        guards: "Optional discovery fallback excludes its private anchor from public ancestor futures.",
+        faults: [edit("src/enter.js", "if (publication) publication.captures.length = capturedAncestors")],
+        witnesses: ["keeps entry usable after each fallible discovery read"],
+    },
+    {
+        id: "failed-gated-noop-is-effective",
+        guards: "A no-op producer whose gated publication commits poison is an effective command.",
+        faults: [edit("src/mutations.js", "if (!restoring) published = true", "if (!restoring) published = false")],
+        witnesses: ["counts failed gated no-op publication as an identity write"],
+    },
+    {
+        id: "failed-entry-publication-is-effective",
+        guards: "Entry completion that fails to publish its value separates ancestor identity.",
+        faults: [edit("src/property-versions.js", "gate.publication.published = true")],
+        witnesses: ["counts failed entry completion as an identity write"],
+    },
+    {
+        id: "existing-poison-blocks-publication",
+        guards: "Consuming already-poisoned scope data publishes nothing.",
+        faults: [edit("src/mutations.js", "placement: baseline, published: false", "placement: baseline, published: true")],
+        witnesses: ["preserves identity when existing poison blocks"],
+    },
+    {
+        id: "entry-structure-shares-preparation",
+        guards: "Nested holders reuse structural preparation without a recursive history walk at each completion.",
+        faults: [edit("src/placement-structure.js", "if (enclosing) return { prepare: enclosing.prepare }",
+            "if (enclosing) return { prepare(placement) { return enclosing.prepare(placement) } }")],
+        witnesses: ["bounded graph ownership verifies entry-history-work"],
+    },
+    {
+        id: "entry-structure-completion-owner",
+        guards: "Completing a nested holder cannot finish its enclosing placement's growth reservation.",
+        faults: [edit("src/placement-structure.js", "if (enclosing) return { prepare: enclosing.prepare }",
+            "if (enclosing) return { prepare: enclosing.prepare, complete: enclosing.complete }")],
+        witnesses: ["keeps the enclosing growth reservation after a nested empty entry"],
+    },
+    {
+        id: "entry-storage-walk-is-iterative",
+        guards: "Required write-through across deep entry history does not consume the JavaScript stack.",
+        faults: [
+            edit("src/property-versions.js", "const destinations = []\n    for (;;) {",
+                "const destinations = []\n    function visit(owner, key) {"),
+            edit("src/property-versions.js", "if (!gate || !isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)) break",
+                "if (!gate || !isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)) return"),
+            edit("src/property-versions.js", "key = gate.key\n    }\n    const absent",
+                "key = gate.key\n        visit(owner, key)\n    }\n    visit(owner, key)\n    const absent"),
+        ],
+        witnesses: ["bounded graph ownership verifies entry-history-work"],
+    },
+    {
+        id: "observation-releases-source-owner",
+        guards: "Captured observations release their source Chain while required work remains pending.",
+        faults: [edit("src/path-operation.js", "        this.chain = undefined\n        const boundary",
+            "        const boundary")],
+        witnesses: ["runtime boundary completion releases completed captures while returned Errors remain unformatted"],
+    },
+    {
+        id: "lookup-releases-root-capture",
+        guards: "Pending lookup callbacks retain exact versions rather than the spent root holder.",
+        faults: [edit("src/path-operation.js", "finally { rootState = chain = undefined }", "finally {}")],
+        witnesses: ["runtime boundary completion releases completed captures while returned Errors remain unformatted"],
+    },
+    {
+        id: "publication-releases-source-owner",
+        guards: "An independent removed-value result cannot retain the source Chain after mutation publication.",
+        faults: [edit("src/path-operation.js", "            this.chain = undefined\n            this.completeExternalEffect()",
+            "            this.completeExternalEffect()")],
+        witnesses: ["runtime boundary completion releases completed captures while returned Errors remain unformatted"],
+    },
+    {
+        id: "managed-capture-releases-source",
+        guards: "Completed receiver capture releases original sources while arguments or receiver properties remain pending.",
+        faults: [edit("src/managed-invocation.js", "    work.releaseReceiverLeases()\n")],
+        witnesses: ["runtime boundary completion releases completed captures while returned Errors remain unformatted"],
+    },
+    {
+        id: "managed-preparation-discards-all-output",
+        guards: "Receiver failure releases successful argument records while required Error collection remains pending.",
+        faults: [edit("src/managed-invocation.js",
+            "        capture.discard()\n        argumentsCapture.discard()",
+            "        capture.discard()")],
+        witnesses: ["runtime boundary completion releases completed captures while returned Errors remain unformatted"],
+    },
+    {
+        id: "managed-preparation-joins-capture-before-identity",
+        guards: "A receiver Error skips argument identity waits and successful output while required Error collection continues.",
+        faults: [edit("src/managed-invocation.js", "[receiverReady, argumentsReady]", "[argumentsReady]")],
+        witnesses: ["managed receiver capture finishes failed joint preparation without argument identity"],
+    },
     {
         id: "leased-input-restores-relationships",
         guards: "A lease on a retired cached graph restores its borrowed descendants' protection before later work.",
@@ -214,6 +337,22 @@ export const SAFEGUARDS = [
         witnesses: [
             "bounded graph ownership preserves detached writer descendants through a cycle",
         ],
+    },
+    {
+        id: "gate-pin-after-preparation",
+        guards: "Failed gate preparation acquires no writer ownership and cannot prevent retirement.",
+        faults: [edit("src/property-versions.js",
+            "    const structure = beginPlacementStructure(owner, key, captured, operationContext)\n    const releaseWriter = retainWriter(owner, operationContext)\n    const previous = capturedVersion",
+            "    const releaseWriter = retainWriter(owner, operationContext)\n    const structure = beginPlacementStructure(owner, key, captured, operationContext)\n    const previous = capturedVersion")],
+        witnesses: ["bounded graph ownership retires Arrays and cyclic descendants after failed entry preparation"],
+    },
+    {
+        id: "mutation-version-pin-after-preparation",
+        guards: "Failed queued-mutation preparation acquires no writer ownership and cannot prevent retirement.",
+        faults: [edit("src/property-versions.js",
+            "    const structure = beginPlacementStructure(owner, key, captured, operationContext)\n    const releaseWriter = retainWriter(owner, operationContext)\n    installPlacementVersion(owner, key, version, operationContext)",
+            "    const releaseWriter = retainWriter(owner, operationContext)\n    const structure = beginPlacementStructure(owner, key, captured, operationContext)\n    installPlacementVersion(owner, key, version, operationContext)")],
+        witnesses: ["bounded graph ownership retires Arrays and cyclic descendants after failed queued mutation preparation"],
     },
 
     // --- Recovery -------------------------------------------------------------
@@ -430,7 +569,7 @@ export const SAFEGUARDS = [
     {
         id: "materialization-preserves-identity",
         guards: "Observation representation copies keep their captured logical identity.",
-        faults: [edit("src/managed-invocation.js", "    if (!mutation) metadata.requireMeta(copy, operationContext).generation = node.identity\n")],
+        faults: [edit("src/managed-invocation.js", "                    if (!mutation) metadata.requireMeta(copy, invocationWork.operationContext).generation = node.identity\n")],
         witnesses: ["native observation representation identity preserves identity:"],
     },
     {
@@ -453,38 +592,136 @@ export const SAFEGUARDS = [
     {
         id: "captures-use-generation-tokens",
         guards: "Identity consumers key by captured generation, not by address.",
-        faults: [edit("src/captured-identity.js", "meta.generation ??= {} : value", "value : value")],
+        faults: [edit("src/captured-identity.js", "return meta.generation ??= fresh()", "return value")],
         witnesses: [
             // Distinct consequence: cyclic cross-owner exports preserve aliases
             // while searches distinguish captured old and new child generations.
             "ownership isolation across pending work preserves cyclic aliases and captured search generations across both owners",
-            "bounded graph ownership distinguishes export generations when a mutable entry installs its gate",
+            "bounded graph ownership distinguishes export generations after an effective entry",
             "cross-boundary histories preserves cached graph generations, aliases, and ordered effects across readiness schedules",
         ],
     },
     {
         id: "path-writes-advance-generation",
-        guards: "Each mutation-path container gets a new generation before its view is exposed.",
-        faults: [edit("src/mutations.js", "            advanceIdentity(parent, operationContext, advancedIdentities ??= new WeakSet())\n")],
+        guards: "Mutation captures affected path occurrences before exposing their unfinished views.",
+        faults: [edit("src/mutations.js", "            if (index > 0) publication.capture(parent)\n")],
         witnesses: [
             "bounded graph ownership distinguishes exported generations before a pending mutation reaches its target",
         ],
     },
     {
-        id: "gates-advance-generation",
-        guards: "Installing a gate gives its owner a new generation.",
-        faults: [edit("src/property-versions.js", "    const releaseWriter = retainWriter(owner, operationContext)\n    advanceIdentity(owner, operationContext)\n",
-            "    const releaseWriter = retainWriter(owner, operationContext)\n")],
+        id: "entry-reserves-future-identity",
+        guards: "Entry exposes a pending future before its callback can publish.",
+        faults: [edit("src/enter.js", "            publication.suspend()\n")],
         witnesses: [
-            "bounded graph ownership distinguishes export generations when a mutable entry installs its gate",
+            "bounded graph ownership distinguishes a retained generation from an unfinished effective entry in includes, ordered=false",
+            "bounded graph ownership keeps before/after entry export captures distinct until delayed effects finish",
         ],
     },
     {
-        id: "generation-advance-reaches-ancestors",
-        guards: "A new generation also advances every ancestor, including above a nested entry gate.",
-        faults: [edit("src/captured-identity.js", "        advanceIdentity(parent, operationContext, visited)\n")],
+        id: "entry-captures-ancestor-identity",
+        guards: "Entry captures every reached ancestor before selecting its placement.",
+        faults: [edit("src/enter.js", "                publication?.capture(value)\n")],
         witnesses: [
-            "bounded graph ownership advances every ancestor generation when a nested entry installs its gate",
+            "bounded graph ownership advances affected ancestor identities for a nested entry publication",
         ],
     },
+    {
+        id: "nonpublication-forwards-identity",
+        guards: "A completed nonpublishing command preserves its predecessor identity.",
+        faults: [edit("src/captured-identity.js", "current.published ? undefined : capture.before", "undefined")],
+        witnesses: ["entry identity conformance N1 preserves identity after empty entry: ready, export"],
+    },
+    {
+        id: "capture-completes-removed-presence-identity",
+        guards: "Ready remap contents do not prove identity while removed destination presence is undecided.",
+        faults: [edit("src/captured-identity.js", "waits.push(compareIdentities(first, node.identity, owner))", "undefined")],
+        witnesses: ["write-based identity conformance removal of undecided presence keeps value access independent: create=false, nested=false"],
+    },
+    {
+        id: "nested-publication-registers-before-close",
+        guards: "An independently returned nested entry contributes to enclosing identity before its outcome is known.",
+        faults: [edit("src/captured-identity.js", "        if (enclosing) enclosing.remaining++\n")],
+        witnesses: ["write-based identity conformance keeps enclosing identity pending for an independently returned nested entry: publishes=true"],
+    },
+    {
+        id: "deletion-uses-settled-presence",
+        guards: "A pending placement gate does not establish that deletion publishes a write.",
+        faults: [edit("src/mutations.js", "target.publication.addPending(presence)", "target.publication.record(true)")],
+        witnesses: ["publication partitions across command sequences models writes: Array=false, present=false, imported=false, nested=false"],
+    },
+    {
+        id: "primitive-search-does-not-wait-for-identity",
+        guards: "Available primitive/object comparisons are unequal before object publication completes.",
+        faults: [edit("src/captured-identity.js", "    if (left === null || right === null || typeof left !== \"object\" || typeof right !== \"object\") return false\n")],
+        witnesses: ["identity completion at managed publication decides available primitive searches: indexOf, backwards=false, matched=true"],
+    },
+    {
+        id: "native-result-does-not-extend-managed-publication",
+        guards: "Managed selection completes before a native call can hold its independent result open.",
+        faults: [edit("src/path-operation.js",
+            "value => ({ mutatedValue: value, result: undefined })",
+            "value => steps.continueGraphTransition(this.reachExternal(value, this.route.path.slice(depth), onExternal), this.operationContext, () => ({ mutatedValue: value, result: undefined }))")],
+        witnesses: ["identity completion at managed publication separates native result delivery: mutation=true, never, write=false"],
+    },
+    {
+        id: "deletion-does-not-gate-unrelated-values",
+        guards: "Only the deletion identity decision depends on preceding presence.",
+        faults: [edit("src/mutations.js",
+            "                propertyVersions.deleteProperty(target.parent, target.key, operationContext)\n                if (languageValues.isPending(presence, operationContext)) target.publication.addPending(presence)\n                else target.publication.record(presence)",
+            "                return internalSteps.continueGraphTransition(presence, operationContext, present => { propertyVersions.deleteProperty(target.parent, target.key, operationContext); target.publication.record(present) })")],
+        witnesses: ["deletion value progress releases the scope while identity presence is pending: present=true, nested=false"],
+    },
+    {
+        id: "deletion-shortcut-requires-final-target",
+        guards: "An absent mutation scope is still a broken prefix when deletion targets a descendant.",
+        faults: [edit("src/path-operation.js", "deletesTarget: deleting && replaceScope", "deletesTarget: deleting")],
+        witnesses: ["scope placement and record order does not treat an absent deletion prefix as its target: pending=false, nested=false, scope=2"],
+    },
+    {
+        id: "nested-assignment-uses-destination-order",
+        guards: "A replacement carries its ordered predecessor's presence and insertion position, not a copied physical slot.",
+        faults: [edit("src/mutations.js", "transferPlacement({ ...resolved, position },", "transferPlacement(resolved,")],
+        witnesses: ["scope placement and record order preserves insertion order after an entered key: imported=false, nested=false, scope=0, delete"],
+    },
+    {
+        id: "external-entry-finishes-managed-identity",
+        guards: "Selecting an external entry completes its nonpublishing managed contribution.",
+        faults: [edit("src/enter.js", "                publication?.finish(false)\n")],
+        witnesses: ["finishes managed identity after an external-scope entry:"],
+    },
+    {
+        id: "copied-completed-absence-is-not-a-write",
+        guards: "A copied gate can resolve absence synchronously before its value delivery advances the copy.",
+        faults: [edit("src/mutations.js", "else target.publication.record(presence)", "else target.publication.record(true)")],
+        witnesses: ["deletes an absent completed transition before copied value delivery:"],
+    },
+    {
+        id: "repair-preserves-failed-prefix",
+        guards: "Repair selection failure returns its Error without poisoning healthy data.",
+        faults: [edit("src/mutations.js", "        if (preserveOnFailure) return failure\n")],
+        witnesses: ["failed repair preserves healthy data:"],
+    },
+    {
+        id: "lineage-rejects-unrelated-identities",
+        guards: "Unrelated identity lineages never require publication completion to compare unequal.",
+        faults: [edit("src/captured-identity.js", "    if (left.lineage !== right.lineage) return false\n")],
+        witnesses: ["identity lineage completion rejects unrelated identities"],
+    },
+    {
+        id: "captured-partition-can-merge-before-settlement",
+        guards: "Assembly finishes when its captured keys merge, even while their common outcome remains pending.",
+        faults: [edit("src/captured-identity.js", "compareIdentities(first, node.identity, owner)",
+            "waitIdentities(node.identity, undefined, owner)")],
+        witnesses: ["finishes a captured partition when its keys merge into an unfinished predecessor"],
+    },
+    {
+        id: "deferred-assignment-keeps-publication-boundary",
+        guards: "Supported publication failure after key-order readiness remains recoverable at the selected scope.",
+        faults: [edit("src/mutations.js",
+            "const result = errorUtils.catchExternalThrow(\n                                        () => propertyVersions.transferPlacement({ ...resolved, position },\n                                            target.parent, target.key, operationContext),\n                                        operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)",
+            "const result = propertyVersions.transferPlacement({ ...resolved, position }, target.parent, target.key, operationContext)")],
+        witnesses: ["preserves scoped failure after waiting for key order:"],
+    },
+
 ]

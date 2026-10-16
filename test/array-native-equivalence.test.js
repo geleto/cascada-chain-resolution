@@ -840,7 +840,6 @@ function verifyViewRepresentation(
     } else if (method === "slice") {
         expected = native.result.length > 0
     } else if (
-        scenario.mutates ||
         [
             "flat",
             "toReversed",

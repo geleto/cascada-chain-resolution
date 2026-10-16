@@ -10,6 +10,7 @@ import { capturePathOrigin, captureRoute } from "./path-context.js"
 import { ArrayView } from "./array-view.js"
 import * as languageValues from "./language-values.js"
 import { captureMutationResult, transformProperty, walkMutationPath } from "./mutations.js"
+import { IdentityPublication } from "./captured-identity.js"
 import { ExternalAccess } from "./external-access.js"
 import { externalLocationError, ExternalEffect, validateExternalAccess } from "./external-operation.js"
 
@@ -58,28 +59,37 @@ class PathOperation extends OperationOwner {
     }
 
     observe(onValue, onExternal, onFailure, reflectionKind) {
+        const chain = this.chain
+        // The walker captures the root placement; subsequent work uses those
+        // versions and the reserved route, never the source Chain again.
+        this.chain = undefined
         const boundary = this.route.externalBoundary
-        const depth = boundary ? boundary[externalTree.TREE_NODE].depth - (this.chain._contextOrigin?.depth ?? 0) : Infinity
-        if (this.mutation && this.route.externalScope) return walkMutationPath(
-            this.chain, this.route.path.slice(0, depth), this.operationContext, target => {
-                // The fixed native binding can itself have managed placement
-                // recovery. Restore only the selected placement, never a poisoned
-                // strict ancestor, before repairing its native metadata or calling.
-                if (this.repair && depth === this.route.path.length) {
-                    const restored = transformProperty(target, this.operationContext, (value, state) =>
-                        steps.continueGraphTransition(this.externalEffect?.readiness, this.operationContext, () =>
-                            this.externalBlocker(false) ??
-                            { mutatedValue: value, result: undefined, placement: state.baseline }),
-                    { repair: true, beforeWait: this.beforeWait })
-                    return steps.continueGraphTransition(restored, this.operationContext, outcome =>
-                        errors.isPoisonError(outcome.mutatedValue) ? onValue(outcome.mutatedValue) :
-                            this.reachExternal(outcome.mutatedValue, [], onExternal))
-                }
-                return steps.continueGraphTransition(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
-                    this.operationContext, value => errors.isPoisonError(value) ? onValue(value) :
-                        this.reachExternal(value, this.route.path.slice(depth), onExternal))
-            }, { observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
-        return walkObservationPath(this.chain, this.route.path, this.operationContext, onValue,
+        const depth = boundary ? boundary[externalTree.TREE_NODE].depth - (chain._contextOrigin?.depth ?? 0) : Infinity
+        if (this.mutation && this.route.externalScope) {
+            // Finish managed selection and recovery before starting native work.
+            // Native availability and reservations cannot extend its publication.
+            const selected = walkMutationPath(
+                chain, this.route.path.slice(0, depth), this.operationContext, target => {
+                    // The fixed native binding can itself have managed placement
+                    // recovery. Restore only the selected placement, never a poisoned
+                    // strict ancestor, before repairing its native metadata or calling.
+                    if (this.repair && depth === this.route.path.length) {
+                        return transformProperty(target, this.operationContext, (value, state) =>
+                            steps.continueGraphTransition(this.externalEffect?.readiness, this.operationContext, () =>
+                                this.externalBlocker(false) ??
+                                { mutatedValue: value, result: undefined, placement: state.baseline }),
+                        { repair: true, beforeWait: this.beforeWait })
+                    }
+                    return steps.continueGraphTransition(versions.resolvePropertyValueAtKey(target.parent, target.key, this.operationContext),
+                        this.operationContext, value => ({ mutatedValue: value, result: undefined }))
+                }, { observeTarget: !this.repair, preserveOnFailure: this.repair, beforeWait: this.beforeWait })
+            return steps.continueGraphTransition(selected, this.operationContext, outcome => {
+                const value = errors.isPoisonError(outcome) ? outcome : outcome.mutatedValue
+                return errors.isPoisonError(value) ? onValue(value) :
+                    this.reachExternal(value, this.route.path.slice(depth), onExternal)
+            })
+        }
+        return walkObservationPath(chain, this.route.path, this.operationContext, onValue,
             onFailure, reflectionKind, { onExternal: (identity, suffix) =>
                 this.reachExternal(identity, suffix, onExternal), externalDepth: depth, owner: this })
     }
@@ -151,14 +161,21 @@ class PathOperation extends OperationOwner {
                         return properties.propertyValidationError("A managed mutation scope cannot contain mutable external locations", operationContext)
                     if (!replaceScope && metadata.metaOf(value, operationContext)?.type === metadata.TYPE.External)
                         return this.routeFailure = externalLocationError(operationContext)
-                    const privateChain = new Chain(undefined, operationContext)
-                    holder = privateChain._state
-                    versions.transferPlacement(state.baseline, privateChain._state, "value", operationContext)
-                    privateChain._externalMutationTree = node
-                    privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
-                    privateChain._rootKey = depth ? target.key : chain._rootKey
-                    privateChain._externalReservationView = chain._externalReservationView
-                    return transform(value, state, privateChain, route.path.slice(depth), node)
+                    const suffix = route.path.slice(depth)
+                    state.key = depth ? target.key : chain._rootKey
+                    let privateChain
+                    // Whole-scope producers already return their replacement.
+                    // Only a nested edit needs a private root for rollback.
+                    if (suffix.length) {
+                        privateChain = new Chain(undefined, operationContext)
+                        privateChain._publication = new IdentityPublication(operationContext)
+                        holder = privateChain._state
+                        versions.transferPlacement(state.baseline, holder, "value", operationContext)
+                        privateChain._externalMutationTree = node
+                        privateChain._contextOrigin = capturePathOrigin(route, (chain._contextOrigin?.depth ?? 0) + depth)
+                        privateChain._rootKey = state.key
+                    }
+                    return transform(value, state, privateChain, suffix, node)
                 })
             }, { replace: replaceScope && depth === requestedDepth, repair: this.repair, beforeWait: this.beforeWait })
             return steps.continueGraphTransition(outcome, operationContext, published => {
@@ -168,7 +185,7 @@ class PathOperation extends OperationOwner {
                 holder = undefined
                 return published
             })
-        }, { targetArrayStructure: true, deletesTarget: deleting,
+        }, { targetArrayStructure: true, deletesTarget: deleting && replaceScope,
             preserveOnFailure: this.repair, beforeWait: this.beforeWait,
             onExternalFailure: error => { this.routeFailure = error } })
     }
@@ -178,7 +195,9 @@ class PathOperation extends OperationOwner {
             const failure = errors.isPoisonError(outcome) ? outcome : errors.isPoisonError(outcome.mutatedValue) ? outcome.mutatedValue : null
             if (failure && this.reachedExternal && this.selectedExternalNode?.[externalTree.TREE_NODE].identity && !this.externalBlocker())
                 externalTree.poisonScope(this.selectedExternalNode, failure)
-            // Publication, not an independently pending result, ends authority.
+            // Publication ends source access and authority independently of
+            // any pending result (for example an Array's removed element).
+            this.chain = undefined
             this.completeExternalEffect()
             return this.finish(errors.isPoisonError(outcome) ? outcome : outcome.result)
         })
@@ -239,9 +258,10 @@ function walkObservationPath(
     reflectionKind = errors.ERROR_KIND.LookupReflectionFailed,
     { onExternal, externalDepth = Infinity, owner } = {},
 ) {
-    const rootState = chain._state
+    let rootState = chain._state
     const targetPath = ["value", ...path]
-    return runTraversal(() => walkFromParent(rootState, 0))
+    try { return runTraversal(() => walkFromParent(rootState, 0)) }
+    finally { rootState = chain = undefined }
 
     function walkFromParent(parent, index) {
         const key = properties.normalizePathSegment(

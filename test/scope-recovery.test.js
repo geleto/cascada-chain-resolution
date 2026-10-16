@@ -18,6 +18,78 @@ function fixture() {
 }
 
 describe("hierarchical scopes and placement recovery", () => {
+    for (const array of [false, true])
+    it(`repair preserves an absent entered prefix after delivery: array=${array}`, async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        const initial = array ? [] : {}, key = array ? 3 : "missing"
+        const source = new r.Chain(initial, ctx)
+        const before = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+        const entry = r.enter(source, [key], ctx, true, () => gate.promise)
+        const result = r.repairPath(source, [key, "x"], ctx)
+        gate.resolve()
+        await entry
+        assert.equal((await result).kind, r.ERROR_KIND.NullLookup)
+        assert.deepEqual(await r.export(source, [], ctx), initial)
+        assert.equal(await r.hasError(source, [], ctx), false)
+        assert.equal(await r.run(new r.Chain([r.lookupPath(source, [], ctx)], ctx), [], "includes",
+            [r.lookupPath(before, [], ctx)], ctx, {}), true)
+        verifyRefCounts(ctx, source._state, before._state)
+    })
+
+    for (const scope of [0, 1])
+    it(`preserves scoped failure after waiting for key order: scope=${scope}`, async () => {
+        const ctx = context(), gate = Promise.withResolvers(), cause = new Error("publication reflection")
+        let armed = false
+        const value = new Proxy({ x: 1 }, { ownKeys(target) {
+            if (armed) throw cause
+            return Reflect.ownKeys(target)
+        } })
+        const source = new r.Chain({ box: { k: 0, other: 1 }, far: 2 }, ctx)
+        r.hasError(source, [], ctx)
+        const entry = r.enter(source, ["box", "k"], ctx, true, () => gate.promise)
+        r.assignPath(source, ["box", "k"], value, ctx, scope)
+        const inside = r.lookupPath(source, ["box", "other"], ctx)
+        const outside = r.lookupPath(source, ["far"], ctx)
+        assert(inside instanceof Promise)
+        if (scope === 1) assert.equal(outside, 2)
+        else assert(outside instanceof Promise)
+        armed = true
+        gate.resolve()
+        await entry
+        const error = await inside
+        assert(r.isPoisonError(error))
+        assert.equal(error.kind, r.ERROR_KIND.PropertyMutationFailed)
+        assert.equal(error.cause, cause)
+        assert.equal(await outside, scope === 0 ? error : 2)
+        assert.equal(ctx.execution.fatalError, null)
+        armed = false
+        await r.repairPath(source, scope === 0 ? [] : ["box"], ctx)
+        assert.deepEqual(await r.export(source, [], ctx), { box: { k: 0, other: 1 }, far: 2 })
+        verifyRefCounts(ctx, source._state)
+    })
+
+    for (const pending of [false, true]) for (const nested of [false, true])
+    for (const state of ["missing", "scalar", "string", "null", "array key", "invalid segment"])
+    it(`failed repair preserves healthy data: ${state}, pending=${pending}, nested=${nested}`, async () => {
+        const ctx = context(), pause = Promise.withResolvers()
+        const initial = state === "missing" ? {} : { a: state === "scalar" ? 1 : state === "string" ? "x"
+            : state === "null" ? null : state === "array key" ? [] : {} }
+        const path = ["a", state === "invalid segment" ? {} : "x"]
+        const source = new r.Chain(pending ? pause.promise : initial, ctx)
+        const before = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+        let result
+        const outer = nested ? r.enter(source, [], ctx, true, inside => { result = r.repairPath(inside, path, ctx) })
+            : (result = r.repairPath(source, path, ctx))
+        pause.resolve(initial)
+        assert(r.isPoisonError(await result))
+        await outer
+        assert.deepEqual(await r.export(source, [], ctx), initial)
+        assert.equal(await r.hasError(source, [], ctx), false)
+        assert.equal(await r.run(new r.Chain([r.lookupPath(source, [], ctx)], ctx), [], "includes",
+            [r.lookupPath(before, [], ctx)], ctx, {}), true)
+        verifyRefCounts(ctx, source._state, before._state)
+    })
+
     for (const route of ["direct", "entered", "nested"]) {
         for (const delivery of ["ready", "synchronous", "pending"]) {
             for (const broad of [false, true]) {

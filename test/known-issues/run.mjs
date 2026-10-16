@@ -26,8 +26,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const root = fileURLToPath(new URL("../../", import.meta.url))
     const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
         "node_modules/mocha/bin/mocha.js", "--reporter", "json",
-        "test/known-issues/phase4-identity.mjs", "test/known-issues/boundary-histories.mjs",
-        "test/known-issues/write-based-identity.mjs"],
+        "test/known-issues/phase4-identity.mjs", "test/known-issues/boundary-histories.mjs"],
     { cwd: root, encoding: "utf8", timeout: 30_000, maxBuffer: 4 * 1024 * 1024 })
     if (result.error) throw result.error
     assert.equal(result.signal, null, "Deferred conformance process must complete")

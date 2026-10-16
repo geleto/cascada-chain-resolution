@@ -161,7 +161,84 @@ function managedArgumentCase(klass, imported) {
     return { ctx, chain, error, weak: [new WeakRef(receiver), new WeakRef(child)] }
 }
 
+function issueJointArgument(chain, ctx, nested) {
+    const marker = () => 123
+    return { result: r.run(chain, [], "inspect", [nested ? { marker } : marker], ctx, {}),
+        weak: [new WeakRef(marker)] }
+}
+
+function jointPreparationCase(nested, deferredError) {
+    const ctx = context("joint preparation"), first = new Error("first"), second = new Error("second")
+    const early = Promise.withResolvers(), late = Promise.withResolvers()
+    let calls = 0
+    const chain = new r.Chain({ first: deferredError ? early.promise : first, late: late.promise,
+        inspect() { calls++; return 1 } }, ctx)
+    const state = issueJointArgument(chain, ctx, nested)
+    assert(state.result instanceof Promise)
+    if (deferredError) early.reject(first)
+    return { ctx, chain, ...state, async finish() {
+        assert.equal(calls, 0)
+        late.reject(second)
+        const error = await state.result
+        assert.deepEqual(new Set(error.errors.map(leaf => leaf.cause)), new Set([first, second]))
+        assert.equal(calls, 0)
+    } }
+}
+
+async function jointPreparationSuccessControl(nested) {
+    const ctx = context("successful joint preparation"), pending = Promise.withResolvers()
+    const chain = new r.Chain({ ready: pending.promise,
+        inspect(value) { return (nested ? value.marker : value)() } }, ctx)
+    const state = issueJointArgument(chain, ctx, nested)
+    await collect()
+    assert(state.weak[0].deref(), "Successful preparation must retain arguments until invocation")
+    pending.resolve(1)
+    assert.equal(await state.result, 123)
+    await collect()
+    assert.equal(state.weak[0].deref(), undefined, "Completed invocation must release its arguments")
+}
+
+function receiverCaptureCase(waitAt, klass, imported) {
+    const ctx = context("receiver source capture"), pending = Promise.withResolvers()
+    class Receiver {
+        inspect() { return this.child.n + this.value }
+        later(wait) { return wait().then(() => this.inspect()) }
+    }
+    if (klass) r.managedStateClass(Receiver)
+    const source = Object.assign(klass ? new Receiver() : {
+        inspect: Receiver.prototype.inspect, later: Receiver.prototype.later,
+    }, { child: { n: 3 }, value: waitAt === "receiver" ? pending.promise : 4 })
+    const chain = new r.Chain(imported ? r.import(source, ctx) : source, ctx)
+    const result = r.run(chain, [], waitAt === "result" ? "later" : "inspect",
+        waitAt === "argument" ? [pending.promise] : waitAt === "result" ? [() => pending.promise] : [], ctx, {})
+    r.assignPath(chain, [], null, ctx)
+    return { ctx, result, weak: [source, source.child, chain, chain._state].map(value => new WeakRef(value)), async finish() {
+        pending.resolve(4)
+        assert.equal(await result, 7, "Pending work uses captured state after the sources are collected")
+    } }
+}
+
+function sourceOwnerCase(route) {
+    const ctx = context("source owner"), pending = Promise.withResolvers()
+    const chain = new r.Chain(route === "pop" ? [pending.promise] : { branch: { value: pending.promise } }, ctx)
+    const result = route === "pop" ? r.run(chain, [], "pop", [], ctx, { mutationScopeDepth: 0 })
+        : route === "lookup" ? r.lookupPath(chain, ["branch", "value"], ctx)
+        : r[route](chain, ["branch"], ctx)
+    r.assignPath(chain, [], null, ctx)
+    return { ctx, result, weak: [new WeakRef(chain), new WeakRef(chain._state)], async finish() {
+        pending.resolve(4)
+        assert.deepEqual(await result, route === "export" ? { value: 4 }
+            : route === "hasError" ? false : route === "getErrors" ? null : 4)
+    } }
+}
+
 const cases = []
+for (const route of ["lookup", "export", "hasError", "getErrors", "pop"])
+    cases.push([`source owner, route=${route}`, () => sourceOwnerCase(route)])
+for (const waitAt of ["receiver", "argument", "result"])
+for (const klass of [false, true]) for (const imported of [false, true])
+    cases.push([`receiver capture, wait=${waitAt}, class=${klass}, imported=${imported}`,
+        () => receiverCaptureCase(waitAt, klass, imported)])
 for (const route of ["import", "lookup", "native export", "result", "export", "hasError", "getErrors"])
 for (const descendant of [false, true]) for (const descriptor of [false, true]) for (const fresh of [false, true]) {
     cases.push([`${route}, descendant=${descendant}, descriptor=${descriptor}, fresh=${fresh}`,
@@ -169,6 +246,9 @@ for (const descendant of [false, true]) for (const descriptor of [false, true]) 
 }
 cases.push(["entry", entryCase])
 cases.push(["discarded length forks", discardedLengthForksCase])
+for (const nested of [false, true]) for (const deferredError of [false, true])
+    cases.push([`joint preparation, nested=${nested}, deferredError=${deferredError}`,
+        () => jointPreparationCase(nested, deferredError)])
 for (const reversed of [false, true])
     cases.push([`failed representation capture, reversed=${reversed}`, () => failedRepresentationCaptureCase(reversed)])
 for (const array of [false, true]) for (const nested of [false, true])
@@ -192,5 +272,7 @@ for (const [, state] of states) if (state.pending) {
     state.pending.resolve(0)
     assert.equal(await state.result, 0)
 }
-assert.deepEqual(retained, [], "Finished work must release sources while its unformatted Error stays retained")
+assert.deepEqual(retained, [], "Spent source references must be released while results stay retained")
+if (!selected || "joint preparation".startsWith(selected))
+    for (const nested of [false, true]) await jointPreparationSuccessControl(nested)
 console.log(`${states.length} completed-work retention cases passed`)

@@ -12,6 +12,43 @@ import { createRandom, randomInteger } from "./native-equivalence-support.js"
 const context = () => ({ execution: new runtime.Execution(), errorContext: "ownership" })
 
 describe("bounded graph ownership", () => {
+    for (const indexed of [false, true]) for (const route of ["entry", "queued mutation"]) {
+        it(`retires Arrays and cyclic descendants after failed ${route} preparation, indexed=${indexed}`, async () => {
+            const ctx = context()
+            let failLength = false
+            const handler = { get(target, key, receiver) {
+                if (failLength && key === "length") throw new Error("length unavailable")
+                return Reflect.get(target, key, receiver)
+            } }
+            const source = new runtime.Chain(runtime.import({ install() {
+                this.array = new Proxy([{ n: 0 }], handler)
+                this.array[1] = {}
+                this.array[1].self = this.array[1]
+            } }, ctx), ctx)
+            runtime.run(source, [], "install", [], ctx, { mutationScopeDepth: 0 })
+            const array = runtime.lookupPath(source, ["array"], ctx)
+            if (indexed) assert.equal(runtime.hasError(source, [], ctx), false)
+            const pending = route === "queued mutation" ? Promise.withResolvers() : undefined
+            if (pending) runtime.assignPath(source, ["array", 0], pending.promise, ctx)
+            failLength = true
+            const result = route === "entry"
+                ? runtime.enter(source, ["array", 0], ctx, true, () => 7)
+                : runtime.assignPath(source, ["array", 0, "n"], 1, ctx)
+            failLength = false
+            if (route === "entry") assert.equal(await result, 7)
+            else assert.equal(result.kind, "PropertyMutationFailed")
+            runtime.assignPath(source, [], null, ctx)
+            assert.equal(metaOf(array, ctx).pinCount ?? 0, 0)
+            assert.equal(metaOf(array, ctx).relationshipsActive, false)
+            assert.equal(metaOf(array[1], ctx).relationshipsActive, false)
+            pending?.resolve({ n: 0 })
+            await new Promise(setImmediate)
+            assert.equal(metaOf(array, ctx).relationshipsActive, false, "Late delivery cannot revive a discarded writer")
+            assert.equal(ctx.execution.fatalError, null)
+            verifyRefCounts(ctx, source._state)
+        })
+    }
+
     for (const offset of [0, 2]) for (const route of ["concat", "assign"]) {
         it(`keeps removed backing slots absent during sparse ${route}, offset=${offset}`, () => {
             const ctx = context()
@@ -110,7 +147,7 @@ describe("bounded graph ownership", () => {
         })
     }
 
-    it("distinguishes export generations when a mutable entry installs its gate", async () => {
+    it("distinguishes export generations after an effective entry", async () => {
         const ctx = context(), later = Promise.withResolvers()
         const source = new runtime.Chain({ x: { k: 1 } }, ctx)
         const input = new runtime.Chain({ first: runtime.lookupPath(source, [], ctx), second: later.promise }, ctx)
@@ -124,7 +161,7 @@ describe("bounded graph ownership", () => {
         verifyRefCounts(ctx, source._state, input._state)
     })
 
-    it("advances every ancestor generation when a nested entry installs its gate", async () => {
+    it("advances affected ancestor identities for a nested entry publication", async () => {
         const ctx = context(), later = Promise.withResolvers()
         const root = { inner: { x: { k: 1 } } }
         const source = new runtime.Chain(root, ctx)
@@ -543,7 +580,7 @@ describe("bounded graph ownership", () => {
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })
 
-    for (const fixture of ["ownership-destinations", "array-point-work", "array-enumeration-work"]) {
+    for (const fixture of ["ownership-destinations", "array-point-work", "array-enumeration-work", "identity-work", "entry-history-work"]) {
         it("verifies " + fixture, function () {
             this.timeout(30000)
             const result = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",

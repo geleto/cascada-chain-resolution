@@ -3,14 +3,19 @@ import assert from "node:assert/strict"
 import { registerHooks } from "node:module"
 
 const shells = []
+let definitions = 0
 globalThis.captureExportShell = value => { shells.push(new WeakRef(value)); return value }
-const exportURL = new URL("../../src/export.js", import.meta.url).href
+globalThis.countExportDefinition = () => { definitions++ }
+const exportURL = new URL("../../src/managed-capture.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (url !== exportURL) return result
-    const source = String(result.source), marker = "createEmptyContainer(value, operationContext)"
+    const source = String(result.source), marker = "initializeCopy?.(node.copy, node)"
     assert(source.includes(marker))
-    return { ...result, source: source.replace(marker, "globalThis.captureExportShell(" + marker + ")") }
+    const definition = "defineCopyProperty(node.copy, key, outputOf(node.entries.get(key)))"
+    assert(source.includes(definition))
+    return { ...result, source: source.replace(marker, "globalThis.captureExportShell(node.copy); " + marker)
+        .replace(definition, "(globalThis.countExportDefinition(), " + definition + ")") }
 } })
 const r = await import("../../src/index.js")
 const { metaOf } = await import("../../src/meta.js")
@@ -23,6 +28,24 @@ async function collected(ref) {
     assert.equal(ref.deref(), undefined)
 }
 assert(global.gc, "Run with --expose-gc")
+
+// Equivalent representations allocate one final child and define its key once.
+for (const pending of [false, true]) {
+    const ctx = context(), gate = Promise.withResolvers(), source = new r.Chain({ k: 1 }, ctx)
+    const before = new r.Chain(r.lookupPath(source, [], ctx), ctx)
+    const entry = pending ? r.enter(source, ["k"], ctx, true, () => gate.promise)
+        : r.repairPath(source, ["k"], ctx)
+    const roots = new r.Chain([r.lookupPath(before, [], ctx), r.lookupPath(source, [], ctx)], ctx)
+    shells.length = definitions = 0
+    const result = r.export(roots, [], ctx)
+    if (pending) assert.equal(shells.length, 0)
+    gate.resolve()
+    await entry
+    const output = await result
+    assert.equal(output[0], output[1])
+    assert.equal(shells.length, 2, "Only the root Array and one final child are allocated")
+    assert.equal(definitions, 3, "Two root edges and one child property are defined once")
+}
 
 // A delivered container is spent once traversal captures its child placements,
 // even while those descendants still need to settle for the result.
@@ -157,8 +180,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
     const pendingResult = issue()
     await collected(pendingResult.source)
     if (operation === "export" && poison) {
-        assert(shells.length > 0)
-        for (const shell of shells) await collected(shell)
+        assert.equal(shells.length, 0, "Export allocates no output shells before successful capture")
     }
     pending.resolve(11)
     const result = await pendingResult.result

@@ -7,13 +7,14 @@ const functions = {
     "input-preparations.js": ["prepareInput", "commitPreparedInput"],
     "error.js": ["runExternalAction"],
     "property-versions.js": ["replacePlacement", "commitPlacementVersion", "commitPromiseVersion",
-        "installPlacementGate", "installMutationVersion", "copyPlacement", "normalizeRawPropertyValue", "installPlacementVersion", "detachPlacementVersion"],
+        "installPlacementGate", "installMutationVersion", "detachAbsentVersion", "copyPlacement", "normalizeRawPropertyValue", "installPlacementVersion", "detachPlacementVersion"],
     "language-properties.js": ["writeLanguageProperty", "deleteLanguageProperty"],
     "mutations.js": ["shallowCopyPathContainer"],
     "array-remap.js": ["createArrayFromRemap", "createRemap"],
     "placement-structure.js": ["defineCopyProperty", "createEmptyContainer"],
     "export.js": ["exportValues"],
-    "managed-invocation.js": ["copyCompleteGraph", "validateReceiver"],
+    "managed-capture.js": ["assembleCapturedGraph"],
+    "managed-invocation.js": ["validateReceiver"],
     "external-snapshot.js": ["snapshotExternalValue"],
     "language-values.js": ["isPending", "thenValue"],
     "meta.js": ["getOrCreateMeta"],
@@ -26,10 +27,6 @@ registerHooks({
         const names = url.startsWith(sourceRoot) && functions[url.slice(sourceRoot.length)]
         if (!names) return loaded
         let source = String(loaded.source)
-        // Export destinations are detached outputs, including writes made by
-        // later traversal callbacks after exportValues has returned.
-        if (url.endsWith("/export.js"))
-            source = source.replaceAll("defineCopyProperty(", "publicationTrace.exportCopy(defineCopyProperty, ")
         for (const name of names) {
             const declaration = `function ${name}(`
             if (!source.includes(declaration)) throw new Error(`Missing traced function ${name}`)

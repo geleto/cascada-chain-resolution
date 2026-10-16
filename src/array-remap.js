@@ -15,6 +15,7 @@ function createRemap(
     start = 0,
     end = undefined,
     inspect = action => action(),
+    onPlacement,
 ) {
     const remap = new Array((end ?? ArrayView.minimumLength(array, operationContext)) - start)
     for (const key of languageProperties.enumerableLanguageKeyCandidates(
@@ -25,7 +26,9 @@ function createRemap(
     )) {
         const placement = inspect(() => propertyVersions.getPropertyPlacement(array, key, operationContext))
         if (placement === undefined) continue
-        defineCopyProperty(remap, String(Number(key) - start), placement)
+        const index = Number(key) - start
+        defineCopyProperty(remap, String(index), placement)
+        onPlacement?.(placement, index)
     }
     return remap
 }

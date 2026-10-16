@@ -1,11 +1,8 @@
-import { captureIdentity, visitRepresentation } from "./captured-identity.js"
 import * as errorUtils from "./error.js"
-import { externalCapabilityEscapeError } from "./external-operation.js"
-import * as internalSteps from "./internal-step.js"
-import * as languageValues from "./language-values.js"
-import * as operationLifecycle from "./operation-lifecycle.js"
-import { walkManagedProperties } from "./managed-traversal.js"
-import { createEmptyContainer, defineCopyProperty, captureContainerStructure, finishContainerCopy } from "./placement-structure.js"
+import * as steps from "./internal-step.js"
+import * as values from "./language-values.js"
+import { releaseOnClose } from "./operation-lifecycle.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -16,126 +13,39 @@ function exportManyValues(values, owner) {
     return exportValues(values, owner, values => values)
 }
 
-// Prepared roots belong to one required frontier. Their internal availability
-// never creates a new input-failure boundary. Aliases share both inspection and
-// copies; one Error accumulator survives discarded output until every wait ends.
-function exportValues(values, owner, onResult) {
-    const operationContext = owner.operationContext
-    const visited = new WeakMap()
+function exportValues(inputs, owner, onResult) {
+    const { operationContext } = owner
     const errors = new Set()
-    let copies = new WeakMap()
-    let outputs = new Array(values.length)
-    const shapes = new Set()
+    const capture = new ManagedCapture(owner, errorUtils.ERROR_KIND.ExportReflectionFailed, collect)
     let unregister
-    const readiness = values.map((value, position) =>
-        internalSteps.continueGraphTransition(
-            value,
-            operationContext,
-            resolved => {
-                const identity = captureIdentity(resolved, operationContext)
-                const readiness = walk(resolved)
-                if (copies) outputs[position] = outputOf(resolved, identity)
-                return readiness
-            },
-            undefined,
-            owner,
-        ),
-    )
-    values = undefined
-    const result = internalSteps.collectInputs(
-        readiness,
-        operationContext,
-        () => {
-            const outcome = errors.size
-                ? errorUtils.combineErrors(
-                    errors,
-                    "Operation received multiple Errors",
-                )
-                : outputs
-            unregister?.()
-            release()
-            return onResult(outcome)
-        },
-        owner,
-    )
-    if (languageValues.isPending(result, operationContext))
-        unregister = operationLifecycle.releaseOnClose(owner, release)
+    const readiness = capture.capture(inputs)
+    inputs = undefined
+    const result = steps.continueGraphTransition(readiness, operationContext, () => {
+        if (errors.size) return finish()
+        return steps.continueGraphTransition(capture.resolve(), operationContext, finish, undefined, owner)
+    }, undefined, owner)
+    if (values.isPending(result, operationContext)) unregister = releaseOnClose(owner, release)
     return result
-
-    function release() {
-        discardOutput()
-        errors.clear()
-    }
 
     function collect(error) {
         errors.add(error)
-        discardOutput()
+        capture.discard()
         owner.preparationFailed?.()
     }
 
-    function discardOutput() {
-        for (const shape of shapes) shape.length?.release?.()
-        shapes.clear()
-        copies = outputs = undefined
+    function finish() {
+        const outcome = errors.size
+            ? errorUtils.combineErrors(errors, "Operation received multiple Errors")
+            : assembleCapturedGraph(capture)
+        release()
+        return onResult(outcome)
     }
 
-    function step(action) {
-        const result = errorUtils.catchExternalThrow(
-            action,
-            operationContext,
-            errorUtils.ERROR_KIND.ExportReflectionFailed,
-        )
-        if (errorUtils.isPoisonError(result)) collect(result)
-        return result
-    }
-
-    function outputOf(value, identity) {
-        return Object.is(identity, value) ? value : copies.get(identity)
-    }
-
-    function walk(value) {
-        if (errorUtils.isPoisonError(value)) {
-            collect(value)
-            return undefined
-        }
-        if (operationContext.execution._externalIdentities.has(value)) {
-            collect(externalCapabilityEscapeError(operationContext))
-            return undefined
-        }
-        const identity = captureIdentity(value, operationContext)
-        if (!languageValues.isTraversable(value, operationContext) || !visitRepresentation(value, identity, visited)) return undefined
-        if (copies && !copies.has(identity)) {
-            const output = step(() =>
-                createEmptyContainer(value, operationContext),
-            )
-            if (copies) copies.set(identity, output)
-        }
-        const readiness = walkManagedProperties(value, owner, step,
-            (resolved, key, present = true) => {
-                if (!present) {
-                    if (copies) delete copies.get(identity)[key]
-                    return undefined
-                }
-                const childIdentity = captureIdentity(resolved, operationContext)
-                const readiness = walk(resolved)
-                if (copies) defineCopyProperty(copies.get(identity), key, outputOf(resolved, childIdentity))
-                return readiness
-            },
-            key => {
-                // Fix output key order at capture, before any settlement.
-                if (copies) defineCopyProperty(copies.get(identity), key, undefined)
-            }, keys => {
-                if (!copies) return
-                const shape = step(() => captureContainerStructure(value, keys, operationContext))
-                if (!copies) return
-                shapes.add(shape)
-                return () => {
-                    if (copies) finishContainerCopy(copies.get(identity), shape)
-                    shapes.delete(shape)
-                }
-            })
-        value = undefined
-        return readiness
+    function release() {
+        unregister?.()
+        unregister = undefined
+        capture.discard()
+        errors.clear()
     }
 }
 

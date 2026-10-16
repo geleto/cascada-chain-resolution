@@ -440,6 +440,7 @@ Ready and deferred repair finish when the restored placement commits, even when 
 | Ordinary Error with no retained baseline | Return that exact Error unchanged; invent no prior value and clear nothing behind it |
 | Valid external scope | Clear its covered repairable metadata, preserving native state and descendant binding conflicts; return undefined |
 | Poisoned strict ancestor or invalid selected binding | Return the existing blocker without reaching or clearing the target |
+| Missing or scalar prefix, or invalid repair path segment/property | Return the selection Error without creating poison or changing healthy managed contents |
 
 Repair-and-call proceeds only after successful repair selection/clearing. An ordinary Error without a baseline or an inaccessible target skips preparation and invocation. A healthy target requires no managed restoration; repair does not search its managed contents for Errors. Supported preflight failure occurs before clearing and preserves the existing recoverable state.
 
