@@ -4,12 +4,65 @@ import { buildRefIndex } from "../src/refcounts.js"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
 import * as metadata from "../src/meta.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
+import { captureIdentity, compareIdentities } from "../src/captured-identity.js"
+import { OperationOwner } from "../src/operation-lifecycle.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
 const leaves = error => error.errors ?? [error]
 const causes = error => new Set(leaves(error).map(leaf => leaf.cause))
 
 describe("complete publication failures", () => {
+    it("counts failed entry completion as an identity write", async () => {
+        const ctx = context(), hold = Promise.withResolvers(), cause = new Error("completion inspection")
+        let refuses = false
+        const value = new Proxy({ k: 1 }, { ownKeys(target) {
+            if (refuses) throw cause
+            return Reflect.ownKeys(target)
+        } })
+        const chain = new runtime.Chain({ value }, ctx)
+        const before = captureIdentity(chain._state.value, ctx)
+        const entry = runtime.enter(chain, ["value"], ctx, true, () => hold.promise)
+        // Index the destination while its old value is hidden by the gate.
+        // Completion must now index the value it publishes at this boundary.
+        const query = runtime.hasError(chain, [], ctx)
+        refuses = true
+        hold.resolve(7)
+        assert.equal(await entry, 7)
+        assert.equal(await query, true)
+        const failure = runtime.lookupPath(chain, ["value"], ctx)
+        assert.equal(failure.cause, cause)
+        assert.equal(failure.kind, runtime.ERROR_KIND.PropertyMutationFailed)
+        assert.equal(compareIdentities(before, captureIdentity(chain._state.value, ctx), new OperationOwner(ctx)), false)
+        refuses = false
+        await runtime.repairPath(chain, ["value"], ctx)
+        assert.deepEqual(runtime.export(chain, ["value"], ctx), { k: 1 })
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("counts failed gated no-op publication as an identity write", async () => {
+        const ctx = context(), hold = Promise.withResolvers(), cause = new Error("refused gate publication")
+        let refuses = false
+        const chain = new runtime.Chain(new Proxy({ items: [] }, {
+            set(target, key, value, receiver) {
+                if (refuses) throw cause
+                return Reflect.set(target, key, value, receiver)
+            },
+        }), ctx)
+        // Capture the key without introducing COW that would replace the Proxy.
+        const before = captureIdentity(chain._state.value, ctx)
+        const result = runtime.run(chain, ["items"], "fill", [7, hold.promise, 1], ctx, { mutationScopeDepth: 1 })
+        refuses = true
+        hold.resolve(1)
+        const failure = await result
+        assert.equal(failure.cause, cause)
+        assert.equal(runtime.lookupPath(chain, ["items"], ctx), failure)
+        assert.equal(compareIdentities(before, captureIdentity(chain._state.value, ctx), new OperationOwner(ctx)), false)
+        refuses = false
+        await runtime.repairPath(chain, ["items"], ctx)
+        assert.deepEqual(runtime.export(chain, ["items"], ctx), [])
+        verifyRefCounts(ctx, chain._state)
+    })
+
     for (const delayed of [false, true]) {
         it(`restores the complete Array when publishing a length change fails, delayed=${delayed}`, async () => {
             const ctx = context(), size = Promise.withResolvers()

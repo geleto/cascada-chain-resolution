@@ -20,6 +20,123 @@ import assert from "node:assert/strict"
 import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
 
 describe("managed invocation", () => {
+    for (const managedClass of [false, true]) for (const initiallyPresent of [false, true])
+    for (const remove of [false, true]) for (const mutation of [false, true]) {
+        it(`selects captured method presence after pending entry: class=${managedClass}, present=${initiallyPresent}, remove=${remove}, mutation=${mutation}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "captured method selection" }
+            class Value { read(change) { if (change) this.value++; return 1 } }
+            if (managedClass) managedStateClass(Value)
+            const receiver = managedClass ? new Value() : {}
+            receiver.value = 0
+            if (initiallyPresent) receiver.read = () => 0
+            function replacement(change) { if (change) this.value++; return 2 }
+            const source = new Chain(receiver, ctx)
+            const pending = Promise.withResolvers()
+            const entry = runtime.enter(source, ["read"], ctx, true, entered => pending.promise.then(() =>
+                remove ? runtime.deletePath(entered, [], ctx) : assignPath(entered, [], replacement, ctx)))
+            const result = run(source, [], "read", [mutation], ctx, mutation ? { mutationScopeDepth: 0 } : {})
+            assert(result instanceof Promise)
+            pending.resolve()
+            await entry
+            const selected = await result
+            const callable = managedClass === remove
+            if (callable) assert.equal(selected, managedClass ? 1 : 2)
+            else {
+                assert.equal(selected.kind, managedClass ? "NotAFunction" : "MissingFunction")
+                if (mutation) {
+                    assert.equal(lookupPath(source, [], ctx), selected, "Failed selection poisons its scope")
+                    assert.equal(runtime.repairPath(source, [], ctx), undefined)
+                }
+            }
+            assert.equal(runtime.hasError(source, [], ctx), false)
+            assert.equal(lookupPath(source, ["value"], ctx), mutation && callable ? 1 : 0)
+            assert.equal(lookupPath(source, ["read"], ctx), remove ? undefined : replacement,
+                "Publication and recovery preserve the completed entry's method placement")
+            verifyRefCounts(ctx, source._state)
+        })
+    }
+
+    for (const pending of [false, true]) for (const reversed of [false, true])
+    for (const mutation of [false, true]) {
+        it(`assembles canonical receiver aliases and cycles: pending=${pending}, reversed=${reversed}, mutation=${mutation}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "canonical receiver edges" }
+            const input = { child: { k: 1 } }
+            input.child.parent = input
+            const source = new Chain(input, ctx)
+            const retained = new Chain(lookupPath(source, [], ctx), ctx)
+            const hold = pending ? deferred() : undefined
+            const entered = runtime.enter(source, ["child", "k"], ctx, true, () => hold?.promise)
+            const old = lookupPath(retained, [], ctx), current = lookupPath(source, [], ctx)
+            const receiver = new Chain({ a: reversed ? current : old, b: reversed ? old : current,
+                holder: { x: old }, same() {
+                    return this.a === this.b && this.holder.x === this.a && this.a.child.parent === this.a
+                }, change() {
+                    this.a.child.k = 2
+                    return this.same() && this.b.child.k === 2
+                },
+            }, ctx)
+            const result = run(receiver, [], mutation ? "change" : "same", [], ctx,
+                mutation ? { mutationScopeDepth: 0 } : {})
+            assert.equal(result instanceof Promise, pending)
+            hold?.resolve()
+            await entered
+            assert.equal(await result, true)
+            assert.equal(lookupPath(retained, ["child", "k"], ctx), 1)
+            assert.equal(lookupPath(source, ["child", "k"], ctx), 1)
+        })
+    }
+
+    it("allocates isolated Arrays from captured shape after member selection", () => {
+        const ctx = { execution: new Execution(), errorContext: "captured receiver shape" }
+        let selected = false, lengthReads = 0
+        const items = new Proxy([1, 2], { get(target, key, receiver) {
+            if (key === "length") {
+                assert.equal(selected, false, "Isolation must not reread captured source length")
+                lengthReads++
+            }
+            return Reflect.get(target, key, receiver)
+        } })
+        function Value() { this.items = items }
+        Value.prototype = new Proxy({ change() { this.items[0] = 3; return this.items.length } }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "change") selected = true
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        managedStateClass(Value)
+        const chain = new Chain(new Value(), ctx)
+        lengthReads = 0
+        assert.equal(run(chain, [], "change", [], ctx, { mutationScopeDepth: 0 }), 2)
+        assert.equal(lengthReads, 2, "Only enumeration and shape capture read source length")
+        assert.equal(lookupPath(chain, ["items", 0], ctx), 3)
+        assert.equal(items[0], 1)
+    })
+
+    it("collects required Errors from noncanonical receiver representations", async () => {
+        const ctx = { execution: new Execution(), errorContext: "noncanonical receiver inspection" }
+        const reflectionFailure = new Error("unreadable representation"), lateFailure = new Error("late receiver Error")
+        let fail = false, called = false
+        const original = new Proxy({ child: { k: 1 } }, { ownKeys(target) {
+            if (fail) throw reflectionFailure
+            return Reflect.ownKeys(target)
+        } })
+        const source = new Chain(original, ctx)
+        const retained = new Chain(lookupPath(source, [], ctx), ctx)
+        runtime.enter(source, ["child", "k"], ctx, true, () => undefined)
+        const late = deferred()
+        const receiver = new Chain({ a: lookupPath(source, [], ctx), b: lookupPath(retained, [], ctx),
+            late: late.promise, read() { called = true },
+        }, ctx)
+        fail = true
+        const result = run(receiver, [], "read", [], ctx, {})
+        assert.equal(result instanceof Promise, true)
+        late.resolve(lateFailure)
+        const failure = await result
+        assert.equal(failure.kind, runtime.ERROR_KIND.Multiple)
+        assert.deepEqual(new Set(failure.errors.map(error => error.cause)), new Set([reflectionFailure, lateFailure]))
+        assert.equal(called, false)
+    })
+
     for (const pending of [false, true]) {
         it(`retains result graph Errors when receiver validation fails, pending=${pending}`, async () => {
             const ctx = { execution: new runtime.Execution(), errorContext: {} }, hold = Promise.withResolvers()
@@ -478,7 +595,7 @@ describe("managed invocation", () => {
         expect(reported).to.be(failure)
     })
 
-    it("prepares the complete observed receiver under a lease", async () => {
+    it("captures the complete observed receiver before later writes", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Line {
             length() {
@@ -496,7 +613,6 @@ describe("managed invocation", () => {
         pending.resolve(1)
 
         expect(await result).to.be(3)
-        expect(line.start.y).to.be(2)
         expect(chain._state.value.start.y).to.be(5)
     })
 
@@ -1040,7 +1156,10 @@ describe("managed invocation", () => {
         const value = {
             child: { value: 1 },
             read(start) {
-                return start().then(() => this.child.value)
+                return start().then(() => this.child.value, error => {
+                    assert.equal(this.child.value, 1, "Rejected native work still sees its captured receiver")
+                    throw error
+                })
             },
         }
         const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
@@ -1053,12 +1172,10 @@ describe("managed invocation", () => {
             { repair: false },
         )
 
-        expect(metaOf(value, testContext).readLeaseCount).to.be(1)
         assignPath(chain, ["child", "value"], 2, testContext)
         completion.reject(failure)
 
         expect(errorCause(await result.catch(error => error))).to.be(failure)
-        expect(value.child.value).to.be(1)
         expect(chain._state.value.child.value).to.be(2)
         expect(metaOf(value, testContext).readLeaseCount).to.be(undefined)
         expect(metaOf(value.child, testContext).readLeaseCount).to.be(undefined)
@@ -1287,7 +1404,7 @@ describe("managed invocation", () => {
         expect(chain._state.value).to.be(mutationFailure)
     })
 
-    it("retains exact admitted identities returned by an observation", () => {
+    it("preserves logical identities and prototypes returned by an observation", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Point {
             constructor(x) {
@@ -1316,11 +1433,12 @@ describe("managed invocation", () => {
         )
 
         expect(result.self).to.be(result)
-        expect(result.point).to.be(holder.point)
+        const retained = new Chain(result, testContext)
+        assert.equal(run(new Chain([holder.point], testContext), [], "includes", [result.point], testContext, {}), true)
         expect(result.point instanceof Point).to.be(true)
         const chain = new Chain(holder, { ...testContext, errorContext: "test Chain initialization" })
         assignPath(chain, ["point", "x"], 2, testContext)
-        expect(result.point.x).to.be(1)
+        expect(readPath(retained, ["point", "x"], testContext)).to.be(1)
         expect(chain._state.value.point.x).to.be(2)
     })
 
@@ -1482,21 +1600,20 @@ describe("managed invocation", () => {
     })
 
     for (const projection of ["entry", "slice", "extended backing"]) {
-        it(`materializes observational Array receivers only when storage differs: ${projection}`, () => {
+        it(`preserves logical Array shape and identity in native observations: ${projection}`, () => {
             const ctx = { execution: new runtime.Execution(), errorContext: {} }
             const items = [1, 2], array = new runtime.Chain(items, ctx)
             if (projection === "entry") runtime.enter(array, [5], ctx, true, () => undefined)
             else runtime.run(array, [], projection === "slice" ? "slice" : "concat",
                 projection === "slice" ? [] : [[3]], ctx, {})
-            let observed
             const receiver = new runtime.Chain({ items, inspect() {
-                observed = this.items
-                return this.items.length
+                return this.items
             } }, ctx)
 
-            assert.equal(runtime.run(receiver, [], "inspect", [], ctx, {}), 2)
-            assert.equal(observed === items, projection !== "extended backing")
-            assert.deepEqual(observed, [1, 2])
+            const observed = new runtime.Chain(runtime.run(receiver, [], "inspect", [], ctx, {}), ctx)
+            assert.deepEqual(runtime.export(observed, [], ctx), [1, 2])
+            assert.equal(runtime.run(new runtime.Chain([items], ctx), [], "includes",
+                [runtime.lookupPath(observed, [], ctx)], ctx, {}), true)
         })
     }
 
@@ -1734,7 +1851,6 @@ describe("managed invocation", () => {
         await flushMicrotasks()
 
         expect(reflected).to.be(false)
-        expect(metaOf(receiver, testContext).readLeaseCount).to.be(1)
     })
 
     it("abandons late receiver work after fatal argument preparation", async () => {
@@ -1782,7 +1898,6 @@ describe("managed invocation", () => {
         expect(reflected).to.be(false)
         expect(metaOf(receiver, testContext).placementVersions.child.value)
             .to.be(receiverValue.promise)
-        expect(metaOf(receiver, testContext).readLeaseCount).to.be(1)
         expect(metaOf(late, testContext)).to.be(undefined)
     })
 })

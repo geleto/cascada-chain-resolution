@@ -1,19 +1,20 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { modelPublications } from "./fixtures/publication-model.js"
 
-// Generated programs compare every observation with an independent model and
-// run the consistency verifiers between turns. Each fixture runs in a child
+// Semantic models and delivery differentials have the distinct scopes described
+// in test/README.md. Consistency verifiers check maintained state. Each fixture runs in a child
 // process with bounded time and heap: a regression can livelock the microtask
 // queue, which also stops Mocha's own timeout. test/README.md describes how to
 // scale and extend them. Coverage assertions keep the default runs from
 // silently losing a dimension when a generator changes.
-function runFixture(name, timeout) {
+function runFixture(name, timeout, args = []) {
     const env = { ...process.env }
     delete env.CASCADA_SEQUENCE_START
     delete env.CASCADA_CONFLICT_PART
     const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=256",
-        fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))],
+        fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), ...args],
     { encoding: "utf8", timeout, env })
     assert.equal(result.error, undefined, result.error?.message)
     assert.equal(result.status, 0, result.stderr)
@@ -25,6 +26,33 @@ const product = (...lists) => lists.reduce((combinations, list) =>
 const harnessModes = ["harness:observed", "harness:verified", "harness:bare"]
 
 describe("generated operation sequences", () => {
+    it("models publication, blocked poison and recovery independently", () => {
+        const model = modelPublications([
+            { kind: "assign", path: ["a", "x", "q"], value: { type: "num", n: 2 }, scope: 3 },
+            { kind: "assign", path: ["a", "x", "q"], value: { type: "num", n: 3 }, scope: 2 },
+            { kind: "repair", path: ["a", "x"] },
+            { kind: "delete", path: ["a", "missing"], scope: 0 },
+            { kind: "enter", path: ["b"], body: [] },
+            { kind: "array", path: ["b"], method: "fill", args: [1, 1, 1], scope: 0 },
+            { kind: "array", path: ["b"], method: "fill", args: [1, 0, 1], scope: 1 },
+        ], [[]])
+        assert.deepEqual([...model.comparisons.values()], [false, true, false, true, true, true, false])
+    })
+
+    it("replays command pairs against ready publication outcomes", function () {
+        this.timeout(60000)
+        const { pairs, runs, modeled, modeledFailures, errorKinds, returnedIdentities, coverage } = runFixture("publication-pairs.js", 55000, ["sample"])
+        assert.equal(pairs, 210)
+        assert.equal(runs, pairs * 3)
+        assert(modeled > 0, "The sample must check the independent failure-aware identity model")
+        assert(modeledFailures > 0, "The sample must check programs with failures")
+        assert.deepEqual(errorKinds, ["NullLookup", "PropertyValidation", "ScalarLookup"])
+        assert.deepEqual(returnedIdentities, ["child", "self"])
+        for (const key of product(["runtime", "imported", "cycle", "entry"],
+            ["sync", "native", "ordered"], ["enter"], ["assign", "delete", "repair"]))
+            assert(coverage.includes(key), `missing ${key}`)
+    })
+
     it("preserves shared input across fresh and already prepared reception", function () {
         this.timeout(60000)
         const { programs, runs, jointPrograms, seededPrograms, lifetimePrograms, lifetimeRuns, jointCoverage, coverage } =

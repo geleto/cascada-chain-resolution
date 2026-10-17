@@ -8,12 +8,76 @@ import { OperationOwner } from "../src/operation-lifecycle.js"
 import { ArrayView } from "../src/array-view.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { createRandom, randomInteger } from "./native-equivalence-support.js"
+import { captureIdentity, compareIdentities } from "../src/captured-identity.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const sync = value => ({ then(deliver) { return deliver(value) } })
 
 describe("entry structural publication", () => {
+    it("keeps the enclosing growth reservation after a nested empty entry", async () => {
+        const ctx = context(), hold = Promise.withResolvers(), chain = new r.Chain([1], ctx)
+        let outer
+        const entry = r.enter(chain, [4], ctx, true, inside => {
+            outer = inside
+            r.enter(inside, [], ctx, true, () => undefined)
+            return hold.promise
+        })
+        let completed = false
+        const length = r.lookupPath(chain, ["length"], ctx)
+        Promise.resolve(length).then(() => { completed = true })
+        await new Promise(setImmediate)
+        assert.equal(completed, false, "The enclosing entry can still grow the Array")
+        r.assignPath(outer, [], 7, ctx)
+        assert.equal(await length, 5)
+        r.deletePath(outer, [], ctx)
+        hold.resolve()
+        await entry
+        assert.deepEqual(await r.export(chain, [], ctx), [1, , , , ,])
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    for (const deleting of [false, true])
+    it(`preserves recovery when nested write-through fails: deleting=${deleting}`, async () => {
+        const ctx = context(), cause = new Error("refused write"), gates = [], entries = []
+        let armed = false
+        const make = () => new Proxy({ k: 1 }, {
+            defineProperty(target, key, descriptor) {
+                if (armed) throw cause
+                return Reflect.defineProperty(target, key, descriptor)
+            },
+            deleteProperty(target, key) {
+                if (armed) throw cause
+                return Reflect.deleteProperty(target, key)
+            },
+        })
+        const source = new r.Chain({ make() { this.item = make() } }, ctx)
+        r.run(source, [], "make", [], ctx, { mutationScopeDepth: 0 })
+        let inner = source
+        for (let index = 0; index < 64; index++) {
+            const gate = Promise.withResolvers()
+            gates.push(gate)
+            entries.push(r.enter(inner, index ? [] : ["item", "k"], ctx, true, entered => {
+                inner = entered
+                return gate.promise
+            }))
+        }
+        armed = true
+        const failure = deleting ? r.deletePath(inner, [], ctx) : r.assignPath(inner, [], 2, ctx)
+        assert(r.isPoisonError(failure))
+        assert.equal(failure.cause, cause)
+        for (let index = gates.length - 1; index >= 0; index--) {
+            gates[index].resolve()
+            await entries[index]
+        }
+        assert.equal(await r.lookupPath(source, ["item", "k"], ctx), failure)
+        assert.equal(ctx.execution.fatalError, null)
+        armed = false
+        await r.repairPath(source, ["item", "k"], ctx)
+        assert.equal(r.lookupPath(source, ["item", "k"], ctx), 1)
+        verifyRefCounts(ctx, source._state)
+    })
+
     for (const siblingBefore of [false, true]) {
         it(`keeps a queued mutation's predecessor creation before its sibling, sibling first=${siblingBefore}`, async () => {
             const ctx = context(), hold = Promise.withResolvers()
@@ -819,12 +883,18 @@ describe("entry structural publication", () => {
                 const root = { branch: source, sibling: 4 }
                 const chain = imported ? new r.ContextChain(root, ctx) : new r.Chain(root, ctx)
                 if (indexed) assert.equal(r.hasError(chain, [], ctx), false)
+                const before = [root, source, storage[key]].map(value => captureIdentity(value, ctx))
                 active = true
                 let entry
                 try {
                     entry = r.enter(chain, ["branch", key], ctx, true, inside => {
                         active = false
                         calls++
+                        const anchor = readLanguageProperty(inside._state, "value", ctx)
+                        const expected = Object.hasOwn(anchor, "branch") ? before[0]
+                            : Object.hasOwn(anchor, key) ? before[1] : before[2]
+                        assert.equal(compareIdentities(captureIdentity(anchor, ctx), expected, new OperationOwner(ctx)), true,
+                            "Optional discovery must keep the private anchor independent of entry completion")
                         if (mutate) r.assignPath(inside, ["n"], 2, ctx)
                         return hold.promise
                     })

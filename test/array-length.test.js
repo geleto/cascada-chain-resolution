@@ -27,6 +27,22 @@ function countLinkReads(state) {
 }
 
 describe("captured Array length knowledge", () => {
+    it("unregisters delivered length questions while their owner remains open", async () => {
+        const work = new OperationOwner({ execution: new Execution(), errorContext: "delivered length cleanup" })
+        for (let index = 0; index < 100; index++) {
+            const state = new LengthState(0), source = state.add(6)
+            const captured = state.capture(work)
+            const pending = captured.read()
+            assert.equal(work.releases.size, 1)
+            source.complete(index % 2 === 0)
+            assert.equal(work.open, true)
+            assert.equal(work.releases, undefined, "Delivered questions cannot accumulate until owner closure")
+            assert.equal(state.retentions, 0)
+            assert.equal(await pending, index % 2 === 0 ? 6 : 0)
+        }
+        work.close()
+    })
+
     for (const created of [false, true]) {
         it(`keeps possible growth logical and preserves earlier questions, created=${created}`, async () => {
             const context = { execution: new Execution(), errorContext: "possible growth" }, storage = [1, 2]
@@ -280,12 +296,12 @@ describe("captured Array length knowledge", () => {
         })
     }
 
-    it("captures many reads without copying or subscribing length histories", () => {
+    it("captures many reads with one notification per source and no history copies", () => {
         const count = 256, state = new LengthState(0)
         const sources = Array.from({ length: count }, (_, index) => state.add(index + 1))
         const reads = countLinkReads(state)
         const captures = Array.from({ length: count }, () => state.capture())
-        assert(sources.every(source => lengthNotificationCount(source) === 0))
+        assert(sources.every(source => lengthNotificationCount(source) === 1))
         assert(reads() < count * 16, `Captures used ${reads()} link reads`)
         state.grow(count + 1) // Earlier markers must exclude later growth.
         for (const source of sources) source.complete(false)
@@ -294,14 +310,14 @@ describe("captured Array length knowledge", () => {
         assert.equal(state.head, undefined)
     })
 
-    it("releases passive captures independently from live length questions", async () => {
+    it("releases captures independently from other length questions", async () => {
         const state = new LengthState(0), source = state.add(6)
-        const owner = new OperationOwner({ execution: new Execution(), errorContext: "passive capture lifetime" })
+        const owner = new OperationOwner({ execution: new Execution(), errorContext: "capture lifetime" })
         const discarded = state.capture(owner), retained = state.capture()
         const pending = state.resolve(owner, value => value)
         owner.close()
         discarded.release()
-        assert.equal(lengthNotificationCount(source), 0)
+        assert.equal(lengthNotificationCount(source), 1, "The retained capture still needs its answer")
         source.complete(true)
         assert.equal(retained.read(), 6)
         assert.equal(state.head, undefined)
@@ -309,7 +325,7 @@ describe("captured Array length knowledge", () => {
         assert(pending instanceof Promise)
     })
 
-    it("matches an independent model for passive captures across forks and closure", async () => {
+    it("matches an independent model for captures across forks and closure", async () => {
         const random = createRandom(0x9fc319)
         const pick = n => randomInteger(random, n)
         const bounds = facts => [Math.max(0, ...facts.map(fact => fact.value ?? 0)),

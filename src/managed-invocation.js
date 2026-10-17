@@ -1,6 +1,5 @@
 import { createMutationOutcome } from "./mutations.js"
-import { ArrayView } from "./array-view.js"
-import { walkManagedProperties } from "./managed-traversal.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
 import * as internalSteps from "./internal-step.js"
 import * as errorUtils from "./error.js"
 import * as imports from "./import.js"
@@ -8,24 +7,20 @@ import * as invocation from "./invocation.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
-import { externalCapabilityEscapeError } from "./external-operation.js"
-import { createEmptyContainer, defineCopyProperty, captureContainerStructure, orderRecordKeys } from "./placement-structure.js"
 import * as operationLifecycle from "./operation-lifecycle.js"
 import * as propertyVersions from "./property-versions.js"
 import { initializePlacements } from "./parent-placements.js"
-import { captureIdentity } from "./captured-identity.js"
 import { readCallableThen } from "./thenable-subscription.js"
 
 function selectManagedMethodDescription(invocationWork) {
-    const { mutation, receiver } = invocationWork
-    const receiverType = languageValues.typeOf(receiver, invocationWork.operationContext)
+    const { mutation } = invocationWork
+    const receiverType = languageValues.typeOf(invocationWork.receiver, invocationWork.operationContext)
     // Preparation resolves receiver contents but never changes its admitted type.
     const selectMethod = receiverType === languageValues.TYPE.Record
         ? selectManagedRecordMethod
         : selectManagedClassMethod
     return {
-        receiverToLease: receiver,
-        leaseInputsThroughResult: !mutation,
+        receiverToLease: invocationWork.receiver,
         prepareArguments: () =>
             prepareManagedReceiverAndArguments(invocationWork),
         invoke(prepared) {
@@ -33,18 +28,15 @@ function selectManagedMethodDescription(invocationWork) {
                 // Selection follows complete preparation and precedes isolation.
                 // A rejected selection already carries its required mutation effect.
                 const callable = errorUtils.catchExternalThrow(
-                    () => selectMethod(prepared.capture.receiver, invocationWork),
+                    () => selectMethod(prepared.capture.identities.get(prepared.capture.roots[0].identity), invocationWork),
                     invocationWork.operationContext,
                     errorUtils.ERROR_KIND.LookupReflectionFailed,
                 )
                 if (typeof callable !== "function") return callable
-                const workingReceiver = prepareMethodReceiver(
-                    prepared.capture,
-                    invocationWork,
-                )
-                if (errorUtils.isPoisonError(workingReceiver)) {
-                    return workingReceiver
-                }
+                const workingReceiver = assembleCapturedGraph(prepared.capture, (copy, node) => {
+                    languageValues.admitReadyValue(copy, invocationWork.operationContext, node.type, node.prototype)
+                    if (!mutation) metadata.requireMeta(copy, invocationWork.operationContext).generation = node.identity
+                })[0]
                 return mutation
                     ? invokeMutation(
                         callable,
@@ -60,133 +52,75 @@ function selectManagedMethodDescription(invocationWork) {
                         invocationWork.operationContext,
                         invocationWork,
                     )
-            } finally { prepared.capture.release() }
+            } finally { prepared.release() }
         },
     }
 }
 
-function prepareManagedReceiverAndArguments(invocationWork) {
-    invocationWork.prepareArgumentFrontier()
-    const capture = { receiver: invocationWork.receiver, nodes: new Map(), identities: new Map(), errors: new Set(), release }
-    const visited = new WeakSet()
-    invocationWork.discardPreparedOutput = discardOutput
+function prepareManagedReceiverAndArguments(work) {
+    const { operationContext } = work
+    work.prepareArgumentFrontier()
+    const errors = new Set()
+    const capture = new ManagedCapture(work, errorUtils.ERROR_KIND.InvalidManagedReceiver, collect)
+    const argumentsCapture = new ManagedCapture(work, errorUtils.ERROR_KIND.ExportReflectionFailed, collect)
+    work.discardPreparedOutput = discardOutput
     let unregister
-    const receiverReadiness = internalSteps.continueGraphTransition(visit(capture.receiver),
-        invocationWork.operationContext, () => capture.errors.size
-            ? errorUtils.combineErrors(capture.errors, "Managed receiver contains multiple Errors")
-            : undefined, undefined, invocationWork)
-    const readiness = internalSteps.prepareInputs(
-        [receiverReadiness, invocationWork.exportArguments()],
-        invocationWork.operationContext,
-        ([, args]) => ({ capture, args }),
-        invocationWork,
-    )
-    if (languageValues.isPending(readiness, invocationWork.operationContext))
-        unregister = operationLifecycle.releaseOnClose(invocationWork, release)
-    return internalSteps.continueGraphTransition(readiness, invocationWork.operationContext, prepared => {
-        if (errorUtils.isPoisonError(prepared)) release()
-        return prepared
-    }, undefined, invocationWork)
+    const receiverReady = capture.capture([work.receiver])
+    work.releaseReceiverLeases()
+    const argumentsReady = argumentsCapture.capture(work.args)
+    work.releaseArgumentLeases()
+    // Finish both required Error frontiers before either identity partition.
+    // Their separate capture domains preserve the receiver/argument boundary.
+    const readiness = internalSteps.collectInputs([receiverReady, argumentsReady], operationContext, () => {
+        if (errors.size) {
+            const failure = errorUtils.combineErrors(errors, "Operation received multiple Errors")
+            release()
+            return failure
+        }
+        return internalSteps.collectInputs([capture.resolve(), argumentsCapture.resolve()], operationContext, () => {
+            const args = assembleCapturedGraph(argumentsCapture)
+            argumentsCapture.discard()
+            return { capture, args, release }
+        }, work)
+    }, work)
+    if (languageValues.isPending(readiness, operationContext))
+        unregister = operationLifecycle.releaseOnClose(work, release)
+    return readiness
 
-    function visit(value) {
-        if (!invocationWork.open) return
-        const { operationContext } = invocationWork
-        if (operationContext.execution._externalIdentities.has(value)) {
-            collect(externalCapabilityEscapeError(operationContext))
-            return
-        }
-        if (errorUtils.isPoisonError(value)) { collect(value); return }
-        if (!languageValues.isTraversable(value, operationContext) || visited.has(value)) return
-        visited.add(value)
-        // Every storage representation is inspected, but equal generations
-        // share one logical capture and acquire logical parent links directly.
-        const identity = capture.nodes && captureIdentity(value, operationContext)
-        const existing = capture.identities?.get(identity)
-        const node = capture.nodes && (existing ?? { entries: new Map(), parents: new Set(), identity, source: value })
-        if (node) {
-            capture.identities.set(identity, node)
-            capture.nodes.set(value, node)
-            if (existing) node.duplicates = true
-        }
-        invocationWork.leaseReceiver(value)
-        try {
-            return walkManagedProperties(value, invocationWork, inspect,
-                (child, key, present = true) => {
-                    if (!present) { if (!existing) node?.entries.delete(key); return }
-                    if (capture.nodes && !existing) node.entries.set(key, child)
-                    const readiness = visit(child)
-                    capture.nodes?.get(child)?.parents.add(node)
-                    return readiness
-                }, undefined, keys => {
-                    // Reserve order before pending properties deliver, including holes
-                    // or deletions whose final presence is not known yet.
-                    if (!capture.nodes || existing) return
-                    for (const key of keys) node.entries.set(key, undefined)
-                    node.shape = inspect(() => captureContainerStructure(value, keys, operationContext))
-                    return () => {
-                        if (capture.nodes) {
-                            if (node.shape?.length?.read) node.shape.length = node.shape.length.read()
-                            node.keys = orderRecordKeys([...node.entries.keys()], node.shape?.order)
-                        }
-                    }
-                })
-        } finally { value = undefined }
+    function collect(failure) {
+        errors.add(failure)
+        work.preparationFailed()
     }
 
-    function inspect(step) {
-        return errorUtils.catchExternalThrow(step, invocationWork.operationContext,
-            errorUtils.ERROR_KIND.InvalidManagedReceiver, failure => {
-                languageValues.admitReadyValue(failure, invocationWork.operationContext)
-                collect(failure)
-            })
+    function discardOutput() {
+        capture.discard()
+        argumentsCapture.discard()
     }
 
     function release() {
         unregister?.()
         unregister = undefined
         discardOutput()
-        capture.errors.clear()
-        invocationWork.discardPreparedOutput = undefined
-    }
-
-    function collect(failure) {
-        capture.errors.add(failure)
-        invocationWork.preparationFailed()
-    }
-
-    function discardOutput() {
-        for (const node of capture.identities?.values() ?? []) {
-            node.shape?.length?.release?.()
-            node.entries.clear()
-            node.parents.clear()
-            node.shape = node.keys = node.copy = node.source = undefined
-        }
-        capture.nodes?.clear()
-        capture.identities?.clear()
-        capture.nodes = capture.identities = undefined
-        capture.receiver = undefined
+        errors.clear()
+        work.discardPreparedOutput = undefined
     }
 }
 
 // Common dispatch rejects `constructor` before either managed policy runs.
-function selectManagedRecordMethod(receiver, invocationWork) {
-    const { value: callable, present } = languageProperties.readLanguagePlacement(
-        receiver,
-        invocationWork.method,
-        invocationWork.operationContext,
-    )
+function selectManagedRecordMethod({ entries }, invocationWork) {
+    const callable = entries.get(invocationWork.method)
     return typeof callable === "function"
         ? callable
         : invocation.methodNotCallableError(
             invocationWork.method,
             invocationWork.operationContext,
-            present,
+            entries.has(invocationWork.method),
         )
 }
 
-function selectManagedClassMethod(receiver, invocationWork) {
+function selectManagedClassMethod({ prototype, entries }, invocationWork) {
     const { method, operationContext } = invocationWork
-    if (languageProperties.hasLanguageProperty(receiver, method, operationContext)) {
+    if (entries.has(method)) {
         return errorUtils.validationError(
             `Cannot call ${method} because an own data property ` +
             "with that name hides the method",
@@ -194,10 +128,6 @@ function selectManagedClassMethod(receiver, invocationWork) {
             errorUtils.ERROR_KIND.NotAFunction,
         )
     }
-    let prototype = metadata.requireMeta(
-        receiver,
-        operationContext,
-    ).admittedPrototype
     while (
         prototype !== null &&
         !metadata.isPlainObjectPrototype(prototype, action =>
@@ -228,71 +158,6 @@ function selectManagedClassMethod(receiver, invocationWork) {
         )
     }
     return invocation.methodNotCallableError(method, operationContext, false)
-}
-
-// Observation materialization path-copies only required representation changes.
-// Mutation isolation copies complete protected subgraphs before arbitrary writes.
-function prepareMethodReceiver(capture, invocationWork) {
-    const { operationContext, mutation } = invocationWork
-    return errorUtils.catchExternalThrow(() => {
-        if (mutation) invocationWork.releaseReceiverLeases()
-        else {
-            const queue = []
-            const requireCopy = node => {
-                if (node.copyRequired) return
-                node.copyRequired = true
-                queue.push(node)
-            }
-            // Logical contents are fixed by capture; physical synchronization may
-            // finish during preparation. Check representation only after settlement.
-            for (const [source, node] of capture.nodes)
-                if (requiresObservationCopy(source, node, operationContext)) requireCopy(node)
-            for (const node of capture.identities.values())
-                if (node.duplicates) for (const parent of node.parents) requireCopy(parent)
-            for (let index = 0; index < queue.length; index++)
-                for (const parent of queue[index].parents) requireCopy(parent)
-        }
-        return copyCompleteGraph(capture.receiver, capture.nodes, operationContext, mutation)
-    }, operationContext, errorUtils.ERROR_KIND.InvalidManagedReceiver, failure => {
-        languageValues.admitReadyValue(failure, operationContext)
-        return failure
-    })
-}
-
-function requiresObservationCopy(source, node, operationContext) {
-    if (ArrayView.requiresMaterialization(source, operationContext)) return true
-    if (node.shape?.order) {
-        const physical = errorUtils.runExternalAction(operationContext, () => Object.keys(source))
-            .filter(key => node.entries.has(key))
-        if (physical.length !== node.keys.length || physical.some((key, index) => key !== node.keys[index])) return true
-    }
-    // Include absent overlays: they may still hide a physical placement.
-    const versions = metadata.requireMeta(source, operationContext).placementVersions
-    for (const key of Object.keys(versions ?? {})) {
-        const descriptor = languageProperties.getLanguagePlacementDescriptor(source, key, operationContext)
-        if (node.entries.has(key)
-            ? !descriptor || !Object.is(descriptor.value, node.entries.get(key))
-            : descriptor) return true
-    }
-    return false
-}
-
-// One copier consumes the captured graph. Observation reuses unchanged identities;
-// mutation copies every node. Shells precede edges to preserve aliases and cycles.
-function copyCompleteGraph(source, nodes, operationContext, mutation) {
-    const node = nodes.get(source)
-    if (!node) return source
-    source = node.source
-    if (!mutation && !node.copyRequired) return source
-    if (node.copy) return node.copy
-    const copy = node.copy = createEmptyContainer(source, operationContext)
-    const { type, admittedPrototype } = metadata.requireMeta(source, operationContext)
-    languageValues.admitReadyValue(copy, operationContext, type, admittedPrototype)
-    if (!mutation) metadata.requireMeta(copy, operationContext).generation = node.identity
-    if (node.shape?.length !== undefined) copy.length = node.shape.length
-    for (const key of node.keys)
-        defineCopyProperty(copy, key, copyCompleteGraph(node.entries.get(key), nodes, operationContext, mutation))
-    return copy
 }
 
 function invokeObservation(callable, receiver, args, operationContext, work) {

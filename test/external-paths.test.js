@@ -13,6 +13,41 @@ function setup(native, parent = false) {
 }
 
 describe("public external paths", () => {
+    for (const action of ["call", "assign", "delete"]) {
+        it(`separates ancestors when external selection writes back failure: ${action}`, () => {
+            const ctx = { execution: new r.Execution(), errorContext: {} }
+            const cause = new Error("external prefix descriptor")
+            let fail = false, calls = 0
+            const api = r.externalState({ value: 1, write() { calls++; this.value++ } })
+            const group = new Proxy({ api }, { getOwnPropertyDescriptor(target, key) {
+                if (fail && key === "api") throw cause
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            } })
+            const chain = new r.ContextChain({ box: { group, sibling: { k: 1 } } }, ctx, { box: { group: { api: {} } } })
+            const paths = [[], ["box"], ["box", "sibling"]]
+            const before = paths.map(path => new r.Chain(r.lookupPath(chain, path, ctx), ctx))
+            fail = true
+            const path = ["box", "group", "api"]
+            const result = action === "call" ? r.run(chain, path, "write", [], ctx, { mutationScopeDepth: 3 })
+                : action === "assign" ? r.assignPath(chain, [...path, "value"], 2, ctx)
+                    : r.deletePath(chain, [...path, "value"], ctx)
+            fail = false
+            const failure = r.lookupPath(chain, ["box", "group"], ctx)
+            assert.equal(failure, result)
+            assert.equal(failure.kind, r.ERROR_KIND.PropertyMutationFailed)
+            assert.equal(failure.cause, cause)
+            assert.deepEqual(paths.map((path, index) => r.run(
+                new r.Chain([r.lookupPath(chain, path, ctx)], ctx), [], "includes",
+                [r.lookupPath(before[index], [], ctx)], ctx, {})), [false, false, true])
+            assert.equal(api.value, 1)
+            assert.equal(calls, 0)
+            r.repairPath(chain, ["box", "group"], ctx)
+            assert.equal(r.lookupPath(chain, [...path, "value"], ctx), 1)
+            assert.equal(r.getErrors(chain, [], ctx), null)
+            verifyRefCounts(ctx, chain._state, ...before.map(snapshot => snapshot._state))
+        })
+    }
+
     for (const deleting of [false, true]) for (const entered of [false, true]) {
         it(`orders a fixed-binding write at its containing external scope, delete=${deleting}, entered=${entered}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }

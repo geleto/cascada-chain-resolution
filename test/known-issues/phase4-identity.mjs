@@ -1,6 +1,4 @@
-// Strict conformance witnesses for the deferred N1/N2 findings. Run explicitly
-// with Mocha; they retain strict expectations until Phases 3/4 integrate publication identity.
-// Keep ready/pending controls and never assert today's incorrect result.
+// Strict N2 validation-copy conformance; fresh-identity fallback remains deferred.
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { OrderedThenable, ready } from "../ordered-thenable.js"
@@ -10,56 +8,6 @@ const context = () => ({ execution: new r.Execution(), errorContext: "deferred i
 const turn = () => new Promise(setImmediate)
 
 describe("Phase 4 identity conformance", () => {
-    for (const timing of ["ready", "synchronous", "native", "ordered"])
-    for (const method of ["join", "toString"])
-    for (const command of ["none", "empty entry", "effective write"]) {
-        it(`N1 preserves cyclic conversion: ${timing}, ${method}, ${command}`, async () => {
-            const ctx = context(), initial = ["x"]
-            initial.push(initial)
-            const pending = timing === "native" ? Promise.withResolvers()
-                : timing === "ordered" ? new OrderedThenable() : undefined
-            const input = timing === "synchronous" ? ready(initial) : pending?.promise ?? pending ?? initial
-            const source = new r.Chain(input, ctx)
-            const entry = command === "none" ? undefined : r.enter(source, [0], ctx, true, () => undefined)
-            if (command === "effective write") r.assignPath(source, [0], "y", ctx)
-            const result = r.run(source, [], method, [], ctx, {})
-            pending?.resolve(initial)
-            await entry
-            // A real write separates the outer Array from the preserved cycle;
-            // protection alone must not add another traversal of that cycle.
-            assert.equal(await result, command === "effective write" ? "y,x," : "x,")
-        })
-    }
-
-    for (const timing of ["ready", "synchronous", "native", "ordered"])
-    for (const consumer of ["search", "export"]) {
-        it(`N1 preserves identity after empty entry: ${timing}, ${consumer}`, async () => {
-            const ctx = context(), initial = [{ k: 1 }]
-            const pending = timing === "native" ? Promise.withResolvers()
-                : timing === "ordered" ? new OrderedThenable() : undefined
-            const input = timing === "synchronous" ? ready(initial) : pending?.promise ?? pending ?? initial
-            const source = new r.Chain(input, ctx)
-            const retained = new r.Chain(r.run(source, [], "slice", [], ctx, {}), ctx)
-            const entry = r.enter(source, [0, "k"], ctx, true, () => undefined)
-            let result
-            if (consumer === "search") {
-                result = Promise.all(["includes", "indexOf", "lastIndexOf"].map(method =>
-                    r.run(source, [], method, [r.lookupPath(retained, [0], ctx)], ctx, {})))
-            } else {
-                const both = new r.Chain({ a: r.lookupPath(source, [0], ctx), b: r.lookupPath(retained, [0], ctx) }, ctx)
-                result = r.export(both, [], ctx)
-            }
-            pending?.resolve(initial)
-            await entry
-            const output = await result
-            if (consumer === "search") assert.deepEqual(output, [true, 0, 0])
-            else {
-                const node = { k: 1 }
-                assertGraph(output, { a: node, b: node })
-            }
-        })
-    }
-
     for (const boundary of ["import", "method result", "host call"])
     for (const ordered of [false, true]) for (const early of [false, true])
     for (const consumer of ["search", "export", "receiver", "arguments"]) {

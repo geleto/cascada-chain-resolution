@@ -176,42 +176,31 @@ class LengthState {
     }
 
     resolve(work, onAnswer, index) {
-        const answer = this.answer(index)
-        if (answer !== undefined) return onAnswer(answer)
-        const { promise, resolve } = Promise.withResolvers()
-        let unregister
-        const node = this.append({ question: true, index, deliver(answer) {
-            unregister?.()
-            resolve(answer)
-        } })
-        unregister = releaseOnClose(work, () => node.state?.releaseQuestion(node))
-        return continueGraphTransition(promise, work.operationContext, onAnswer, undefined, work)
+        const captured = this.capture(work, index)
+        return continueGraphTransition(captured?.read ? captured.read() : captured,
+            work.operationContext, onAnswer, undefined, work)
     }
 
-    // A read retains one position, not an independently mutable sequence.
-    // Passive markers need no active notifications; complete traversal reads their
-    // answer after its captured placement transitions have finished.
-    capture(owner) {
-        if (this.minimum === this.maximum) return this.minimum
-        const node = this.append({ question: true })
+    // Shape has its own completion: deletion can remove a pending placement
+    // without deciding whether its preceding entry grew the Array. Capture one
+    // ordered question; later contributions cannot change its answer.
+    capture(owner, index) {
+        let answer = this.answer(index)
+        if (answer !== undefined) return answer
+        const { promise, resolve } = Promise.withResolvers()
         let unregister
+        const node = this.append({ question: true, index, deliver(value) {
+            answer = value
+            release()
+            resolve(value)
+        } })
         function release() {
             unregister?.()
             unregister = undefined
             node.state?.releaseQuestion(node)
         }
         if (owner) unregister = releaseOnClose(owner, release)
-        return {
-            read() {
-                node.state?.refresh()
-                if (node.minimum !== node.maximum)
-                    throw new Error("Complete placement traversal left Array shape unresolved")
-                const length = node.minimum
-                release()
-                return length
-            },
-            release,
-        }
+        return { read: () => answer ?? promise, release }
     }
 
     fork() {

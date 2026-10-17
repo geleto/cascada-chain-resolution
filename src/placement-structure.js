@@ -28,6 +28,11 @@ function recordOrder(owner, operationContext) {
 // One reserved placement can publish several structural effects before its
 // final value. Copies retain its token/outcome; later writers get new tokens.
 function beginPlacementStructure(owner, key, placement, operationContext) {
+    // Entered holders reserve the same semantic placement. Borrow preparation;
+    // only the original reservation owns completion. Ordinary holder writes
+    // still record their captured insertion position below.
+    const enclosing = metadata.metaOf(owner, operationContext)?.entryGate?.structure
+    if (enclosing) return { prepare: enclosing.prepare }
     const array = isLogicalArray(owner, operationContext)
     const order = array ? undefined : recordOrder(owner, operationContext)
     // -1 keeps physical relative order; Infinity denotes absence. Nonnegative
@@ -37,17 +42,14 @@ function beginPlacementStructure(owner, key, placement, operationContext) {
     // when those siblings finish first. No-op/replacement keeps the old position.
     const creationPosition = order ? order.clock.next++ : undefined
     const completeGrowth = array ? ArrayView.beginIndexTransition(owner, key, operationContext) : undefined
-    const enclosing = metadata.metaOf(owner, operationContext)?.entryGate?.structure
     if (order) order.positions.set(key, token)
     return {
         prepare(placement) {
             const present = placement.present !== false
-            const commitEnclosing = enclosing?.prepare(placement)
             if (token) placement.position = present ? placement.position < Infinity ? placement.position : creationPosition : Infinity
             return () => {
                 if (token) token.position = placement.position
                 if (present) completeGrowth?.(true)
-                commitEnclosing?.()
             }
         },
         complete() {
@@ -121,19 +123,7 @@ function captureContainerStructure(owner, keys, operationContext) {
         : { order: captureRecordOrder(owner, keys, operationContext) }
 }
 
-function finishContainerCopy(copy, shape) {
-    if (shape.length !== undefined) {
-        const length = shape.length
-        copy.length = typeof length === "number" ? length : length.read()
-    } else if (shape.order) {
-        const keys = orderRecordKeys(Object.keys(copy), shape.order)
-        const properties = keys.map(key => Object.getOwnPropertyDescriptor(copy, key))
-        for (const key of keys) delete copy[key]
-        for (let index = 0; index < keys.length; index++) Object.defineProperty(copy, keys[index], properties[index])
-    }
-}
-
 export { beginPlacementStructure, preparePlacementStructure,
     createEmptyContainer, defineCopyProperty,
-    captureContainerStructure, finishContainerCopy,
+    captureContainerStructure,
     prepareContainerStructureCopy, orderRecordKeys }

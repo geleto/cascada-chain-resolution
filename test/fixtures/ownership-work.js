@@ -26,7 +26,7 @@ globalThis.CountedOwners = class extends Set {
     }
 }
 const replacements = {
-    "captured-identity.js": [["meta.generation = undefined", "identities"]],
+    "captured-identity.js": [["capture(value) {", "identities"]],
     "placement-structure.js": [
         ["function defineCopyProperty(copy, key, value) {", "copies"],
     ],
@@ -223,9 +223,10 @@ for (const size of [8, 64]) for (const iterations of [10, 40]) {
         r.assignPath(holder, [], null, context)
     }
     assert.equal(inspections, 0)
-    // Each root assignment also creates and closes one operation-private holder.
-    assert.equal(counts.activations, (size + 2) * iterations)
-    assert.equal(counts.retirements, (size + 2) * iterations)
+    // Whole-root replacement needs no private holder: only the cached region
+    // activates and retires, stopping at its independently retained leaf.
+    assert.equal(counts.activations, size * iterations)
+    assert.equal(counts.retirements, size * iterations)
     assert(counts.proofs <= (2 * size + 8) * iterations, JSON.stringify({ size, iterations, ...counts }))
     assert.equal(metaOf(leaf, context).relationshipsActive, true)
     samples.push({ case: "cached reactivation", size, iterations, ...counts, inspections })

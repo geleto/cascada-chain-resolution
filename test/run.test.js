@@ -506,7 +506,7 @@ describe("run", () => {
         )
     })
 
-    it("leases a receiver through a pending host result", async () => {
+    it("preserves the receiver snapshot through a pending host result", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const source = { value: 1 }
@@ -523,13 +523,10 @@ describe("run", () => {
         completion.resolve()
 
         expect(await result).to.be(1)
-        expect(source.value).to.be(1)
-        expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
-        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
     })
 
-    it("admits a promised host receiver alias before releasing its lease", async () => {
+    it("preserves a promised receiver alias across later source writes", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const completion = deferred()
         const source = { value: 1 }
@@ -545,14 +542,15 @@ describe("run", () => {
         const retained = new Chain(result, testContext)
         completion.resolve()
         const alias = await result
+        assert.equal(run(new Chain([lookupPath(chain, [], testContext)], testContext), [], "includes",
+            [alias], testContext, {}), true)
         assignPath(chain, ["value"], 2, testContext)
 
-        expect(alias).to.be(source)
+        assert.equal(run(new Chain([lookupPath(chain, [], testContext)], testContext), [], "includes",
+            [alias], testContext, {}), false)
         expect(alias.value).to.be(1)
-        expect(chain._state.value).not.to.be(source)
         expect(chain._state.value.value).to.be(2)
         await flushMicrotasks()
-        expect(metaOf(source, testContext).readLeaseCount).to.be(undefined)
         expect(retained._state.value).to.be(alias)
     })
 
@@ -673,16 +671,18 @@ describe("run", () => {
 
         const resolved = { done: true }
         pending.resolve(resolved)
+        const retained = new Chain(invocation, testContext)
         const result = await invocation
-        expect(result).to.be(root)
+        assert.equal(run(new Chain([root], testContext), [], "includes", [result], testContext, {}), true)
         expect(Reflect.ownKeys(root)).to.eql(languageKeys)
         expect(metaOf(root, testContext).imported).to.be(undefined)
-        expect(requiresCopyOnWrite(root, testContext)).to.be(true)
         expect(await earlierRead).to.be(resolved)
         await flushMicrotasks()
 
         expect(root.pending).to.be(resolved)
         expect(readPath(rootChain, ["pending"], testContext)).to.be(resolved)
+        assignPath(rootChain, ["pending", "done"], false, testContext)
+        expect(readPath(retained, ["pending", "done"], testContext)).to.be(true)
     })
 
     it("preserves holes and identities in Array observers", () => {
@@ -2766,7 +2766,7 @@ describe("run", () => {
         Object.defineProperty(record, "isReceiver", {
             enumerable: true,
             value() {
-                return this === record
+                return this.value === 3 && typeof this.size === "function"
             },
         })
 
@@ -3271,7 +3271,7 @@ describe("run", () => {
         expect(reflected).to.be(false)
     })
 
-    it("balances nested entry and method-argument read leases", async () => {
+    it("preserves a readonly entry and pending invocation across source writes", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const argument = deferred()
         const record = { value: 1 }
@@ -3282,7 +3282,8 @@ describe("run", () => {
             },
         })
 
-        const result = enter(new Chain(record, testContext), [], testContext, false, entered => {
+        const source = new Chain(record, testContext)
+        const result = enter(source, [], testContext, false, entered => {
             const observed = run(
                 entered,
                 [],
@@ -3291,12 +3292,14 @@ describe("run", () => {
                 { ...testContext, errorContext: "test run" },
                 { repair: false },
             )
-            expect(metaOf(record, testContext).readLeaseCount).to.be(2)
+            assignPath(source, ["value"], 10, testContext)
+            expect(lookupPath(entered, ["value"], testContext)).to.be(1)
             return observed
         })
 
         argument.resolve(2)
         expect(await result).to.be(3)
+        expect(lookupPath(source, ["value"], testContext)).to.be(10)
         expect(metaOf(record, testContext).readLeaseCount).to.be(undefined)
     })
 

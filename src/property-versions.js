@@ -1,6 +1,6 @@
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { createLeaseLedger, releaseDetached, retainWriter, releasePin } from "./ownership.js"
-import { captureIdentity, advanceIdentity } from "./captured-identity.js"
+import { captureIdentity } from "./captured-identity.js"
 import { ArrayView, isArrayView } from "./array-view.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import * as errorUtils from "./error.js"
@@ -25,18 +25,17 @@ class PropertyPlacement {
         const { owner, key, operationContext } = this
         Object.assign(this, languageProperties.readLanguagePlacement(owner, key, operationContext))
         this.owner = undefined
-        this.identity = captureIdentity(this.value, operationContext)
         return this
     }
 
-    resolveValue() {
+    resolveValue(project) {
         const captured = this.ensureCaptured()
         // The caller receives pending data through another Promise reaction.
         // Protect it at publication, before a later writer can resume.
         return resolvePlacement(captured, this.operationContext, placement => {
             Object.assign(this, placement)
-            this.identity = captureIdentity(this.value, this.operationContext)
-            return this.value
+            // Search identity is captured at delivery, before later writers resume.
+            return project ? project(this.value, this.operationContext) : this.value
         })
     }
 
@@ -203,17 +202,18 @@ function transferPlacement(placement, owner, key, operationContext, destinationV
 }
 
 function installPlacementGate(owner, key, operationContext, captured, capturedVersion) {
+    const structure = beginPlacementStructure(owner, key, captured, operationContext)
     const releaseWriter = retainWriter(owner, operationContext)
-    advanceIdentity(owner, operationContext)
     const previous = capturedVersion ?? getPlacementVersion(owner, key, operationContext)
     const { promise, resolve } = Promise.withResolvers()
     const publication = Promise.withResolvers()
     const transition = { promise: publication.promise }
     const gate = {
-        promise, owner, key,
+        promise, owner, key, structure,
         resolve() {
             const version = gate.version
-            gate.structure.complete()
+            gate.publication?.finish()
+            gate.structure.complete?.()
             transition.placement = capturePlacementFromVersion(version)
             publication.resolve()
             releaseWriter()
@@ -225,7 +225,6 @@ function installPlacementGate(owner, key, operationContext, captured, capturedVe
         },
     }
     const version = { value: gate.promise, promiseBacked: true, pendingPresence: true, transition, position: captured.position }
-    gate.structure = beginPlacementStructure(owner, key, captured, operationContext)
     version.storageAbsent = previous ? previous.storageAbsent : !captured.present
     if (capturedVersion) {
         commitPlacementVersion(owner, key, capturedVersion, version, operationContext, false)
@@ -249,6 +248,7 @@ function completePlacementGate(gate, placement, operationContext) {
                 errorUtils.ERROR_KIND.AssignmentValueFailed, false, gate.structure),
             operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
         if (errorUtils.isPoisonError(failure)) {
+            gate.publication.published = true
             publishPlacementFailure(gate.owner, gate.key, gate.version,
                 combinePublicationErrors(resolved.value, failure), resolved.recovery ?? resolved,
                 operationContext, gate.structure, resolved.position)
@@ -405,13 +405,13 @@ function observePromiseVersion(
 // as its availability signal so supported thenables can still deliver directly.
 // Later access cannot see ready state until this mutation has taken its turn.
 function installMutationVersion(owner, key, source, operationContext, onValue) {
-    const releaseWriter = retainWriter(owner, operationContext)
     const captured = capturePlacementFromVersion(source)
     const transition = {}
     const version = createVersionFromPlacement(captured)
     version.promiseBacked = true
     version.transition = transition
     const structure = beginPlacementStructure(owner, key, captured, operationContext)
+    const releaseWriter = retainWriter(owner, operationContext)
     installPlacementVersion(owner, key, version, operationContext)
     recordLogicalPlacement(owner, key, captured.value, version.value, operationContext, true)
     let result
@@ -426,7 +426,7 @@ function installMutationVersion(owner, key, source, operationContext, onValue) {
         delete version.writing
         detachAbsentVersion(owner, key, version, operationContext)
         transition.placement = capturePlacementFromVersion(version)
-        structure.complete()
+        structure.complete?.()
     })
     trackVersionPublication(version, transition.promise, operationContext)
     return internalSteps.continueGraphTransition(transition.promise, operationContext, () => { releaseWriter(); return result })
@@ -452,8 +452,7 @@ function resolvePropertyValueAtKey(owner, key, operationContext) {
 }
 
 function resolvePropertyIdentityAtKey(owner, key, operationContext) {
-    const placement = new PropertyPlacement(owner, String(key), operationContext)
-    return internalSteps.continueGraphTransition(placement.resolveValue(), operationContext, () => placement.identity)
+    return new PropertyPlacement(owner, String(key), operationContext).resolveValue(captureIdentity)
 }
 
 function requirePromiseVersion(owner, key, operationContext) {
@@ -609,19 +608,37 @@ function replacePlacement(owner, key, placement, operationContext, writeBack = t
 
 function preparePlacementStorage(owner, key, placement, operationContext) {
     // Entry holders write through their captured source authority. Detached
-    // references still advance privately without touching replacement storage.
-    const gate = metadata.metaOf(owner, operationContext)?.entryGate
-    const mirror = gate && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)
-        ? preparePlacementStorage(gate.owner, gate.key, placement, operationContext) : undefined
+    // references still advance privately. Nested entries can form a long
+    // history around one value: prepare and write outermost-first without
+    // recursive calls, preserving storage failure before private publication.
+    const destinations = []
+    for (;;) {
+        const gate = metadata.metaOf(owner, operationContext)?.entryGate
+        destinations.push({ owner, key, gate })
+        if (!gate || !isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)) break
+        owner = gate.owner
+        key = gate.key
+    }
     const absent = placement.present === false && !errorUtils.isPoisonError(placement.value)
-    const descriptor = absent
-        ? languageProperties.assertCanDeleteLanguageProperty(owner, key, operationContext)
-        : languageProperties.assertCanSetLanguageProperty(owner, key, operationContext)
-    return { descriptor, commit() {
-        if (mirror && isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext))
-            gate.version.storageAbsent = mirror.commit()
-        if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext, descriptor)
-        else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext, descriptor)
+    for (let index = destinations.length - 1; index >= 0; index--) {
+        const destination = destinations[index]
+        destination.descriptor = absent
+            ? languageProperties.assertCanDeleteLanguageProperty(destination.owner, destination.key, operationContext)
+            : languageProperties.assertCanSetLanguageProperty(destination.owner, destination.key, operationContext)
+    }
+    return { descriptor: destinations[0].descriptor, commit() {
+        let last = 0
+        while (last < destinations.length - 1) {
+            const { gate } = destinations[last]
+            if (!isLivePlacementVersion(gate.owner, gate.key, gate.version, operationContext)) break
+            last++
+        }
+        for (let index = last; index >= 0; index--) {
+            const { owner, key, descriptor } = destinations[index]
+            if (absent) languageProperties.deleteLanguageProperty(owner, key, operationContext, descriptor)
+            else languageProperties.writeLanguageProperty(owner, key, placement.value, operationContext, descriptor)
+            if (index > 0) destinations[index - 1].gate.version.storageAbsent = absent
+        }
         return absent
     } }
 }
