@@ -672,7 +672,7 @@ export const SAFEGUARDS = [
     {
         id: "deletion-uses-settled-presence",
         guards: "A pending placement gate does not establish that deletion publishes a write.",
-        faults: [edit("src/mutations.js", "target.publication.addPending(presence)", "target.publication.record(true)")],
+        faults: [edit("src/mutate-property.js", "target.publication.addPending(presence)", "target.publication.record(true)")],
         witnesses: ["publication partitions across command sequences models writes: Array=false, present=false, imported=false, nested=false"],
     },
     {
@@ -692,7 +692,7 @@ export const SAFEGUARDS = [
     {
         id: "deletion-does-not-gate-unrelated-values",
         guards: "Only the deletion identity decision depends on preceding presence.",
-        faults: [edit("src/mutations.js",
+        faults: [edit("src/mutate-property.js",
             "                propertyVersions.deleteProperty(target.parent, target.key, operationContext)\n                if (languageValues.isPending(presence, operationContext)) target.publication.addPending(presence)\n                else target.publication.record(presence)",
             "                return internalSteps.continueGraphTransition(presence, operationContext, present => { propertyVersions.deleteProperty(target.parent, target.key, operationContext); target.publication.record(present) })")],
         witnesses: ["deletion value progress releases the scope while identity presence is pending: present=true, nested=false"],
@@ -706,7 +706,7 @@ export const SAFEGUARDS = [
     {
         id: "nested-assignment-uses-destination-order",
         guards: "A replacement carries its ordered predecessor's presence and insertion position, not a copied physical slot.",
-        faults: [edit("src/mutations.js", "transferPlacement({ ...resolved, position },", "transferPlacement(resolved,")],
+        faults: [edit("src/mutate-property.js", "transferPlacement({ ...resolved, position },", "transferPlacement(resolved,")],
         witnesses: ["scope placement and record order preserves insertion order after an entered key: imported=false, nested=false, scope=0, delete"],
     },
     {
@@ -718,7 +718,7 @@ export const SAFEGUARDS = [
     {
         id: "copied-completed-absence-is-not-a-write",
         guards: "A copied gate can resolve absence synchronously before its value delivery advances the copy.",
-        faults: [edit("src/mutations.js", "else target.publication.record(presence)", "else target.publication.record(true)")],
+        faults: [edit("src/mutate-property.js", "else target.publication.record(presence)", "else target.publication.record(true)")],
         witnesses: ["deletes an absent completed transition before copied value delivery:"],
     },
     {
@@ -743,7 +743,7 @@ export const SAFEGUARDS = [
     {
         id: "deferred-assignment-keeps-publication-boundary",
         guards: "Supported publication failure after key-order readiness remains recoverable at the selected scope.",
-        faults: [edit("src/mutations.js",
+        faults: [edit("src/mutate-property.js",
             "const result = errorUtils.catchExternalThrow(\n                                        () => propertyVersions.transferPlacement({ ...resolved, position },\n                                            target.parent, target.key, operationContext),\n                                        operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)",
             "const result = propertyVersions.transferPlacement({ ...resolved, position }, target.parent, target.key, operationContext)")],
         witnesses: ["preserves scoped failure after waiting for key order:"],

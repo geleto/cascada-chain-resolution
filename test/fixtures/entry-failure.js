@@ -7,7 +7,7 @@ const entries = {
     "import.js": ["importValue", "importMethodResult"],
     "enter.js": ["enter"],
     "run.js": ["run"],
-    "mutations.js": ["mutatePath"],
+    "mutate-property.js": ["mutatePath"],
     "observations.js": ["lookupPath", "lookupPathForExpression", "exportPath", "hasError", "getErrors"],
     "path-operation.js": ["repairPath"],
 }

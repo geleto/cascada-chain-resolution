@@ -22,7 +22,7 @@ import { import as importCore, importMethodResult as importMethodResultCore } fr
 import {
     assignPath as assignPathCore,
     deletePath as deletePathCore,
-} from "./mutations.js"
+} from "./mutate-property.js"
 import { run as runCore } from "./run.js"
 import { repairPath as repairPathCore } from "./path-operation.js"
 import {
