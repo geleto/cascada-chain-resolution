@@ -138,7 +138,7 @@ class ArrayView {
     }
 
     static recordBackingPlacement(owner, key, previous, value, operationContext) {
-        if (!isArrayIndex(String(key))) return
+        if (!isArrayIndex(key)) return
         const range = metadata.metaOf(owner, operationContext)?.arrayRange
         const backing = range?.backing ?? owner
         const meta = metadata.requireMeta(backing, operationContext)
@@ -159,7 +159,7 @@ class ArrayView {
         const range = metadata.metaOf(value, operationContext)?.arrayRange
         if (!range) return false
         const length = ArrayView.minimumLength(value, operationContext)
-        if (isArrayIndex(String(key)) && Number(key) < length) {
+        if (isArrayIndex(key) && Number(key) < length) {
             const backing = metadata.requireMeta(range.backing, operationContext)
             // tryShareStorage never registers views over imported backing.
             if (backing.arrayBacking?.owners.size === 1 && backing.arrayBacking.owners.has(value))
@@ -171,7 +171,7 @@ class ArrayView {
     static hasOtherStorageUse(owner, key, operationContext) {
         const meta = metadata.metaOf(owner, operationContext)
         const backing = meta?.backingRecord
-        if (!backing || !isArrayIndex(String(key))) return false
+        if (!backing || !isArrayIndex(key)) return false
         const index = (meta.arrayRange?.start ?? 0) + Number(key)
         let shared = false
         backing.visitViewPlacements([index], operationContext, parent => {
@@ -327,9 +327,12 @@ function isLogicalArray(value, operationContext) {
 }
 
 function isArrayIndex(key) {
-    if (typeof key !== "string" || key === "") return false
-    const index = Number(key)
-    return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key
+    if (typeof key === "string") {
+        const index = Number(key)
+        if (String(index) !== key) return false
+        key = index
+    }
+    return Number.isInteger(key) && key >= 0 && key < 0xffffffff
 }
 
 function hasArrayAncestor(ancestry, array, operation) {

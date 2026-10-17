@@ -1759,7 +1759,7 @@ describe("run", () => {
                     return [...Reflect.ownKeys(target), "1001"]
                 },
                 getOwnPropertyDescriptor(target, key) {
-                    if (arrayViews.isArrayIndex(String(key))) {
+                    if (arrayViews.isArrayIndex(key)) {
                         inspected.push(Number(key))
                     }
                     if (key === "1001") {
@@ -1878,7 +1878,7 @@ describe("run", () => {
             target[length - 1] = 2
             const source = new Proxy(target, {
                 getOwnPropertyDescriptor(target, key) {
-                    if (arrayViews.isArrayIndex(String(key))) {
+                    if (arrayViews.isArrayIndex(key)) {
                         descriptorReads++
                     }
                     return Reflect.getOwnPropertyDescriptor(target, key)

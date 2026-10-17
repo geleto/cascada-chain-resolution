@@ -159,7 +159,7 @@ function prepareWithArguments([index = 0, replacement], work) {
 
 function observeAt(index, invocationWork) {
     const thisValue = invocationWork.receiver
-    if (!isArrayIndex(String(index))) return undefined
+    if (!isArrayIndex(index)) return undefined
     return retainElement(
         propertyVersions.getPropertyPlacement(
             thisValue,

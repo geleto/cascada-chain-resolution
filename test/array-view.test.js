@@ -117,10 +117,16 @@ describe("ArrayView", () => {
     })
 
     it("recognizes only canonical JavaScript Array indexes", () => {
-        for (const key of ["0", "1", "4294967294"]) {
+        for (const key of [0, -0, 1, 4294967294, "0", "1", "4294967294"]) {
             expect(arrayViews.isArrayIndex(key)).to.be(true)
         }
         for (const key of [
+            -1,
+            0.5,
+            NaN,
+            Infinity,
+            -Infinity,
+            4294967295,
             "",
             "01",
             "1.0",
