@@ -34,7 +34,9 @@ class ExternalAccess {
                 if (errors.isPoisonError(ready)) return ready
                 if (this.operationContext.execution._externalIdentities.has(ready))
                     return externalCapabilityEscapeError(this.operationContext)
-                if (this.boundary) return capture(snapshotExternalValue(ready, this.operationContext, !forExport))
+                if (this.boundary) return steps.continueGraphTransition(
+                    snapshotExternalValue(ready, this.operation, !forExport), this.operationContext,
+                    capture, undefined, this.operation)
                 const imported = imports.importExternalProperty(ready, this.operationContext)
                 return forExport ? exportValue(imported, this.operation) : capture(imported)
             })

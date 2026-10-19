@@ -3,7 +3,6 @@ import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
 import { readLanguageProperty } from "../src/language-properties.js"
-import { snapshotExternalValue } from "../src/external-snapshot.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
 import { ArrayView } from "../src/array-view.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
@@ -13,6 +12,8 @@ import { captureIdentity, compareIdentities } from "../src/captured-identity.js"
 const context = () => ({ execution: new r.Execution(), errorContext: {} })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const sync = value => ({ then(deliver) { return deliver(value) } })
+const snapshot = (value, ctx) => r.lookupPath(new r.ContextChain(
+    { api: r.externalState({ value }) }, ctx, { api: {} }), ["api", "value"], ctx)
 
 describe("entry structural publication", () => {
     it("keeps the enclosing growth reservation after a nested empty entry", async () => {
@@ -828,12 +829,12 @@ describe("entry structural publication", () => {
         const entry = r.enter(chain, [5], ctx, true, () => hold.promise)
         const state = metaOf(array, ctx).arrayRange.lengthState
         const tail = state.tail
-        const failure = snapshotExternalValue(array, ctx)
+        const failure = snapshot(array, ctx)
         assert(r.isPoisonError(failure))
         assert.equal(state.tail, tail)
         hold.resolve()
         await entry
-        assert.deepEqual(snapshotExternalValue(array, ctx), [])
+        assert.deepEqual(snapshot(array, ctx), [])
     })
 
     it("does not write storage for no-op protection or optional discovery failure", () => {
@@ -951,7 +952,7 @@ describe("entry structural publication", () => {
         const expected = [0, 1, 2]
         expected.length = 6
         assert.deepEqual(await r.export(chain, [], ctx), expected)
-        assert.deepEqual(snapshotExternalValue(r.lookupPath(chain, [], ctx), ctx), expected)
+        assert.deepEqual(snapshot(r.lookupPath(chain, [], ctx), ctx), expected)
         verifyRefCounts(ctx, chain._state)
     })
 

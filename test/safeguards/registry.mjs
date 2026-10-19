@@ -617,7 +617,7 @@ export const SAFEGUARDS = [
     {
         id: "captures-use-generation-tokens",
         guards: "Identity consumers key by captured generation, not by address.",
-        faults: [edit("src/captured-identity.js", "return meta.generation ??= fresh()", "return value")],
+        faults: [edit("src/captured-identity.js", "return meta.generation ??= createIdentity()", "return value")],
         witnesses: [
             // Distinct consequence: cyclic cross-owner exports preserve aliases
             // while searches distinguish captured old and new child generations.
@@ -739,6 +739,27 @@ export const SAFEGUARDS = [
         faults: [edit("src/captured-identity.js", "compareIdentities(first, node.identity, owner)",
             "waitIdentities(node.identity, undefined, owner)")],
         witnesses: ["finishes a captured partition when its keys merge into an unfinished predecessor"],
+    },
+    {
+        id: "snapshot-canonical-managed-identities",
+        guards: "Snapshot assembly preserves shared logical identities across distinct managed representations.",
+        faults: [edit("src/external-snapshot.js",
+            "identity: managed ? captureIdentity(source, operationContext) : createIdentity(),",
+            "identity: createIdentity(),")],
+        witnesses: ["snapshot canonical identity preserves original/observation-copy aliases and cycles:"],
+    },
+    {
+        id: "snapshot-ends-native-access-before-identity",
+        guards: "Snapshot identity completion cannot block later native work needed by an earlier managed publication.",
+        faults: [edit("src/external-snapshot.js", "    owner.completeExternalEffect()\n")],
+        witnesses: ["snapshot canonical identity waits only for aliases and releases native access:"],
+    },
+    {
+        id: "snapshot-releases-captured-sources",
+        guards: "Identity-only snapshot waits retain captured records, not source containers.",
+        faults: [edit("src/external-snapshot.js",
+            "    finally { visited.clear(); value = undefined }\n")],
+        witnesses: ["snapshot canonical identity releases snapshot sources while identity grouping is pending"],
     },
     {
         id: "deferred-assignment-keeps-publication-boundary",

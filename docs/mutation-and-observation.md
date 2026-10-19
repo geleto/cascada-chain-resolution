@@ -145,7 +145,7 @@ Capture explicit arguments and the issuing view, and reserve statically selected
 
 Capture managed namespace state at that ordered path turn. After external waiting, recheck binding authority and the ordered external poison state, without acquiring a later managed gate or version as a new prerequisite. A later mixed entry may already be waiting for this operation; rescanning its live gate would reverse that dependency. Batch reference selection starts every disjoint path in its original issuance turn; an unrelated slow argument cannot postpone a ready argument's reservation.
 
-Native methods cannot inspect or mutate managed storage through retained references. Their explicit arguments use the ordinary export contract with no special rule for values above a bang. Method-result import remains nonblocking for nested Promises and retains source-preserving borrowed-result copies where validation requires them.
+Native methods cannot inspect or mutate managed storage through retained references. Their explicit arguments use the ordinary export contract with no special rule for values above a bang. Method-result import remains nonblocking for nested Promises. The approved [preservation contract](data-limitations.md#method-results) reuses existing prepared managed values and their pending obligations while validating newly supplied result data; production cutover is tracked in Phase 4.
 
 ## Entry reserves access, not mutation authority
 
@@ -173,6 +173,6 @@ Repair uses the selected placement's ordinary managed ordering and any covered e
 
 Use complete parent placements, managed leases, COW, property versions, and operation-result ownership together with the common hierarchical external reservations. Mixed entry composes those mechanisms while preserving their distinct lifetime requirements.
 
-The end state uses one external ordering algorithm, owning-placement poison for managed state, and automatic rollback of each failed managed mutation. Hierarchical external scopes add direct/subtree completion frontiers, entry-local ordering state, nested discovery, and Error summaries. Keep borrowed method-result handling where source and result validation differ. Measure copying and retained state as well as code size; do not promise a net line reduction before implementation.
+The end state uses one external ordering algorithm, owning-placement poison for managed state, and automatic rollback of each failed managed mutation. Hierarchical external scopes add direct/subtree completion frontiers, entry-local ordering state, nested discovery, and Error summaries. Preserve existing managed method results through ordinary ownership rather than a second result-specific validation. Measure copying and retained state as well as code size; do not promise a net line reduction before implementation.
 
 Share operation ownership only when complete lifetimes coincide. Output release, managed publication, callback closure, external access, and independent result processing keep their actual last-use rules. Share managed traversal only where capture and delivery semantics match: import is transactional, snapshots require ready data, and indexed Error queries preserve pruning. Rejected experimental abstractions do not become production adapters.

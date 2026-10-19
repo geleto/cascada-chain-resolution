@@ -1,6 +1,6 @@
 # Imported data
 
-**Implementation status:** common input preparation, complete parent registration, staged category filtering, placement validation, and prepared shape copying are implemented. Bounded retention, parent-derived ownership, and retirement are also implemented; later work is tracked in the [runtime evolution plan](runtime-evolution-plan.md).
+**Implementation status:** common input preparation, complete parent registration, staged category filtering, placement validation, prepared shape copying, bounded retention, ownership and retirement are implemented. The [approved method-result preservation revision](runtime-evolution-plan.md#contract-decision-reusing-already-prepared-method-results) specified here awaits production cutover; current borrowed-result revalidation and its fresh-identity fallback remain until that change lands.
 
 ## Causal admission
 
@@ -8,7 +8,7 @@ The context importer uses `ContextValueFailed`; causal host-result import uses `
 
 Preparation runs synchronously until each captured dependency returns pending. A supported `then` may invoke only its newly supplied callback during subscription; it cannot deliver older work or start a competing initialization. Synchronous delivery reuses the current staging walk and identity map. Later delivery starts a new segment after the current segment has committed or discarded. No deferred-subscription queue, initialization reconciliation, or inactive-frontier retention walk is needed.
 
-Already-prepared ordinary roots return before allocating batch state unless context-tree discovery requires work. Method-result validation still follows borrowed pending placements through independent copies and preserves source attribution. Staging captures logical placements without normalizing borrowed storage; final commit performs no host action or subscription.
+Already-prepared ordinary roots return before allocating batch state unless context-tree discovery requires work. Method-result reception also reuses completed preparation after its direct Error/capability/receiver checks; it preserves existing pending obligations and source attribution. Staging for new or not-yet-prepared containers captures logical placements without normalizing borrowed storage; final commit performs no host action or subscription.
 
 `import(value, operationContext)` is the inbound host-data boundary. `operationContext` carries the execution and source-error information. Imported managed data is borrowed: Cascada stores metadata externally and never modifies its host representation.
 
@@ -32,7 +32,7 @@ Each available synchronous segment uses one transactional identity walk. Its adm
 
 
 1. Recognize native Errors and classify every other newly reached identity from its declarations and defaults.
-2. Traverse new managed records, Arrays, and class instances once while preserving aliases and cycles.
+2. Traverse new or not-yet-prepared managed records, Arrays, and class instances once while preserving aliases and cycles; retain prepared managed references without revalidation.
 3. Stop at external identities, Functions, and Errors.
 4. Consume each reached possible Promise at its program position. A synchronous custom outcome continues this segment; only a returned pending chain becomes a Promise-backed placement.
 5. Commit admission, origin, incoming relationships, pending Promise versions, and fixed logical versions only after the complete segment validates. A synchronous custom outcome over unchanged imported storage uses the same fixed-overlay mechanism as other final logical values that cannot be written physically.
@@ -45,17 +45,11 @@ The walk inspects only own enumerable string-keyed data properties. It neither i
 
 An already admitted identity keeps its category and origin. Completed input preparation is reused without a subtree rescan; classification alone is not proof of preparation. `placementsInitialized` covers available placements and their later delivery obligations, independently of Promise/Error counters. Preserve borrowed source captures and attach actual incoming relationships at publication. Import builds no refcount index.
 
-Method-result admission additionally checks traversable result occurrences for
-registered mutable capabilities. A call inside mutable external state also
-rejects its exact native receiver. These checks reuse the admission walk and
-logical placements without reclassifying admitted sources or scanning opaque
-interiors. Capture key candidates before inspecting individual descriptors, so a failing descriptor cannot hide later siblings. A failed ready result segment preserves all discoverable ready Errors alongside its capability or reflection failure. Newly owned deferred segments retain that result policy.
+Method-result admission checks the direct value and values reached while preparing new or not-yet-prepared managed containers for registered mutable capabilities. A call inside mutable external state also rejects its exact native receiver. Stop at prepared managed references in the same execution, including children of fresh wrappers and later deliveries. Preserve their captured logical value, identity, origin and established pending producers; do not rescan their interiors or add result-specific validation copies.
 
-Borrowed pending placements also apply the result policy, through copies of their containers and the borrowed ancestors that reach them. Reuse the staged placement walk to preserve aliases and ready cycles; unchanged branches stay shared. Existing managed availability keeps its original settlement and attribution. A result continuation consumes the captured source version after its normal settlement, then validates and publishes only into the result copy. A previously unconsumed Chain placement first establishes its ordinary source settlement. Neither result validation nor later source replacement rewrites that captured version. Copy admission and result versions commit with the result segment; abandoned result work leaves source settlement intact. Nested result availability does not extend the completed receiver phase.
+Capture key candidates for each required fresh walk before inspecting individual descriptors, so a failing descriptor cannot hide later siblings. A failed fresh result segment preserves discoverable ready Errors alongside its capability or reflection failure. Newly owned deferred segments retain that result policy. Existing Errors keep their causal attribution. Receiver-validation failure combines its failure with Errors encountered by required fresh result preparation; it adds no scan into reused interiors and does not await independent nested properties. Queries, export and receiver preparation retain their own complete Error-collection obligations.
 
-The target identity contract requires pure validation copies to preserve source identity and actual validation replacements to remain distinct. The [validation-copy completion experiment](runtime-evolution-plan.md#integration-experiment-validation-copy-completion) is closed with the fresh-identity fallback: staging parent relationships are discarded after commit, while later versions validate independently. They do not yet supply unchanged/replaced contributions for every copied ancestor across aliases and cycles.
-
-Validation-copy containers therefore keep fresh settled identities through the common identity surface. Source isolation, internal aliases/cycles, unchanged shared branches and required validation remain intact. This avoids false equality but retains N2 false distinctions between unchanged copies and sources. It is a deferred conformance gap, not a change to the target contract. Strict N2 witnesses retain an exact unchanged-failure baseline.
+The approved [method-result contract](data-limitations.md#method-results) replaces borrowed validation with ordinary reference preservation. A prepared graph containing an inert registered-resource reference may remain free of Error data while access or export still fails. Freshly introduced forbidden result references retain their rejection. New host-produced containers keep their own identities; returning a prepared reference preserves its captured identity without a separate changed/unchanged verdict.
 
 The host-result ownership contract
 forbids later receiver access or exposure through nested result work.
@@ -68,7 +62,7 @@ must not admit such a source before the snapshot selects its logical read rule.
 
 Public `import(value, operationContext)` creates no static external mutation tree. An unregistered external identity remains observation-only; an already registered identity keeps its binding and access restrictions through every alias. Import cannot downgrade it to freely observable data. Only initial ContextChain import may establish mutation authority.
 
-Result capture shares ordinary managed ownership and captured-version primitives with lookup, not the public lookup operation or its path/operation owner. Retain managed identities through the same sharing rules and read admitted sources through logical placements without reattributing their existing Errors. Fresh host segments retain transactional admission. Result-specific capability validation may differ from the source, including after pending delivery; use selective container/ancestor copies only for that difference. Do not replace this with a full-result await, unconditional graph copy, repeated path lookups, or a policy view that every graph consumer must carry. Receiver rollback and independent result validation have separate effects and completion lifetimes.
+Result capture shares ordinary managed ownership and captured-version primitives with lookup, not the public lookup operation or its path/operation owner. Retain existing managed identities without reattributing their Errors or adding another interpretation of their pending data. Fresh host segments retain transactional admission. Do not replace preservation with a full-result await, unconditional copy, repeated path lookups or a policy view carried by graph consumers. Receiver rollback and independent result admission have separate effects and completion lifetimes.
 
 ## Promise boundaries
 
@@ -78,7 +72,7 @@ A nested pending Promise belongs to its captured property version. Its fulfillme
 
 Import owns the processor for each newly available segment. Synchronous delivery joins the active staged walk; later delivery for a committed placement starts a new segment at its existing FIFO position and cannot add external-tree leaves. The importer registers its own delivery transition and publishes the complete prepared placement, including presence and recovery, through the ordinary property-version commit. Property-version code owns capture, version construction, producer tracking, and committed overlay/bookkeeping. Raw reception invokes shared preparation before those commits; import-specific validation remains at the inbound boundary. Record pending publication only after subscription returns, preserving any newer producer established by synchronous delivery; completed publication releases obsolete dependencies. The same staged version becomes the pending Promise version when needed; no installer callback, `ImportTransaction` class, second overlay store, or configurable walker is required.
 
-Borrowed source delivery uses the shared placement resolver to preserve its complete logical state. Initial raw-input subscription and segment validation remain import-owned: ordinary value consumption admits immediately and cannot substitute for staged admission. An abandoned segment stops before result processing. A borrowed transition projects publication onto the result's own version so copies and repair continue through result validation; forwarding the unchecked source transition would grant the wrong authority.
+Captured source delivery preserves complete logical placement state through the shared placement resolver. Existing authoritative placement versions keep their established producer, policy and settlement even when their container still needs initialization; reception adds no result-validation transition or replacement subscription. Only raw unversioned pending placements start preparation-owned subscriptions. Preserve fixed/absent overlays, physical Array backing registration and existing publication destinations when initializing topology. Initial raw-input subscription and segment validation for newly owned work remain import-owned: ordinary value consumption cannot replace staged admission. An abandoned segment stops before result processing. Transfers, copies and repair preserve presence, recovery, order and publication separately from data availability.
 
 ## Ownership
 

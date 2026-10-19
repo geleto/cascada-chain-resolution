@@ -4,32 +4,64 @@ import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 import { capturePlacement } from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { defineCopyProperty } from "./placement-structure.js"
+import { createIdentity, captureIdentity } from "./captured-identity.js"
+import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
+import { continueGraphTransition } from "./internal-step.js"
+import { isPending } from "./language-values.js"
+import { releaseOnClose } from "./operation-lifecycle.js"
 import { initializePlacements } from "./parent-placements.js"
 import { readCallableThen } from "./thenable-subscription.js"
 
-// External snapshots are ready-only transactions. Sources keep their admission
-// and logical storage; only a completely successful output graph is admitted.
-function snapshotExternalValue(value, operationContext, admit = true) {
+// Data capture is ready-only. Identity grouping may finish later, after native
+// source access and its reservation have ended. Only final copies are admitted.
+function snapshotExternalValue(value, owner, admit = true) {
+    const { operationContext } = owner
     const visited = new Map()
     const failures = new Set()
-    let copies = []
+    const functions = new Set()
+    const capture = new ManagedCapture(owner, errors.ERROR_KIND.ExternalPropertyReadFailed, collect)
+    let unregister
     try {
         const result = walk(value)
-        if (failures.size) return errors.combineErrors(failures, "External property snapshot failed")
-        // Graph lookup adopts the completed copies. Native export transfers those
-        // same independent copies without admission or a second copying pass.
-        if (admit) for (const [copy, type, prototype] of copies)
-            metadata.getOrCreateMeta(copy, operationContext, type, prototype)
-        if (admit) for (const [copy, type] of copies)
-            if (metadata.isTraversableType(type)) initializePlacements(copy, operationContext)
-        return result
-    } finally { visited.clear(); failures.clear(); copies = value = undefined }
+        if (capture.records) capture.roots.push(result)
+    } catch (failure) { release(); throw failure }
+    finally { visited.clear(); value = undefined }
+    // Later conflicting native work must not wait for a managed identity
+    // decision: that earlier managed work can itself need the native resource.
+    owner.completeExternalEffect()
+    if (failures.size) {
+        const failure = errors.combineErrors(failures, "External property snapshot failed")
+        release()
+        return failure
+    }
+    const result = continueGraphTransition(capture.resolve(), operationContext, finish, undefined, owner)
+    if (isPending(result, operationContext)) unregister = releaseOnClose(owner, release)
+    return result
+
+    function finish() {
+        try {
+            const [result] = assembleCapturedGraph(capture, admit ? (copy, node) =>
+                metadata.getOrCreateMeta(copy, operationContext, node.type, node.prototype) : undefined)
+            if (admit) {
+                for (const fn of functions) metadata.getOrCreateMeta(fn, operationContext, metadata.TYPE.Function)
+                for (const node of capture.identities.values()) initializePlacements(node.copy, operationContext)
+            }
+            return result
+        } finally { release() }
+    }
+
+    function release() {
+        unregister?.()
+        unregister = undefined
+        capture.discard()
+        functions.clear()
+        failures.clear()
+    }
 
     function collect(failure) {
         failures.add(failure)
-        if (copies) for (const source of visited.keys()) visited.set(source, undefined)
-        copies = undefined
+        capture.discard()
+        functions.clear()
         return failure
     }
 
@@ -58,8 +90,7 @@ function snapshotExternalValue(value, operationContext, admit = true) {
                 source, operationContext, errors.ERROR_KIND.ExternalPropertyReadFailed))
             if (!metadata.isObjectLike(source)) return source
             if (typeof source === "function") {
-                if (copies && !metadata.metaOf(source, operationContext))
-                    copies.push([source, metadata.TYPE.Function])
+                if (capture.records && !metadata.metaOf(source, operationContext)) functions.add(source)
                 return source
             }
             if (operationContext.execution._externalIdentities.has(source))
@@ -96,9 +127,12 @@ function snapshotExternalValue(value, operationContext, admit = true) {
             const plain = !managed && !array && !errors.isPoisonError(prototype) &&
                 (prototype === null || isPlainPrototype(prototype))
             const type = managed ? meta.type : array ? metadata.TYPE.Array : plain === true ? metadata.TYPE.Record : metadata.TYPE.ManagedClass
-            const copy = copies ? array ? new Array(length) : Object.create(prototype) : undefined
-            visited.set(source, copy)
-            if (copies) copies.push([copy, type, prototype])
+            const node = capture.records ? {
+                identity: managed ? captureIdentity(source, operationContext) : createIdentity(),
+                type, prototype, shape: { length }, entries: new Map(),
+            } : undefined
+            visited.set(source, node)
+            if (node) capture.records.add(node)
             const keys = managed
                 ? inspect(() => properties.enumerableLanguageKeyCandidates(source, operationContext))
                 : native(() => Reflect.ownKeys(source))
@@ -120,11 +154,9 @@ function snapshotExternalValue(value, operationContext, admit = true) {
                     child = native(() => source[key])
                 }
                 const copied = walk(child)
-                if (copies) {
-                    defineCopyProperty(copy, key, copied)
-                }
+                if (capture.records) node.entries.set(key, copied)
             }
-            return copy
+            return node
         } finally { source = undefined }
     }
 

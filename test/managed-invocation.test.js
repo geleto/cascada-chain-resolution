@@ -20,6 +20,33 @@ import assert from "node:assert/strict"
 import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
 
 describe("managed invocation", () => {
+    it("does not certify fresh descendants after failed receiver finalization", async () => {
+        const execution = new Execution()
+        const ctx = { execution, errorContext: "failed receiver preparation" }
+        const resultCtx = { execution, errorContext: "later fresh method result" }
+        const pending = Promise.withResolvers()
+        const cached = { later: pending.promise }
+        const receiver = new Chain({ store(supply) { this.cached = supply() } }, ctx)
+
+        const first = run(receiver, [], "store", [() => cached], ctx, { mutationScopeDepth: 0 })
+        assert.equal(first.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
+        assert.equal(first.errorContext, ctx.errorContext)
+
+        // Failed validation admitted cached's category, but established no
+        // preparation or producer for its raw pending property.
+        const resource = runtime.externalState({})
+        const authority = new runtime.ContextChain({ resource }, ctx, { resource: {} })
+        const returned = new Chain(runtime.importMethodResult(cached, resultCtx), resultCtx)
+        pending.resolve(resource)
+        const error = await lookupPath(returned, ["later"], resultCtx)
+        assert.equal(error.kind, runtime.ERROR_KIND.ExternalCapabilityEscape)
+        assert.equal(error.errorContext, resultCtx.errorContext)
+        assert.equal(await runtime.hasError(returned, [], resultCtx), true)
+        assert.equal(runtime.getErrors(authority, [], ctx), null)
+        assert.equal(runtime.repairPath(receiver, [], ctx), undefined)
+        assert.equal(lookupPath(receiver, ["cached"], ctx), undefined)
+    })
+
     for (const managedClass of [false, true]) for (const initiallyPresent of [false, true])
     for (const remove of [false, true]) for (const mutation of [false, true]) {
         it(`selects captured method presence after pending entry: class=${managedClass}, present=${initiallyPresent}, remove=${remove}, mutation=${mutation}`, async () => {

@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { registerHooks } from "node:module"
 
 let counts
-const reset = () => { counts = { links: 0, moves: 0, deliveries: 0, captures: 0 } }
+const reset = () => { counts = { links: 0, moves: 0, deliveries: 0, captures: 0, waits: 0 } }
 globalThis.countIdentityWork = key => { counts[key]++ }
 const identityURL = new URL("../../src/captured-identity.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
@@ -14,6 +14,8 @@ registerHooks({ load(url, context, next) {
     for (const [marker, replacement] of [
         ["function captureIdentity(value, operationContext) {",
             "function captureIdentity(value, operationContext) { globalThis.countIdentityWork('captures');"],
+        ["function waitIdentities(left, right, owner) {",
+            "function waitIdentities(left, right, owner) { globalThis.countIdentityWork('waits');"],
         ["while (root.state === FORWARD) root = root.into",
             "while (root.state === FORWARD) { globalThis.countIdentityWork('links'); root = root.into }"],
         ["for (const query of moving ?? []) {",
@@ -27,11 +29,13 @@ registerHooks({ load(url, context, next) {
 } })
 reset()
 const r = await import("../../src/index.js")
-const { captureIdentity, inheritIdentity, IdentityPublication, compareIdentities } = await import("../../src/captured-identity.js")
+const { captureIdentity, inheritIdentity, IdentityPublication, compareIdentities,
+    resolveCapturedIdentities } = await import("../../src/captured-identity.js")
 const { OperationOwner } = await import("../../src/operation-lifecycle.js")
 const context = () => ({ execution: new r.Execution(), errorContext: "identity work" })
 const turn = () => new Promise(setImmediate)
 const samples = []
+const partitions = []
 
 // Representation-only remaps need placements, not search identity keys.
 {
@@ -73,6 +77,37 @@ for (const size of [128, 512, 2048, 8192]) for (const order of ["reverse", "bala
     assert(counts.links <= 12 * size * Math.log2(size), JSON.stringify({ size, order, ...counts }))
     assert(counts.deliveries <= 2 * size, JSON.stringify({ size, order, ...counts }))
     samples.push({ size, order, ...counts })
+}
+
+// Many old capture keys can already forward to one non-anchor representative.
+// Compare that representative once, whether it eventually merges or stays distinct.
+for (const published of [false, true]) {
+    const ctx = context(), owner = new OperationOwner(ctx)
+    const source = new r.Chain({}, ctx), successor = new r.Chain({}, ctx)
+    const nodes = [{ identity: captureIdentity(source._state.value, ctx) }]
+    inheritIdentity(source._state.value, successor._state.value, ctx)
+    const publication = new IdentityPublication(ctx)
+    publication.capture(successor._state.value); publication.suspend()
+    for (let index = 0; index < 1024; index++) {
+        const copy = new r.Chain({}, ctx)
+        inheritIdentity(successor._state.value, copy._state.value, ctx)
+        const noOp = new IdentityPublication(ctx)
+        noOp.capture(copy._state.value); noOp.suspend()
+        nodes.push({ identity: captureIdentity(copy._state.value, ctx) })
+        noOp.finish(false)
+        r.assignPath(copy, [], null, ctx)
+    }
+    reset()
+    const result = resolveCapturedIdentities(nodes, owner)
+    assert.equal(counts.waits, 1, "Shared non-anchor representatives need only one comparison wait")
+    publication.finish(published)
+    const canonical = await result
+    assert.equal(canonical.size, published ? 2 : 1)
+    assert.equal(new Set(nodes.slice(1).map(node => node.identity)).size, 1)
+    assert.equal(nodes[0].identity === nodes[1].identity, !published)
+    assert.equal(owner.releases, undefined, "Completed partition comparisons release their registrations")
+    partitions.push({ representations: nodes.length, published, waits: counts.waits, groups: canonical.size })
+    owner.close()
 }
 
 // Closing consumers removes interests without cancelling shared publication.
@@ -207,5 +242,5 @@ for (const published of [false, true]) {
     assert.equal(destination.outcome(), true)
 }
 
-console.log(JSON.stringify({ samples, closedComparisons: 1024, sourceCollected: true,
+console.log(JSON.stringify({ samples, partitions, closedComparisons: 1024, sourceCollected: true,
     nestedCompletion: 8192, completedSiblingsCollected: 1024, adoptedSiblingsCollected: 1024 }))

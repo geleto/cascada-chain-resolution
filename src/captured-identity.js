@@ -4,7 +4,7 @@ import { collectInputs, continueGraphTransition } from "./internal-step.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 
 const PENDING = 0, SETTLED = 1, FORWARD = 2
-const fresh = () => {
+const createIdentity = () => {
     const cell = { state: SETTLED }
     cell.lineage = cell
     return cell
@@ -17,7 +17,7 @@ function captureIdentity(value, operationContext) {
     const meta = Error.isError(value)
         ? metadata.getOrCreateMeta(value, operationContext, metadata.TYPE.Error)
         : metadata.requireMeta(value, operationContext)
-    return meta.generation ??= fresh()
+    return meta.generation ??= createIdentity()
 }
 
 function inheritIdentity(source, copy, operationContext) {
@@ -84,7 +84,7 @@ class IdentityPublication {
         else this.captures.push(meta)
     }
     reserve(meta) {
-        const before = meta.generation ??= fresh()
+        const before = meta.generation ??= createIdentity()
         const after = meta.generation = { state: PENDING, size: 1, lineage: before.lineage }
         this.captures.push({ before, after })
     }
@@ -170,9 +170,11 @@ function compareIdentities(left, right, owner, sameValueZero = false) {
 // A lineage represented by just one key already has its final partition.
 // Group only the completed capture; no source walk or history search is needed.
 function resolveCapturedIdentities(nodes, owner) {
-    const anchors = new Map(), waits = []
+    const anchors = new Map(), representatives = new Set(), waits = []
     for (const node of nodes) {
         node.identity = identityRoot(node.identity)
+        if (representatives.has(node.identity)) continue
+        representatives.add(node.identity)
         const first = anchors.get(node.identity.lineage)
         if (!first) anchors.set(node.identity.lineage, node.identity)
         else if (node.identity !== first) waits.push(compareIdentities(first, node.identity, owner))
@@ -233,5 +235,5 @@ function visitRepresentation(value, identity, visited) {
     return true
 }
 
-export { captureIdentity, inheritIdentity, compareIdentities, resolveCapturedIdentities,
+export { createIdentity, captureIdentity, inheritIdentity, compareIdentities, resolveCapturedIdentities,
     IdentityPublication, visitRepresentation }

@@ -124,6 +124,7 @@ describe("managed receiver capture", () => {
             pause.reject(late)
             const error = await result
             assert(runtime.isPoisonError(error))
+            assert.equal(error.errors?.length, 2, "Both representation and late-branch Errors must be collected")
             assert.deepEqual(new Set(error.errors.map(error => error.cause)), new Set([cause, late]))
             assert.equal(calls, 0)
             assert.equal(ctx.execution.fatalError, null)
