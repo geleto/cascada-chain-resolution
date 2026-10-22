@@ -226,6 +226,50 @@ describe("snapshot canonical identity", () => {
             verifyRefCounts(ctx, work.source._state, work.before._state, first._state, second._state, held._state)
         })
 
+        for (const identityReady of [true, false])
+        it(`selects recaptured snapshots while preserving an earlier output: ready=${identityReady}, write=${write}`, async () => {
+            const ctx = context(), work = pendingPair(ctx, write)
+            if (identityReady) { work.gate.resolve(); await work.entry; await new Promise(setImmediate) }
+            const first = new r.Chain(snapshot([work.pair.a, work.pair.b], ctx), ctx)
+            const second = new r.Chain(snapshot([work.pair.a, work.pair.b], ctx), ctx)
+            const selected = { first: r.lookupPath(first, [], ctx), second: r.lookupPath(second, [], ctx) }
+            selected.self = selected
+            const held = new r.Chain(snapshot([selected], ctx), ctx)
+            for (let round = 0; round < 4; round++)
+                r.assignPath(held, [], snapshot(r.lookupPath(held, [], ctx), ctx), ctx)
+
+            const result = r.run(held, [], "at", [0], ctx, {})
+            assert(!r.isPending(result, ctx), "Selecting a recaptured object needs no descendant alias partition")
+            const chosen = new r.Chain(result, ctx)
+            const earlier = r.export(chosen, [], ctx)
+            assert.equal(r.isPending(earlier, ctx), !identityReady)
+            assert.equal(r.assignPath(chosen, ["first", 0, 1], 9, ctx), undefined)
+            assert.equal(r.lookupPath(chosen, ["first", 0, 1], ctx), 9)
+            assert.equal(r.lookupPath(held, [0, "first", 0, 1], ctx), 7)
+            work.gate.resolve()
+            await work.entry
+
+            const before = await earlier, after = await r.export(chosen, [], ctx)
+            for (const value of [before, after]) {
+                assert.equal(value.second[0] === value.second[1], !write)
+                assert.notEqual(value.first[1], value.second[1], "Independent snapshot domains remain distinct after recapture")
+            }
+            assert.equal(before.self, before)
+            // Path copying changes the selected occurrence; the off-path cycle
+            // continues to reference its captured pre-write value.
+            assert.notEqual(after.self, after)
+            assert.equal(after.self.self, after.self)
+            assert.deepEqual(after.self.first[0], [, 7, ,])
+            assert.equal(after.first[1], after.self.first[1])
+            assert.equal(before.first[0] === before.first[1], !write)
+            assert.deepEqual(before.first[0], [, 7, ,])
+            assert.notEqual(after.first[0], after.first[1])
+            assert.deepEqual(after.first[0], [, 9, ,])
+            assert.deepEqual(after.first[1], [, 7, ,])
+            verifyRefCounts(ctx, work.source._state, work.before._state, first._state,
+                second._state, held._state, chosen._state)
+        })
+
         it(`isolates mutation of a snapshot before source identity completion: write=${write}`, async () => {
             const ctx = context(), work = pendingPair(ctx, write)
             const held = new r.Chain(snapshot(work.pair, ctx), ctx)

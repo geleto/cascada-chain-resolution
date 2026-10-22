@@ -936,15 +936,17 @@ function tryConcatArrayView({ parts, receiverRemap }, invocationWork) {
 
 function tryAppendArrayView(suffix, invocationWork) {
     const { receiver: thisValue, operationContext } = invocationWork
-    return ArrayView.tryExtendEnd(
-        thisValue,
-        suffix.length,
-        operationContext,
-        view => {
-            const start = ArrayView.readyLength(view, operationContext) - suffix.length
-            arrayRemaps.placeRemap(view, suffix, operationContext, start)
-        },
-    )
+    try {
+        return ArrayView.tryExtendEnd(
+            thisValue,
+            suffix.length,
+            operationContext,
+            view => {
+                const start = ArrayView.readyLength(view, operationContext) - suffix.length
+                arrayRemaps.placeRemap(view, suffix, operationContext, start)
+            },
+        )
+    } finally { suffix = undefined }
 }
 
 export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep, searchFromIndex,

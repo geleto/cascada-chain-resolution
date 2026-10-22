@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
 import { ready, ChainedThenable, OrderedThenable } from "../ordered-thenable.js"
@@ -93,13 +94,11 @@ const jointCoverage = new Set()
 const boundaries = ["import", "chain", "assignment", "method-result"]
 const deliveries = ["ready", "synchronous", "native", "ordered"]
 const modes = ["bare", "verified", "observed"]
-let programs = 0, runs = 0, jointPrograms = 0, seededPrograms = 0
+let programs = 0, runs = 0, jointPrograms = 0, seededPrograms = 0, lifetimePrograms = 0
 
-async function checkReception({ seed, boundary, array, nested, early, delivery, before, after, leafValue }, joint) {
-    programs++
-    if (joint) jointPrograms++
-    else seededPrograms++
-    for (const mode of modes) {
+async function checkReception({ seed, boundary, array, nested, early, delivery, before, after, leafValue }, joint, coverage, jointCoverage) {
+    for (const [modeIndex, mode] of modes.entries()) {
+        reportGeneratedStage({ seed, harness: mode, remainingReplays: modes.slice(modeIndex + 1) })
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const trigger = new ChainedThenable()
         const leaf = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
@@ -132,30 +131,51 @@ async function checkReception({ seed, boundary, array, nested, early, delivery, 
         for (const key of [`boundary:${boundary}`, `array:${array}`, `nested:${nested}`,
             `preparation:${early ? "already prepared" : "fresh"}`, `delivery:${delivery}`, `harness:${mode}`]) coverage.add(key)
         if (joint) jointCoverage.add(`${boundary}:${early ? "already prepared" : "fresh"}:${delivery}:${array ? "array" : "record"}:${nested ? "nested" : "direct"}`)
-        runs++
     }
 }
 
 // Cover the complete bounded interaction regardless of how many random seeds
 // are requested. Marginal counters alone cannot show that these cases ran.
+const cases = []
 for (const boundary of boundaries) for (const early of [false, true]) for (const delivery of deliveries)
     for (const array of [false, true]) for (const nested of [false, true]) {
-        await checkReception({ seed: "joint", boundary, array, nested, early, delivery,
-            before: 2, after: 2, leafValue: 7 }, true)
+        cases.push({ seed: "joint", boundary, array, nested, early, delivery,
+            before: 2, after: 2, leafValue: 7, joint: true })
     }
 
 for (let seed = 0; seed < seeds; seed++) {
-    for (const mode of modes) {
-        try { await checkLifetime(seed, mode, coverage) }
-        catch (cause) { throw new Error(`lifetime seed=${seed}, mode=${mode}`, { cause }) }
-    }
+    cases.push({ seed, lifetime: true })
     const random = createRandom(seed + 0x19fa)
     const nested = seed % 2 === 0, early = Math.floor(seed / 2) % 2 === 0
     const delivery = ["ready", "native", "ordered"][seed % 3]
     const before = 1 + randomInteger(random, 3), after = 1 + randomInteger(random, 3)
     const leafValue = 1 + randomInteger(random, 1000)
     for (const boundary of boundaries) for (const array of [false, true])
-        await checkReception({ seed, boundary, array, nested, early, delivery, before, after, leafValue }, false)
+        cases.push({ seed, boundary, array, nested, early, delivery, before, after, leafValue, joint: false })
 }
-console.log(JSON.stringify({ programs, runs, jointPrograms, seededPrograms, lifetimePrograms: seeds,
-    lifetimeRuns: seeds * 3, jointCoverage: [...jointCoverage].sort(), coverage: [...coverage].sort() }))
+const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
+    async runCase(spec) {
+        const coverage = new Set(), jointCoverage = new Set()
+        if (spec.lifetime) {
+            for (const [modeIndex, mode] of modes.entries()) {
+                reportGeneratedStage({ seed: spec.seed, harness: mode, remainingReplays: modes.slice(modeIndex + 1) })
+                try { await checkLifetime(spec.seed, mode, coverage) }
+                catch (cause) { throw new Error(`lifetime seed=${spec.seed}, mode=${mode}`, { cause }) }
+            }
+        } else await checkReception(spec, spec.joint, coverage, jointCoverage)
+        return { coverage: [...coverage], jointCoverage: [...jointCoverage] }
+    },
+    onPass(result, spec) {
+        for (const key of result.coverage) coverage.add(key)
+        for (const key of result.jointCoverage) jointCoverage.add(key)
+        if (spec.lifetime) lifetimePrograms++
+        else {
+            programs++
+            runs += modes.length
+            if (spec.joint) jointPrograms++
+            else seededPrograms++
+        }
+    },
+})
+console.log(JSON.stringify({ programs, runs, jointPrograms, seededPrograms, lifetimePrograms,
+    lifetimeRuns: lifetimePrograms * 3, jointCoverage: [...jointCoverage].sort(), coverage: [...coverage].sort(), ...totals }))

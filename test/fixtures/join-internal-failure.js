@@ -1,5 +1,6 @@
 // A fault in the captured intrinsic is trusted work, not a host-call failure.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let fault
@@ -13,7 +14,7 @@ globalThis.failTrustedJoin = stage => {
 const target = new URL("../../src/language-conversion.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const source = String(result.source)
     const marker = "const arrayJoin = Array.prototype.join"
     assert(source.includes(marker), "Join fault anchor needs updating")

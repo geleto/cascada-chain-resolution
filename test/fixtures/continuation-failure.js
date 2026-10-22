@@ -1,5 +1,6 @@
 // Internal defects at the callback and retirement lanes of valid public work.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let faults, selectedContext, issued, events
@@ -13,9 +14,9 @@ globalThis.continuationFault = (site, context) => {
 const root = new URL("../../src/", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    const marker = url === root + "observations.js" ? "const retain = value => {"
-        : url === root + "input-preparations.js" ? "const accept = root => {"
-        : url === root + "ownership.js" ? "function retireCandidates(operationContext) {" : undefined
+    const marker = normalizeModuleURL(url) === normalizeModuleURL(root + "observations.js") ? "const retain = value => {"
+        : normalizeModuleURL(url) === normalizeModuleURL(root + "input-preparations.js") ? "const accept = root => {"
+        : normalizeModuleURL(url) === normalizeModuleURL(root + "ownership.js") ? "function retireCandidates(operationContext) {" : undefined
     if (!marker) return result
     const source = String(result.source)
     assert(source.includes(marker), "Continuation fault anchor needs updating")

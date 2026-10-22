@@ -1,6 +1,7 @@
 // Implementation faults at semantic stages of valid public operations. No host
 // inputs, primordials, declarations, or integration facts are corrupted.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 import { ready, OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
@@ -27,7 +28,7 @@ registerHooks({ load(url, context, next) {
     const result = next(url, context)
     let source = String(result.source).replaceAll("\r\n", "\n")
     for (const [site, [file, originalMarker]] of Object.entries(sites)) {
-        if (url !== root + file) continue
+        if (normalizeModuleURL(url) !== normalizeModuleURL(root + file)) continue
         const marker = source.includes(originalMarker) ? originalMarker : originalMarker.replace(/function (\w+)\(/, 'function $1Untraced(')
         assert(source.includes(marker), `Internal ${site} fault anchor needs updating`)
         source = source.replace(marker, marker + (site === "assembly"

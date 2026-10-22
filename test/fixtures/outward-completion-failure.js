@@ -1,5 +1,6 @@
 // Inject an internal defect at final outward processing, after normal graph work.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let fault
@@ -12,7 +13,7 @@ globalThis.injectOutwardFailure = () => {
 const target = new URL("../../src/operation-result.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     let source = String(result.source)
     for (const marker of ["delivery?.capture(value)", "if (isPoisonError(value)) reject(value)"]) {
         assert(source.includes(marker))

@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacement } from "./property-versions.js"
+import { capturePlacement, getPlacementVersion } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 
 const ORDINARY_PROPERTY = 0
@@ -194,7 +194,7 @@ function hasLanguageProperty(parent, key, operationContext) {
     const propertyKind = classifyLanguageProperty(parent, key, operationContext)
     if (propertyKind === INVALID_ARRAY_KEY) return false
     if (propertyKind !== ORDINARY_PROPERTY) return true
-    const version = metadata.metaOf(parent, operationContext)?.placementVersions?.[key]
+    const version = getPlacementVersion(parent, key, operationContext)
     // An undecided placement is a candidate, even without physical storage.
     // Its consumer resolves presence through the captured transition.
     if (version) return version.present !== false

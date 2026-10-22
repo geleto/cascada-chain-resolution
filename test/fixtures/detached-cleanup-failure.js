@@ -1,5 +1,6 @@
 // Faults occur in runtime lease cleanup reached through valid public imports.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let selectedContext, cause, armed = false, reached = 0
@@ -12,7 +13,7 @@ globalThis.detachedCleanupFault = context => {
 const target = new URL("../../src/ownership.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const marker = "function release() {\n        if (closed) return"
     const source = String(result.source).replaceAll("\r\n", "\n")
     assert(source.includes(marker), "Lease cleanup fault anchor needs updating")

@@ -1,5 +1,6 @@
 // Read-only copy-loop counter for exclusive Array point writes.
 import assert from 'node:assert/strict'
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from 'node:module'
 
 let copied = 0
@@ -7,7 +8,7 @@ globalThis.__phase2CountCopy = () => copied++
 const moduleURL = new URL('../../src/mutations.js', import.meta.url).href
 registerHooks({load(url, context, next) {
     const loaded = next(url, context)
-    if (url !== moduleURL) return loaded
+    if (normalizeModuleURL(url) !== normalizeModuleURL(moduleURL)) return loaded
     const marker = 'const placement = languageProperties.readLanguagePlacement(source, key, operationContext)'
     const source = String(loaded.source)
     assert(source.includes(marker), 'Copy-loop hook changed')

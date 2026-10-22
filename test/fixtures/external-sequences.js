@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { TREE_NODE } from "../../src/external-mutation-tree.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
@@ -606,24 +607,35 @@ const programs = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16) * 6
 const start = Number(process.env.CASCADA_SEQUENCE_START ?? 0)
 const coverage = new Set()
 let runs = 0
-for (let index = start; index < programs; index++) {
-    const seed = (0x3c6ef372 + Math.imul(index, 0x9e3779b9)) >>> 0
-    const program = generate(createRandom(seed))
-    const finals = []
-    for (const mode of ["observed", "verified", "bare"]) {
-        let result
-        try {
-            result = await runProgram(structuredClone(program), seed, mode, coverage)
-        } catch (error) {
-            result = { errors: [`threw ${error?.stack ?? error}`] }
+const totals = await runGeneratedCases({
+    moduleURL: import.meta.url,
+    cases: Array.from({ length: programs - start }, (_, offset) => ({ program: start + offset })),
+    async runCase({ program: index }) {
+        const coverage = new Set()
+        const seed = (0x3c6ef372 + Math.imul(index, 0x9e3779b9)) >>> 0
+        const program = generate(createRandom(seed))
+        const finals = []
+        const modes = ["observed", "verified", "bare"]
+        for (const [modeIndex, mode] of modes.entries()) {
+            reportGeneratedStage({ seed, harness: mode, remainingReplays: modes.slice(modeIndex + 1) })
+            let result
+            try {
+                result = await runProgram(structuredClone(program), seed, mode, coverage)
+            } catch (error) {
+                result = { errors: [`threw ${error?.stack ?? error}`] }
+            }
+            if (result.errors.length) {
+                throw new Error(`program ${index} (seed ${seed}, harness=${mode}) failed:\n  ${result.errors.join("\n  ")}\n` +
+                    `program: ${JSON.stringify(program)}`)
+            }
+            finals.push(result.final)
         }
-        runs++
-        if (result.errors.length) {
-            throw new Error(`program ${index} (seed ${seed}, harness=${mode}) failed:\n  ${result.errors.join("\n  ")}\n` +
-                `program: ${JSON.stringify(program)}`)
-        }
-        finals.push(result.final)
-    }
-    if (new Set(finals).size !== 1) throw new Error(`program ${index} (seed ${seed}): harness modes disagree: ${JSON.stringify(finals)}`)
-}
-console.log(JSON.stringify({ programs: programs - start, runs, coverage: [...coverage].sort() }))
+        if (new Set(finals).size !== 1) throw new Error(`program ${index} (seed ${seed}): harness modes disagree: ${JSON.stringify(finals)}`)
+        return { runs: finals.length, coverage: [...coverage] }
+    },
+    onPass(result) {
+        runs += result.runs
+        for (const key of result.coverage) coverage.add(key)
+    },
+})
+console.log(JSON.stringify({ programs: totals.passed, runs, coverage: [...coverage].sort(), ...totals }))

@@ -2,6 +2,7 @@ import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
 import * as languageProperties from "./language-properties.js"
 import * as languageValues from "./language-values.js"
+import { ArrayView } from "./array-view.js"
 
 const COUNT_FIELDS = ["frontierCount", "errorCount"]
 
@@ -52,8 +53,9 @@ function buildRefIndex(value, operationContext) {
         for (const { meta, counter } of staged.values()) {
             Object.assign(meta, counter)
         }
-        for (const [node, { children }] of staged) {
+        for (const [node, { children, backingUses }] of staged) {
             for (const child of children) addParentCounterEdge(child, node, operationContext)
+            for (const [key, version] of backingUses) retainBackingCounter(version, node, key, operationContext)
         }
         return value
     } finally { staged.clear(); active.clear(); value = undefined }
@@ -67,10 +69,14 @@ function buildRefIndex(value, operationContext) {
             parents: new Map(),
         }
         const children = []
-        staged.set(node, { meta: metadata.requireMeta(node, operationContext), counter, children })
+        const backingUses = []
+        staged.set(node, { meta: metadata.requireMeta(node, operationContext), counter, children, backingUses })
         active.add(node)
         for (const key of languageProperties.enumerableLanguageKeys(node, operationContext)) {
             const child = languageProperties.readLanguageProperty(node, key, operationContext)
+            const backingVersion = !metadata.requireMeta(node, operationContext).placementVersions?.[key] &&
+                ArrayView.backingVersion(node, key, operationContext)
+            if (backingVersion) backingUses.push([key, backingVersion])
             if (languageValues.isPending(child, operationContext))
                 counter.frontierCount++
             else if (errorUtils.isPoisonError(child)) counter.errorCount++
@@ -140,8 +146,20 @@ function prepareCounterUpdate(
     value,
     operationContext,
 ) {
+    const ownerMeta = metadata.metaOf(owner, operationContext)
+    if (ownerMeta?.backingOwners) {
+        const updates = []
+        const version = ownerMeta.placementVersions?.[key]
+        for (const [parent, logicalKey] of version?.counterProjections ?? []) {
+            const update = prepareCounterUpdate(parent, logicalKey, before, value, operationContext)
+            if (update) updates.push(update)
+        }
+        return () => { for (const update of updates) update() }
+    }
     const counter = getRefCounter(owner, operationContext)
     if (!counter) return
+    const backingVersion = !metadata.requireMeta(owner, operationContext).placementVersions?.[key] &&
+        ArrayView.backingVersion(owner, key, operationContext)
     const cycleCut = prepareRefEdge(
         owner,
         counter,
@@ -155,12 +173,31 @@ function prepareCounterUpdate(
     )
     const nextState = getValueRefState(value, operationContext, cycleCut)
     return () => {
+        if (backingVersion && (metadata.requireMeta(owner, operationContext).placementVersions?.[key] ||
+            ArrayView.backingVersion(owner, key, operationContext) !== backingVersion))
+            releaseBackingCounter(backingVersion, owner, operationContext)
         updateCycleCut(counter, key, cycleCut)
         removeParentCounterEdge(previousState.childCounter, owner, operationContext)
         addParentCounterEdge(nextState.childCounter, owner, operationContext)
         for (const field of COUNT_FIELDS)
             updateCount(counter, field, nextState[field] - previousState[field], operationContext)
     }
+}
+
+// Index construction already visits each logical placement. Maintain that
+// exact optional projection until its owner overrides the slot or retires;
+// shared settlement must not scan unrelated backing owners to rediscover it.
+function retainBackingCounter(version, owner, key, operationContext) {
+    ;(version.counterProjections ??= new Map()).set(owner, key)
+    ;(metadata.requireMeta(owner, operationContext).backingCounterVersions ??= new Set()).add(version)
+}
+
+function releaseBackingCounter(version, owner, operationContext) {
+    version.counterProjections?.delete(owner)
+    if (!version.counterProjections?.size) delete version.counterProjections
+    const meta = metadata.requireMeta(owner, operationContext)
+    meta.backingCounterVersions?.delete(version)
+    if (!meta.backingCounterVersions?.size) delete meta.backingCounterVersions
 }
 
 function addParentCounterEdge(counter, parent, operationContext) {

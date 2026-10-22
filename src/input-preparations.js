@@ -6,7 +6,7 @@ import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
 import * as propertyVersions from "./property-versions.js"
 import { externalCapabilityEscapeError } from "./external-operation.js"
-import { CONSTRUCTION_STATE, PlacementConstruction } from "./parent-placements.js"
+import { activateRelationships, CONSTRUCTION_STATE, PlacementConstruction } from "./parent-placements.js"
 
 // One inward transition consumes availability, prepares the delivered input,
 // and captures it before later work can change its ownership.
@@ -17,6 +17,10 @@ function receiveValue(value, operationContext, policy, onValue = value => value,
                 // Context discovery applies only to the supplied, ready root.
                 root === value ? externalMutationTreeSetup : undefined)
             languageValues.admitReadyValue(prepared, operationContext)
+            // A consumer can build an index without retaining the received root
+            // (for example an external-property Error query). Restore cached
+            // topology before consumption so retirement also clears that index.
+            activateRelationships(prepared, operationContext)
             return onValue(prepared)
         } finally { onValue = undefined }
     }
@@ -46,7 +50,7 @@ function prepareInput(
     // Only an exact-receiver check or authority discovery needs a prepared root.
     if (!policy.receiverIdentity && !externalMutationTreeSetup && existing &&
         (existing.placementsInitialized || !metadata.isTraversableType(existing.type)))
-        return root // The receiving placement or lease restores inactive relationships.
+        return root // Common reception, or the receiving placement/lease, restores relationships.
 
     // Pending segments share failed inspections without retaining their sources.
     inspectionFailures ??= new WeakMap()

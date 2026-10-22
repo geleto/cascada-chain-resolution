@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { modelPublications } from "./fixtures/publication-model.js"
+import { enabled as traceEnabled } from "./trace-state.js"
 
 // Semantic models and delivery differentials have the distinct scopes described
 // in test/README.md. Consistency verifiers check maintained state. Each fixture runs in a child
@@ -10,10 +11,10 @@ import { modelPublications } from "./fixtures/publication-model.js"
 // scale and extend them. Coverage assertions keep the default runs from
 // silently losing a dimension when a generator changes.
 function runFixture(name, timeout, args = []) {
-    const env = { ...process.env }
+    const env = { ...process.env, CASCADA_SEQUENCE_EXPECT_TRACE: traceEnabled ? "1" : "0" }
     delete env.CASCADA_SEQUENCE_START
     delete env.CASCADA_CONFLICT_PART
-    const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=256",
+    const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict", "--max-old-space-size=256",
         fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)), ...args],
     { encoding: "utf8", timeout, env })
     assert.equal(result.error, undefined, result.error?.message)

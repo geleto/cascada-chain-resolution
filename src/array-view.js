@@ -27,6 +27,14 @@ class ArrayBacking {
 
     // Includes the original Array alongside its derived views.
     visitViewPlacements(indexes, operationContext, visit) {
+        const versions = metadata.metaOf(this.producers, operationContext)?.placementVersions
+        return this.visitStoragePlacements(versions ? [...indexes].filter(index => !versions[index]) : indexes,
+            operationContext, visit)
+    }
+
+    // Both physical slots and shared producers project through these bounds.
+    // Owner-local versions replace either projection at their own placement.
+    visitStoragePlacements(indexes, operationContext, visit) {
         for (const owner of this.owners) {
             const meta = metadata.requireMeta(owner, operationContext)
             const range = meta.arrayRange
@@ -41,6 +49,27 @@ class ArrayBacking {
         }
     }
 
+}
+
+// Logical backing contents are separate from physical cache edges. In
+// particular, failed optional storage writes must retain both facts.
+// Like physical slots, these forward producers live with their backing, even
+// when current views mask them or cover only another range. Retirement clears
+// their reverse edges and publication destinations, not authoritative contents.
+class ArrayBackingProducers {
+    constructor(backing, operationContext) {
+        this.backing = backing
+        const meta = metadata.getOrCreateMeta(this, operationContext, metadata.TYPE.Primitive)
+        meta.placementsInitialized = true
+        meta.backingOwners = backing.owners
+        meta.outgoingPlacements = new Map()
+        meta.arrayRange = { backing: backing.array, start: 0 }
+        activateRelationships(this, operationContext)
+    }
+
+    visitViewPlacements(indexes, operationContext, visit) {
+        return this.backing.visitStoragePlacements(indexes, operationContext, visit)
+    }
 }
 
 // Each logical owner keeps its bounds and pending length in metadata. Native
@@ -133,6 +162,7 @@ class ArrayView {
             if (metadata.requireMeta(owner, operationContext).relationshipsActive) {
                 record.owners.add(owner)
                 activateRelationships(record, operationContext)
+                activateRelationships(record.producers, operationContext)
             }
         }
     }
@@ -174,12 +204,62 @@ class ArrayView {
         if (!backing || !isArrayIndex(key)) return false
         const index = (meta.arrayRange?.start ?? 0) + Number(key)
         let shared = false
-        backing.visitViewPlacements([index], operationContext, parent => {
+        backing.visitStoragePlacements([index], operationContext, parent => {
             if (parent === owner) return
             shared = true
             return false
         })
         return shared
+    }
+
+    static backingVersion(owner, key, operationContext) {
+        const meta = metadata.metaOf(owner, operationContext)
+        if (meta?.type !== metadata.TYPE.Array || !isArrayIndex(key)) return
+        const range = meta.arrayRange
+        if (range && Number(key) >= ArrayView.minimumLength(owner, operationContext)) return
+        const backing = range?.backing ?? owner
+        const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
+        return metadata.metaOf(producers, operationContext)?.placementVersions?.[(range?.start ?? 0) + Number(key)]
+    }
+
+    // Logical version consumers need only the selected range's maintained
+    // producers. Use the existing outgoing table's size to avoid scanning a
+    // large unrelated backing or expanding a large sparse range into holes.
+    static *backingVersions(owner, start, operationContext) {
+        const meta = metadata.metaOf(owner, operationContext)
+        const range = meta?.arrayRange
+        if (meta?.type !== metadata.TYPE.Array || !range) return
+        const producers = metadata.metaOf(range.backing, operationContext)?.arrayBacking?.producers
+        const producerMeta = metadata.metaOf(producers, operationContext)
+        const versions = producerMeta?.placementVersions
+        if (!versions) return
+        const end = range.start + ArrayView.minimumLength(owner, operationContext)
+        start += range.start
+        if (start >= end) return
+        const keys = end - start <= producerMeta.outgoingPlacements.size
+            ? indexKeys(start, end) : Object.keys(versions)
+        for (const key of keys) {
+            const index = Number(key)
+            if (index < start || index >= end) continue
+            const logical = String(index - range.start), version = versions[key]
+            if (version && !meta.placementVersions?.[logical]) yield [logical, version]
+        }
+    }
+
+    // Bounds are already established. An unshared physical position can own
+    // one producer regardless of how many bounds-only successors are created.
+    // Local gates/overrides keep their own authority, as do explicit copies.
+    static placementDestination(owner, key, operationContext) {
+        const meta = metadata.metaOf(owner, operationContext)
+        const range = meta?.arrayRange
+        if (meta?.type !== metadata.TYPE.Array || !range || range.backing === owner || meta.parents ||
+            !isArrayIndex(key) || meta.placementVersions?.[key] ||
+            Number(key) >= ArrayView.minimumLength(owner, operationContext) ||
+            ArrayView.hasOtherStorageUse(owner, key, operationContext)) return
+        const backingMeta = metadata.requireMeta(range.backing, operationContext)
+        const record = backingMeta.arrayBacking ??= new ArrayBacking(range.backing, operationContext)
+        const producers = record.producers ??= new ArrayBackingProducers(record, operationContext)
+        return { owner: producers, key: String(range.start + Number(key)) }
     }
 
     // Freeze the source's logical bounds before creating an owner that can
@@ -196,37 +276,40 @@ class ArrayView {
     }
 
     static tryExtendEnd(source, count, operationContext, populate) {
-        const range = metadata.metaOf(source, operationContext)?.arrayRange
-        const backing = range?.backing ?? source
-        // Imported storage cannot be extended, regardless of its host descriptors.
-        if (metadata.isImported(source, operationContext) ||
-            metadata.isImported(backing, operationContext)) return
-        if (ArrayView.readyLength(source, operationContext) === undefined) return
-        // Check tail availability before attaching a new logical owner.
-        // An empty extension needs no physical write.
-        let nextPhysicalLength
-        if (count > 0) {
-            const length = ArrayView.#physicalLength(backing, operationContext)
-            if (range && range.start + ArrayView.minimumLength(source, operationContext) !== length) return
-            // Only the native backing owner can reserve growth beyond physical
-            // storage: distinct views materialize or extend storage first.
-            // Its pending creation reserves the intervening holes too.
-            const backingRange = metadata.requireMeta(backing, operationContext).arrayRange
-            if (backingRange && (backingRange.lengthState.maximum ?? backingRange.lengthState) > length) return
-            if (length + count > 0xffffffff) return
-            if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return
-            const descriptor = errorUtils.runExternalAction(operationContext, () =>
-                Object.getOwnPropertyDescriptor(backing, "length"))
-            if (descriptor?.writable !== true) return
-            nextPhysicalLength = length + count
-        }
-        if (!ArrayView.tryShareStorage(source, operationContext)) return
-        const next = new ArrayView(source, operationContext, 0, ArrayView.minimumLength(source, operationContext) + count)
-        return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
-            copyArrayOverlays(source, next, operationContext)
-            if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
-            populate?.(next)
-        })
+        let backing
+        try {
+            const range = metadata.metaOf(source, operationContext)?.arrayRange
+            backing = range?.backing ?? source
+            // Imported storage cannot be extended, regardless of its host descriptors.
+            if (metadata.isImported(source, operationContext) ||
+                metadata.isImported(backing, operationContext)) return
+            if (ArrayView.readyLength(source, operationContext) === undefined) return
+            // Check tail availability before attaching a new logical owner.
+            // An empty extension needs no physical write.
+            let nextPhysicalLength
+            if (count > 0) {
+                const length = ArrayView.#physicalLength(backing, operationContext)
+                if (range && range.start + ArrayView.minimumLength(source, operationContext) !== length) return
+                // Only the native backing owner can reserve growth beyond physical
+                // storage: distinct views materialize or extend storage first.
+                // Its pending creation reserves the intervening holes too.
+                const backingRange = metadata.requireMeta(backing, operationContext).arrayRange
+                if (backingRange && (backingRange.lengthState.maximum ?? backingRange.lengthState) > length) return
+                if (length + count > 0xffffffff) return
+                if (!errorUtils.runExternalAction(operationContext, () => Object.isExtensible(backing))) return
+                const descriptor = errorUtils.runExternalAction(operationContext, () =>
+                    Object.getOwnPropertyDescriptor(backing, "length"))
+                if (descriptor?.writable !== true) return
+                nextPhysicalLength = length + count
+            }
+            if (!ArrayView.tryShareStorage(source, operationContext)) return
+            const next = new ArrayView(source, operationContext, 0, ArrayView.minimumLength(source, operationContext) + count)
+            return PlacementConstruction.initializeAndPublish(next, operationContext, next => {
+                copyArrayOverlays(source, next, operationContext)
+                if (count > 0) errorUtils.runExternalAction(operationContext, () => { backing.length = nextPhysicalLength })
+                populate?.(next)
+            })
+        } finally { source = backing = populate = undefined }
     }
 
     // Capture storage candidates now: broad ranges enumerate stored keys;
@@ -248,6 +331,10 @@ class ArrayView {
                 for (const key of ownKeys) {
                     if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
                     keys[String(Number(key) - offset)] = true
+                }
+                const producers = metadata.metaOf(backing, operationContext)?.arrayBacking?.producers
+                for (const key of Object.keys(metadata.metaOf(producers, operationContext)?.placementVersions ?? {})) {
+                    if (Number(key) >= start && Number(key) < end) keys[String(Number(key) - offset)] = true
                 }
                 return Object.keys(keys)
             }
@@ -272,9 +359,11 @@ class ArrayView {
 
     static mutationTarget(array, key, operationContext, writing) {
         // A native owner's index write precedes its logical growth commit.
+        // A backing producer already owns its physical slot; logical bounds
+        // were checked before selecting it, even if storage has not grown yet.
         // A distinct view writes only within its already established bounds.
-        const range = metadata.requireMeta(array, operationContext).arrayRange
-        const physical = writing && range.backing === array && isArrayIndex(key)
+        const meta = metadata.requireMeta(array, operationContext), range = meta.arrayRange
+        const physical = writing && (range.backing === array || meta.backingOwners) && isArrayIndex(key)
             ? key : ArrayView.#physicalKey(array, key, operationContext)
         if (physical === undefined) {
             if (writing) throw new Error("Cannot write outside an ArrayView range")
@@ -292,8 +381,10 @@ class ArrayView {
     }
 
     static #stateOf(array, operationContext) {
-        const range = metadata.metaOf(array, operationContext)?.arrayRange
+        const meta = metadata.metaOf(array, operationContext)
+        const range = meta?.arrayRange
         if (!range) return ArrayView.#physicalLength(array, operationContext)
+        if (meta.backingOwners) return ArrayView.#physicalLength(range.backing, operationContext)
         // Earlier questions retain their sequence when current bounds become exact.
         const state = range.lengthState
         if (state instanceof LengthState) {
@@ -315,7 +406,9 @@ class ArrayView {
     }
 
     static #physicalLength(array, operationContext) {
-        return errorUtils.runExternalAction(operationContext, () => array.length)
+        try {
+            return errorUtils.runExternalAction(operationContext, () => array.length)
+        } finally { array = undefined }
     }
 }
 
@@ -359,4 +452,4 @@ function hasArrayAncestor(ancestry, array, operation) {
     }
 }
 
-export { ArrayView, ArrayBacking, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }
+export { ArrayView, ArrayBacking, ArrayBackingProducers, isArrayView, isLogicalArray, isArrayIndex, hasArrayAncestor }

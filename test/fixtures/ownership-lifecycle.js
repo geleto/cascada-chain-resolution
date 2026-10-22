@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 // Observe every admitted identity, including private copies and backing records.
@@ -8,7 +9,7 @@ globalThis.recordOwnershipAdmission = value => admitted.push(new WeakRef(value))
 const metaURL = new URL("../../src/meta.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== metaURL) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(metaURL)) return result
     const source = String(result.source), marker = "metadata.set(value, meta)"
     assert(source.includes(marker), "Missing admission observation site")
     return { ...result, source: source.replace(marker, `${marker}; globalThis.recordOwnershipAdmission(value)`) }

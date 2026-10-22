@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { runGeneratedCases } from "../generated-runner.js"
 import * as r from "../../src/index.js"
 import { createRandom, randomInteger } from "../native-equivalence-support.js"
 import { OrderedThenable } from "../ordered-thenable.js"
@@ -35,10 +36,15 @@ assert.throws(() => check([1, undefined, 2], { value: [1, , 2], poisoned: false 
 
 const seedCount = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16)
 const traces = new Set()
-let cases = 0
+const cases = []
 for (let index = 0; index < seedCount; index++) {
     const seed = (0x51f15e + Math.imul(index, 0x9e3779b9)) >>> 0
     for (const array of [false, true]) for (const delivery of ["native", "ordered"]) {
+        cases.push({ seed, array, delivery })
+    }
+}
+const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
+    async runCase({ seed, array, delivery }) {
         const random = createRandom(seed)
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const chain = new r.Chain({ item: fresh(0, array) }, ctx)
@@ -137,12 +143,12 @@ for (let index = 0; index < seedCount; index++) {
                     : await snapshot.result, snapshot.expected)
             assert.equal(ctx.execution.fatalError, null)
             verifyRefCounts(ctx, chain._state, ...forks.map(fork => fork._state))
-            traces.add(JSON.stringify({ array, delivery, trace }))
-            cases++
+            return JSON.stringify({ array, delivery, trace })
         } catch (error) {
             throw new Error(`seed=${seed}, array=${array}, delivery=${delivery}, trace=${JSON.stringify(trace)}`, { cause: error })
         }
-    }
-}
-assert.equal(traces.size, cases, "count distinct command/schedule traces")
-console.log(JSON.stringify({ cases, distinctTraces: traces.size }))
+    },
+    onPass(trace) { traces.add(trace) },
+})
+assert.equal(traces.size, totals.passed, "count distinct command/schedule traces")
+console.log(JSON.stringify({ cases: totals.passed, distinctTraces: traces.size, ...totals }))

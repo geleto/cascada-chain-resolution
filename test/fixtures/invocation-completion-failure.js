@@ -1,6 +1,7 @@
 // Replace a normalized internal result during valid public calls. Host inputs,
 // methods, primordials, and integration arguments keep their supported behavior.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 import { OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
@@ -15,7 +16,7 @@ globalThis.wrapInvocationResult = accessReceiver => (...args) => {
 const target = new URL("../../src/invocation.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const source = String(result.source)
     const marker = "const { operationContext, mutation } = invocationWork"
     assert(source.includes(marker), "Invocation fault anchor needs updating")

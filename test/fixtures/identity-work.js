@@ -1,15 +1,18 @@
 // Production identity work and last-use checks. Public cases cover producers;
 // this fixture isolates history-sized forwarding from ordinary graph traversal.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let counts
+let instrumented = false
 const reset = () => { counts = { roots: 0, links: 0, moves: 0, deliveries: 0, captures: 0, waits: 0 } }
 globalThis.countIdentityWork = key => { counts[key]++ }
 const identityURL = new URL("../../src/captured-identity.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== identityURL) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(identityURL)) return result
+    if (process.env.CASCADA_WORK_NOOP_LOADER === "1") return result
     let source = String(result.source)
     for (const [marker, replacement] of [
         ["function identityRoot(identity) {",
@@ -27,10 +30,12 @@ registerHooks({ load(url, context, next) {
         assert(source.includes(marker), "Identity work instrumentation needs updating")
         source = source.replaceAll(marker, replacement)
     }
+    instrumented = true
     return { ...result, source }
 } })
 reset()
 const r = await import("../../src/index.js")
+assert(instrumented, "Identity work requires its runtime counter loader")
 const { captureIdentity, inheritIdentity, IdentityPublication, compareIdentities,
     resolveCapturedIdentities } = await import("../../src/captured-identity.js")
 const { OperationOwner } = await import("../../src/operation-lifecycle.js")

@@ -1,5 +1,6 @@
 // Public lifetime witnesses; the loader only observes allocated export shells.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 const shells = []
@@ -9,7 +10,7 @@ globalThis.countExportDefinition = () => { definitions++ }
 const exportURL = new URL("../../src/captured-graph.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== exportURL) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(exportURL)) return result
     const source = String(result.source), marker = "initializeCopy?.(node.copy, node)"
     assert(source.includes(marker))
     const definition = "defineCopyProperty(node.copy, key, outputOf(node.entries.get(key)))"
@@ -23,9 +24,9 @@ const { getParentPlacements } = await import("../../src/parent-placements.js")
 const { verifyRefCounts } = await import("../verify-refcounts.js")
 const context = () => ({ execution: new r.Execution(), errorContext: "ownership destinations" })
 const turn = () => new Promise(setImmediate)
-async function collected(ref) {
+async function collected(ref, message) {
     for (let i = 0; i < 20; i++) { await turn(); global.gc() }
-    assert.equal(ref.deref(), undefined)
+    assert.equal(ref.deref(), undefined, message)
 }
 assert(global.gc, "Run with --expose-gc")
 
@@ -231,6 +232,38 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
     await turn()
     assert.equal(ctx.execution._readyDeliveries, undefined)
     assert.equal(ctx.execution._readyDeliveryQueued, false)
+}
+
+// A backing retained by another range must not retain a retired indexed owner.
+// A proved Error short-circuit closes the query before its pending sibling, so
+// no unfinished operation legitimately holds the indexed full view here.
+{
+    function issueIndexedOwner() {
+        const ctx = context(), input = Promise.withResolvers()
+        const poison = r.validationError("short circuit", ctx, r.ERROR_KIND.OperationInputFailed)
+        const chain = new r.Chain([poison], ctx)
+        r.run(chain, [], "push", [input.promise], ctx, { mutationScopeDepth: 0 })
+        const view = chain._state.value, backing = metaOf(view, ctx).arrayRange.backing
+        const prefix = new r.Chain(r.run(chain, [], "slice", [0, 1], ctx, {}), ctx)
+        assert.equal(metaOf(prefix._state.value, ctx).arrayRange.backing, backing)
+        assert.equal(r.hasError(chain, [], ctx), true)
+        const producer = metaOf(backing, ctx).arrayBacking.producers
+        assert(metaOf(producer, ctx).placementVersions["1"].counterProjections.has(view))
+        return { ctx, input, chain, prefix, view: new WeakRef(view), backing: new WeakRef(backing) }
+    }
+    const state = issueIndexedOwner()
+    for (let i = 0; i < 20; i++) { await turn(); global.gc() }
+    assert(state.view.deref(), "The live indexed owner must remain reachable")
+    r.assignPath(state.chain, [], null, state.ctx)
+    await collected(state.view, "A live backing producer must not retain a retired indexed view")
+    assert(state.backing.deref(), "The retained prefix still retains shared physical backing")
+    state.input.resolve({ n: 1 })
+    await turn()
+    assert.equal(r.lookupPath(state.prefix, ["length"], state.ctx), 1)
+    assert.equal(r.hasError(state.prefix, [], state.ctx), true)
+    verifyRefCounts(state.ctx, state.prefix._state, state.chain._state)
+    r.assignPath(state.prefix, [], null, state.ctx)
+    await collected(state.backing)
 }
 
 console.log("Destination retirement, reactivation, counters, source GC, and discarded export GC passed")

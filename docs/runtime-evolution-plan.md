@@ -968,6 +968,8 @@ An exhaustive abstract check over all three-node directed graphs, retained-root 
 
 Run these after retirement and storage permission are authoritative. They address distinct sources of prefix copying; preserve separate work counters and keep/revert decisions.
 
+**Phase 5 follow-up completed:** the [composition and peak-work review](phase5-review.md) checked the historical limits in sections 6.1, 6.2 and 6.5 and corrected the compounded pending-push cost with shared backing producers. Strict counters distinguish requested retained data from repeated producer copying. Existing retained-view materialization and whole-backing limits remain documented; the rejected prototypes below remain rejected.
+
 #### 6.1 F8: Linear Array materialization for a point mutation
 
 **Experiment completed: retain exclusive reuse; reject the broader overlay-write prototype.** Exclusive in-range writes and mutable element entry preserve the existing view/backing, with zero prefix copies in the production work-count fixture. Retained-view writes still materialize the Array: F8 remains a documented performance limitation, not an unfinished experiment. The criteria below govern any future representation redesign.
@@ -1458,40 +1460,13 @@ Pair ready values and Promise fulfillment with throws/rejections of the same nat
 
 ## Phase 5: Stabilize runtime boundary interactions
 
-**Status: specified; implementation audit, fixes and acceptance are pending.** Run a bounded review/fix cycle over **all Phase 4/4A functionality and the shared mechanisms it relies on**, including unchanged code and direct Phase 4 regressions. Closing an implementation milestone does not exempt its code from review. Classify findings by violated invariant and affected routes; determine introduction only when a baseline comparison supports it.
+**Status: complete on 2026-10-22.** The [Phase 5 review](phase5-review.md) records the corrected implementation, 54 successful final acceptance jobs, 217 reviewed safeguard detections and independent review on the unchanged candidate. [B22](phase5-b22-review.md) is corrected with shared backing producers and strict deterministic work controls. Review all Phase 4/4A functionality and the shared mechanisms it relies on, including unchanged code and newly discovered Phase 4 regressions.
 
-The detailed [stabilization specification](phase5-stabilization.md) defines the historical obligation ledger, required intersections, resource/work checks, test-evidence rules and execution gates. It consolidates the supplied reviews into **21 finding families**, distinguishing corrected defects from superseded contracts and rejected experiments. Use that specification with the implementation mode of [the systematic audit](prompts/audit.md); AGENTS.md and the data contract remain the semantic authorities.
+The [stabilization specification](phase5-stabilization.md) is the single detailed definition of scope, finding obligations, test-harness work, acceptance gates and independent final review. It also owns current imported-Promise ownership verification; Phase 7 repeats the affected checks after Phase 6's path changes. Existing feature milestones and historical test totals do not waive these obligations.
 
-### Scope and review targets
+Phase 5 remains available for [manually initiated reruns](prompts/phase5-rerun.md). Each run records its own scope, candidate, fresh review and executed or explicitly reused evidence while preserving the completed milestone's history. A new supported finding reopens its affected obligations; repeat reviews do not start automatically.
 
-Review producers, callers, consumers and cleanup. Re-enumerate the public surface and internal bypass producers; keep one evidence matrix in the Phase 5 review record. Extend existing tests and generators rather than adding a second audit framework.
-
-| Area | Recurring failure patterns and required checks |
-| --- | --- |
-| Admission, classification and authority | Every published identity is admitted; Functions and healthy Errors retain precedence; equivalent import/property/result routes agree; context discovery reuses inspection failures and cannot grant authority through timing or copies. |
-| Placement transfer and publication | Copying, gates, remaps, replacement and retirement preserve required presence, order, producer, discovery and recovery facts. Destination publication authority remains separate from copied contents. Check no-op and failed publication as well as writes. |
-| Invocation and isolation | Receiver adoption protects host-retained exported arguments; receiver effects and independent result admission remain separate; managed and native receiver routes preserve their appropriate ownership and reservation boundaries. |
-| Capture, identity and controlled consumers | Determined results do not wait for unrelated data or aliases; native output still assembles canonical aliases. Check scalar/object selection, early exits, complete consumers, fresh snapshot domains, repeated snapshots and later mutation. |
-| Poison, fatality and recovery | Failures preserve their required scope and complete collection across timing changes, binding conflicts and repair. Healthy Error data stays data. Query failure and fatal escape follow their distinct contracts; approved reporting exceptions remain narrow. |
-| Lifetimes and work bounds | Source access, argument access, output, collection and publication end at their actual last uses. Retained lazy diagnostics cannot retain spent captures. Measure graph work, allocations, subscriptions and retention separately, including long histories around small graphs. |
-
-These areas overlap deliberately. The detailed specification names mandatory intersections and actual-condition controls: pending reuse after retirement, stored/returned overlap, recaptured snapshots, failed inspection with discovery/copying, late authority conflicts, poison/query reporting, and release while required collection continues. Include applicable records, Arrays/ArrayViews, managed classes, exact external leaves, registered resources, aliases and cycles. Exclude unsupported host mutation/forgery defenses and newly proposed APIs. Promise-valued paths, coordinated multiple-reference compiler entry and iterator specification retain their future scope; those deferrals cannot excuse a defect in existing supported behavior.
-
-### Review and correction cycle
-
-1. **Reconcile:** pin sources and test/tools; give every historical family a current trace and disposition, reconstructing missing witnesses where necessary. Old test totals do not close a row.
-2. **Audit:** compare all-ready sequential expectations with actual synchronous/pending delivery, reversed settlements, mutations and supported faults. Check values, identity, poison membership, effects, completion and release separately. Logical precedence follows the command tree; pure inspection order is not an effect oracle.
-3. **Correct and simplify:** reduce failures and fix their authoritative boundary; inspect sibling producers/callers and lifetime/work consequences. Retain experiments only when they reduce total complexity without weakening required behavior. Discuss uncertain contracts or disproportionately complex solutions.
-4. **Validate:** execute the detailed specification's normal/traced, safeguard, generated-history, publication/conflict, GC and work gates on the identified candidate. Confirm instrumentation in child processes and actual difficult-path execution. A matching fault anchor is not a witnessed fault.
-5. **Review and close:** reassess the fixed candidate against the matrix, including assumptions introduced by fixes. Record results, exclusions and remaining confidence limits. New findings reopen the affected families and acceptance gates.
-
-### Completion criteria
-
-- Every scoped matrix row has a producer-to-cleanup trace and applicable current verification; no unexplained required evidence gap remains. Exclusions name their contract or genuinely future feature.
-- No known actionable correctness, isolation, authority, required-completion, poison-collection or lifetime defect remains in this scope. Any proposed deferral needs a concrete rationale and explicit agreement; it cannot be hidden by changing the phase label.
-- The [specified acceptance gates](phase5-stabilization.md#execution-stages-and-acceptance) pass, with focused regressions retained for discovered failure families. Phase 4's 5,178-test checkpoint does not satisfy Phase 5's new audit or validation obligations.
-- A final review of the fixed candidate finds no further actionable issue in the scoped matrix. This is an evidence-based completion criterion, not a promise of zero undiscovered bugs or an obligation to review indefinitely.
-- Contracts, current status and tests agree; temporary loaders, superseded paths and obsolete scaffolding from the fixes are removed. Record the final snapshot and residual limitations in a Phase 5 review record, keeping Phase 4's evidence historical.
+The pending-push peak-retention finding is [corrected and verified](phase5-stabilization.md#pending-push-history-evidence). Canonical backing producers remove repeated pending-entry copies while ordinary overlays preserve independent owners. Existing whole-backing and retained-output costs remain separately documented; no Phase 2 limitation was used to exempt the compounded work violation.
 
 ### Retired proposal: physical reuse
 
@@ -1569,31 +1544,17 @@ Repair selects managed placements through ordinary path resolution; registered e
 
 ## Phase 7: Review imported-Promise settlement ownership
 
-**Status: planned preservation check; migrated from former phase 11.** Run after the preceding ownership, identity, and Promise-path changes. No production rewrite is planned without a demonstrated defect.
+**Status: planned preservation check after Phase 6; migrated from former phase 11.** Current imported-Promise correctness belongs to Phase 5. This phase rechecks that baseline after Promise-valued path integration rather than repeating an independent importer audit.
 
-### Problem
+Reuse the [imported-Promise ownership specification](phase5-stabilization.md#imported-promise-ownership), its B01/B08/B09/B10/B19 traces and retained witnesses. The importer continues to own raw subscriptions, segment preparation and boundary policy; placement code owns complete prepared-state capture and publication. No importer rewrite is planned without a demonstrated defect or simpler ownership boundary.
 
-The import processor owns segment processing, validation, staging, and abandonment for synchronous and pending custom delivery. It uses the shared placement mechanics established by Phase 9F-B without an installer callback or property-to-import delegation loop. Mutable-authority discovery independently follows Phase 9E's directly accessible source rule.
+Verification adds the interactions introduced by Phase 6:
 
-### Outcome
+- Pair ready, synchronous and deferred path selection with pending import deliveries, rejected/unused path suffixes, copies/gates, retirement/re-entry and failed staging. Check segment atomicity, original producers, authority, handoff and cleanup against the Phase 5 baseline.
+- Preserve the first-actual-import source-attribution exception while keeping admission, poison presence, policy, graph effects and discovery authority independent of settlement order.
+- Rerun the affected Phase 5 normal/traced regressions, receiving differentials, failure sensitivity and work/lifetime controls on the Phase 6 candidate. Record the changed routes and evidence; neither prior Phase 5 acceptance nor Phase 6's path tests alone close this preservation check.
 
-This phase is a preservation check after Phase 9F-B consolidation and Phase 6 Promise-path changes, with no further production rewrite planned. Verify the resulting processor against the constraints below. The bounded lifecycle evaluation belongs to Phase 9F-B; do not repeat it here or reopen the importer without a newly demonstrated defect or duplicated responsibility.
-
-### Constraints
-
-- Preserve one staged import walk per synchronous segment with branch-local structural poison. Authority-transaction or exact-receiver failure publishes no fresh admissions, origins, Promise placements, fixed imported versions, external-tree leaves, or fresh topology. Staging itself needs no protection leases or topology activation. Publication and ordinary receiving retention restore cached relationships when needed; failed staging leaves those obligations with their existing owners.
-- Synchronous custom delivery continues the active segment and identity map. Later delivery for a committed placement starts a fresh segment at its existing FIFO position and retains its originating boundary context. The same preparation's failed-inspection map travels through pending delivery records, reusing poison without retaining source identities or completed history. Independent preparations may retry unadmitted failures. An abandoned segment's callbacks retain no import or publication authority.
-- Keep external-tree discovery as a separate occurrence walk because it must preserve finite alias paths; commit it atomically with identity admission.
-- Reuse placement versions and the existing Promise version. Add no `ImportTransaction`, second overlay store, or parallel continuation path.
-- Make no change merely to move code between files. A neutral or larger conceptual result is a failed experiment and must be reverted.
-
-### Verification
-
-- Ready and Promise-fulfilled imports preserve the same admission, attribution, alias, cycle, placement-version, and tree-discovery behavior.
-- Authority-transaction and exact-receiver failure leave no partial fresh state or abandoned parent/backing relationships; structural poison remains local and preserves healthy branches. Earlier independent publication remains valid. Verify cached restoration and cleanup, imported protection, ready import holds, and failed-inspection reuse and collection across later segments together. Internal import joins its enclosing transition; escaping managed values retain their common handoff.
-- The importer still owns raw-input subscription, fulfillment-segment processing, and import policy; shared placement code owns capture, construction, producer tracking, and commits of complete prepared logical state. Ordinary consumption must not admit data ahead of segment validation. Prepared method results preserve existing producers and complete placement state through copies, gates and repair without new result revalidation. Fresh owned deliveries keep their boundary policy. No installer callbacks, import-policy forwarding, property-to-import delegation loop, or duplicate processor have returned.
-
-Keep [`import-processing.md`](import-processing.md) aligned with the retained Phase 9F-B boundary; update it here only if a newly justified change is retained.
+Fix discovered regressions at their owning boundary and keep [import-processing.md](import-processing.md) aligned. Do not introduce installer callbacks, import-policy delegation loops, a second overlay store or a duplicate processor. Revert experiments that only relocate responsibility or add concepts.
 
 ## Phase 8: Cut Cascada over to the execution Error architecture
 

@@ -1,5 +1,6 @@
 // Finalization faults are injected into runtime work reached by valid public operations.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 import { OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
@@ -16,7 +17,7 @@ const root = new URL("../../src/", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     let source = String(result.source)
-    if (url === root + "operation-lifecycle.js") {
+    if (normalizeModuleURL(url) === normalizeModuleURL(root + "operation-lifecycle.js")) {
         for (const [marker, replacement] of [
             ["this.release?.()", 'globalThis.ownerFinalizationFault("owner-release", this.operationContext); this.release?.()'],
             ["for (const release of releases) release()", 'for (const release of releases) { globalThis.ownerFinalizationFault("registered-release", this.operationContext); release() }'],
@@ -24,7 +25,7 @@ registerHooks({ load(url, context, next) {
             assert(source.includes(marker), "Owner finalization fault anchor needs updating")
             source = source.replace(marker, replacement)
         }
-    } else if (url === root + "captured-graph.js") {
+    } else if (normalizeModuleURL(url) === normalizeModuleURL(root + "captured-graph.js")) {
         const marker = "    discard() {"
         assert(source.includes(marker), "Export output cleanup fault anchor needs updating")
         source = source.replace(marker, marker + '\n        globalThis.ownerFinalizationFault("export-discard", this.owner.operationContext)')

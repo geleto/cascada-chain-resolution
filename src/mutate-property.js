@@ -12,6 +12,7 @@ import * as externalTree from "./external-mutation-tree.js"
 import { captureMutationResult, walkMutationPath } from "./mutations.js"
 import { exportValue } from "./export.js"
 import { receiveValue } from "./input-preparations.js"
+import { ArrayView } from "./array-view.js"
 
 function prepareAssignment(placement, key, operationContext) {
     const validate = resolved => languageProperties.validatePropertyValue(key, resolved.value, operationContext) ?? resolved
@@ -125,16 +126,17 @@ function assignManagedPath(
 // to the new Array without delaying its publication.
 function resolveTruncatedArrayTransitions(array, start, operationContext) {
     const versions = metadata.metaOf(array, operationContext)?.placementVersions
-    if (!versions) return undefined
     const waits = []
-    for (const key of Object.keys(versions)) {
-        const version = versions[key]
-        if (Number(key) < start || !version?.transition) continue
+    for (const key of Object.keys(versions ?? {})) collect(key, versions[key])
+    for (const [key, version] of ArrayView.backingVersions(array, start, operationContext)) collect(key, version)
+    return waits.length > 1 ? Promise.all(waits) : waits[0]
+
+    function collect(key, version) {
+        if (Number(key) < start || !version.transition) return
         const wait = propertyVersions.resolvePlacementTransition(
             propertyVersions.capturePlacementFromVersion(version), operationContext, () => undefined)
         if (languageValues.isPending(wait, operationContext)) waits.push(wait)
     }
-    return waits.length > 1 ? Promise.all(waits) : waits[0]
 }
 
 // --- deletePath :  delete a.k ----------------------------------------------

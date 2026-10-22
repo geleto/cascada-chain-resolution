@@ -1,6 +1,5 @@
 import * as metadata from "../src/meta.js"
 import { getParentPlacements } from "../src/parent-placements.js"
-import { ArrayBacking } from "../src/array-view.js"
 import * as errors from "../src/error.js"
 
 // Read forward storage independently, without normalizing values, subscribing,
@@ -25,11 +24,31 @@ function logicalPlacements(owner, context) {
         const descriptor = Object.getOwnPropertyDescriptor(view?.backing ?? owner, key)
         if (descriptor?.enumerable && "value" in descriptor) placements.set(logical, descriptor.value)
     }
+    if (array) {
+        const record = metadata.metaOf(view?.backing ?? owner, context)?.arrayBacking?.producers
+        for (const [physical, version] of Object.entries(metadata.metaOf(record, context)?.placementVersions ?? {})) {
+            const index = Number(physical) - offset
+            if (index < 0 || length !== undefined && index >= length) continue
+            if (version.present === false) placements.delete(String(index))
+            else placements.set(String(index), version.value)
+        }
+    }
     for (const [key, version] of Object.entries(meta.placementVersions ?? {})) {
         if (version.present === false) placements.delete(key)
         else placements.set(key, version.value)
     }
     return placements
+}
+
+function logicalVersion(owner, key, context) {
+    const meta = metadata.metaOf(owner, context)
+    if (meta.placementVersions?.[key]) return meta.placementVersions[key]
+    if (meta.type !== metadata.TYPE.Array) return
+    const range = meta.arrayRange
+    const index = Number(key)
+    if (range && index >= (range.lengthState.minimum ?? range.lengthState)) return
+    const record = metadata.metaOf(range?.backing ?? owner, context)?.arrayBacking?.producers
+    return metadata.metaOf(record, context)?.placementVersions?.[index + (range?.start ?? 0)]
 }
 
 function verifyParents(context, ...roots) {
@@ -69,6 +88,14 @@ function verifyParents(context, ...roots) {
                 (registeredMeta.arrayRange?.backing ?? registered) !== array)
                 fail("Invalid Array backing owner")
         }
+        for (const version of Object.values(metadata.metaOf(record?.producers, context)?.placementVersions ?? {})) {
+            for (const [owner, key] of version.counterProjections ?? []) {
+                const state = metadata.metaOf(owner, context)
+                if (!state?.relationshipsActive || !state.parents ||
+                    !state.backingCounterVersions?.has(version) || logicalVersion(owner, key, context) !== version)
+                    fail("Invalid backing producer counter projection")
+            }
+        }
         for (const key of Reflect.ownKeys(array)) {
             if (typeof key !== "string") continue
             const index = Number(key)
@@ -86,7 +113,7 @@ function verifyParents(context, ...roots) {
                 const range = state.arrayRange
                 const logical = index - (range?.start ?? 0)
                 const length = range ? range.lengthState.minimum ?? range.lengthState : array.length
-                return logical >= 0 && logical < length && !state.placementVersions?.[logical]
+                return logical >= 0 && logical < length && !logicalVersion(registered, String(logical), context)
             })
             if (!captured && exposed) fail("Missing exposed backing occurrence")
             if (captured) walk(child)
@@ -99,25 +126,43 @@ function verifyParents(context, ...roots) {
         seen.add(node)
         if (!meta.placementsInitialized) fail("Published managed container has incomplete parent preparation")
         if (!meta.relationshipsActive) {
-            if (meta.incomingParents || meta.preservationParents || meta.parents || meta.counterChildren ||
+            if (meta.incomingParents || meta.preservationParents || meta.parents || meta.counterChildren || meta.backingCounterVersions ||
                 meta.frontierCount !== undefined || meta.errorCount !== undefined ||
                 meta.cycleCuts || meta.destination?.owner || meta.backingRecord?.owners.has(node))
                 fail("Retired container retains active ownership state")
             for (const child of forward(node).values()) walk(child)
             return
         }
-        for (const [source, indexes] of occurrences(node)) if (source instanceof ArrayBacking) {
-            if (!metadata.metaOf(source, context)?.relationshipsActive || !source.owners.size)
-                fail("Incoming backing occurrence has no active owner")
-            if (metadata.metaOf(source.array, context)?.arrayBacking !== source) fail("Detached Array backing record")
-            for (const index of indexes) {
-                const descriptor = Object.getOwnPropertyDescriptor(source.array, String(index))
-                if (!Number.isInteger(index) || index < 0 || index >= 4294967295 ||
-                    !descriptor?.enumerable || descriptor.value !== node)
-                    fail("Physical backing occurrence does not hold its child")
+        for (const [source, indexes] of occurrences(node)) {
+            const sourceMeta = metadata.metaOf(source, context)
+            if (!sourceMeta?.backingOwners) continue
+            if (!sourceMeta.arrayRange) {
+                if (!sourceMeta.relationshipsActive || !source.owners.size)
+                    fail("Incoming backing occurrence has no active owner")
+                if (metadata.metaOf(source.array, context)?.arrayBacking !== source) fail("Detached Array backing record")
+                for (const index of indexes) {
+                    const descriptor = Object.getOwnPropertyDescriptor(source.array, String(index))
+                    if (!Number.isInteger(index) || index < 0 || index >= 4294967295 ||
+                        !descriptor?.enumerable || descriptor.value !== node)
+                        fail("Physical backing occurrence does not hold its child")
+                }
+            } else {
+                if (!sourceMeta.relationshipsActive || !source.backing.owners.size ||
+                    source.backing.producers !== source)
+                    fail("Incoming backing producer has no active owner")
+                for (const index of indexes) {
+                    const version = sourceMeta.placementVersions?.[index]
+                    if (!version || version.present === false || version.value !== node)
+                        fail("Backing producer does not hold its child")
+                }
             }
         }
         if (meta.type === metadata.TYPE.Array) checkBacking(node, meta)
+        for (const version of meta.backingCounterVersions ?? []) {
+            const key = version.counterProjections?.get(node)
+            if (!meta.parents || key === undefined || logicalVersion(node, key, context) !== version)
+                fail("Missing backing producer counter projection")
+        }
         const incoming = getParentPlacements(node, context)
         const pairs = new Map()
         const projection = new Map()
@@ -139,7 +184,7 @@ function verifyParents(context, ...roots) {
         }
         for (const [key, child] of forward(node)) {
             const childMeta = metadata.metaOf(child, context)
-            const version = meta.placementVersions?.[key]
+            const version = logicalVersion(node, key, context)
             // Errors and Functions are leaves without container relationships;
             // an unadmitted object needs an installed delivery obligation.
             // Inspect that obligation, never the child's potentially accessor

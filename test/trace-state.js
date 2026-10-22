@@ -1,8 +1,10 @@
 // Test-process state only. Runtime source is instrumented by trace-runtime.js;
 // production modules contain no tracer hooks, counters, or allocation registry.
+import { appendFileSync } from "node:fs"
 const stack = []
 const counters = new Map()
 let enabled = false
+let reported = false
 let copies
 const publication = new Set([
     "replacePlacement", "commitPlacementVersion", "commitPromiseVersion",
@@ -18,7 +20,20 @@ const construction = new Set([
     "createRemap", "exportValues", "fixture",
 ])
 
-function count(name) { counters.set(name, (counters.get(name) ?? 0) + 1) }
+function receipt(event, name) {
+    if (process.env.CASCADA_TRACE_RECEIPT_FILE)
+        appendFileSync(process.env.CASCADA_TRACE_RECEIPT_FILE, JSON.stringify({
+            event, name, pid: process.pid, parent: process.ppid, script: process.argv[1],
+        }) + "\n")
+}
+function count(name) {
+    counters.set(name, (counters.get(name) ?? 0) + 1)
+}
+// Only the rewritten production wrappers call this. Test fixture scopes and
+// manual trace counters do not establish runtime-worker execution.
+function runtimeHit(name) {
+    if (!reported) { reported = true; receipt("executed", name) }
+}
 function enter(name, args) {
     if ((name === "runExternalAction" || name === "thenValue") &&
         stack.some(frame => frame.name === "commitPreparedInput"))
@@ -35,10 +50,10 @@ function fixture(write, ...args) {
     enter("fixture", args)
     try { return write(...args) } finally { leave() }
 }
-function enable() { enabled = true }
+function enable() { if (!enabled) receipt("loaded"); enabled = true }
 function reset() { counters.clear() }
 function counts() { return Object.fromEntries(counters) }
 function trackCopies() { return copies = [] }
 function allocated(value) { copies?.push(new WeakRef(value)) }
 
-export { enter, leave, fixture, count, enable, enabled, reset, counts, trackCopies, allocated }
+export { enter, leave, fixture, count, runtimeHit, enable, enabled, reset, counts, trackCopies, allocated }

@@ -163,6 +163,15 @@ function copyPlacement(placement, owner, key, operationContext, writeBack = true
 
 function transferPlacement(placement, owner, key, operationContext, destinationVersion,
     kind = errorUtils.ERROR_KIND.AssignmentValueFailed, writeBack = true, structure) {
+    const ownerMeta = metadata.metaOf(owner, operationContext)
+    if (writeBack && !destinationVersion && !structure && ownerMeta?.type === metadata.TYPE.Array &&
+        ownerMeta.arrayRange && ownerMeta.arrayRange.backing !== owner &&
+        (placement.sourceVersion || placement.recovery || placement.discoveryBlocked ||
+            languageValues.isPending(placement.value, operationContext) ||
+            ArrayView.backingVersion(owner, key, operationContext))) {
+        const destination = ArrayView.placementDestination(owner, key, operationContext)
+        if (destination) { owner = destination.owner; key = destination.key }
+    }
     if (writeBack && !destinationVersion && !placement.present) {
         deleteProperty(owner, key, operationContext)
         return undefined
@@ -312,16 +321,18 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
 
 function detachAbsentVersion(owner, key, version, operationContext) {
     // A completed writer alone does not prove that removing a logical absence
-    // is safe: publication without writeback may still mask physical storage.
+    // is safe: it may still mask physical storage or a canonical backing value.
     // Present versions can still authorize queued path publication after they
     // settle; matching physical storage alone does not make them disposable.
     if (version.present === false && version.storageAbsent && !errorUtils.isPoisonError(version.value) && !version.writing &&
+        !ArrayView.backingVersion(owner, key, operationContext) &&
         isLivePlacementVersion(owner, key, version, operationContext))
         detachPlacementVersion(owner, key, operationContext)
 }
 
 function getPlacementVersion(owner, key, operationContext) {
-    return metadata.metaOf(owner, operationContext)?.placementVersions?.[key]
+    return metadata.metaOf(owner, operationContext)?.placementVersions?.[key] ??
+        ArrayView.backingVersion(owner, key, operationContext)
 }
 
 function getPromiseVersion(owner, key, operationContext) {
@@ -416,8 +427,8 @@ function installMutationVersion(owner, key, source, operationContext, onValue) {
     version.transition = transition
     const structure = beginPlacementStructure(owner, key, captured, operationContext)
     const releaseWriter = retainWriter(owner, operationContext)
-    installPlacementVersion(owner, key, version, operationContext)
-    recordLogicalPlacement(owner, key, captured.value, version.value, operationContext, true)
+    prepareEdgeUpdate(owner, key, captured, version.value, operationContext,
+        () => installPlacementVersion(owner, key, version, operationContext))()
     let result
     transition.promise = resolvePlacement(captured, operationContext, (placement, releaseCapture) => {
         version.writing = true
@@ -527,9 +538,9 @@ function commitPromiseVersion(
     writeBack,
     structure,
 ) {
-    // A view updates its overlay. Native-owner settlement can refresh storage:
-    // any derived owner already captured this pending slot in its own overlay.
-    // New mutations still check sharing before writing or installing a version.
+    // A view or shared backing producer advances its logical version. Native
+    // owner settlement may refresh storage; derived native-owner placements
+    // already have their own capture. Mutations still check sharing first.
     writeBack &&= !isArrayView(owner, operationContext)
     let { value } = placement
     function recordFailure(failure) {
@@ -558,7 +569,8 @@ function replacePlacement(owner, key, placement, operationContext, writeBack = t
         preparePropertyCommit(owner, key, placement, operationContext, undefined, writeBack, () => {
             // Failed storage work must leave the old logical version available.
             detachPlacementVersion(owner, key, operationContext)
-            if (!writeBack || placement.promiseBacked || placement.recovery || placement.discoveryBlocked)
+            if (!writeBack || placement.promiseBacked || placement.recovery || placement.discoveryBlocked ||
+                ArrayView.backingVersion(owner, key, operationContext))
                 installPlacementVersion(owner, key, placement, operationContext)
         })()
     } finally { owner = placement = undefined }

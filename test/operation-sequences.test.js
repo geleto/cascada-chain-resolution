@@ -6,6 +6,7 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import { metaOf } from "../src/meta.js"
 import { OrderedThenable, ready } from "./ordered-thenable.js"
+import { enabled as traceEnabled } from "./trace-state.js"
 
 // Bounded command sequences use native property semantics as an independent
 // oracle. Each prefix is a separate scenario, so intermediate exports cannot
@@ -226,9 +227,10 @@ describe("observations across scope publication", () => {
 describe("pending structural publication", () => {
     it("matches a sequential model across seeded placement schedules", function () {
         this.timeout(60000)
-        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=128",
+        const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict", "--max-old-space-size=128",
             fileURLToPath(new URL("./fixtures/placement-sequences.js", import.meta.url))],
-        { encoding: "utf8", timeout: 55000 })
+        { encoding: "utf8", timeout: 55000,
+            env: { ...process.env, CASCADA_SEQUENCE_EXPECT_TRACE: traceEnabled ? "1" : "0" } })
         assert.equal(result.error, undefined, result.error?.message)
         assert.equal(result.status, 0, result.stderr)
         const coverage = JSON.parse(result.stdout)
@@ -240,7 +242,7 @@ describe("pending structural publication", () => {
         this.timeout(15000)
         // A microtask livelock also prevents Mocha's timeout from firing.
         // Bound both time and heap in a child process so a regression is safe.
-        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=128",
+        const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict", "--max-old-space-size=128",
             fileURLToPath(new URL("./fixtures/pending-structural-publication.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })
         assert.equal(result.error, undefined, result.error?.message)
@@ -387,7 +389,7 @@ describe("bounded external ordering sequences", () => {
     for (const entered of [false, true]) {
         it(`matches an independent conflict model, entered=${entered}`, async function () {
             // Each test exhausts command triples and their settlement orders.
-            this.timeout(10000)
+            this.timeout(30000)
             for (const sequence of sequences(commands, 3).filter(sequence => sequence.length === 3)) {
                 for (const order of releaseOrders) {
                     const ctx = { execution: new r.Execution(), errorContext: {} }

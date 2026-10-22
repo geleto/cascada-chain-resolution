@@ -142,11 +142,11 @@ Prepared method results are covered by [method-result-identity.test.js](method-r
 
 Run a fixture directly with `node --expose-gc --unhandled-rejections=strict test/fixtures/<name>.mjs`; add `--stack-trace-limit=1000` for deeper Error frames and `--import ./test/trace-runtime.js` for publication/work instrumentation. Keep each fixture's own asserted fault/allocation hooks. Do not format or strip Error stacks to make collection pass. The [review record](../docs/phase4-review.md) preserves historical candidate evidence, corrected receiving defects and approved contract decisions, including the import source-context exception.
 
-The [Phase 5 stabilization specification](../docs/phase5-stabilization.md) defines the next audit's historical finding ledger, required cross-boundary cases and acceptance gates. It covers all Phase 4/4A functionality and shared mechanisms, including new regressions. Its [evidence rules](../docs/phase5-stabilization.md#test-evidence-requirements) require exact candidate/test inputs, verified child instrumentation, actual-condition controls and independent value/identity/poison/effect assertions. Existing counts and fault-anchor matches are historical evidence, not completion of those pending gates.
+The [Phase 5 stabilization specification](../docs/phase5-stabilization.md) defines the audit's historical finding ledger, required cross-boundary cases and acceptance gates. It covers all Phase 4/4A functionality and shared mechanisms, including new regressions. Its [evidence rules](../docs/phase5-stabilization.md#test-evidence-requirements) require exact candidate/test inputs, verified child instrumentation, actual-condition controls and independent value/identity/poison/effect assertions. Historical counts and fault-anchor matches do not satisfy those gates; current acceptance is recorded in the [execution review](../docs/phase5-review.md).
 
 [preparation-back-references.mjs](fixtures/preparation-back-references.mjs) runs **33 finite-graph progress cases** through import, method-result import and host calls, including source/result/cached-wrapper back-references. Both plain and preparation-budget modes run in the default suite, with child-process deadlines against microtask livelock. The obsolete physical-copy assertion is replaced by preserved source identity; value, cycle, host-storage and original-producer checks remain.
 
-Default active-root histories deliberately settle method-result/host-call values before second reception and label that route `settled-reentry`. They are not evidence for pending reuse. The separate pending history suite uses `historyCases(4, true)`; set `CASCADA_SEQUENCE_SEEDS=400` when running `test/pending-boundary-histories.test.js` for **3,200 genuinely pending repeated-root histories** with all 32 applicable joint keys. Both use the existing independent graph oracle. Retired-root histories establish actual retirement and keep their own controls.
+Default active-root histories deliberately settle method-result/host-call values before second reception and label that route `settled-reentry`. They are not evidence for pending reuse. The separate pending history suite uses `historyCases(4, true)`; set `CASCADA_SEQUENCE_SEEDS=1600` when running `test/pending-boundary-histories.test.js` for **12,800 genuinely pending repeated-root histories** with all 32 applicable joint keys. Both use the existing independent graph oracle. Retired-root histories establish actual retirement and keep their own controls.
 
 ## Scaling generated runs
 
@@ -160,20 +160,24 @@ node --import ./test/trace-runtime.js --unhandled-rejections=strict ./node_modul
 
 The loader instruments named helpers, including edge-neutral pending mutation-version installation, completed-absence overlay cleanup and shared capture assembly. Internal-stage fault tests also target assembly in both native managed modes across five delivery modes and raw, poison, undefined and fatal throws. Shared capture assembly and deliberate internal fixture setup are explicitly scoped. `publication-trace.test.js` proves sensitivity by omitting one boundary in an isolated load; it also runs discarded-construction GC and preparation work-count fixtures. The GC fixture keeps an inspection Error observable while proving that pending callbacks and Error stack frames do not retain the failed input. Use `--import ./test/trace-runtime.js` on direct sequence and matrix commands too: child fixture processes do not inherit their parentРІР‚в„ўs loader arguments automatically. The incoming oracle uses independent forward descriptors, Array bounds, and overlays rather than the preparerРІР‚в„ўs key filter.
 
-Default generated runs stay bounded. Before merging changes to shared transition mechanisms, such as placement publication, entry, external reservations, Array length, or structural methods, also run them at a larger scale with these settings:
+Default generated runs stay bounded. Before merging changes to shared transition mechanisms, such as placement publication, entry, external reservations, Array length, or structural methods, run **at least 1,600 seeds** for each of the six fixtures: `preparation-sequences.js` (including lifecycle cases), `placement-sequences.js`, `array-sequences.js`, `nested-sequences.js`, `external-sequences.js` and `boundary-histories.js`. Run the pending-history suite and `receiving-invocation-differential.mjs` at the same scale.
+
+The old 400-seed ceiling reaches only 2,400 Array/external programs. Array program 9,345 requires at least 1,558 seeds; its reduced witness is retained in [entry-storage.test.js](entry-storage.test.js). The reviewed external failure at program 3,762 requires at least 628 seeds, and earlier external/preparation checks already used 1,600. A 1,600-seed floor reaches 9,600 programs in these generators; it supplements reduced regressions and asserted joint coverage rather than replacing them. Program numbers depend on the pinned generator version.
 
 | Setting | Effect |
 | --- | --- |
 | `CASCADA_SEQUENCE_SEEDS=n` | Seeds for the sequence fixtures (default 16): 4 cases each for placement sequences; 6 programs each for Array, nested and external sequences; 8 reception programs plus 1 lifecycle program for input preparation, in addition to its fixed 128 reception cases; and 32 active boundary histories per seed plus 128 fixed retired-root histories. Boundary histories require at least 4 seeds. |
 | `CASCADA_SEQUENCE_START=i` | First program to run in the Array, nested, or external fixture; use it with the index a failure reports. |
+| `CASCADA_SEQUENCE_CONTINUE=n` | Positive maximum number of failed comparison cases before stopping. Unset or zero keeps ordinary fail-fast execution. Available in all six fixtures and the receiving/invocation differential. |
+| `CASCADA_SEQUENCE_TIMEOUT_MS=n` | Per-case isolated worker deadline, including startup; default 30,000 ms. Used by continuation mode. |
 | `CASCADA_CONFLICT_MATRIX=full` | The complete conflict product in all three harness modes, with checks after every microtask turn in the instrumented runs. |
 | `CASCADA_CONFLICT_PART=i/n` | Runs every n-th case starting at i, to split a full matrix across processes. |
 
 Run a fixture directly to use `CASCADA_SEQUENCE_START` or `CASCADA_CONFLICT_PART`; the Mocha tests remove them so their coverage assertions stay meaningful:
 
 ```sh
-# About 20 seconds.
-CASCADA_SEQUENCE_SEEDS=400 node --unhandled-rejections=strict test/fixtures/array-sequences.js
+# Larger closure run; explicitly instrument this worker.
+CASCADA_SEQUENCE_SEEDS=1600 node --import ./test/trace-runtime.js --unhandled-rejections=strict test/fixtures/array-sequences.js
 # About two minutes across eight processes; prints any failing part.
 for part in 0 1 2 3 4 5 6 7; do
     CASCADA_CONFLICT_MATRIX=full CASCADA_CONFLICT_PART=$part/8 node --unhandled-rejections=strict \
@@ -182,6 +186,12 @@ done; wait
 ```
 
 A fixture prints a coverage summary on success. On failure it exits non-zero and reports what reproduces the case: the seed and program, or the matrix case, including the harness mode. The fixtures are deterministic, so the same command and settings fail again.
+
+**Phase 5 investigation support:** [generated-runner.js](generated-runner.js) creates fresh inputs, models and executions for independent cases. Successful workers can run another case; every failed, escaped or timed-out worker is discarded. It reports the active replay, abandoned sibling replays, and attempted/passed/failed/skipped comparison-case totals, counts coverage only after all case assertions, and exits nonzero on any failure. A comparison case groups one program's paired harness/delivery runs; the `runs` field still counts successful individual replays. [Generated-runner controls](generated-runner.test.js) retain two separated failures with healthy successors, failure-limit skips, escaping failures, microtask-starvation deadlines and worker instrumentation receipts. Generated subprocess wrappers forward Node loader arguments; a no-op loader must fail the receipt check.
+
+The [receiving/invocation differential](fixtures/receiving-invocation-differential.mjs) replays bounded seeded programs across import, method-result import, host results, observation properties, mutable snapshots and managed methods. It uses the independent graph oracle, preserves earlier exports through native and path mutations, and checks exact cause/source/kind membership. Root versus nested delivery, healthy native Error data, direct rejection, ready-only snapshot restrictions and metadata-only scope queries have explicit controls. [Its tests](receiving-invocation-differential.test.js) retain five executed production faults for values, aliases, missing poison, effects and completion, separately from oracle self-checks. See the [specification](../docs/phase5-stabilization.md#retained-receiving-and-invocation-differentials) for the full-audit obligations.
+
+**B22 work regression:** [pending-push-work.test.js](pending-push-work.test.js) checks linear work and maintained storage during issuance, partial settlement, final settlement and repair. Shared backing producers remove the former quadratic pending-overlay capture chain; the [review](../docs/phase5-b22-review.md) records the design and measurements. The wrapper also requires a disabled counter loader to fail and restores the old copied-overlay path to prove the strict bound detects it after semantic controls complete. `node test/fixtures/pending-push-work.js --report-only` prints counters without certifying the work bound. Candidate-wide Phase 5 acceptance is recorded separately in the [execution review](../docs/phase5-review.md).
 
 The full publication-pair differential is reproducible from the repository:
 

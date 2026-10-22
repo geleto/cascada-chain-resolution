@@ -84,6 +84,9 @@ Captured source delivery preserves complete logical placement state through the 
 
 ## Ownership
 
+Cached reception restores a prepared root's inactive relationships from authoritative forward state before handing it to the consumer, stopping at active descendants. This performs no host inspection, admission, resubscription or optional counter rebuild. A consumer may index a value without retaining it; ordinary end-of-transition retirement then removes that index together with its restored relationships. Index construction itself does not receive or retain a value. Captured versions and delivery holders keep their existing, separate lifetimes.
+
+
 New imported managed identities carry imported protection, so mutation copies before changing host storage independently of parent counts or temporary leases. Copies are runtime-owned; reused imported children keep their origin. Frozen, sealed, and writable imported managed objects therefore have the same logical behavior.
 
 Application code must not mutate managed data after passing it to Cascada. External identities remain exact leaves. Initial context discovery reuses one segment-local identity-to-location map to detect duplicate locations and commit registrations after validation. Binding state follows [external-context-ordering.md](external-context-ordering.md#identity-binding-map). A regular Chain's inert admission cannot disqualify a later context, and an abandoned segment cannot invalidate an existing binding.

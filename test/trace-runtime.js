@@ -1,8 +1,8 @@
 import { registerHooks } from "node:module"
-import * as trace from "./trace-state.js"
+import { normalizeModuleURL } from "./module-url.js"
 
-const sourceRoot = new URL("../src/", import.meta.url).href
-const stateURL = new URL("./trace-state.js", import.meta.url).href
+const sourceRoot = normalizeModuleURL(new URL("../src/", import.meta.url))
+const stateURL = normalizeModuleURL(new URL("./trace-state.js", import.meta.url))
 const functions = {
     "input-preparations.js": ["prepareInput", "commitPreparedInput"],
     "error.js": ["runExternalAction"],
@@ -19,11 +19,17 @@ const functions = {
     "language-values.js": ["isPending", "thenValue"],
 }
 
-trace.enable()
 registerHooks({
+    resolve(specifier, context, nextResolve) {
+        const resolved = nextResolve(specifier, context)
+        // The loader and a worker may spell the same Windows drive differently.
+        // Both must share one counter module, not merely instrument the same body.
+        return normalizeModuleURL(resolved.url) === stateURL ? { ...resolved, url: stateURL } : resolved
+    },
     load(url, context, nextLoad) {
         const loaded = nextLoad(url, context)
-        const names = url.startsWith(sourceRoot) && functions[url.slice(sourceRoot.length)]
+        const normalized = normalizeModuleURL(url)
+        const names = normalized.startsWith(sourceRoot) && functions[normalized.slice(sourceRoot.length)]
         if (!names) return loaded
         let source = String(loaded.source)
         for (const name of names) {
@@ -32,14 +38,16 @@ registerHooks({
             source = source.replace(declaration, `function ${name}Untraced(`)
             if (name === "createEmptyContainer") {
                 source += `\nfunction createEmptyContainer(...args) {
+                    publicationTrace.runtimeHit("createEmptyContainer");
                     const result = createEmptyContainerUntraced(...args);
                     publicationTrace.allocated(result);
                     return result;
                 }\n`
             } else if (name === "isPending") {
-                source += `\nfunction isPending(...args) { publicationTrace.count("isPending"); return isPendingUntraced(...args) }\n`
+                source += `\nfunction isPending(...args) { publicationTrace.runtimeHit("isPending"); publicationTrace.count("isPending"); return isPendingUntraced(...args) }\n`
             } else if (name === "readLanguagePlacement") {
                 source += `\nfunction readLanguagePlacement(...args) {
+                    publicationTrace.runtimeHit("readLanguagePlacement");
                     const result = readLanguagePlacementUntraced(...args);
                     if (!result.sourceVersion && !errorUtils.isPoisonError(result.value) && metadata.isObjectLike(result.value) &&
                         !metadata.metaOf(result.value, args[2]))
@@ -50,6 +58,7 @@ registerHooks({
                 source += `\nfunction ${name}(...args) { return ${name}Untraced(...args) }\n`
             } else {
                 source += `\nfunction ${name}(...args) {
+                    publicationTrace.runtimeHit(${JSON.stringify(name)});
                     publicationTrace.enter(${JSON.stringify(name)}, args);
                     try { return ${name}Untraced(...args) } finally { publicationTrace.leave() }
                 }\n`
@@ -58,3 +67,5 @@ registerHooks({
         return { ...loaded, source: `import * as publicationTrace from ${JSON.stringify(stateURL)};\n${source}` }
     },
 })
+const trace = await import(stateURL)
+trace.enable()

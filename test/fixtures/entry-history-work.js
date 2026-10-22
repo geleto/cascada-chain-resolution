@@ -1,5 +1,6 @@
 // Entry history grows around a single placement, not a deep data graph.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let preparations = 0
@@ -7,7 +8,7 @@ globalThis.countEntryStructure = () => { preparations++ }
 const structureURL = new URL("../../src/placement-structure.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const loaded = next(url, context)
-    if (url !== structureURL) return loaded
+    if (normalizeModuleURL(url) !== normalizeModuleURL(structureURL)) return loaded
     const source = String(loaded.source)
     assert(source.includes("prepare(placement) {"))
     return { ...loaded, source: source.replaceAll("prepare(placement) {",

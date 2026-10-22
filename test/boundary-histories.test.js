@@ -1,15 +1,17 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
+import { enabled as traceEnabled } from "./trace-state.js"
 
 describe("cross-boundary histories", () => {
     it("preserves cached graph generations, aliases, and ordered effects across readiness schedules", function () {
         this.timeout(120000)
         const seeds = Number(process.env.CASCADA_SEQUENCE_SEEDS ?? 16)
         assert(Number.isInteger(seeds) && seeds >= 4, "at least four seeds cover both shapes and mutation routes")
-        const child = spawnSync(process.execPath, ["--unhandled-rejections=strict", "--max-old-space-size=256",
+        const child = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict", "--max-old-space-size=256",
             fileURLToPath(new URL("./fixtures/boundary-histories.js", import.meta.url))],
-        { encoding: "utf8", timeout: 110000, env: process.env })
+        { encoding: "utf8", timeout: 110000,
+            env: { ...process.env, CASCADA_SEQUENCE_EXPECT_TRACE: traceEnabled ? "1" : "0" } })
         assert.equal(child.error, undefined, child.error?.message)
         assert.equal(child.status, 0, child.stderr)
         const { programs, coverage, retirementPrograms, retirementCoverage } = JSON.parse(child.stdout)

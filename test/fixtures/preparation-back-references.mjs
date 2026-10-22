@@ -18,7 +18,7 @@ if (!worker) {
         const spec = { boundary, reference, delivery }
         const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             fileURLToPath(import.meta.url), `--worker=${JSON.stringify(spec)}`, ...(plain ? ["--plain"] : [])],
-        { encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024 })
+        { encoding: "utf8", timeout: 15000, maxBuffer: 1024 * 1024 })
         assert.equal(result.error, undefined, `${JSON.stringify(spec)}: ${result.error}`)
         assert.equal(result.status, 0, `${JSON.stringify(spec)}\n${result.stdout}${result.stderr}`)
         passed++

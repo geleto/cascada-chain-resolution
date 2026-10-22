@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 import { OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
@@ -12,7 +13,7 @@ globalThis.auditPublication = (result, operationContext) => {
 const target = new URL("../../src/property-versions.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const source = String(result.source).replaceAll("\r\n", "\n")
     const before = "    const publication = receiveValue(value, operationContext, { kind, imported: Boolean(contextSetup) },\n        publish, undefined, contextSetup?.mutationAccessTree === undefined ? undefined : contextSetup)"
     assert(source.includes(before), "Publication fault anchor needs updating")

@@ -2,6 +2,7 @@
 // receives. node --expose-gc
 // --stack-trace-limit=1000 test/fixtures/call-selection-release.mjs
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 assert(global.gc, "Run with --expose-gc")
@@ -10,7 +11,7 @@ globalThis.phase4SelectionCopy = value => copies?.push(new WeakRef(value))
 const target = new URL("../../src/captured-graph.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const source = String(result.source), marker = "initializeCopy?.(node.copy, node)"
     assert.equal(source.split(marker).length, 2, "Allocation hook anchor changed")
     loaded = true

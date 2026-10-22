@@ -39,19 +39,27 @@ function arrayPreparation(method, ordered, mutation, failed, comparator = false)
     } }
 }
 
-function pendingCall(mutation, retained) {
+function pendingCall(mutation, retained, diagnostic = false) {
     const ctx = { execution: new r.Execution(), errorContext: "spent exported arguments" }
     const gate = Promise.withResolvers()
-    let weak, held
-    const chain = new r.Chain({ call(report, input, wait) {
+    let weak, held, cause
+    function call(report, input, wait) {
+        if (diagnostic) {
+            cause = new Error("retained native diagnostic")
+            // Remove only the host method's own frame. Runtime frames cannot
+            // retain exported arguments after this native invocation returns.
+            Error.captureStackTrace(cause, call)
+        }
         report(input)
         return wait()
-    } }, ctx)
+    }
+    const chain = new r.Chain({ call }, ctx)
     const result = r.run(chain, [], "call", [value => {
         weak = new WeakRef(value)
         if (retained) held = value
     }, { payload: new Array(10000).fill(7) }, () => gate.promise], ctx, mutation ? { mutationScopeDepth: 0 } : {})
-    return { ctx, chain, result, weak, retained, held: () => held, settle() { held = undefined; gate.resolve(1) } }
+    return { ctx, chain, result, weak, retained, cause, name: `mutation=${mutation}, retained=${retained}, diagnostic=${diagnostic}`,
+        held: () => held, settle() { held = undefined; gate.resolve(1) } }
 }
 
 function searchPreparation(method, ordered, failed) {
@@ -136,7 +144,8 @@ for (const ordered of [false, true]) for (const failed of [false, true]) {
     for (const mutation of [false, true]) for (const method of ["fill", "splice", "toSpliced"])
         if (!mutation || method !== "toSpliced") arrays.push(arrayPreparation(method, ordered, mutation, failed))
 }
-for (const mutation of [false, true]) for (const retained of [false, true]) calls.push(pendingCall(mutation, retained))
+for (const mutation of [false, true]) for (const retained of [false, true])
+for (const diagnostic of [false, true]) calls.push(pendingCall(mutation, retained, diagnostic))
 await collect()
 for (const state of comparators) for (const weak of state.weak)
     assert.equal(weak.deref() !== undefined, state.retained, `Only unfinished successful sorting needs its comparator: ${state.name}`)
@@ -147,10 +156,10 @@ for (const state of arrays) {
     if (state.failed && state.sourceRef) assert.equal(state.sourceRef.deref(), undefined)
 }
 for (const state of calls) {
-    assert.equal(state.weak.deref() !== undefined, state.retained,
-        "Only actual host use may retain exported arguments after invocation")
     if (state.retained) assert.equal(state.held().payload[0], 7)
 }
+assert.deepEqual(calls.filter(state => (state.weak.deref() !== undefined) !== state.retained).map(state => state.name), [],
+    "Only actual host use may retain exported arguments after invocation")
 for (const state of [...arrays, ...calls]) state.settle()
 for (const state of comparators) { state.settle(); state.verify(await state.result) }
 for (const state of arrays) {

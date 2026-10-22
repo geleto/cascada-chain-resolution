@@ -33,6 +33,45 @@ function fixture(failAt, source = { x: 1, bump() { this.x++ } }) {
 }
 
 describe("supported reflection boundary sweeps", () => {
+    it("reads cached Array length without re-probing an admitted Proxy prototype", () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }
+        let armed = false, probes = 0
+        const proxy = new Proxy([1, 2], {
+            getPrototypeOf(target) {
+                if (armed) { probes++; throw new Error("prototype unavailable after admission") }
+                return Reflect.getPrototypeOf(target)
+            },
+        })
+        const chain = new r.Chain(proxy, ctx)
+        r.run(chain, [], "slice", [], ctx, {})
+        armed = true
+        assert.equal(r.lookupPath(chain, ["length"], ctx), 2)
+        assert.equal(probes, 0)
+        assert.equal(ctx.execution.fatalError, null)
+        verifyRefCounts(ctx, chain._state)
+    })
+
+    it("uses admitted metadata for Proxy parent and pending-counter bookkeeping", async () => {
+        const ctx = { execution: new r.Execution(), errorContext: {} }, pending = Promise.withResolvers()
+        let armed = false, probes = 0
+        const proxy = new Proxy({ child: { n: 1 }, pending: pending.promise }, {
+            getPrototypeOf(target) {
+                if (armed) { probes++; throw new Error("prototype unavailable after admission") }
+                return Reflect.getPrototypeOf(target)
+            },
+        })
+        const chain = new r.Chain(proxy, ctx)
+        armed = true
+        r.assignPath(chain, ["ready"], 7, ctx)
+        r.assignPath(chain, ["child", "n"], 2, ctx)
+        pending.resolve({ n: 3 })
+        await new Promise(setImmediate)
+        assert.deepEqual(r.export(chain, [], ctx), { child: { n: 2 }, pending: { n: 3 }, ready: 7 })
+        assert.equal(probes, 0)
+        assert.equal(ctx.execution.fatalError, null)
+        verifyRefCounts(ctx, chain._state)
+    })
+
     for (const method of ["flat", "join", "toSorted", "sort", "concat", "slice"]) {
         it(`${method} keeps reflection failure recoverable across pending inputs`, async () => {
             async function run(failAt) {

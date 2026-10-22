@@ -1,5 +1,6 @@
 // Fail runtime classification logic while valid public reads copy external state.
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 
 let fault, remaining, reached
@@ -13,7 +14,7 @@ globalThis.injectSnapshotClassificationFailure = () => {
 const target = new URL("../../src/meta.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     const source = String(result.source)
     const marker = "    if (prototype === Object.prototype) return true"
     assert(source.includes(marker), "Snapshot classification fault anchor needs updating")

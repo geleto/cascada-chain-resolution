@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { reportGeneratedStage, runGeneratedCases } from "../generated-runner.js"
 import { fileURLToPath } from "node:url"
 import * as r from "../../src/index.js"
 import { assertGraph } from "../graph-oracle.js"
@@ -157,29 +158,48 @@ export async function runBoundaryHistory(spec) {
 }
 
 export async function runBoundaryHistories(seeds = 16) {
-    const coverage = new Set(), replay = new Map()
-    let programs = 0
+    const coverage = new Set(), groups = new Map(), retirementCoverage = new Set()
+    let programs = 0, retirementPrograms = 0
     for (const spec of historyCases(seeds)) {
-        let result
-        try { result = await runBoundaryHistory(spec) }
-        catch (cause) { throw new Error(`boundary history ${historyKey(spec)} seed=${spec.seed}`, { cause }) }
         const replayKey = [spec.seed, spec.boundary, spec.release, spec.route, spec.shape].join(":")
-        if (replay.has(replayKey)) assert.deepEqual(result.effects, replay.get(replayKey), "readiness replay preserves effects")
-        else replay.set(replayKey, result.effects)
-        coverage.add(result.key)
-        programs++
+        if (!groups.has(replayKey)) groups.set(replayKey, [])
+        groups.get(replayKey).push(spec)
     }
-    const retirementCoverage = new Set()
-    let retirementPrograms = 0
-    for (const spec of historyCases(4)) {
-        const retired = { ...spec, settledBeforeReentry: false }
-        try { await runRetiredBoundaryHistory(retired) }
-        catch (cause) { throw new Error(`retired boundary history ${historyKey(retired)} seed=${retired.seed}`, { cause }) }
-        retirementCoverage.add(historyKey(retired))
-        retirementPrograms++
-    }
+    const cases = [...groups.values()].map(histories => ({ histories }))
+    for (const spec of historyCases(4)) cases.push({ retired: { ...spec, settledBeforeReentry: false } })
+    const totals = await runGeneratedCases({ moduleURL: import.meta.url, cases,
+        async runCase({ histories, retired }) {
+            if (retired) {
+                try { await runRetiredBoundaryHistory(retired) }
+                catch (cause) { throw new Error(`retired boundary history ${historyKey(retired)} seed=${retired.seed}`, { cause }) }
+                return { retirementKey: historyKey(retired) }
+            }
+            const keys = []
+            let effects
+            for (const [replayIndex, spec] of histories.entries()) {
+                reportGeneratedStage({ seed: spec.seed, delivery: spec.delivery,
+                    remainingReplays: histories.slice(replayIndex + 1).map(history => history.delivery) })
+                let result
+                try { result = await runBoundaryHistory(spec) }
+                catch (cause) { throw new Error(`boundary history ${historyKey(spec)} seed=${spec.seed}`, { cause }) }
+                if (effects) assert.deepEqual(result.effects, effects, "readiness replay preserves effects")
+                else effects = result.effects
+                keys.push(result.key)
+            }
+            return { keys }
+        },
+        onPass(result) {
+            if (result.retirementKey) {
+                retirementCoverage.add(result.retirementKey)
+                retirementPrograms++
+            } else {
+                for (const key of result.keys) coverage.add(key)
+                programs += result.keys.length
+            }
+        },
+    })
     return { programs, coverage: [...coverage].sort(), retirementPrograms,
-        retirementCoverage: [...retirementCoverage].sort() }
+        retirementCoverage: [...retirementCoverage].sort(), ...totals }
 }
 
 // A separate bounded history proves re-entry after actual retirement. Holding a

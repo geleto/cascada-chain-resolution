@@ -1,7 +1,7 @@
 import { observePlacementCapture } from "./property-versions.js"
 import { reconsider } from "./ownership.js"
 import * as metadata from "./meta.js"
-import { ArrayView, ArrayBacking, isArrayView, isArrayIndex } from "./array-view.js"
+import { ArrayView, isArrayView, isArrayIndex } from "./array-view.js"
 
 const CONSTRUCTION_STATE = Object.freeze({
     Staged: 0,
@@ -62,7 +62,7 @@ function visitParentPlacements(value, operationContext, visit) {
     if (!incoming) return
     const entries = incoming instanceof Map ? incoming : [[incoming.source, [incoming.key]]]
     for (const [source, keys] of entries) {
-        if (source instanceof ArrayBacking) {
+        if (metadata.metaOf(source, operationContext)?.backingOwners) {
             if (source.visitViewPlacements(keys, operationContext, visit) === false) return false
         } else {
             for (const key of keys) if (visit(source, key) === false) return false
@@ -154,7 +154,8 @@ function recordLogicalPlacement(owner, key, before, after, operationContext, was
     if (version) recordVersion(owner, key, version, operationContext)
     else {
         clearRecovery(owner, key, operationContext)
-        if (meta.type !== metadata.TYPE.Array) addParent(after, owner, key, operationContext)
+        if (meta.type !== metadata.TYPE.Array && !meta.backingOwners)
+            addParent(after, owner, key, operationContext)
     }
 }
 
@@ -189,13 +190,14 @@ function activateRelationships(owner, operationContext) {
     const meta = metadata.metaOf(owner, operationContext)
     if (!meta?.placementsInitialized || meta.relationshipsActive) return
     meta.relationshipsActive = true
-    meta.arrayRange?.lengthState.retain?.()
+    meta.arrayRange?.lengthState?.retain?.()
     reconsider(owner, operationContext)
     if (meta.destination) meta.destination.owner = owner
     if (meta.backingRecord) {
         const record = meta.backingRecord
         record.owners.add(owner)
         activateRelationships(record, operationContext)
+        activateRelationships(record.producers, operationContext)
     }
     for (const [key, placement] of meta.outgoingPlacements ?? []) {
         if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)
@@ -208,17 +210,23 @@ function activateRelationships(owner, operationContext) {
 function retireRelationships(owner, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     meta.relationshipsActive = false
-    meta.arrayRange?.lengthState.release?.()
+    meta.arrayRange?.lengthState?.release?.()
     for (const release of meta.recoveryUses?.values() ?? []) release()
     delete meta.recoveryUses
     if (meta.destination) meta.destination.owner = undefined
     if (meta.backingRecord) {
         meta.backingRecord.owners.delete(owner)
         reconsider(meta.backingRecord, operationContext)
+        if (meta.backingRecord.producers) reconsider(meta.backingRecord.producers, operationContext)
     }
     for (const [key, placement] of meta.outgoingPlacements ?? [])
         if (placement.present !== false) unlinkParent(placement.value, owner, key, operationContext)
     for (const parents of meta.counterChildren ?? []) parents.delete(owner)
+    for (const version of meta.backingCounterVersions ?? []) {
+        version.counterProjections.delete(owner)
+        if (!version.counterProjections.size) delete version.counterProjections
+    }
+    delete meta.backingCounterVersions
     for (const field of ["parents", "frontierCount", "errorCount", "cycleCuts", "counterChildren"])
         delete meta[field]
 }

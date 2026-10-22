@@ -1,6 +1,7 @@
 // Strict public-operation lifetime catalogue, adapted from the independent review.
 // Run with --expose-gc at default and --stack-trace-limit=1000.
 import assert from 'node:assert/strict'
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from 'node:module'
 let failNextEntry = false, entryFailures = 0
 globalThis.publicEntryFault = () => {
@@ -12,7 +13,7 @@ globalThis.publicEntryFault = () => {
 const ownershipURL = new URL('../../src/ownership.js', import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== ownershipURL) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(ownershipURL)) return result
     const source = String(result.source), marker = '        expireReadyDeliveries(operationContext.execution)'
     assert(source.includes(marker), 'Receiving entry fault anchor changed')
     return { ...result, source: source.replace(marker, marker + '; globalThis.publicEntryFault()') }

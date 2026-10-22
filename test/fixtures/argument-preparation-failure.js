@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { normalizeModuleURL } from "../module-url.js"
 import { registerHooks } from "node:module"
 import { OrderedThenable, ChainedThenable } from "../ordered-thenable.js"
 
@@ -12,7 +13,7 @@ globalThis.auditArgument = (result, operationContext) => {
 const target = new URL("../../src/invocation.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== target) return result
+    if (normalizeModuleURL(url) !== normalizeModuleURL(target)) return result
     let source = String(result.source)
     const before = "        if (languageValues.isPending(result, operationContext)) {"
     assert(source.includes(before), "Argument fault anchor needs updating")
