@@ -29,14 +29,11 @@ function getOrCreateMeta(
     type = undefined,
     admittedPrototype = undefined,
 ) {
+    if (type === undefined) return requireMeta(value, operationContext)
     const metadata = operationContext.execution._metadata
     let meta = metadata.get(value)
     if (!meta) {
-        meta = type === undefined
-            ? inspectAdmissionMetaFacts(value, operationContext)
-            : admittedPrototype === undefined
-                ? { type }
-                : { type, admittedPrototype }
+        meta = admittedPrototype === undefined ? { type } : { type, admittedPrototype }
         if (
             (meta.type === TYPE.Record || meta.type === TYPE.ManagedClass) &&
             meta.admittedPrototype === undefined
@@ -44,61 +41,52 @@ function getOrCreateMeta(
             throw new TypeError("Managed container admission requires a prototype")
         }
         metadata.set(value, meta)
-    } else if (type !== undefined && meta.type !== type) {
+    } else if (meta.type !== type) {
         throw new TypeError("Admitted type cannot change")
     }
     return meta
 }
 
-// Classification is a capability probe whose reflection can invoke Proxy
-// traps. If it cannot identify managed structure, preserving the exact value
-// as external is always safe.
+// The consuming boundary owns reflection failure, including its poison kind
+// and graph effect. A failed inspection must not select a different category.
 function inspectAdmissionMetaFacts(value, operationContext) {
-    return errorUtils.catchExternalAction(
-        () => classifyTypeFacts(value, action =>
-            errorUtils.runExternalAction(operationContext, action)),
-        () => ({ type: TYPE.External }),
-    )
-}
-
-function inspectDeclarationMetaFacts(value) {
-    return errorUtils.catchExternalAction(
-        () => classifyTypeFacts(value, errorUtils.runDeclarationAction),
-        () => ({ type: TYPE.External }),
-    )
+    return classifyTypeFacts(value, action => errorUtils.runExternalAction(operationContext, action))
 }
 
 function classifyTypeFacts(value, reflect) {
-    // This order is the admission-precedence contract.
-    if (Error.isError(value)) return { type: TYPE.Error }
-    if (typeof value === "function") return { type: TYPE.Function }
-    const declaration = IDENTITY_DECLARATIONS.get(value)
-    if (declaration === DECLARATION_EXTERNAL) return { type: TYPE.External }
-    if (reflect(() => Array.isArray(value))) return { type: TYPE.Array }
+    try {
+        // This order is the admission-precedence contract.
+        if (errorUtils.isPoisonError(value)) return { type: TYPE.Error }
+        if (Error.isError(value)) return { type: TYPE.External }
+        if (typeof value === "function") return { type: TYPE.Function }
+        const declaration = IDENTITY_DECLARATIONS.get(value)
+        if (declaration === DECLARATION_EXTERNAL) return { type: TYPE.External }
+        if (reflect(() => Array.isArray(value))) return { type: TYPE.Array }
 
-    const admittedPrototype = reflect(() => Object.getPrototypeOf(value))
-    if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype, reflect))
-        return { type: TYPE.Record, admittedPrototype }
+        const admittedPrototype = reflect(() => Object.getPrototypeOf(value))
+        if (admittedPrototype === null || isPlainObjectPrototype(admittedPrototype, reflect))
+            return { type: TYPE.Record, admittedPrototype }
 
-    return declaration === DECLARATION_MANAGED ||
-        MANAGED_PROTOTYPES.has(admittedPrototype)
-        ? { type: TYPE.ManagedClass, admittedPrototype }
-        : { type: TYPE.External, admittedPrototype }
+        return declaration === DECLARATION_MANAGED ||
+            MANAGED_PROTOTYPES.has(admittedPrototype)
+            ? { type: TYPE.ManagedClass, admittedPrototype }
+            : { type: TYPE.External, admittedPrototype }
+    } finally { value = undefined }
 }
 
 function isPlainObjectPrototype(prototype, reflect) {
-    if (prototype === Object.prototype) return true
-    if (prototype === null) return false
-    if (reflect(() => Object.getPrototypeOf(prototype)) !== null) return false
-    const constructor = reflect(() => Object.getOwnPropertyDescriptor(
-        prototype,
-        "constructor",
-    ))?.value
-    return typeof constructor === "function" &&
-        reflect(() => Object.getOwnPropertyDescriptor(
-            constructor,
-            "prototype",
-        ))?.value === prototype
+    let constructor
+    try {
+        if (prototype === Object.prototype) return true
+        if (prototype === null) return false
+        if (reflect(() => Object.getPrototypeOf(prototype)) !== null) return false
+        constructor = reflect(() => Object.getOwnPropertyDescriptor(prototype, "constructor"))?.value
+        // A null-rooted class also has a constructor pointing back to its
+        // prototype. Only the native Object constructor identifies a realm's base.
+        return typeof constructor === "function" &&
+            reflect(() => Object.getOwnPropertyDescriptor(constructor, "prototype"))?.value === prototype &&
+            Function.prototype.toString.call(constructor) === Function.prototype.toString.call(Object)
+    } finally { prototype = constructor = undefined }
 }
 
 function identityDeclarationOf(value) {
@@ -188,7 +176,7 @@ export {
     isImported,
     identityDeclarationOf,
     inspectAdmissionMetaFacts,
-    inspectDeclarationMetaFacts,
+    classifyTypeFacts,
     isObjectLike,
     isPlainObjectPrototype,
     isTraversableType,

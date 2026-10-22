@@ -33,6 +33,14 @@ describe("prepared input failure boundaries", () => {
             const result = r.lookupPath(chain, route === "length" ? [] : ["host"], initialization)
             if (source && delivery !== "synchronous") source.reject(reason)
             const actual = await result
+            if (delivery === "ready" && !poison) {
+                if (route === "external rhs") {
+                    assert.equal(host.value, raw)
+                    assert.equal(r.hasError(chain, ["host"], operation), false)
+                } else assert.equal(actual.kind, r.ERROR_KIND.ScalarConversionFailed)
+                assert.equal(execution.fatalError, null)
+                return
+            }
             assert(r.isPoisonError(actual))
             if (poison) assert.equal(actual, original)
             else {

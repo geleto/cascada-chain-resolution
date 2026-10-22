@@ -12,10 +12,28 @@ const poison = ctx => runtime.createPoisonError(
 )
 
 describe("expression boundary", () => {
+    for (const mutable of [false, true])
+    for (const [mode, deliver] of Object.entries({ ready: value => value, synchronous: ready, pending: value => Promise.resolve(value) }))
+    it(`rejects a native non-primitive before importing its descendants: mutable=${mutable}, ${mode}`, async () => {
+        const ctx = context()
+        let enumerations = 0
+        const child = new OrderedThenable()
+        const value = new Proxy({ child }, {
+            ownKeys(target) { enumerations++; return Reflect.ownKeys(target) },
+        })
+        const api = runtime.externalState({ value: deliver(value) })
+        const chain = mutable ? new runtime.ContextChain({ api }, ctx, { api: {} }) :
+            new runtime.Chain(runtime.import({ api }, ctx), ctx)
+        await assert.rejects(Promise.resolve(runtime.lookupPathForExpression(chain, ["api", "value"], ctx)),
+            error => error.kind === runtime.ERROR_KIND.InvalidExpressionValue)
+        assert.equal(enumerations, 0)
+        assert.equal(child.subscriptions, 0)
+    })
+
     it("keeps repeatable synchronous rejection separate from native Errors", async () => {
         const ctx = context()
         const first = poison(ctx)
-        const compound = runtime.combineErrors([first, poison(ctx)], "both")
+        const compound = runtime.combineErrors([first, poison(ctx)])
         for (const error of [first, compound]) {
             const value = runtime.createPoisonedValue(error)
             assert.equal(Error.isError(value), false)
@@ -91,7 +109,7 @@ describe("expression boundary", () => {
             const introduced = context()
             const consumer = context(introduced.execution)
             const first = poison(introduced)
-            for (const error of [first, runtime.combineErrors([first, poison(introduced)], "both")]) {
+            for (const error of [first, runtime.combineErrors([first, poison(introduced)])]) {
                 const chain = new runtime.Chain(deliver(error), introduced)
                 const result = runtime.lookupPathForExpression(chain, [], consumer)
                 if (mode === "pending") await assert.rejects(result, e => e === error)
@@ -195,7 +213,7 @@ describe("expression boundary", () => {
             assert.equal(ctx.execution.fatalError, null)
         })
 
-        it(`extracts successful hasError Booleans and propagates its query failure, pending=${pending}`, async () => {
+        it(`extracts hasError Booleans including inspection failure, pending=${pending}`, async () => {
             const ctx = context()
             for (const input of [{ clean: 1 }, { failure: poison(ctx) }]) {
                 const chain = new runtime.Chain(pending ? Promise.resolve(input) : input, ctx)
@@ -213,11 +231,7 @@ describe("expression boundary", () => {
             fail = true
             const query = runtime.hasError(chain, [], ctx)
             const result = runtime.lookupPathForExpression(new runtime.Chain(query, ctx), [], ctx)
-            await assert.rejects(Promise.resolve(result), error => {
-                assert.equal(error.kind, runtime.ERROR_KIND.QueryReflectionFailed)
-                assert.equal(error.cause, cause)
-                return true
-            })
+            assert.equal(await result, true)
             assert.equal(ctx.execution.fatalError, null)
         })
 
@@ -256,8 +270,9 @@ describe("expression boundary", () => {
         const value = runtime.createPoisonedValue(poison(ctx))
         for (const declare of [runtime.externalState, runtime.managedState]) {
             const error = declare(value)
-            assert(Error.isError(error))
-            assert.equal(runtime.isPoisonError(error), false)
+            assert(runtime.isPoisonError(error))
+            assert.equal(error.kind, runtime.ERROR_KIND.DeclarationValidation)
+            assert.equal(error.errorContext, undefined)
         }
         assert.equal(ctx.execution._metadata.get(value), undefined)
     })

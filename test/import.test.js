@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
@@ -311,7 +312,7 @@ describe("import", () => {
         expect(readPath(new Chain(external, testContext), ["pending"], testContext)).to.be(undefined)
     })
 
-    it("passes primitives through and wraps a root Error", () => {
+    it("passes primitives and ordinary Error data through", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const error = new Error("language error")
 
@@ -319,8 +320,8 @@ describe("import", () => {
         expect(importValue(undefined, { ...testContext, errorContext: "undefined import" })).to.be(undefined)
         expect(importValue(7, { ...testContext, errorContext: "number import" })).to.be(7)
         expect(importValue("text", { ...testContext, errorContext: "string import" })).to.be("text")
-        expect(errorCause(importValue(error, { ...testContext, errorContext: "error import" }))).to.be(error)
-        expect(metaOf(error, testContext)).to.be(undefined)
+        expect(importValue(error, { ...testContext, errorContext: "error import" })).to.be(error)
+        expect(metaOf(error, testContext).imported).to.be(true)
     })
 
     it("marks resolved promise roots before returning them", async () => {
@@ -665,8 +666,8 @@ describe("import", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const leftPending = deferred()
         const rightPending = deferred()
-        const leftError = new Error("left")
-        const rightError = new Error("right")
+        const leftError = poison("left")
+        const rightError = poison("right")
         const left = { error: leftError, pending: leftPending.promise }
         const right = { error: rightError, pending: rightPending.promise }
         left.right = right
@@ -683,8 +684,8 @@ describe("import", () => {
 
         const leftResult = getErrors(new Chain(left, testContext), [], testContext)
         const rightResult = getErrors(new Chain(right, testContext), [], testContext)
-        const leftResolvedError = new Error("left resolved")
-        const rightResolvedError = new Error("right resolved")
+        const leftResolvedError = poison("left resolved")
+        const rightResolvedError = poison("right resolved")
         leftPending.resolve({ error: leftResolvedError })
         rightPending.resolve({ error: rightResolvedError })
 
@@ -1134,7 +1135,7 @@ describe("import", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const sealedPending = Promise.resolve(1)
         const frozenPending = Promise.resolve(2)
-        const error = new Error("bad")
+        const error = poison("bad")
         const sealed = Object.seal({ pending: sealedPending })
         const frozen = Object.freeze({ pending: frozenPending })
         const nonExtensibleError = Object.preventExtensions({ error })
@@ -1212,7 +1213,7 @@ describe("import", () => {
     it("indexes and observes cyclic arrays", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const directError = new Error("array direct")
+        const directError = poison("array direct")
         const array = []
         array[0] = array
         array[1] = directError
@@ -1226,7 +1227,7 @@ describe("import", () => {
         expect(hasError(new Chain(array, testContext), [], testContext)).to.be(true)
 
         const result = getErrors(new Chain(array, testContext), [], testContext)
-        const resolvedError = new Error("array resolved")
+        const resolvedError = poison("array resolved")
         pending.resolve({ error: resolvedError })
 
         const errors = await result
@@ -1291,7 +1292,7 @@ describe("import", () => {
     it("keeps non-extensible imported siblings independent", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const firstPromise = Promise.resolve(1)
-        const secondError = new Error("bad")
+        const secondError = poison("bad")
         const first = Object.seal({ clean: 1, pending: firstPromise })
         const second = Object.freeze({ bad: secondError })
         importValue(first, { ...testContext, errorContext: "first frozen sibling" })
@@ -1315,7 +1316,7 @@ describe("import", () => {
         assignPath(chain, ["first", "clean"], 2, testContext)
         expect(chain._state.value.first.clean).to.be(2)
         expect(first.clean).to.be(1)
-        expect((await getErrors(chain, [], testContext)).cause).to.be(secondError)
+        expect(await getErrors(chain, [], testContext)).to.be(secondError)
         verifyRefCounts(testContext, chain._state.value)
     })
 
@@ -1608,7 +1609,7 @@ describe("import", () => {
         expect(copy.pending).to.be(owned)
     })
 
-    it("retains imported status when COW drops a resolved Promise version", async () => {
+    it("protects imported values across COW after Promise settlement", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const resolved = { value: true }
@@ -1632,9 +1633,12 @@ describe("import", () => {
         assignPath(chain, ["right"], 2, testContext)
         const second = chain._state.value
 
-        expect(metaOf(second, testContext)?.placementVersions?.pending).to.be(undefined)
         expect(second.pending).to.be(resolved)
         expect(metaOf(resolved, testContext).imported).to.be(true)
+        assignPath(chain, ["pending", "value"], false, testContext)
+        expect(readPath(chain, ["pending", "value"], testContext)).to.be(false)
+        expect(readPath(retained, ["pending", "value"], testContext)).to.be(true)
+        expect(resolved.value).to.be(true)
     })
 
     it("keeps an off-path fork runtime-owned when it becomes the COW path", async () => {
@@ -1759,7 +1763,7 @@ describe("import", () => {
     it("collects private non-extensible values from detached versions", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const errorValue = Object.freeze({ bad: new Error("bad") })
+        const errorValue = Object.freeze({ bad: poison("bad") })
         const root = { value: pending.promise }
         const chain = new Chain(root, testContext)
 
@@ -1865,7 +1869,7 @@ describe("import", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const child = { pending: pending.promise }
-        const hiddenError = new Error("indexed sibling")
+        const hiddenError = poison("indexed sibling")
         new Chain(child, testContext)
         buildRefIndex(child, testContext)
         const root = { child, hiddenError }
@@ -2193,7 +2197,7 @@ describe("import", () => {
         expect(root.value).to.be(pending.promise)
     })
 
-    it("retries an imported identity after reflection fails", async () => {
+    it("can separately receive a failed child without changing its earlier parent", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("child ownKeys failed")
@@ -2208,17 +2212,22 @@ describe("import", () => {
         })
         const root = { child }
 
-        expect(errorCause(importValue(root, { ...testContext, errorContext: "failed import" }))).to.be(failure)
-        expect(metaOf(root, testContext)).to.be(undefined)
+        expect(importValue(root, { ...testContext, errorContext: "failed import" })).to.be(root)
+        const chain = new Chain(root, testContext)
+        const failedChild = lookupPath(chain, ["child"], testContext)
+        expect(errorCause(failedChild)).to.be(failure)
         expect(metaOf(child, testContext)).to.be(undefined)
         expect(importValue(root, { ...testContext, errorContext: "retried import" })).to.be(root)
+        expect(ownKeysCalls).to.be(1)
+        expect(importValue(child, { ...testContext, errorContext: "separate child import" })).to.be(child)
         expect(ownKeysCalls).to.be(2)
 
         pending.resolve(7)
         await flushMicrotasks()
 
         expect(childTarget.pending).to.be(pending.promise)
-        expect(readPath(new Chain(root, testContext), ["child", "pending"], testContext)).to.be(7)
+        expect(readPath(new Chain(child, testContext), ["pending"], testContext)).to.be(7)
+        expect(lookupPath(chain, ["child"], testContext)).to.be(failedChild)
         verifyRefCounts(testContext, root)
     })
 

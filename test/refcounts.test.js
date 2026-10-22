@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import {
     Chain,
     getErrors,
@@ -48,7 +49,7 @@ describe("graph presence summaries", () => {
 
         const rootChain = new Chain(root, testContext)
         assignPath(rootChain, ["pending"], deferredValue.promise, testContext)
-        assignPath(rootChain, ["nested", "error"], new Error("bad"), testContext)
+        assignPath(rootChain, ["nested", "error"], poison("bad"), testContext)
         assignPath(rootChain, ["cycle"], cyclic, testContext)
 
         expect(root.pending).to.be(deferredValue.promise)
@@ -213,7 +214,7 @@ describe("graph presence summaries", () => {
     it("keeps history-dependent cycle projections valid", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const publishedError = new Error("published")
+        const publishedError = poison("published")
         const publishedRoot = { value: pending.promise }
         new Chain(publishedRoot, testContext)
         buildRefIndex(publishedRoot, testContext)
@@ -225,7 +226,7 @@ describe("graph presence summaries", () => {
         pending.resolve(publishedValue)
         await flushMicrotasks()
 
-        const indexedError = new Error("indexed")
+        const indexedError = poison("indexed")
         const indexedRoot = {}
         const indexedValue = {
             nested: { bad: indexedError },
@@ -279,7 +280,7 @@ describe("graph presence summaries", () => {
 
     it("materializes indexed state before a restricted deletion", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const child = { bad: new Error("bad") }
+        const child = { bad: poison("bad") }
         const root = {}
         Object.defineProperty(root, "value", {
             value: child,
@@ -487,7 +488,7 @@ describe("graph presence summaries", () => {
 
     it("indexes only the reached branch inside an imported boundary", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const reached = { bad: new Error("bad") }
+        const reached = { bad: poison("bad") }
         const sibling = { clean: true }
         const root = importValue({ reached, sibling }, { ...testContext, errorContext: "branch-local index" })
 
@@ -799,7 +800,7 @@ describe("graph presence summaries", () => {
         expect(failure.message).to.be("Ref-count parent graph contains a cycle")
 
         const publicationFailure = thrownBy(() => {
-            assignPath(new Chain(left, testContext), ["error"], new Error("bad"), testContext)
+            assignPath(new Chain(left, testContext), ["error"], poison("bad"), testContext)
         })
         expect(publicationFailure.message).to.be(
             "Ref-count parent graph contains a cycle",
@@ -812,7 +813,7 @@ describe("graph presence summaries", () => {
         const nestedPromise = deferred()
         const root = {
             pending: deferredValue.promise,
-            nested: { error: new Error("bad") },
+            nested: { error: poison("bad") },
         }
 
         const rootChain = new Chain(root, testContext)
@@ -828,7 +829,7 @@ describe("graph presence summaries", () => {
     it("lets hasError signal errors and return the clean wait tree", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const clean = { x: 1 }
-        const currentError = { bad: new Error("bad") }
+        const currentError = { bad: poison("bad") }
         const pendingClean = deferred()
         const pendingBad = deferred()
         const cleanRoot = { value: pendingClean.promise }
@@ -860,7 +861,7 @@ describe("graph presence summaries", () => {
         const second = deferred()
         const root = {
             pending: first.promise,
-            error: new Error("old"),
+            error: poison("old"),
             nested: {},
         }
 
@@ -877,7 +878,7 @@ describe("graph presence summaries", () => {
         expectCounts(testContext, root, 2, 0)
         verifyRefCounts(testContext, root)
 
-        first.resolve({ failed: new Error("resolved") })
+        first.resolve({ failed: poison("resolved") })
         await flushMicrotasks()
         expectCounts(testContext, root, 1, 1)
         verifyRefCounts(testContext, root)
@@ -904,7 +905,7 @@ describe("graph presence summaries", () => {
         expectCounts(testContext, root, 0, 0)
         verifyRefCounts(testContext, root)
 
-        deferredValue.resolve(new Error("late"))
+        deferredValue.resolve(poison("late"))
         await flushMicrotasks()
 
         expect(root.value).to.be(7)
@@ -1189,7 +1190,7 @@ describe("graph presence summaries", () => {
         expect(getRefCounter(newChild, testContext).parents.get(root)).to.be(1)
         verifyRefCounts(testContext, root, oldChild)
 
-        oldPending.resolve(new Error("detached"))
+        oldPending.resolve(poison("detached"))
         await flushMicrotasks()
 
         expect(getRefCounter(oldChild, testContext)).to.be(undefined)
@@ -1212,7 +1213,7 @@ describe("graph presence summaries", () => {
         const chain = new Chain(root, testContext)
 
         buildRefIndex(root, testContext)
-        assignPath(chain, ["value"], new Error("bad"), testContext)
+        assignPath(chain, ["value"], poison("bad"), testContext)
         expectCounts(testContext, root, 0, 1)
         verifyRefCounts(testContext, root)
 
@@ -1262,7 +1263,7 @@ describe("graph presence summaries", () => {
         expectCounts(testContext, root, 0, 0)
         verifyRefCounts(testContext, root)
 
-        deferredValue.resolve(new Error("late"))
+        deferredValue.resolve(poison("late"))
         await flushMicrotasks()
 
         expect(root).to.eql({})
@@ -1293,7 +1294,7 @@ describe("graph presence summaries", () => {
         const deferredBranch = deferred()
         const root = {
             branch: deferredBranch.promise,
-            sibling: { error: new Error("old") },
+            sibling: { error: poison("old") },
         }
 
         new Chain(root, testContext)

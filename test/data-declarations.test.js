@@ -7,6 +7,7 @@ import {
     lookupPath,
     managedState,
     managedStateClass,
+    PoisonError,
     Execution,
 } from "../src/index.js"
 import { deferred, expect } from "./support.js"
@@ -186,7 +187,7 @@ describe("data declarations", () => {
         )
     })
 
-    it("stops at nested uninspectable state", () => {
+    it("rejects uninspectable state without partial declarations", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const opaque = new Proxy({}, {
             getPrototypeOf() {
@@ -195,15 +196,11 @@ describe("data declarations", () => {
         })
         const root = { opaque }
 
-        expect(managedState(root)).to.be(root)
-        expect(managedState(opaque).message).to.be(
-            "managedState cannot inspect this prototype",
-        )
+        expect(managedState(root)).to.be.a(PoisonError)
+        expect(managedState(opaque).message).to.be("uninspectable")
 
         new Chain(opaque, testContext)
-        expect(metadata.metaOf(opaque, testContext).type).to.be(
-            languageValues.TYPE.External,
-        )
+        expect(metadata.metaOf(opaque, testContext)).to.be(undefined)
     })
 
     it("does not let later declarations reclassify admitted identities", () => {
@@ -328,7 +325,7 @@ describe("data declarations", () => {
         }
         class Last {}
 
-        expect(managedStateClass(First, Invalid, Last)).to.be.a(TypeError)
+        expect(managedStateClass(First, Invalid, Last)).to.be.a(PoisonError)
 
         const first = new First()
         const last = new Last()
@@ -355,8 +352,8 @@ describe("data declarations", () => {
         const declared = new Declared()
         declared.then = undefined
 
-        expect(managedStateClass(Registered)).to.be.a(TypeError)
-        expect(managedState(declared)).to.be.a(TypeError)
+        expect(managedStateClass(Registered)).to.be.a(PoisonError)
+        expect(managedState(declared)).to.be.a(PoisonError)
 
         new Chain(registered, testContext)
         new Chain(declared, testContext)
@@ -372,7 +369,7 @@ describe("data declarations", () => {
                 return undefined
             }
         }
-        expect(managedStateClass(WithThenAccessor)).to.be.a(TypeError)
+        expect(managedStateClass(WithThenAccessor)).to.be.a(PoisonError)
         expect(reads).to.be(0)
     })
 

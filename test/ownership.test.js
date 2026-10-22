@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import * as runtime from "../src/index.js"
 import { metaOf } from "../src/meta.js"
+import { buildRefIndex } from "../src/refcounts.js"
 import { getParentPlacements } from "../src/parent-placements.js"
 import { verifyParents } from "./verify-parents.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
@@ -20,16 +21,11 @@ describe("bounded graph ownership", () => {
                 if (failLength && key === "length") throw new Error("length unavailable")
                 return Reflect.get(target, key, receiver)
             } }
-            const source = new runtime.Chain(runtime.import({ install() {
-                this.array = new Proxy([{ n: 0 }], handler)
-                this.array[1] = {}
-                this.array[1].self = this.array[1]
-            } }, ctx), ctx)
-            runtime.run(source, [], "install", [], ctx, { mutationScopeDepth: 0 })
-            const array = runtime.lookupPath(source, ["array"], ctx)
-            if (indexed) assert.equal(runtime.hasError(source, [], ctx), false)
             const pending = route === "queued mutation" ? Promise.withResolvers() : undefined
-            if (pending) runtime.assignPath(source, ["array", 0], pending.promise, ctx)
+            const cycle = {}; cycle.self = cycle
+            const source = new runtime.Chain({ array: new Proxy([pending?.promise ?? { n: 0 }, cycle], handler) }, ctx)
+            const array = runtime.lookupPath(source, ["array"], ctx)
+            if (indexed) buildRefIndex(source._state, ctx)
             failLength = true
             const result = route === "entry"
                 ? runtime.enter(source, ["array", 0], ctx, true, () => 7)
@@ -547,10 +543,9 @@ describe("bounded graph ownership", () => {
             runtime.assignPath(prior, [], null, ctx)
             runtime.assignPath(holder, [], null, ctx)
             assert.equal(metaOf(cached, ctx).relationshipsActive, false)
-            const input = { cached, abandoned: abandoned.promise, invalid: new Proxy({}, {
-                ownKeys() { throw new Error("preparation failed") },
-            }) }
-            const received = new runtime.Chain(input, ctx)
+            const resource = runtime.externalState({})
+            const input = { cached, abandoned: abandoned.promise, first: resource, second: resource }
+            const received = new runtime.ContextChain(input, ctx, { first: {}, second: {} })
             assert(runtime.isPoisonError(received._state.value))
             assert.equal(metaOf(input, ctx), undefined)
             for (const value of [raw, cached, cycle]) {

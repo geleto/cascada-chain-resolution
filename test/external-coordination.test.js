@@ -56,7 +56,7 @@ describe("external binding commit", () => {
         const boundaries = externalLocations(chain._externalMutationTree, [])
         assert.equal(boundaries.length, 1)
         assert.deepEqual(externalLocationPaths(chain._externalMutationTree), [["items", "0"]])
-        assert.equal(boundaries[0][TREE_NODE].entry.binding, boundaries[0])
+        assert.equal(boundaries[0][TREE_NODE].entry.binding.deref(), boundaries[0])
     })
 
     it("abandons pending import work without invalidating an existing registration", async () => {
@@ -66,7 +66,7 @@ describe("external binding commit", () => {
         const root = { existing, pending: pending.promise, rawError: new Error("staged"), first: duplicate, second: duplicate }
         const chain = new runtime.ContextChain(root, ctx, { existing: {}, first: {}, second: {} })
         assert.equal(runtime.lookupPath(chain, [], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
-        assert.equal(boundary[TREE_NODE].entry.binding, boundary)
+        assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
         const late = { identity: external(), error: new Error("abandoned") }
         pending.resolve(late)
         await flush()
@@ -88,9 +88,9 @@ describe("external binding commit", () => {
             const first = new runtime.ContextChain(root, ctx, { identity: {} })
             if (!regularFirst) ordinary = new runtime.Chain(runtime.import(root, ctx), ctx)
             const boundary = externalTree.findBranch(first._externalMutationTree, ["identity"])
-            assert.equal(boundary[TREE_NODE].entry.binding, boundary)
+            assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
             assert.equal(validateExternalAccess(identity, undefined, ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
-            assert.equal(boundary[TREE_NODE].entry.binding, boundary)
+            assert.equal(boundary[TREE_NODE].entry.binding.deref(), boundary)
             assert.equal(runtime.lookupPath(ordinary, ["identity"], ctx).kind, runtime.ERROR_KIND.ExternalLocationConflict)
 
             const secondContext = context(ctx.execution)

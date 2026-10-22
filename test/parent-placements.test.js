@@ -204,7 +204,7 @@ describe("complete incoming placements", () => {
     })
 
     for (const kind of ["initialization", "assignment", "argument"]) {
-        it(`atomically fails fresh structural preparation at ${kind}`, async () => {
+        it(`preserves healthy topology beside structural poison at ${kind}`, async () => {
             const ctx = context(), cause = new Error("inspection"), good = {}
             const bad = new Proxy({}, { ownKeys() { throw cause } })
             const value = { good, bad }
@@ -215,10 +215,15 @@ describe("complete incoming placements", () => {
                 assert.equal(r.assignPath(chain, [], value, ctx), undefined)
                 result = chain._state.value
             } else result = await r.run(new r.Chain({ accept(x) { return x } }, ctx), [], "accept", [value], ctx, {})
-            assert(r.isPoisonError(result))
-            assert.equal(result.cause, cause)
-            assert.equal(metaOf(good, ctx), undefined)
-            assert.equal(metaOf(value, ctx), undefined)
+            const error = kind === "argument" ? result : r.lookupPath(new r.Chain(result, ctx), ["bad"], ctx)
+            assert(r.isPoisonError(error))
+            assert.equal(error.cause, cause)
+            assert(metaOf(good, ctx).placementsInitialized)
+            assert(metaOf(value, ctx).placementsInitialized)
+            if (kind !== "argument") {
+                assert.equal(result.good, good)
+                verifyParents(ctx, value)
+            }
         })
     }
 
@@ -304,19 +309,18 @@ describe("complete incoming placements", () => {
     })
 
     for (const corruption of ["missing", "stale", "owner"]) {
-        it(`the independent oracle detects ${corruption} backing facts hidden by an overlay`, async () => {
-            const ctx = context(), child = {}, pending = Promise.withResolvers(), source = [pending.promise]
+        it(`the independent oracle detects ${corruption} backing facts`, async () => {
+            const ctx = context(), child = {}, pending = Promise.withResolvers(), source = [corruption === "missing" ? child : pending.promise]
             const chain = new r.Chain(source, ctx)
             pending.resolve(child)
             await r.lookupPath(chain, [0], ctx)
             const backing = metaOf(source, ctx).arrayBacking
             const incoming = metaOf(child, ctx).incomingParents
-            assert(incoming instanceof Map)
-            if (corruption === "missing") incoming.delete(backing)
+            if (corruption === "missing") delete metaOf(child, ctx).incomingParents
             else if (corruption === "stale") incoming.get(backing).add(1)
             else backing.owners.delete(source)
             assert.throws(() => verifyParents(ctx, chain._state), corruption === "missing"
-                ? /Missing physical backing occurrence/ : corruption === "stale"
+                ? /Missing exposed backing occurrence/ : corruption === "stale"
                     ? /Physical backing occurrence does not hold its child/ : /Missing Array backing owner/)
         })
     }

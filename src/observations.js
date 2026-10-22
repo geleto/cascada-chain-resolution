@@ -45,18 +45,24 @@ class ErrorQueryWork extends PathOperation {
             return this.open ? this.inspectValue(value) : this.result
         }
         const result = this.observe(inspect,
-            access => access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false),
+            access => {
+                if (!access.boundary && access.path.length) return access.read(false, value => {
+                    this.completeExternalEffect()
+                    return this.inspectValue(value)
+                })
+                return access.validatePath() ?? this.complete(undefined, () => this.errors ? null : false)
+            },
             error => this.settle(error), errorUtils.ERROR_KIND.QueryReflectionFailed)
         return internalSteps.continueGraphTransition(result, this.operationContext,
             value => this.open && errorUtils.isPoisonError(value) ? this.inspectValue(value) : value)
     }
     inspectValue(value) {
-        if (errorUtils.isPoisonError(value)) return this.settle(this.errors ? value : true)
+        if (errorUtils.isPoisonError(value)) return this.settle(value)
         const readiness = languageValues.isTraversable(value, this.operationContext)
             ? collectFencedErrorWaits(value, this) : undefined
         return this.complete(readiness, () => {
             if (!this.errors) return false
-            return this.errors.size ? errorUtils.combineErrors(this.errors, "Errors in queried value") : null
+            return this.errors.size ? errorUtils.combineErrors(this.errors) : null
         })
     }
     found(error) {
@@ -66,6 +72,7 @@ class ErrorQueryWork extends PathOperation {
     }
     settle(result) {
         if (!this.open) return this.result
+        if (!this.errors && errorUtils.isPoisonError(result)) result = true
         this.result = result
         const resolve = this.resolveOutcome
         this.completeExternalEffect()
@@ -125,8 +132,7 @@ function lookupPathForExpression(chain, path, operationContext, firstDynamicSegm
                 )
         }
     }
-    return operation.finish(operation.observe(validate, access =>
-        internalSteps.continueGraphTransition(access.read(), operationContext, validate)))
+    return operation.finish(operation.observe(validate, access => access.readValue(validate)))
 }
 
 // --- export : host-ready settled snapshot of a branch -----------------------

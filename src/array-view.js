@@ -232,36 +232,42 @@ class ArrayView {
     // Capture storage candidates now: broad ranges enumerate stored keys;
     // bounded views inspect only their range.
     static physicalKeyCandidates(array, operationContext, start = 0, end) {
-        const range = metadata.metaOf(array, operationContext)?.arrayRange
-        const backing = range?.backing ?? array
-        const backingLength = ArrayView.#physicalLength(backing, operationContext)
-        const offset = range?.start ?? 0
-        const extent = range ? ArrayView.minimumLength(array, operationContext) : backingLength
-        start = offset + Math.max(0, start)
-        end = offset + Math.min(extent, end ?? extent)
-        if (extent >= backingLength && offset === 0 && end - start >= extent / 2) {
-            const ownKeys = errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(backing))
-            // Proxies may list indexes out of order; logical Arrays use index order.
-            const keys = Object.create(null)
-            for (const key of ownKeys) {
-                if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
-                keys[String(Number(key) - offset)] = true
+        let backing
+        try {
+            const range = metadata.metaOf(array, operationContext)?.arrayRange
+            backing = range?.backing ?? array
+            const backingLength = ArrayView.#physicalLength(backing, operationContext)
+            const offset = range?.start ?? 0
+            const extent = range ? ArrayView.minimumLength(array, operationContext) : backingLength
+            start = offset + Math.max(0, start)
+            end = offset + Math.min(extent, end ?? extent)
+            if (extent >= backingLength && offset === 0 && end - start >= extent / 2) {
+                const ownKeys = errorUtils.runExternalAction(operationContext, () => Reflect.ownKeys(backing))
+                // Proxies may list indexes out of order; logical Arrays use index order.
+                const keys = Object.create(null)
+                for (const key of ownKeys) {
+                    if (!isArrayIndex(key) || Number(key) < start || Number(key) >= end) continue
+                    keys[String(Number(key) - offset)] = true
+                }
+                return Object.keys(keys)
             }
-            return Object.keys(keys)
-        }
-        // Capture the bounds now without allocating one key per hole. Iteration
-        // itself reads no storage, so descriptor failures cannot lose candidates.
-        return indexKeys(start - offset, end - offset)
+            // Capture the bounds now without allocating one key per hole. Iteration
+            // itself reads no storage, so descriptor failures cannot lose candidates.
+            return indexKeys(start - offset, end - offset)
+        } finally { backing = undefined }
     }
 
     static descriptor(array, key, operationContext) {
-        const range = metadata.requireMeta(array, operationContext).arrayRange
-        if (key === "length") return {
-            value: ArrayView.minimumLength(array, operationContext), enumerable: false, writable: true, configurable: false,
-        }
-        const physical = ArrayView.#physicalKey(array, key, operationContext)
-        return physical === undefined ? undefined : errorUtils.runExternalAction(
-            operationContext, () => Object.getOwnPropertyDescriptor(range.backing, physical))
+        let range
+        try {
+            range = metadata.requireMeta(array, operationContext).arrayRange
+            if (key === "length") return {
+                value: ArrayView.minimumLength(array, operationContext), enumerable: false, writable: true, configurable: false,
+            }
+            const physical = ArrayView.#physicalKey(array, key, operationContext)
+            return physical === undefined ? undefined : errorUtils.runExternalAction(
+                operationContext, () => Object.getOwnPropertyDescriptor(range.backing, physical))
+        } finally { range = undefined }
     }
 
     static mutationTarget(array, key, operationContext, writing) {

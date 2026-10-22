@@ -113,7 +113,7 @@ identifies the source operation and may differ for every call.
 
 `PoisonError` and `FatalError` directly extend native `Error`; `CompoundPoisonError` extends `PoisonError`. Use `isPoisonError` and `isFatalError` to recognize kernel outcomes. Trusted runtime code uses the factories from `cascada-chain-resolution`; direct construction is outside the supported API. Complete wrappers and compound child arrays are frozen.
 
-A poison retains its exact native `.cause`, opaque `.errorContext`, and stable `.kind`. Later propagation preserves them. Compounds and `getErrors` flatten and deduplicate by cause, source-context identity, and kind, with unspecified order. Exact causes follow the [diagnostic payload contract](docs/data-limitations.md#errors).
+A causal poison retains its exact native `.cause` when present, opaque `.errorContext`, and stable `.kind`. Later propagation preserves them. Compounds and `getErrors` flatten and deduplicate by cause, source-context identity, and kind, with unspecified order. Aggregate diagnostics follow the [common-source compound contract](docs/error-handling.md#compound-errors); exact causes follow the [diagnostic payload contract](docs/data-limitations.md#errors).
 
 A graph **Error**, or **poison**, is an ordinary non-thenable native Error. Ready Error results can be inspected directly, and pending normalized graph operations fulfill with the same logical Error after required processing. Raw native Errors receive causal attribution before thenability recognition. FatalError stays non-thenable and is never graph data.
 
@@ -245,7 +245,9 @@ after Promise fulfillment. Export acquires no external phase.
 If the branch contains one language Error, that contextualized occurrence is
 returned. Several leaves produce a `CompoundPoisonError`; nested compounds are
 flattened and deduplicated by cause, source-context identity, and kind, with
-unspecified Error order.
+unspecified Error order. A compound's message is `Multiple Errors`; its
+`errorContext` is the common leaf source when all leaves share it, otherwise
+`undefined`. Each leaf retains its own diagnostics.
 The result is a Promise when the complete snapshot or Error set depends on
 pending data. A language Error keeps the full scan running; a fatal
 `FatalError` stops it.
@@ -292,8 +294,9 @@ identities and their connecting placements cannot be replaced, removed, or moved
 Mutable property lookup copies the selected graph under an observation phase.
 A direct property Promise is supported; intermediate native Promises and nested
 snapshot thenables are rejected without subscribing. The exact mutable identity
-cannot be extracted. Observation-only external property identities remain exact
-and external on first admission.
+cannot be extracted. Observation-only external property results follow ordinary
+declarations and defaults; declare a record or Array external before reception
+when it requires native behavior.
 
 ### Data declarations
 

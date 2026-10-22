@@ -34,18 +34,19 @@ describe("invocation completion failure boundaries", () => {
             assert.equal(result instanceof Promise, delivery !== "synchronous")
             if (delivery !== "synchronous") source[channel === "reject" ? "reject" : "resolve"](failure)
             const actual = await result
-            assert(r.isPoisonError(actual))
+            if (reason === "raw" && channel === "fulfill") assert.equal(actual, cause)
+            else assert(r.isPoisonError(actual))
             if (reason === "poison") assert.equal(actual, failure)
-            else {
+            else if (channel === "reject") {
                 assert.equal(actual.cause, cause)
                 assert.equal(actual.kind, r.ERROR_KIND.InvocationFailed)
                 assert.equal(actual.errorContext, operation.errorContext)
             }
-            if (mutation) {
+            if (mutation && (reason === "poison" || channel === "reject")) {
                 assert.equal(r.lookupPath(chain, path, operation), actual)
                 r.repairPath(chain, path, operation)
                 assert.equal(r.lookupPath(chain, [...path, "value"], operation), 1)
-            } else assert.equal(r.lookupPath(chain, ["value"], operation), 1)
+            } else assert.equal(r.lookupPath(chain, [...path, "value"], operation), 1)
             assert.equal(execution.fatalError, null)
             assert.deepEqual(reports, [])
             assert.equal(r.import(3, operation), 3)

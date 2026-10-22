@@ -3,17 +3,19 @@ import { registerHooks } from "node:module"
 
 globalThis.captureAllocations = 0
 globalThis.containerCopies = 0
-const moduleURL = new URL("../../src/managed-capture.js", import.meta.url).href
+const sites = new Map([
+    [new URL("../../src/managed-capture.js", import.meta.url).href,
+        ["entries: new Map(), identity", "entries: (globalThis.captureAllocations++, new Map()), identity"]],
+    [new URL("../../src/captured-graph.js", import.meta.url).href,
+        ["node.copy = node.shape.length === undefined", "globalThis.containerCopies++; node.copy = node.shape.length === undefined"]],
+])
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
-    if (url !== moduleURL) return result
-    let source = String(result.source)
-    const capture = "entries: new Map(), identity"
-    const copy = "node.copy = node.shape.length === undefined"
-    assert([capture, copy].every(marker => source.includes(marker)), "Capture work counters need updating")
-    source = source.replace(capture, "entries: (globalThis.captureAllocations++, new Map()), identity")
-        .replace(copy, "globalThis.containerCopies++; " + copy)
-    return { ...result, source }
+    if (!sites.has(url)) return result
+    const [marker, replacement] = sites.get(url)
+    const source = String(result.source)
+    assert(source.includes(marker), "Capture work counters need updating")
+    return { ...result, source: source.replace(marker, replacement) }
 } })
 const r = await import("../../src/index.js")
 const { OrderedThenable } = await import("../ordered-thenable.js")
@@ -76,6 +78,6 @@ for (const size of [16, 64, 128]) for (const reversed of [false, true]) {
     const source = new r.Chain(receiver, ctx)
     methodReads = 0
     assert.equal(r.run(source, [], "read", [], ctx, {}), 1)
-    assert.equal(methodReads, 2, "Enumeration and value capture suffice for method selection")
+    assert.equal(methodReads, 1, "One placement capture suffices for method selection")
 }
 console.log("20 receiver/export captures preserve aliases with one capture and copy per canonical node")

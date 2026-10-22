@@ -32,9 +32,9 @@ describe("Array sort failure boundaries", () => {
                 if (outcome === "return poison") assert.equal(failure, poison)
                 else {
                     assert.equal(failure.errorContext, ctx.errorContext)
-                    assert.equal(failure.kind, outcome === "throw" || outcome === "return Error"
+                    assert.equal(failure.kind, outcome === "throw"
                         ? r.ERROR_KIND.ControlledCallbackFailed : r.ERROR_KIND.InvalidCallbackResult)
-                    if (outcome === "throw" || outcome === "return Error") assert.equal(failure.cause, cause)
+                    if (outcome === "throw") assert.equal(failure.cause, cause)
                 }
                 assert.equal(execution.fatalError, null)
                 assert.deepEqual(reports, [])

@@ -44,11 +44,11 @@ describe("publication route instrumentation", () => {
         assert.match(result.stderr, /Untracked placement route: writeLanguageProperty/)
     })
 
-    it("detects child admission being repaired by an ordinary read", () => {
+    it("detects missing child admission at an ordinary read", () => {
         const result = spawnSync(process.execPath, ["--import", tracer, "--input-type=module", "-e",
             'import * as r from "./src/index.js"; const ctx={execution:new r.Execution(),errorContext:{}}; const child={}; const chain=new r.Chain({child},ctx); ctx.execution._metadata.delete(child); r.lookupPath(chain,["child"],ctx)'],
         { encoding: "utf8", timeout: 10000 })
         assert.notEqual(result.status, 0)
-        assert.match(result.stderr, /Ordinary read first admitted a managed child/)
+        assert.match(result.stderr, /Ordinary read reached an unprepared child/)
     })
 })

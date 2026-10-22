@@ -58,7 +58,7 @@ describe("invocation input ownership", () => {
     for (const rejection of ["constructor", "mode", "receiver", "blocked scope"]) {
         it(`releases provisional inputs after ${rejection} rejection without conversion or late root inspection`, async () => {
             const ctx = context(), late = Promise.withResolvers(), child = Promise.withResolvers()
-            const unused = new Error("unused argument"), blocked = new Error("blocked scope")
+            const unused = new Error("unused argument"), blocked = r.validationError("blocked scope", ctx, r.ERROR_KIND.OperationInputFailed)
             let inspections = 0, lateInspections = 0, conversions = 0
             const input = new Proxy({ child: child.promise, toString() { conversions++; return "input" } }, {
                 ownKeys(target) { inspections++; return Reflect.ownKeys(target) },

@@ -28,15 +28,13 @@ describe("supported thenables", () => {
     it("uses direct transitions for ready inputs and nested continuation work", () => {
         const ctx = context()
         assert.equal(
-            internalSteps.consumeValue(
+            internalSteps.continueGraphTransition(
                 ready(2),
                 ctx,
-                errors.ERROR_KIND.OperationInputFailed,
                 value =>
-                    internalSteps.consumeValue(
+                    internalSteps.continueGraphTransition(
                         ready(3),
                         ctx,
-                        errors.ERROR_KIND.OperationInputFailed,
                         next => value + next,
                     ),
             ),
@@ -71,17 +69,15 @@ describe("supported thenables", () => {
         const ctx = context()
         const source = new OrderedThenable()
         const order = []
-        const first = internalSteps.consumeValue(
+        const first = internalSteps.continueGraphTransition(
             source,
             ctx,
-            errors.ERROR_KIND.OperationInputFailed,
             () => order.push(1),
         )
         source.resolve("ready")
-        const second = internalSteps.consumeValue(
+        const second = internalSteps.continueGraphTransition(
             source,
             ctx,
-            errors.ERROR_KIND.OperationInputFailed,
             () => order.push(2),
         )
         assert.equal(values.isPending(second, ctx), true)
@@ -89,10 +85,9 @@ describe("supported thenables", () => {
         await Promise.all([first, second])
         assert.deepEqual(order, [1, 2])
         assert.equal(
-            internalSteps.consumeValue(
+            internalSteps.continueGraphTransition(
                 source,
                 ctx,
-                errors.ERROR_KIND.OperationInputFailed,
                 () => 3,
             ),
             3,
@@ -402,7 +397,7 @@ describe("supported thenables", () => {
     })
 
     for (const reject of [false, true]) {
-        it("abandons staged subscriptions before late " + (reject ? "rejection" : "fulfillment"), async () => {
+        it("keeps healthy subscriptions beside structural poison through late " + (reject ? "rejection" : "fulfillment"), async () => {
             const ctx = context()
             const pending = new OrderedThenable()
             const staged = {}
@@ -410,13 +405,14 @@ describe("supported thenables", () => {
             const invalid = new Proxy({}, { ownKeys() { throw failure } })
             const root = { pending, child: ready(staged), invalid }
             const result = runtime.import(root, ctx)
-            assert.equal(result.cause, failure)
-            for (const value of [root, staged, invalid]) assert.equal(metadata.metaOf(value, ctx), undefined)
+            assert.equal(runtime.lookupPath(new runtime.Chain(result, ctx), ["invalid"], ctx).cause, failure)
+            for (const value of [root, staged]) assert(metadata.metaOf(value, ctx).placementsInitialized)
+            assert.equal(metadata.metaOf(invalid, ctx), undefined)
             const late = {}
             if (reject) pending.reject(late)
             else pending.resolve(late)
             await flush()
-            assert.equal(metadata.metaOf(late, ctx), undefined)
+            assert.equal(Boolean(metadata.metaOf(late, ctx)), !reject)
             assert.equal(ctx.execution.fatalError, null)
         })
     }
@@ -426,17 +422,12 @@ describe("supported thenables", () => {
         const pending = new OrderedThenable()
         class External {}
         const external = new External()
-        let discovering = false
         const failure = new Error("discovery failed")
-        const root = new Proxy({ pending, resource: external, last: {
-            then(onReady) { discovering = true; return onReady(1) },
-        } }, {
-            getOwnPropertyDescriptor(target, key) {
-                if (discovering) throw failure
-                return Reflect.getOwnPropertyDescriptor(target, key)
-            },
-        })
-        const chain = new runtime.ContextChain(root, ctx, { resource: {} })
+        const native = runtime.externalState(new Proxy({ resource: external }, {
+            getOwnPropertyDescriptor() { throw failure },
+        }))
+        const root = { pending, native }
+        const chain = new runtime.ContextChain(root, ctx, { native: { resource: {} } })
         assert.equal(chain._state.value.cause, failure)
         assert.equal(metadata.metaOf(root, ctx), undefined)
         assert.equal(ctx.execution._externalIdentities.has(external), false)
@@ -471,12 +462,8 @@ describe("supported thenables", () => {
         new runtime.Chain(external, ctx)
         const baseline = reads
         for (const value of [error, fn, external]) {
-            const result = internalSteps.consumeValue(
-                value,
-                ctx,
-                errors.ERROR_KIND.OperationInputFailed,
-            )
-            assert.equal(Error.isError(value) ? result.cause : result, value)
+            const result = runtime.import(value, ctx)
+            assert.equal(result, value)
             assert.equal(reads, baseline)
         }
     })

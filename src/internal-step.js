@@ -1,6 +1,6 @@
 import { runGraphTransition } from "./ownership.js"
 // This module owns the one guarded operation-work family: immediate entry, continuation
-// after one result, initial value consumption, complete input collection, and clean-input
+// after one result, complete input collection, and clean-input
 // preparation. These share the execution and owner checks; do not grow them into
 // configurable lifecycle or Error-policy variants. See AGENTS.md "Operation Work Lifetimes".
 
@@ -55,38 +55,15 @@ function continueGuarded(
             return undefined
         return run(operationContext, callback, result)
     }
+    // Reception supplies a missing poison source inside the live-work guard,
+    // before the consumer can publish it or perform its failure effects.
+    const fulfill = result => onFulfilled(errorUtils.isPoisonError(result)
+        ? errorUtils.createPoisonError(result, operationContext, result.kind) : result)
     return languageValues.thenValue(
         value,
-        guard(onFulfilled),
+        guard(fulfill),
         guard(onRejected),
         operationContext,
-    )
-}
-
-// Initial value consumption is a causal boundary. Later property continuations
-// consume the source Promise version's published value and never contextualize it again.
-function consumeValue(
-    value,
-    operationContext,
-    kind,
-    onValue = value => value,
-    owner,
-) {
-    const accept = value => {
-        if (Error.isError(value))
-            value = errorUtils.createPoisonError(value, operationContext, kind)
-        languageValues.admitReadyValue(value, operationContext)
-        return onValue(value)
-    }
-    return continueGraphTransition(
-        value,
-        operationContext,
-        accept,
-        reason =>
-            accept(
-                errorUtils.createPoisonError(reason, operationContext, kind),
-            ),
-        owner,
     )
 }
 
@@ -127,7 +104,7 @@ function collectInputResults(inputs, operationContext, onReady, owner, errors) {
     function finish() {
         unregister?.()
         try {
-            return errors?.size ? errorUtils.combineErrors(errors, "Operation received multiple Errors") : onReady(values)
+            return errors?.size ? errorUtils.combineErrors(errors) : onReady(values)
         } finally {
             values = onReady = undefined
             errors?.clear()
@@ -137,7 +114,6 @@ function collectInputResults(inputs, operationContext, onReady, owner, errors) {
 
 export {
     collectInputs,
-    consumeValue,
     continueOperation,
     continueGraphTransition,
     prepareInputs,

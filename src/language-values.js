@@ -47,13 +47,9 @@ function admitReadyValue(
 ) {
     if (errorUtils.isFatalError(value))
         errorUtils.failExecution(operationContext, value)
-    if (Error.isError(value) && !errorUtils.isPoisonError(value)) {
-        throw new TypeError(
-            "Raw Error reached admission without a causal boundary",
-        )
-    }
     if (metadata.isObjectLike(value))
-        metadata.getOrCreateMeta(value, operationContext, knownType, knownAdmittedPrototype)
+        metadata.getOrCreateMeta(value, operationContext,
+            knownType ?? (errorUtils.isPoisonError(value) ? metadata.TYPE.Error : undefined), knownAdmittedPrototype)
 }
 
 function typeOf(value, operationContext) {

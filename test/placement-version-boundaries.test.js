@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import { OrderedThenable, ready } from "./ordered-thenable.js"
+import { OrderedThenable, ready, rejected } from "./ordered-thenable.js"
 import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { capturePlacement, commitPlacementVersion, createVersionFromPlacement, getPlacementVersion, installMutationVersion, installPlacementVersion, observePlacementCapture } from "../src/property-versions.js"
@@ -362,7 +362,8 @@ describe("placement versions across representation boundaries", () => {
                 const introduced = context()
                 const later = context(introduced.execution)
                 const cause = new Error("original leaf")
-                const input = method === "shift" ? [0, cause] : [cause, 0]
+                const error = runtime.createPoisonError(cause, introduced, runtime.ERROR_KIND.ImportRejected)
+                const input = method === "shift" ? [0, error] : [error, 0]
                 const chain = new runtime.Chain(imported ? runtime.import(input, introduced) : input, introduced)
                 const original = runtime.lookupPath(chain, [method === "shift" ? "1" : "0"], introduced)
                 const output = runtime.run(chain, [], method, [], later, {})
@@ -404,7 +405,8 @@ describe("placement versions across representation boundaries", () => {
                 const later = context(introduced.execution)
                 const cause = new Error("original input")
                 const failure = new Error("storage mutation")
-                const child = new Proxy({ value: cause }, {
+                const input = rejected(cause)
+                const child = new Proxy({ value: input }, {
                     set() { throw failure },
                     deleteProperty() { throw failure },
                 })
@@ -418,7 +420,7 @@ describe("placement versions across representation boundaries", () => {
                 assert.equal(runtime.lookupPath(chain, ["left", "value"], later), action === "assign" ? 9 : undefined)
                 assert.equal(runtime.lookupPath(chain, ["right", "value"], later), original)
                 assert.equal(original.errorContext, introduced.errorContext)
-                assert.equal(child.value, cause)
+                assert.equal(child.value, input)
                 assert.equal(later.execution.fatalError, null)
                 verifyRefCounts(later, chain._state)
             })

@@ -1,5 +1,4 @@
-import { runReceivingCommand } from "./ownership.js"
-import { returnOperationResult, returnExpressionResult, runManagedOperation } from "./operation-result.js"
+import { returnOperationResult, returnExpressionResult, runManagedOperation, runOperation } from "./operation-result.js"
 import { Chain, ContextChain } from "./chain.js"
 import {
     CompoundPoisonError,
@@ -31,55 +30,44 @@ import {
     managedStateClass,
 } from "./data-declarations.js"
 
-// Public commands enter the fatal and graph-transition boundary here. Core
-// helpers share that entry; deferred work keeps its own resumption guards.
+// Public commands share the receiving boundary and its input-release rule.
+// Pass inputs directly, without closures retaining the wrapper's source bindings.
 function importValue(value, operationContext) {
-    return runManagedOperation(operationContext, delivery => importCore(value, operationContext, delivery))
+    return runManagedOperation(operationContext, importCore, [value, operationContext])
 }
 
 function lookupPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runManagedOperation(operationContext, delivery => lookupPathCore(chain, path, operationContext, firstDynamicSegment, delivery))
+    return runManagedOperation(operationContext, lookupPathCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
 function lookupPathForExpression(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runReceivingCommand(operationContext, () => {
-        const result = lookupPathForExpressionCore(chain, path, operationContext, firstDynamicSegment)
-        return returnExpressionResult(operationContext, result)
-    })
+    return runOperation(operationContext, lookupPathForExpressionCore,
+        [chain, path, operationContext, firstDynamicSegment], returnExpressionResult)
 }
 
 function importMethodResult(value, operationContext) {
-    return runManagedOperation(operationContext, delivery => importMethodResultCore(value, operationContext, delivery))
+    return runManagedOperation(operationContext, importMethodResultCore, [value, operationContext])
 }
 
 function exportValue(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runReceivingCommand(operationContext, () => {
-        const result = exportPath(chain, path, operationContext, firstDynamicSegment)
-        return returnOperationResult(operationContext, result)
-    })
+    return runOperation(operationContext, exportPath, [chain, path, operationContext, firstDynamicSegment])
 }
 
 function hasError(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runReceivingCommand(operationContext, () => {
-        const result = hasErrorCore(chain, path, operationContext, firstDynamicSegment)
-        return returnOperationResult(operationContext, result)
-    })
+    return runOperation(operationContext, hasErrorCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
 function getErrors(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runReceivingCommand(operationContext, () => {
-        const result = getErrorsCore(chain, path, operationContext, firstDynamicSegment)
-        return returnOperationResult(operationContext, result)
-    })
+    return runOperation(operationContext, getErrorsCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
 function run(chain, path, method, args, operationContext, facts) {
-    return runManagedOperation(operationContext, delivery => runCore(chain, path, method, args, operationContext, facts, delivery))
+    return runManagedOperation(operationContext, runCore, [chain, path, method, args, operationContext, facts])
 }
 
 function enter(chain, path, operationContext, entryMutable, onEntered, firstDynamicSegment = path.length) {
-    return runManagedOperation(operationContext, delivery => enterCore(
-        chain, path, operationContext, entryMutable, onEntered, firstDynamicSegment, delivery))
+    return runManagedOperation(operationContext, enterCore,
+        [chain, path, operationContext, entryMutable, onEntered, firstDynamicSegment])
 }
 
 function assignPath(
@@ -90,17 +78,8 @@ function assignPath(
     mutationScopeDepth = path.length,
     firstDynamicSegment = path.length,
 ) {
-    return runReceivingCommand(operationContext, () => {
-        const result = assignPathCore(
-            chain,
-            path,
-            value,
-            operationContext,
-            mutationScopeDepth,
-            firstDynamicSegment,
-        )
-        return returnOperationResult(operationContext, result)
-    })
+    return runOperation(operationContext, assignPathCore,
+        [chain, path, value, operationContext, mutationScopeDepth, firstDynamicSegment])
 }
 
 function deletePath(
@@ -110,22 +89,12 @@ function deletePath(
     mutationScopeDepth = path.length,
     firstDynamicSegment = path.length,
 ) {
-    return runReceivingCommand(operationContext, () => {
-        const result = deletePathCore(
-            chain,
-            path,
-            operationContext,
-            mutationScopeDepth,
-            firstDynamicSegment,
-        )
-        return returnOperationResult(operationContext, result)
-    })
+    return runOperation(operationContext, deletePathCore,
+        [chain, path, operationContext, mutationScopeDepth, firstDynamicSegment])
 }
 
 function repairPath(chain, path, operationContext, firstDynamicSegment = path.length) {
-    return runReceivingCommand(operationContext, () => {
-        return returnOperationResult(operationContext, repairPathCore(chain, path, operationContext, firstDynamicSegment))
-    })
+    return runOperation(operationContext, repairPathCore, [chain, path, operationContext, firstDynamicSegment])
 }
 
 export {

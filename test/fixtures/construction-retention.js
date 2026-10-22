@@ -32,8 +32,10 @@ assert.deepEqual(await r.export(retained, ["pending"], ctx), { done: true })
 const failedPending = new OrderedThenable()
 function failInspection() { throw new Error("failed input inspection") }
 function captureFailedInput() {
-    const root = { pending: failedPending, unrelated: {}, bad: new Proxy({}, { ownKeys: failInspection }) }
-    return { root: new WeakRef(root), unrelated: new WeakRef(root.unrelated), error: r.import(root, ctx) }
+    const api = r.externalState(new Proxy({}, { getOwnPropertyDescriptor: failInspection }))
+    const root = { pending: failedPending, unrelated: {}, api }
+    const result = new r.ContextChain(root, ctx, { api: { child: {} } })
+    return { root: new WeakRef(root), unrelated: new WeakRef(root.unrelated), error: result._state.value }
 }
 const failed = captureFailedInput()
 assert(r.isPoisonError(failed.error))

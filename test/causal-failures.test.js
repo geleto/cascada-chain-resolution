@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
 import * as errors from "../src/error.js"
-import * as values from "../src/language-values.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { ready, rejected } from "./ordered-thenable.js"
 
@@ -31,10 +30,7 @@ function externalStep(ctx, kind, action) {
         return runtime.continueOperation(
             result,
             ctx,
-            value =>
-                Error.isError(value)
-                    ? runtime.createPoisonError(value, ctx, kind)
-                    : value,
+            value => value,
             reason => runtime.createPoisonError(reason, ctx, kind),
         )
     })
@@ -82,7 +78,7 @@ describe("causal failure architecture", () => {
             ctx,
         )
         assert.equal(failure.cause, cause)
-        assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
+        assert.equal(failure.kind, runtime.ERROR_KIND.OperationInputFailed)
         assert.equal(failure.errorContext, ctx.errorContext)
     })
     for (const reverse of [false, true]) {
@@ -126,7 +122,7 @@ describe("causal failure architecture", () => {
             runtime.ERROR_KIND.PropertyValidation,
         )
         const input = [first, second]
-        const compound = runtime.combineErrors(input, "combined")
+        const compound = runtime.combineErrors(input)
         input.length = 0
         assert.equal(
             Object.getPrototypeOf(runtime.PoisonError.prototype),
@@ -148,10 +144,7 @@ describe("causal failure architecture", () => {
         }
         assert(Object.isFrozen(compound.errors))
         assert.deepEqual(new Set(compound.errors), new Set([first, second]))
-        const nested = runtime.combineErrors(
-            [compound, first],
-            "nested",
-        )
+        const nested = runtime.combineErrors([compound, first])
         assert.deepEqual(new Set(nested.errors), new Set([first, second]))
         assert(nested.errors.every(
             error => !(error instanceof runtime.CompoundPoisonError),
@@ -211,7 +204,7 @@ describe("causal failure architecture", () => {
                 runtime.ERROR_KIND.InvocationFailed,
             )
             assert(Object.hasOwn(first, "cause"))
-            assert.equal(runtime.combineErrors([first, same], "same"), first)
+            assert.equal(runtime.combineErrors([first, same]), first)
             const expected = new Set([
                 first,
                 otherSource,
@@ -221,7 +214,6 @@ describe("causal failure architecture", () => {
             ])
             const compound = runtime.combineErrors(
                 [first, same, otherSource, otherKind, missingA, missingB],
-                "distinct",
             )
             assert.deepEqual(new Set(compound.errors), expected)
             const chain = new runtime.Chain({ first, same, compound }, ctx)
@@ -295,23 +287,21 @@ describe("causal failure architecture", () => {
                 runtime.ERROR_KIND.InvocationFailed,
                 () => result,
             )
-            assert.equal(failure.cause, cause)
-            assert.equal(failure.errorContext, source)
-            assert.equal(failure.line, undefined)
+            if (runtime.isPoisonError(failure)) {
+                assert.equal(failure.cause, cause)
+                assert.equal(failure.errorContext, source)
+                assert.equal(failure.line, undefined)
+            } else assert.equal(failure, cause)
             assert.equal(reads, 0)
         }
     })
 
-    it("treats raw Error admission as a missed causal boundary", () => {
+    it("admits native Error data without creating poison or fatality", () => {
         const ctx = context()
-        const failure = capture(() =>
-            runtime.runInternalStep(ctx, () =>
-                values.admitReadyValue(new Error("raw"), ctx),
-            ),
-        )
-        assert(runtime.isFatalError(failure))
-        assert.equal(failure, ctx.execution.fatalError)
-        assert.match(failure.cause.message, /causal boundary/)
+        const value = new Error("data")
+        assert.equal(runtime.import(value, ctx), value)
+        assert.equal(runtime.export(new runtime.Chain(value, ctx), [], ctx), value)
+        assert.equal(ctx.execution.fatalError, null)
     })
 
     it("distinguishes an Error-valued then property from failure reading then", () => {
@@ -346,7 +336,7 @@ describe("causal failure architecture", () => {
         ["rejected", cause => Promise.reject(cause)],
     ]) {
         it(
-            "uses the same direct mutation failure effect when " + mode,
+            "distinguishes native Error data from method failure when " + mode,
             async () => {
                 const ctx = context()
                 const cause = new Error(mode)
@@ -365,9 +355,14 @@ describe("causal failure architecture", () => {
                     ctx,
                     { mutationScopeDepth: 0 },
                 )
-                assert.equal(failure.cause, cause)
-                assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
-                assert.equal(runtime.lookupPath(chain, [], ctx), failure)
+                if (mode === "returned" || mode === "fulfilled" || mode === "synchronous custom fulfillment") {
+                    assert.equal(failure, cause)
+                    assert.equal(runtime.lookupPath(chain, ["changed"], ctx), true)
+                } else {
+                    assert.equal(failure.cause, cause)
+                    assert.equal(failure.kind, runtime.ERROR_KIND.InvocationFailed)
+                    assert.equal(runtime.lookupPath(chain, [], ctx), failure)
+                }
                 assert.equal(ctx.execution.fatalError, null)
             },
         )
@@ -394,7 +389,7 @@ describe("causal failure architecture", () => {
                 const cause = new Error("iterator")
                 const iterator = {
                     next() {
-                        return deliver(cause)
+                        return deliver(runtime.createPoisonError(cause, ctx, runtime.ERROR_KIND.IteratorFailed))
                     },
                 }
                 const advance = externalStep(
@@ -475,7 +470,7 @@ describe("causal failure architecture", () => {
                 let calls = 0
                 const receiver = runtime.import(
                     {
-                        ready: causes[0],
+                        ready: rejected(causes[0]),
                         pending: receiverPending.promise,
                         call() {
                             calls++
@@ -522,17 +517,21 @@ describe("causal failure architecture", () => {
         )
     }
 
-    it("preserves ordinary contextless declaration errors and existing fatals", () => {
+    it("returns contextless declaration poison and preserves existing fatals", () => {
         const cause = new Error("declaration")
         const opaque = Object.defineProperty({}, "then", {
             get() {
                 throw cause
             },
         })
-        assert.equal(runtime.managedState(opaque), cause)
+        const failure = runtime.managedState(opaque)
+        assert(runtime.isPoisonError(failure))
+        assert.equal(failure.cause, cause)
         const ctx = context()
-        const poison = runtime.import(cause, ctx)
-        assert.equal(poison.cause, cause)
+        const attributed = runtime.import(failure, ctx)
+        assert.equal(attributed.errorContext, ctx.errorContext)
+        assert.equal(attributed.cause, cause)
+        assert.equal(runtime.import(cause, ctx), cause)
         assert.equal(ctx.execution.fatalError, null)
         const fatal = capture(() =>
             runtime.failExecution(context(), new Error("fatal")),

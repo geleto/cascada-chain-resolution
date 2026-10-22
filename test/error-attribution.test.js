@@ -1,3 +1,4 @@
+import { rejected } from "./ordered-thenable.js"
 import {
     Chain,
     assignPath,
@@ -13,6 +14,7 @@ import { errorCause, expect } from "./support.js"
 import * as errorUtils from "../src/error.js"
 import * as internalSteps from "../src/internal-step.js"
 import * as runtime from "../src/index.js"
+import { setImmediate as nextTurn } from "node:timers/promises"
 
 describe("causal Error attribution", () => {
     it("exports the complete shared Error-kind vocabulary", () => {
@@ -22,6 +24,8 @@ describe("causal Error attribution", () => {
             "ChainValueFailed",
             "ContextValueFailed",
             "ControlledCallbackFailed",
+            "DeclarationReflectionFailed",
+            "DeclarationValidation",
             "DivideByZero",
             "ExportReflectionFailed",
             "ExternalCapabilityEscape",
@@ -87,13 +91,67 @@ describe("causal Error attribution", () => {
         expect(lookupPath(chain, [], testContext)).to.be(failure)
     })
 
+    for (const route of ["import", "method-result", "prepared-property"])
+    for (const order of ["first", "second", "ready-second"])
+    for (const leaf of ["ready", "pending", "contextualized"]) {
+        it(`keeps the first actual import source: ${route}, ${order}, ${leaf}`, async () => {
+            const execution = new Execution()
+            const first = { execution, errorContext: { line: 10 } }
+            const second = { execution, errorContext: { line: 20 } }
+            const original = { execution, errorContext: { line: 1 } }
+            const cause = new Error("shared input")
+            const kind = route === "import" ? runtime.ERROR_KIND.ContextValueFailed
+                : route === "method-result" ? runtime.ERROR_KIND.InvocationFailed
+                : runtime.ERROR_KIND.ExternalPropertyReadFailed
+            const established = runtime.createPoisonError(cause, original, kind)
+            const pendingLeaf = Promise.withResolvers()
+            const input = rejected(cause)
+            const shared = { bad: leaf === "ready" ? input
+                : leaf === "pending" ? pendingLeaf.promise : established }
+            const a = Promise.withResolvers(), b = Promise.withResolvers()
+            const receive = (value, context) => route === "import" ? importValue(value, context)
+                : route === "method-result" ? runtime.importMethodResult(value, context)
+                : lookupPath(new Chain(runtime.externalState({ value: importValue(value, context) }), context), ["value"], context)
+            const earlier = new Chain(receive({ next: a.promise }, first), first)
+            const later = new Chain(receive(order === "ready-second" ? shared : b.promise, second), second)
+            if (order === "ready-second" && leaf !== "pending")
+                expect(lookupPath(later, ["bad"], second).errorContext).to.be(
+                    leaf === "contextualized" ? original.errorContext : second.errorContext)
+            if (order === "first") {
+                a.resolve(shared)
+                await nextTurn()
+                b.resolve(shared)
+            } else {
+                b.resolve(shared)
+                await nextTurn()
+                a.resolve(shared)
+            }
+            await Promise.all([
+                lookupPath(earlier, ["next"], first),
+                lookupPath(later, [], second),
+            ])
+            if (leaf === "pending") pendingLeaf.reject(cause)
+            const error = await lookupPath(later, ["bad"], second)
+            expect(error.errorContext).to.be(leaf === "contextualized" ? original.errorContext
+                : order === "first" ? first.errorContext : second.errorContext)
+            expect(error.cause).to.be(cause)
+            expect(error.kind).to.be(leaf === "contextualized" ? kind : runtime.ERROR_KIND.OperationInputFailed)
+            expect(await getErrors(earlier, [], first)).to.be(error)
+            expect(await exportValue(later, [], second)).to.be(error)
+            if (leaf === "contextualized") expect(error).to.be(established)
+            expect(shared.bad).to.be(leaf === "ready" ? input
+                : leaf === "pending" ? pendingLeaf.promise : established)
+            expect(execution.fatalError).to.be(null)
+        })
+    }
+
     it("attributes assignment and lookup failures to their own operations", () => {
         const executionContext = { execution: new Execution(), errorContext: "Chain initialization" }
         const chain = new runtime.Chain({}, executionContext)
         const native = new Error("assigned")
         const assignmentContext = { execution: executionContext.execution, errorContext: "assignment source" }
 
-        runtime.assignPath(chain, ["failure"], native, assignmentContext)
+        runtime.assignPath(chain, ["failure"], rejected(native), assignmentContext)
         const assigned = runtime.lookupPath(
             chain,
             ["failure"],
@@ -112,38 +170,36 @@ describe("causal Error attribution", () => {
         expect(missing.kind).to.be(errorUtils.ERROR_KIND.NullLookup)
     })
 
-    it("creates one wrapper per native-Error occurrence", () => {
+    it("contextualizes each synchronous rejection occurrence", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const native = new Error("shared native failure")
-        const source = { first: native, second: native }
+        const firstInput = rejected(native), secondInput = rejected(native)
+        const source = { first: firstInput, second: secondInput }
         const imported = importValue(source, { ...testContext, errorContext: "native Error import" })
 
         const first = lookupPath(new Chain(imported, testContext), ["first"], testContext)
         const second = lookupPath(new Chain(imported, testContext), ["second"], testContext)
 
-        expect(source.first).to.be(native)
-        expect(source.second).to.be(native)
+        expect(source.first).to.be(firstInput)
+        expect(source.second).to.be(secondInput)
         expect(metaOf(native, testContext)).to.be(undefined)
         expect(first).not.to.be(second)
         for (const occurrence of [first, second]) {
             expect(occurrence.cause).to.be(native)
             expect(occurrence.errorContext).to.be("native Error import")
             expect(occurrence.kind).to.be(
-                errorUtils.ERROR_KIND.ContextValueFailed,
+                errorUtils.ERROR_KIND.OperationInputFailed,
             )
         }
-        expect(errorUtils.combineErrors(
-            [first, second],
-            "combined",
-        )).to.be(first)
+        expect(errorUtils.combineErrors([first, second])).to.be(first)
     })
 
     it("deduplicates equivalent Error occurrences in queries and export", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const native = new Error("shared native failure")
         const chain = new Chain(importValue({
-            first: native,
-            second: native,
+            first: rejected(native),
+            second: rejected(native),
         }, { ...testContext, errorContext: "shared native Error import" }), testContext)
 
         const occurrences = getErrors(chain, [], testContext)
@@ -154,12 +210,12 @@ describe("causal Error attribution", () => {
         expect(exported).to.be(occurrences)
     })
 
-    it("attributes reuse of one native Error to each consuming boundary", () => {
+    it("attributes rejection with one native Error to each consuming boundary", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const native = new Error("reused")
 
-        const first = importValue(native, { ...testContext, errorContext: "first import" })
-        const second = importValue(native, { ...testContext, errorContext: "second import" })
+        const first = importValue(rejected(native), { ...testContext, errorContext: "first import" })
+        const second = importValue(rejected(native), { ...testContext, errorContext: "second import" })
 
         expect(first).not.to.be(second)
         expect(first.cause).to.be(native)
@@ -171,7 +227,7 @@ describe("causal Error attribution", () => {
     it("detaches an imported Error overlay when its placement changes", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const native = new Error("old value")
-        const imported = importValue({ value: native }, { ...testContext, errorContext: "fixed Error import" })
+        const imported = importValue({ value: rejected(native) }, { ...testContext, errorContext: "fixed Error import" })
         const chain = new Chain(imported, testContext)
 
         const occurrence = lookupPath(chain, ["value"], testContext)
@@ -187,7 +243,7 @@ describe("causal Error attribution", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const native = new Error("copied occurrence")
         const source = importValue({
-            branch: { failure: native, value: 1 },
+            branch: { failure: rejected(native), value: 1 },
         }, { ...testContext, errorContext: "fixed Error import" })
         const chain = new Chain(source, testContext)
         lookupPath(chain, [], testContext)
@@ -242,26 +298,24 @@ describe("causal Error attribution", () => {
         expect(invoked.kind).to.be(errorUtils.ERROR_KIND.ThenInvocationFailed)
     })
 
-    it("commits no Error overlay when an import segment fails", () => {
-        const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const native = new Error("nested")
+    it("keeps descriptor poison local and stable across cached import", () => {
+        const ctx = { execution: new Execution(), errorContext: "first import" }
+        const native = new Error("healthy data")
         let fail = true
-        const source = new Proxy({ failure: native, broken: true }, {
+        const source = new Proxy({ value: native, broken: true }, {
             getOwnPropertyDescriptor(target, key) {
                 if (fail && key === "broken") throw new Error("reflection failed")
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-
-        const failed = importValue(source, { ...testContext, errorContext: "failed import" })
-        expect(errorCause(failed).message).to.be("reflection failed")
-        expect(metaOf(source, testContext)).to.be(undefined)
-
+        const chain = new Chain(importValue(source, ctx), ctx)
+        const failed = lookupPath(chain, ["broken"], ctx)
+        expect(failed.cause.message).to.be("reflection failed")
+        expect(failed.errorContext).to.be(ctx.errorContext)
+        expect(lookupPath(chain, ["value"], ctx)).to.be(native)
         fail = false
-        const imported = importValue(source, { ...testContext, errorContext: "successful import" })
-        const occurrence = lookupPath(new Chain(imported, testContext), ["failure"], testContext)
-        expect(occurrence.cause).to.be(native)
-        expect(occurrence.errorContext).to.be("successful import")
+        expect(importValue(source, { ...ctx, errorContext: "later import" })).to.be(source)
+        expect(lookupPath(chain, ["broken"], ctx)).to.be(failed)
     })
 
     it("distinguishes host throws, returned Errors, and rejections", async () => {
@@ -315,9 +369,9 @@ describe("causal Error attribution", () => {
         expect(thrownResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
         expect(thrownResult.errorContext).to.be("test run")
         expect(errorCause(returnedResult)).to.be(returned)
-        expect(returnedResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
+        expect(returnedResult).to.be(returned)
         expect(errorCause(fulfilledResult)).to.be(fulfilled)
-        expect(fulfilledResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
+        expect(fulfilledResult).to.be(fulfilled)
         expect(errorCause(rejectedResult)).to.be(rejected)
         expect(rejectedResult.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
     })
@@ -343,7 +397,7 @@ describe("causal Error attribution", () => {
 
         expect(errorCause(failure)).to.be(cause)
         expect(failure.errorContext).to.be("copied Promise import")
-        expect(failure.kind).to.be(errorUtils.ERROR_KIND.ContextValueFailed)
+        expect(failure.kind).to.be(errorUtils.ERROR_KIND.OperationInputFailed)
     })
 
     it("attributes Errors nested in a host result to that result boundary", async () => {
@@ -353,7 +407,7 @@ describe("causal Error attribution", () => {
         const receiver = {
             result() {
                 return {
-                    ready: readyCause,
+                    ready: rejected(readyCause),
                     pending: Promise.reject(rejectionCause),
                 }
             },
@@ -366,10 +420,10 @@ describe("causal Error attribution", () => {
 
         expect(ready.cause).to.be(readyCause)
         expect(ready.errorContext).to.be("test run")
-        expect(ready.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
+        expect(ready.kind).to.be(errorUtils.ERROR_KIND.OperationInputFailed)
         expect(pending.cause).to.be(rejectionCause)
         expect(pending.errorContext).to.be("test run")
-        expect(pending.kind).to.be(errorUtils.ERROR_KIND.InvocationFailed)
+        expect(pending.kind).to.be(errorUtils.ERROR_KIND.OperationInputFailed)
     })
 
     it("flattens compounds and retains different causal kinds", () => {
@@ -391,9 +445,9 @@ describe("causal Error attribution", () => {
             context,
             errorUtils.ERROR_KIND.InvocationFailed,
         )
-        const nested = errorUtils.combineErrors([duplicate, second], "nested")
+        const nested = errorUtils.combineErrors([duplicate, second])
 
-        const combined = errorUtils.combineErrors([first, nested], "combined")
+        const combined = errorUtils.combineErrors([first, nested])
 
         expect(combined).to.be.a(runtime.CompoundPoisonError)
         expect(new Set(combined.errors)).to.eql(

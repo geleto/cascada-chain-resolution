@@ -5,7 +5,8 @@ import { markPromiseHandled, mayBeThenable, readCallableThen } from "./thenable-
 import * as arrayRemaps from "./array-remap.js"
 import * as conversion from "./language-conversion.js"
 import * as errorUtils from "./error.js"
-import { exportManyValues } from "./export.js"
+import { ManagedCapture } from "./managed-capture.js"
+import { assembleCapturedGraph } from "./captured-graph.js"
 import * as invocation from "./invocation.js"
 import * as languageValues from "./language-values.js"
 import * as metadata from "./meta.js"
@@ -28,7 +29,8 @@ const arraySort = Array.prototype.sort
 // until a delayed observation has captured its output.
 // PASS_AS_PAYLOAD retains logical data without resolving, converting, or exporting.
 // inputs and restInput determine both the protected frontier and preparation.
-// Custom preparation receives those outcomes and handles only receiver-dependent work.
+// Custom preparation receives those outcomes and consumes receiver shape before
+// snapshot identity assembly. Placement-consuming work belongs to invocation.
 // A remap producer can report a nonwriting or pending mutation through its third
 // argument. Otherwise publication is effective. Intrinsics require exact length
 // before invocation, including when a custom remap supplies their write rules.
@@ -142,10 +144,20 @@ const ARRAY_METHODS = {
     },
 }
 
+function resolveArrayLength(work, onLength) {
+    return work.arrayLength !== undefined ? onLength(work.arrayLength) :
+        ArrayView.resolveLength(work.receiver, work, onLength)
+}
+
+function resolveArrayInRange(index, work, onInRange) {
+    return work.arrayLength !== undefined ? onInRange(index < work.arrayLength) :
+        ArrayView.resolveInRange(work.receiver, index, work, onInRange)
+}
+
 function prepareAtIndex([index = 0], work) {
     return runArrayStep(work, () => index < 0
-        ? ArrayView.resolveInRange(work.receiver, -index - 1, work, present => present
-            ? ArrayView.resolveLength(work.receiver, work, length => length + index) : undefined)
+        ? resolveArrayInRange(-index - 1, work, present => present
+            ? resolveArrayLength(work, length => length + index) : undefined)
         : index)
 }
 
@@ -153,7 +165,7 @@ function prepareWithArguments([index = 0, replacement], work) {
     return runArrayStep(work, () => {
         const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
             "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
-        return ArrayView.resolveInRange(work.receiver, index < 0 ? -index - 1 : index, work, finish)
+        return resolveArrayInRange(index < 0 ? -index - 1 : index, work, finish)
     })
 }
 
@@ -209,14 +221,14 @@ function prepareSliceBounds([start = 0, end], work) {
         // every length. These empty ranges consume no receiver placements.
         if (start === Infinity || end === -Infinity ||
             end !== undefined && (start < 0) === (end < 0) && start >= end) return [0, 0]
-        const exact = () => ArrayView.resolveLength(work.receiver, work, length => {
+        const exact = () => resolveArrayLength(work, length => {
             const first = toRelativeIndex(start, length, 0)
             return [first, Math.max(first, toRelativeIndex(end, length, length))]
         })
-        return start >= 0 ? ArrayView.resolveInRange(work.receiver, start, work, present => {
+        return start >= 0 ? resolveArrayInRange(start, work, present => {
             if (!present) return [0, 0]
             return end >= 0 && Number.isFinite(end)
-                ? ArrayView.resolveInRange(work.receiver, end - 1, work, covered => covered ? [start, end] : exact())
+                ? resolveArrayInRange(end - 1, work, covered => covered ? [start, end] : exact())
                 : exact()
         }) : exact()
     })
@@ -317,7 +329,7 @@ function captureRemap(array, work) {
 
 function prepareConcatArguments(parts, work) {
     return runArrayStep(work, () => {
-        const length = ArrayView.readyLength(work.receiver, work.operationContext)
+        const length = work.arrayLength ?? ArrayView.readyLength(work.receiver, work.operationContext)
         if (length !== undefined) return finish(length)
         // Capture available placements before waiting for structural work.
         // Publication must reuse those versions rather than later backing state.
@@ -372,56 +384,43 @@ function prepareFlatArray(array, depth, ancestry, invocationWork) {
     return runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
         depth === Infinity && hasArrayAncestor(ancestry, array, invocationWork),
         invocationWork.operationContext, cycle => runArrayStep(invocationWork, () => {
-        if (cycle) {
-            return errorUtils.validationError(
+        try {
+            if (cycle) return errorUtils.validationError(
                 "Cannot flat an Array cycle to unlimited depth",
                 invocationWork.operationContext,
                 errorUtils.ERROR_KIND.InvalidArrayOperation,
             )
-        }
-        const source = arrayRemaps.createRemap(array, invocationWork.operationContext, 0, undefined,
-            action => runArrayStep(invocationWork, action))
-        const keys = Object.keys(source)
-        const nestedAncestry = depth === Infinity
-            ? { identity: captureIdentity(array, invocationWork.operationContext), parent: ancestry }
-            : undefined
-        const parts = keys.map(key =>
-            prepareFlatProperty(
-                source[key],
-                depth,
-                nestedAncestry,
-                invocationWork,
-            ),
-        )
-        return internalSteps.prepareInputs(
-            parts,
-            invocationWork.operationContext,
-            values => {
-                // Every prepared level is flattened, so holes contribute no
-                // output and need neither their positions nor final length.
-                const output = []
-                for (let index = 0; index < keys.length; index++)
-                    if (source[keys[index]].present !== false) output.push(values[index])
-                return output
-            },
-            invocationWork,
-        )
+            const source = arrayRemaps.createRemap(array, invocationWork.operationContext, 0, undefined,
+                action => runArrayStep(invocationWork, action))
+            const nestedAncestry = depth === Infinity
+                ? { identity: captureIdentity(array, invocationWork.operationContext), parent: ancestry }
+                : undefined
+            const parts = []
+            for (const key of Object.keys(source))
+                parts.push(prepareFlatProperty(source[key], depth, nestedAncestry, invocationWork))
+            // Consumed placements carry final presence. Nested remaps come only
+            // from present Array values, so no source-key map needs to survive.
+            return internalSteps.prepareInputs(parts, invocationWork.operationContext,
+                values => values.filter(value => !propertyVersions.isPropertyPlacement(value) || value.present !== false),
+                invocationWork)
+        } finally { array = undefined }
     }), undefined, invocationWork))
 }
 
 function prepareFlatProperty(placement, depth, ancestry, invocationWork) {
     return runArrayStep(invocationWork, () => {
-        if (errorUtils.isPoisonError(placement)) return placement
-        if (depth === 0) return placement.resolvePresence()
+        if (errorUtils.isPoisonError(placement) || depth === 0) {
+            try { return errorUtils.isPoisonError(placement) ? placement : placement.resolvePresence() }
+            finally { placement = undefined }
+        }
         return internalSteps.continueGraphTransition(
-            placement.resolveValue(),
-            invocationWork.operationContext,
-            value => isLogicalArray(value, invocationWork.operationContext)
-                ? prepareFlatArray(value, depth - 1, ancestry, invocationWork)
-                : placement,
-            undefined,
-            invocationWork,
-        )
+            placement.resolveValue(), invocationWork.operationContext,
+            value => {
+                try {
+                    return isLogicalArray(value, invocationWork.operationContext)
+                        ? prepareFlatArray(value, depth - 1, ancestry, invocationWork) : placement
+                } finally { placement = undefined }
+            }, undefined, invocationWork)
     })
 }
 
@@ -436,7 +435,11 @@ function identityInput(value, invocationWork) {
 }
 
 function searchFromIndex(value, work) {
-    return runArrayStep(work, () => ArrayView.resolveInRange(work.receiver, 0, work, present => {
+    const hasElements = work.searchHasElements
+    work.searchHasElements = undefined
+    return runArrayStep(work, () => internalSteps.continueGraphTransition(
+        hasElements,
+        work.operationContext, present => {
         try {
             if (!present) {
                 work.discardArgument(1)
@@ -446,7 +449,7 @@ function searchFromIndex(value, work) {
             work.releaseArgument(1)
             return result
         } finally { value = undefined }
-    }))
+    }, undefined, work))
 }
 
 function prepareSearchArguments(args, invocationWork) {
@@ -454,17 +457,17 @@ function prepareSearchArguments(args, invocationWork) {
     const backwards = invocationWork.method === "lastIndexOf"
     const [searchValue, fromIndex = backwards ? Infinity : 0] = args
     const at = start => ({ searchValue, start })
-    const capture = () => ArrayView.resolveLength(invocationWork.receiver, invocationWork,
+    const capture = () => resolveArrayLength(invocationWork,
         length => at(backwards ? normalizeBackwardStart(fromIndex, length) : normalizeForwardStart(fromIndex, length)))
     return runArrayStep(invocationWork, () => {
         // Absolute forward starts need no length. An absolute backward
         // start needs only proof that the position is in range.
         if (fromIndex >= 0) return backwards
-            ? ArrayView.resolveInRange(invocationWork.receiver, fromIndex, invocationWork,
+            ? resolveArrayInRange(fromIndex, invocationWork,
                 present => present ? at(fromIndex) : capture())
             : at(fromIndex)
         if (!backwards) return fromIndex === -Infinity ? at(0) : capture()
-        return ArrayView.resolveInRange(invocationWork.receiver, -fromIndex - 1, invocationWork,
+        return resolveArrayInRange(-fromIndex - 1, invocationWork,
             present => present ? capture() : at(-1))
     })
 }
@@ -555,149 +558,124 @@ function prepareToSortedRemap(args, invocationWork) {
     return prepareSortedRemap(args, invocationWork, undefined, true)
 }
 
-function prepareSortedRemap([comparator], invocationWork, reportWrites, denseOutput = false) {
-    const thisValue = invocationWork.receiver
-    const source = arrayRemaps.createRemap(thisValue, invocationWork.operationContext, 0, undefined,
-        action => runArrayStep(invocationWork, action))
-    const shape = { length: ArrayView.captureLength(thisValue, invocationWork.operationContext, invocationWork) }
-    const records = []
-    for (const key of Object.keys(source)) {
-        const placement = source[key]
-        if (errorUtils.isPoisonError(placement)) {
-            records.push(placement)
-            continue
+function prepareSortedRemap([comparator], work, reportWrites, denseOutput = false) {
+    const { operationContext } = work
+    let receiver = work.receiver
+    const shape = { length: ArrayView.captureLength(receiver, operationContext, work) }
+    const records = [], waits = [], errors = new Set()
+    const capture = comparator === undefined ? undefined :
+        new ManagedCapture(work, errorUtils.ERROR_KIND.ExportReflectionFailed, collect)
+    let first, preparing = false
+    work.discardPreparedOutput = discardOutput
+    let source
+    try {
+        source = arrayRemaps.createRemap(receiver, operationContext, 0, undefined,
+            action => runArrayStep(work, action))
+        for (const key of Object.keys(source)) {
+            let placement = source[key]
+            const record = { placement }
+            records.push(record)
+            const ready = errorUtils.isPoisonError(placement) ? placement :
+                runArrayStep(work, () => internalSteps.continueGraphTransition(placement.resolveValue(),
+                    operationContext, value => { record.value = value; return record }, undefined, work))
+            waits.push(internalSteps.continueGraphTransition(ready, operationContext, value => {
+                record.present = placement?.present !== false
+                placement = undefined
+                if (errorUtils.isPoisonError(value)) {
+                    record.error = value
+                    collect(value)
+                } else if (!record.present) return
+                else {
+                    record.defined = record.value !== undefined
+                    // A singleton needs no callback; with another candidate this
+                    // poison prevents comparison. Required collection still waits.
+                    if (errorUtils.isPoisonError(record.value)) comparator = undefined
+                }
+                if (errors.size) record.placement = undefined
+                if (!record.error && !record.defined) return
+                // Native sort needs no comparison for fewer than two defined
+                // elements. Once needed, consume each value as it arrives.
+                if (preparing) prepare(record)
+                else if (first) {
+                    preparing = true
+                    prepare(first)
+                    first = undefined
+                    prepare(record)
+                } else first = record
+            }, undefined, work))
         }
-        records.push(
-            runArrayStep(invocationWork, () =>
-                internalSteps.continueGraphTransition(
-                    placement.resolveValue(),
-                    invocationWork.operationContext,
-                    value => ({ placement, value }),
-                    undefined,
-                    invocationWork,
-                ),
-            ),
-        )
-    }
-    // Failed captures remain inputs to conversion/export, alongside successfully
-    // resolved records. Only that complete preparation may decide to stop sorting.
-    const result = internalSteps.collectInputs(
-        records,
-        invocationWork.operationContext,
-        ready => {
-            const sortable = []
-            const undefinedPlacements = []
-            for (const record of ready) {
-                if (record.placement?.present === false) continue
-                if (!errorUtils.isPoisonError(record) && record.value === undefined) {
-                    undefinedPlacements.push(record.placement)
-                } else {
-                    sortable.push(record)
-                }
-            }
-            invocationWork.discardPreparedOutput = discardOutput
-            if (sortable.length < 2) {
-                return errorUtils.isPoisonError(sortable[0]) ? sortable[0] : finish(sortable)
-            }
-            return prepareAndSortRecords(sortable, comparator, invocationWork, finish)
+    } finally { receiver = source = undefined }
+    // Deliveries can add conversion/capture work. Join that frontier only after
+    // every placement has delivered; failed output still collects all Errors.
+    const result = internalSteps.collectInputs(waits.slice(), operationContext, () =>
+        internalSteps.collectInputs(waits, operationContext, finish, work), work)
+    return internalSteps.continueGraphTransition(result, operationContext, value => {
+        discardOutput()
+        records.length = waits.length = 0
+        first = undefined
+        errors.clear()
+        work.discardPreparedOutput = undefined
+        return value
+    }, undefined, work)
 
-            function finish(sorted) {
-                if (invocationWork.mutation) reportWrites(sorted.length + undefinedPlacements.length > 0)
-                return internalSteps.continueGraphTransition(shape.length?.read ? shape.length.read() : shape.length,
-                    invocationWork.operationContext, length =>
-                        finishSortedRemap(sorted, undefinedPlacements, denseOutput, length), undefined, invocationWork)
-            }
-
-            function discardOutput() {
-                source.length = undefinedPlacements.length = 0
-                shape.length?.release?.()
-                for (const record of sortable) {
-                    if (!errorUtils.isPoisonError(record)) record.placement = record.exported = undefined
-                }
-            }
-        },
-        invocationWork,
-    )
-    return internalSteps.continueGraphTransition(result, invocationWork.operationContext, remap => {
-        invocationWork.discardPreparedOutput?.()
-        invocationWork.discardPreparedOutput = undefined
-        records.length = source.length = 0
-        return remap
-    }, undefined, invocationWork)
-}
-
-function prepareAndSortRecords(
-    sortable,
-    comparator,
-    invocationWork,
-    finish,
-) {
-    if (comparator === undefined) {
-        const records = sortable.map(record => {
-            if (errorUtils.isPoisonError(record)) return record
-            const converted = conversion.toStringValue(record.value, undefined, invocationWork)
-            record.value = undefined
-            return internalSteps.continueGraphTransition(
-                converted,
-                invocationWork.operationContext,
-                key => {
-                    if (errorUtils.isPoisonError(key)) return key
-
-                    record.key = key
-                    return record
-                },
-                undefined,
-                invocationWork,
-            )
-        })
-        return internalSteps.prepareInputs(
-            records,
-            invocationWork.operationContext,
-            ready => {
-                return sortRecords(
-                    ready,
-                    comparePreparedKeys,
-                    invocationWork.operationContext,
-                    finish,
-                )
-            },
-            invocationWork,
-        )
+    function collect(error) {
+        errors.add(error)
+        work.preparationFailed()
     }
 
-    const snapshot = sortable.map(record =>
-        errorUtils.isPoisonError(record) ? record : record.value,
-    )
-    for (const record of sortable) if (!errorUtils.isPoisonError(record)) record.value = undefined
-    const exportedSnapshot = exportManyValues(snapshot, invocationWork)
-    snapshot.length = 0
-    return internalSteps.continueGraphTransition(
-        exportedSnapshot,
-        invocationWork.operationContext,
-        exported => {
-            if (errorUtils.isPoisonError(exported)) return exported
+    function discardOutput() {
+        comparator = undefined
+        shape.length?.release?.()
+        capture?.discard()
+        for (const record of records) record.placement = record.edge = record.exported = undefined
+    }
 
-            for (let index = 0; index < sortable.length; index++) {
-                sortable[index].exported = exported[index]
-            }
-            return sortRecords(
-                sortable,
-                (left, right) => compareExported(
-                    comparator,
-                    left.exported,
-                    right.exported,
-                    invocationWork.operationContext,
-                ),
-                invocationWork.operationContext,
-                finish,
-            )
-        },
-        undefined,
-        invocationWork,
-    )
+    function prepare(record) {
+        if (record.error) return
+        let value = record.value
+        record.value = undefined
+        try {
+            const result = capture
+            ? capture.walk(value, edge => { record.edge = edge })
+            : internalSteps.continueGraphTransition(conversion.toStringValue(value, undefined, work),
+                operationContext, key => {
+                    if (errorUtils.isPoisonError(key)) collect(key)
+                    else if (!errors.size) record.key = key
+                }, undefined, work)
+            waits.push(result)
+        } finally { value = undefined }
+    }
+
+    function finish() {
+        if (errors.size) return errorUtils.combineErrors(errors)
+        const sortable = [], undefinedPlacements = []
+        for (const record of records) if (record.present) {
+            if (record.defined) sortable.push(record)
+            else undefinedPlacements.push(record.placement)
+        }
+        if (capture && preparing) {
+            capture.roots = sortable.map(record => record.edge)
+            return internalSteps.continueGraphTransition(capture.resolve(), operationContext, () => {
+                let exported = assembleCapturedGraph(capture)
+                for (let index = 0; index < sortable.length; index++) sortable[index].exported = exported[index]
+                exported = undefined
+                capture.discard()
+                return sorted(sortRecords(sortable, (left, right) =>
+                    compareExported(comparator, left.exported, right.exported, operationContext)))
+            }, undefined, work)
+        }
+        return sorted(preparing ? sortRecords(sortable, comparePreparedKeys) : sortable)
+
+        function sorted(sorted) {
+            if (errorUtils.isPoisonError(sorted)) return sorted
+            if (work.mutation) reportWrites(sorted.length + undefinedPlacements.length > 0)
+            return internalSteps.continueGraphTransition(shape.length?.read ? shape.length.read() : shape.length,
+                operationContext, length => finishSortedRemap(sorted, undefinedPlacements, denseOutput, length), undefined, work)
+        }
+    }
 }
 
-function sortRecords(sortable, compare, operationContext, finish) {
+function sortRecords(sortable, compare) {
     // The records and native sort are runtime-owned. Only the comparator's
     // explicit poison outcome aborts sorting recoverably; internal throws are fatal.
     let sorted, comparatorFailure
@@ -713,7 +691,7 @@ function sortRecords(sortable, compare, operationContext, finish) {
         if (comparatorFailure === undefined || reason !== comparatorFailure) throw reason
         return reason
     }
-    return finish(sorted)
+    return sorted
 }
 
 function finishSortedRemap(
@@ -739,42 +717,45 @@ function comparePreparedKeys(left, right) {
 }
 
 function compareExported(comparator, left, right, operationContext) {
-    const result = invocation.invokeFunction(
-        comparator,
-        undefined,
-        [left, right],
-        operationContext,
-        errorUtils.ERROR_KIND.ControlledCallbackFailed,
-    )
-    if (errorUtils.isPoisonError(result)) return result
-    const pending = mayBeThenable(result, operationContext) && errorUtils.catchExternalThrow(
-        () => readCallableThen(result, operationContext),
-        operationContext,
-        errorUtils.ERROR_KIND.ThenAccessFailed,
-    )
-    if (errorUtils.isPoisonError(pending)) return pending
-    if (pending) {
-        const observed = internalSteps.continueGraphTransition(
-            result,
+    let result
+    try {
+        result = invocation.invokeFunction(
+            comparator,
+            undefined,
+            [left, right],
             operationContext,
-            () => undefined,
-            () => undefined,
+            errorUtils.ERROR_KIND.ControlledCallbackFailed,
         )
-        markPromiseHandled(observed, operationContext)
-        return errorUtils.validationError(
-            "Promise-returning Array sort comparators are unsupported",
+        if (errorUtils.isPoisonError(result)) return result
+        const pending = mayBeThenable(result, operationContext) && errorUtils.catchExternalThrow(
+            () => readCallableThen(result, operationContext),
             operationContext,
-            errorUtils.ERROR_KIND.InvalidCallbackResult,
+            errorUtils.ERROR_KIND.ThenAccessFailed,
         )
-    }
-    if (typeof result !== "number") {
-        return errorUtils.validationError(
-            "Array sort comparator must return a Number",
-            operationContext,
-            errorUtils.ERROR_KIND.InvalidCallbackResult,
-        )
-    }
-    return result
+        if (errorUtils.isPoisonError(pending)) return pending
+        if (pending) {
+            const observed = internalSteps.continueGraphTransition(
+                result,
+                operationContext,
+                () => undefined,
+                () => undefined,
+            )
+            markPromiseHandled(observed, operationContext)
+            return errorUtils.validationError(
+                "Promise-returning Array sort comparators are unsupported",
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidCallbackResult,
+            )
+        }
+        if (typeof result !== "number") {
+            return errorUtils.validationError(
+                "Array sort comparator must return a Number",
+                operationContext,
+                errorUtils.ERROR_KIND.InvalidCallbackResult,
+            )
+        }
+        return result
+    } finally { comparator = left = right = result = undefined }
 }
 
 function includes({ searchValue, start }, invocationWork) {
@@ -847,7 +828,8 @@ function orderedIndexSearch(
 ) {
     let thisValue = invocationWork.receiver
     let index = start
-    return next()
+    return internalSteps.continueGraphTransition(next(), invocationWork.operationContext,
+        result => { thisValue = undefined; return result }, undefined, invocationWork)
 
     function next() {
         return runArrayStep(invocationWork, () => {
@@ -965,4 +947,5 @@ function tryAppendArrayView(suffix, invocationWork) {
     )
 }
 
-export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep, searchFromIndex }
+export { ARRAY_METHODS, RETURN_RECEIVER, PASS_AS_PAYLOAD, runArrayStep, searchFromIndex,
+    resolveArrayLength, resolveArrayInRange }

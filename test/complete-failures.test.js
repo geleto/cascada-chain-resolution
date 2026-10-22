@@ -22,7 +22,7 @@ describe("complete failure outcomes", () => {
             const last = new Error("last")
             const reflection = new Error("descriptor")
             let fail = false
-            const graph = new Proxy({ first, bad: 0, last }, {
+            const graph = new Proxy({ first: runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.OperationInputFailed), bad: 0, last: runtime.createPoisonError(last, ctx, runtime.ERROR_KIND.OperationInputFailed) }, {
                 getOwnPropertyDescriptor(value, key) {
                     if (fail && key === "bad") throw reflection
                     return Reflect.getOwnPropertyDescriptor(value, key)
@@ -49,7 +49,7 @@ describe("complete failure outcomes", () => {
         const last = new Error("last")
         const reflection = new Error("inside descriptor")
         let fail = false
-        const source = new Proxy([0, first, 0, last, 0], {
+        const source = new Proxy([0, runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.OperationInputFailed), 0, runtime.createPoisonError(last, ctx, runtime.ERROR_KIND.OperationInputFailed), 0], {
             ownKeys(value) {
                 assert.equal(fail, false, "a bounded view must not enumerate its whole backing")
                 return Reflect.ownKeys(value)
@@ -88,8 +88,8 @@ describe("complete failure outcomes", () => {
                     let fail = false
                     let calls = 0
                     const target = array
-                        ? [first, 0, pending.promise]
-                        : { before: first, bad: 0, after: pending.promise }
+                        ? [runtime.createPoisonError(first, introduced, runtime.ERROR_KIND.OperationInputFailed), 0, pending.promise]
+                        : { before: runtime.createPoisonError(first, introduced, runtime.ERROR_KIND.OperationInputFailed), bad: 0, after: pending.promise }
                     const badKey = array ? "1" : "bad"
                     const graph = new Proxy(target, {
                         getOwnPropertyDescriptor(value, key) {
@@ -121,7 +121,7 @@ describe("complete failure outcomes", () => {
                         const error = errors.find(error => error.cause === cause)
                         assert(error)
                         assert.equal(error.errorContext, introduced.errorContext)
-                        assert.equal(error.kind, runtime.ERROR_KIND.ContextValueFailed)
+                        assert.equal(error.kind, runtime.ERROR_KIND.OperationInputFailed)
                     }
                     const reflected = errors.find(error => error.cause === reflection)
                     assert(reflected)
@@ -170,9 +170,9 @@ describe("complete failure outcomes", () => {
                     change() {
                         const finish = () => {
                             this.child = new Proxy(this.child, traps)
-                            this.first = first
-                            this.last = last
-                            this.child.nested = nested
+                            this.first = runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.InvalidManagedReceiver)
+                            this.last = runtime.createPoisonError(last, ctx, runtime.ERROR_KIND.InvalidManagedReceiver)
+                            this.child.nested = runtime.createPoisonError(nested, ctx, runtime.ERROR_KIND.InvalidManagedReceiver)
                             fail = true
                             return 1
                         }
@@ -214,7 +214,7 @@ describe("complete failure outcomes", () => {
                         change() {
                             const finish = () => {
                                 this.n = 2
-                                if (invalidReceiver) this.bad = receiverCause
+                                if (invalidReceiver) this.bad = runtime.createPoisonError(receiverCause, ctx, runtime.ERROR_KIND.InvalidManagedReceiver)
                                 return output
                             }
                             return pending ? Promise.resolve().then(finish) : finish()

@@ -18,7 +18,7 @@ function prepareAssignment(placement, key, operationContext) {
     // Only callable-then validation consumes assignment availability. Other
     // pending values publish now, without extending the mutation lifetime.
     return key === "then"
-        ? propertyVersions.resolvePlacement(placement, operationContext, validate, errorUtils.ERROR_KIND.AssignmentValueFailed)
+        ? propertyVersions.resolvePlacement(placement, operationContext, validate)
         : validate(placement)
 }
 
@@ -197,32 +197,42 @@ function mutatePath(chain, path, placement, operationContext, depth, dynamic, de
         placement = propertyVersions.prepareInputPlacement(value, operationContext, errorUtils.ERROR_KIND.AssignmentValueFailed)
         operation.retainInput(placement)
     }
-    const outward = !deleting && !operation.routeFailure && external
+    let outward = !deleting && !operation.routeFailure && external
         ? receiveValue(value, operationContext, { kind: errorUtils.ERROR_KIND.OperationInputFailed },
             value => exportValue(value, operation), operation)
         : undefined
-    if (external) markPromiseHandled(outward, operationContext)
+    value = undefined
+    if (external) {
+        placement = undefined
+        markPromiseHandled(outward, operationContext)
+    }
     const result = external
-        ? operation.finishMutation(operation.observe(value => value, access => deleting ? access.delete() :
-            internalSteps.continueGraphTransition(outward, operationContext, value => access.write(value), undefined, operation)))
+        ? operation.finishMutation(operation.observe(value => value, access => {
+            try {
+                return deleting ? access.delete() : internalSteps.continueGraphTransition(outward,
+                    operationContext, value => access.write(value), undefined, operation)
+            } finally { outward = undefined }
+        }))
         : operation.finishMutation(operation.mutate((scope, state, privateChain, suffix, node) => {
-            if (externalTree.findBranch(node, suffix)) return languageProperties.propertyValidationError(
-                "A mutable external namespace cannot be replaced or deleted", operationContext)
-            if (suffix.length === 0) {
-                if (deleting) return state.key !== undefined
-                    ? { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false }, published: state.present }
-                    : { mutatedValue: null, result: undefined, published: true }
-                return internalSteps.continueGraphTransition(prepareAssignment(placement, state.key, operationContext),
-                    operationContext, assigned => errorUtils.isPoisonError(assigned) ? assigned :
-                        { mutatedValue: assigned.value, placement: assigned, result: undefined, published: true })
-            }
-            const action = deleting
-                ? deleteManagedPath(privateChain, suffix, operationContext)
-                : assignManagedPath(privateChain, suffix, placement, operation)
-            return internalSteps.continueGraphTransition(action, operationContext, result => {
-                if (errorUtils.isPoisonError(result)) return result
-                return captureMutationResult(privateChain, result, operationContext)
-            })
+            try {
+                if (externalTree.findBranch(node, suffix)) return languageProperties.propertyValidationError(
+                    "A mutable external namespace cannot be replaced or deleted", operationContext)
+                if (suffix.length === 0) {
+                    if (deleting) return state.key !== undefined
+                        ? { mutatedValue: undefined, result: undefined, placement: { value: undefined, present: false }, published: state.present }
+                        : { mutatedValue: null, result: undefined, published: true }
+                    return internalSteps.continueGraphTransition(prepareAssignment(placement, state.key, operationContext),
+                        operationContext, assigned => errorUtils.isPoisonError(assigned) ? assigned :
+                            { mutatedValue: assigned.value, placement: assigned, result: undefined, published: true })
+                }
+                const action = deleting
+                    ? deleteManagedPath(privateChain, suffix, operationContext)
+                    : assignManagedPath(privateChain, suffix, placement, operation)
+                return internalSteps.continueGraphTransition(action, operationContext, result => {
+                    if (errorUtils.isPoisonError(result)) return result
+                    return captureMutationResult(privateChain, result, operationContext)
+                })
+            } finally { placement = undefined }
         }, replaceScope, deleting))
     if (!languageValues.isPending(result, operationContext)) return result
     markPromiseHandled(result, operationContext)

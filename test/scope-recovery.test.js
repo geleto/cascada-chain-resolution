@@ -10,7 +10,7 @@ const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve()
 const mutate = (chain, path, method, ctx, args = [], scope = path.length) => r.run(chain, path, method, args, ctx, { mutationScopeDepth: scope })
 function fixture() {
     const events = []
-    const make = name => ({ count: 0, work(wait) { events.push(name); this.count++; return wait }, fail() { throw new Error(name) } })
+    const make = name => r.externalState({ count: 0, work(wait) { events.push(name); this.count++; return wait }, fail() { throw new Error(name) } })
     const api = r.externalState({ db: make("db"), config: make("config"), reset() { events.push("reset") } })
     const ctx = context()
     const chain = new r.ContextChain({ api }, ctx, { api: { db: {}, config: {} } })
@@ -18,6 +18,30 @@ function fixture() {
 }
 
 describe("hierarchical scopes and placement recovery", () => {
+    for (const pending of [false, true]) for (const call of [false, true])
+    it(`a binding conflict blocks repair without poisoning its managed placement: pending=${pending}, call=${call}`, async () => {
+        const ctx = context(), hold = Promise.withResolvers()
+        let calls = 0
+        const api = r.externalState({ value: 1, wait() { return hold.promise }, change() { calls++ } })
+        const chain = new r.ContextChain({ api }, ctx, { api: {} })
+        const before = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
+        const earlier = pending ? mutate(chain, ["api"], "wait", ctx) : undefined
+        const conflictContext = { ...ctx, errorContext: "competing registration" }
+        new r.ContextChain({ other: api }, conflictContext, { other: {} })
+        const repair = call ? r.run(chain, ["api"], "change", [], ctx, { mutationScopeDepth: 1, repair: true }) :
+            r.repairPath(chain, ["api"], ctx)
+        hold.resolve()
+        await earlier
+        const failure = await repair
+        assert.equal(failure.errorContext, conflictContext.errorContext)
+        const dynamicContext = { ...ctx, errorContext: "dynamic lookup" }
+        const lookup = await r.lookupPath(chain, ["api", "value"], dynamicContext, 0)
+        assert.equal(lookup.errorContext, dynamicContext.errorContext)
+        assert.equal(await r.run(new r.Chain([r.lookupPath(chain, [], ctx)], ctx), [], "includes",
+            [r.lookupPath(before, [], ctx)], ctx, {}), true)
+        assert.equal(calls, 0)
+    })
+
     for (const array of [false, true])
     it(`repair preserves an absent entered prefix after delivery: array=${array}`, async () => {
         const ctx = context(), gate = Promise.withResolvers()
@@ -185,7 +209,7 @@ describe("hierarchical scopes and placement recovery", () => {
     it("does not retain a mixed entry's native reservation for an unrelated managed lookup", async () => {
         const ctx = context(), hold = Promise.withResolvers()
         let calls = 0, reading
-        const api = r.externalState({ db: { work() { calls++ } } })
+        const api = r.externalState({ db: r.externalState({ work() { calls++ } }) })
         const chain = new r.ContextChain({ api, pending: hold.promise }, ctx, { api: { db: {} } })
         r.enter(chain, [], ctx, true, inside => {
             reading = r.lookupPath(inside, ["pending"], ctx)
@@ -306,7 +330,7 @@ describe("hierarchical scopes and placement recovery", () => {
                 assert.equal(poison.cause, cause)
                 if (imported) {
                     assert.equal(poison.errorContext, introduced.errorContext)
-                    assert.equal(poison.kind, r.ERROR_KIND.ContextValueFailed)
+                    assert.equal(poison.kind, r.ERROR_KIND.OperationInputFailed)
                 }
             } else {
                 old.resolve(7)
@@ -429,7 +453,7 @@ describe("hierarchical scopes and placement recovery", () => {
         for (const firstMutation of [false, true]) for (const secondMutation of [false, true])
             it(`orders ${relation} scopes, mutations=${firstMutation}/${secondMutation}`, async () => {
                 const ctx = context(), events = [], wait = Promise.withResolvers()
-                const methods = () => ({ hold() { events.push("first"); return wait.promise }, next() { events.push("second"); return 2 } })
+                const methods = () => r.externalState({ hold() { events.push("first"); return wait.promise }, next() { events.push("second"); return 2 } })
                 const api = r.externalState({ ...methods(), db: methods(), config: methods() })
                 const chain = new r.ContextChain({ api }, ctx, { api: { db: {}, config: {} } })
                 const firstPath = relation === "ancestor" ? ["api"] : ["api", "db"]
@@ -448,7 +472,7 @@ describe("hierarchical scopes and placement recovery", () => {
         assert.equal(mutate(chain, ["api", "db"], "work", ctx), undefined)
         assert.equal(mutate(chain, ["api", "config"], "work", ctx), undefined)
         assert.deepEqual(events, ["db", "config"])
-        assert.equal(ctx.execution._externalIdentities.get(api.db).binding, chain._externalMutationTree.api.db)
+        assert.equal(ctx.execution._externalIdentities.get(api.db).binding.deref(), chain._externalMutationTree.api.db)
     })
     it("waits for children at a parent and prevents later children from overtaking it", async () => {
         const { chain, ctx, events } = fixture()
@@ -737,7 +761,7 @@ describe("hierarchical scopes and placement recovery", () => {
             get skipped() { called++; return {} },
             accessor: { get then() { called++; return undefined } },
             synchronous: { then(resolve) { called++; resolve({}) } },
-            ready: {},
+            ready: r.externalState({}),
         })
         const requests = { api: { skipped: {}, accessor: {}, synchronous: {}, ready: {} } }
         const chain = new r.ContextChain({ api }, ctx, requests)

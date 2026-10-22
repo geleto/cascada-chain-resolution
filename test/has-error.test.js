@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import {
     Chain,
     assignPath,
@@ -19,7 +20,7 @@ describe("hasError", () => {
         const root = {
             branch: {
                 clean: { x: 1 },
-                bad: new Error("bad"),
+                bad: poison("bad"),
             },
         }
 
@@ -30,7 +31,7 @@ describe("hasError", () => {
         expect(hasError(rootChain, ["branch", "clean"], testContext)).to.be(false)
         expect(hasError(rootChain, ["branch", "missing"], testContext)).to.be(false)
         expect(hasError(rootChain, ["missing", "x"], testContext)).to.be(true)
-        expect(hasError(new Chain(new Error("root"), testContext), [], testContext)).to.be(true)
+        expect(hasError(new Chain(poison("root"), testContext), [], testContext)).to.be(true)
         expect(hasError(new Chain(7, testContext), [], testContext)).to.be(false)
         expect(hasError(new Chain(7, testContext), ["x"], testContext)).to.be(true)
     })
@@ -39,13 +40,13 @@ describe("hasError", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const root = {}
         Object.defineProperty(root, "__proto__", {
-            value: new Error("hidden proto"),
+            value: poison("hidden proto"),
             enumerable: true,
             writable: true,
             configurable: true,
         })
         Object.defineProperty(root, "hidden", {
-            value: new Error("hidden"),
+            value: poison("hidden"),
             enumerable: false,
             writable: true,
             configurable: true,
@@ -92,7 +93,7 @@ describe("hasError", () => {
         const registrations = countPromiseRegistrations(pending.promise)
         const root = {}
         root.self = root
-        root.bad = new Error("found")
+        root.bad = poison("found")
         root.pending = pending.promise
         importValue(root, { ...testContext, errorContext: "cycle first Error" })
         const beforeQuery = registrations()
@@ -113,7 +114,7 @@ describe("hasError", () => {
         }), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("late query continuation failure")
-        const ancestor = { bad: new Error("found") }
+        const ancestor = { bad: poison("found") }
         const branch = { pending: pending.promise, back: ancestor }
         ancestor.branch = branch
         importValue(ancestor, { ...testContext, errorContext: "abandoned Error query" })
@@ -157,7 +158,7 @@ describe("hasError", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const clean = Object.freeze({ nested: { value: 1 } })
         const pending = Object.preventExtensions({ pending: Promise.resolve(1) })
-        const error = new Error("bad")
+        const error = poison("bad")
         const bad = Object.seal({ nested: { bad: error } })
 
         importValue(clean, { ...testContext, errorContext: "clean frozen probe" })
@@ -247,7 +248,7 @@ describe("hasError", () => {
         const after = { y: 2 }
         const root = {
             before,
-            bad: new Error("bad"),
+            bad: poison("bad"),
             after,
         }
 
@@ -260,7 +261,7 @@ describe("hasError", () => {
         const pending = deferred()
         const root = {
             pending: pending.promise,
-            bad: new Error("bad"),
+            bad: poison("bad"),
         }
 
         expect(hasError(new Chain(root, testContext), [], testContext)).to.be(true)
@@ -330,7 +331,7 @@ describe("hasError", () => {
         }
         const result = hasError(new Chain(root, testContext), [], testContext)
 
-        bad.resolve(new Error("found"))
+        bad.resolve(poison("found"))
         expect(await result).to.be(true)
 
         later.resolve(value)
@@ -354,7 +355,7 @@ describe("hasError", () => {
         const result = hasError(new Chain(root, testContext), ["branch"], testContext)
 
         outer.resolve({
-            nested: { bad: new Error("bad") },
+            nested: { bad: poison("bad") },
             inner: inner.promise,
         })
 
@@ -384,7 +385,7 @@ describe("hasError", () => {
 
         // Second barrier commits the error; the answer fires at THIS settlement
         // because the resolved branch is indexed while `slow` is still pending.
-        inner.resolve({ deep: { bad: new Error("bad") } })
+        inner.resolve({ deep: { bad: poison("bad") } })
 
         expect(await result).to.be(true)
         verifyRefCounts(testContext, root)
@@ -495,7 +496,7 @@ describe("hasError", () => {
         const chain = new Chain(root, testContext)
 
         const result = hasError(chain, ["branch"], testContext)
-        assignPath(chain, ["branch", "stable", "later"], new Error("future"), testContext)
+        assignPath(chain, ["branch", "stable", "later"], poison("future"), testContext)
 
         pending.resolve("done")
 
@@ -511,7 +512,7 @@ describe("hasError", () => {
 
         const result = hasError(new Chain(root, testContext), ["branch", "bad"], testContext)
 
-        pending.resolve({ bad: new Error("bad") })
+        pending.resolve({ bad: poison("bad") })
 
         expect(await result).to.be(true)
         verifyRefCounts(testContext, root)
@@ -526,7 +527,7 @@ describe("hasError", () => {
         // runs first at settlement (FIFO), installs the Error into the counted
         // resolved value, and hasError's wait continuation must observe it.
         const rootChain = new Chain(root, testContext)
-        assignPath(rootChain, ["branch", "pending", "bad"], new Error("bad"), testContext)
+        assignPath(rootChain, ["branch", "pending", "bad"], poison("bad"), testContext)
         const result = hasError(rootChain, ["branch"], testContext)
 
         pending.resolve({})
@@ -544,7 +545,7 @@ describe("hasError", () => {
         assignPath(rootChain, ["branch", "pending", "bad"], "fixed", testContext)
         const result = hasError(rootChain, ["branch"], testContext)
 
-        pending.resolve({ bad: new Error("transient") })
+        pending.resolve({ bad: poison("transient") })
 
         expect(await result).to.be(false)
         expect(root.branch.pending).to.eql({ bad: "fixed" })
@@ -557,7 +558,7 @@ describe("hasError", () => {
         const chain = new Chain({ branch: pending.promise }, testContext)
 
         const result = hasError(chain, ["branch"], testContext)
-        assignPath(chain, ["branch", "bad"], new Error("future"), testContext)
+        assignPath(chain, ["branch", "bad"], poison("future"), testContext)
         pending.resolve({})
 
         expect(await result).to.be(false)
@@ -794,7 +795,7 @@ describe("hasError", () => {
 
         expect(settled).to.be(false)
 
-        pending.resolve({ nested: { bad: new Error("bad") } })
+        pending.resolve({ nested: { bad: poison("bad") } })
 
         expect(await result).to.be(true)
         expect(root.branch.pending).to.be("fixed")

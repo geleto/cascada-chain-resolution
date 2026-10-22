@@ -13,10 +13,12 @@ function mayBeThenable(value, operationContext) {
 // Callers select eligible values and own lookup-failure classification. Only
 // the native property read is external; protocol interpretation stays trusted.
 function readCallableThen(value, operationContext) {
-    const candidate = runExternalAction(operationContext, () => value.then)
-    if (isFatalError(candidate)) failExecution(operationContext, candidate)
-    // A non-callable Error is a successful probe, not a language result.
-    return typeof candidate === "function" ? candidate : undefined
+    try {
+        const candidate = runExternalAction(operationContext, () => value.then)
+        if (isFatalError(candidate)) failExecution(operationContext, candidate)
+        // A non-callable Error is a successful probe, not a language result.
+        return typeof candidate === "function" ? candidate : undefined
+    } finally { value = undefined }
 }
 
 function markPromiseHandled(promise, operationContext) {

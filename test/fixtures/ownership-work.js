@@ -57,7 +57,8 @@ registerHooks({ load(url, context, next) {
         assert(source.includes(marker), "Missing publication-destination allocation counter")
         source = source.replace(marker, "if (!meta.destination) globalThis.countOwnershipWork('destinations');\n    " + marker)
     }
-    for (const [marker, key, node = "undefined"] of replacements[url.slice(sourceRoot.length)] ?? []) {
+    for (const [originalMarker, key, node = "undefined"] of replacements[url.slice(sourceRoot.length)] ?? []) {
+        const marker = source.includes(originalMarker) ? originalMarker : originalMarker.replace(/function (\w+)\(/, 'function $1Untraced(')
         assert(source.includes(marker), `Missing work counter: ${marker}`)
         source = source.replaceAll(marker, `${marker}\n globalThis.countOwnershipWork("${key}", ${node});`)
     }
@@ -187,12 +188,12 @@ for (const array of [false, true]) {
     const context = ctx(), child = {}, cached = array ? [child] : {child}
     const prior = new r.Chain(cached, context)
     r.assignPath(prior, [], null, context)
-    const invalid = new Proxy({}, {ownKeys() { throw new Error("expected preparation failure") }})
+    const resource = r.externalState({})
     reset()
-    const received = new r.Chain({cached, invalid}, context)
+    const received = new r.ContextChain({cached, first: resource, second: resource}, context, {first: {}, second: {}})
     assert(r.isPoisonError(received._state.value))
-    assert.equal(counts.activations, array ? 4 : 3) // Holder, cached root, child, and optional backing.
-    assert.equal(counts.retirements, array ? 3 : 2) // Failed preparation releases its restored region.
+    assert.equal(counts.activations, 1) // Only the holder; rejected input never restores borrowed topology.
+    assert.equal(counts.retirements, 0)
     assert.equal(metaOf(cached, context).relationshipsActive, false)
     samples.push({case:"failed preparation", array, ...counts})
 }

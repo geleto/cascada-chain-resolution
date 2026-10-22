@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
 import * as propertyVersions from "../src/property-versions.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
@@ -164,7 +165,7 @@ describe("ArrayView", () => {
 
     it("recognizes views by identity without reflecting on wrappers", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const view = new arrayViews.ArrayView([1], testContext)
+        const view = new arrayViews.ArrayView(importValue([1], testContext), testContext)
         const wrapper = new Proxy(view, {
             getPrototypeOf() {
                 throw new Error("view wrapper was reflected")
@@ -198,7 +199,7 @@ describe("ArrayView", () => {
 
     it("interprets constructor bounds relative to the logical source", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const source = [1, 2, 3]
+        const source = importValue([1, 2, 3], testContext)
         const original = new arrayViews.ArrayView(source, testContext)
         const tail = new arrayViews.ArrayView(original, testContext, 1, 3)
         const last = new arrayViews.ArrayView(tail, testContext, 1, 2)
@@ -361,7 +362,7 @@ describe("ArrayView", () => {
     it("projects error queries and export through a view", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("view error")
+        const error = poison("view error")
         const source = [{ error }, pending.promise]
         const view = run(new Chain(source, testContext), [], "push", [3], testContext, { repair: false })
         const chain = new Chain(view, testContext)

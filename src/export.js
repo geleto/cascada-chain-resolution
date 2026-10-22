@@ -2,7 +2,8 @@ import * as errorUtils from "./error.js"
 import * as steps from "./internal-step.js"
 import * as values from "./language-values.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
-import { ManagedCapture, assembleCapturedGraph } from "./managed-capture.js"
+import { ManagedCapture } from "./managed-capture.js"
+import { assembleCapturedGraph } from "./captured-graph.js"
 
 function exportValue(value, owner) {
     return exportValues([value], owner, outcome =>
@@ -35,7 +36,7 @@ function exportValues(inputs, owner, onResult) {
 
     function finish() {
         const outcome = errors.size
-            ? errorUtils.combineErrors(errors, "Operation received multiple Errors")
+            ? errorUtils.combineErrors(errors)
             : assembleCapturedGraph(capture)
         release()
         return onResult(outcome)

@@ -39,20 +39,13 @@ describe("entry structural publication", () => {
     })
 
     for (const deleting of [false, true])
-    it(`preserves recovery when nested write-through fails: deleting=${deleting}`, async () => {
-        const ctx = context(), cause = new Error("refused write"), gates = [], entries = []
-        let armed = false
-        const make = () => new Proxy({ k: 1 }, {
-            defineProperty(target, key, descriptor) {
-                if (armed) throw cause
-                return Reflect.defineProperty(target, key, descriptor)
-            },
-            deleteProperty(target, key) {
-                if (armed) throw cause
-                return Reflect.deleteProperty(target, key)
-            },
-        })
-        const source = new r.Chain({ make() { this.item = make() } }, ctx)
+    it(`protects newly adopted host storage through nested entries: deleting=${deleting}`, async () => {
+        const ctx = context(), gates = [], entries = []
+        let original
+        const source = new r.Chain({ make() {
+            original = Object.freeze({ k: 1 })
+            this.item = original
+        } }, ctx)
         r.run(source, [], "make", [], ctx, { mutationScopeDepth: 0 })
         let inner = source
         for (let index = 0; index < 64; index++) {
@@ -63,19 +56,15 @@ describe("entry structural publication", () => {
                 return gate.promise
             }))
         }
-        armed = true
-        const failure = deleting ? r.deletePath(inner, [], ctx) : r.assignPath(inner, [], 2, ctx)
-        assert(r.isPoisonError(failure))
-        assert.equal(failure.cause, cause)
+        const result = deleting ? r.deletePath(inner, [], ctx) : r.assignPath(inner, [], 2, ctx)
+        assert.equal(result, undefined)
         for (let index = gates.length - 1; index >= 0; index--) {
             gates[index].resolve()
             await entries[index]
         }
-        assert.equal(await r.lookupPath(source, ["item", "k"], ctx), failure)
+        assert.equal(await r.lookupPath(source, ["item", "k"], ctx), deleting ? undefined : 2)
+        assert.deepEqual(original, { k: 1 })
         assert.equal(ctx.execution.fatalError, null)
-        armed = false
-        await r.repairPath(source, ["item", "k"], ctx)
-        assert.equal(r.lookupPath(source, ["item", "k"], ctx), 1)
         verifyRefCounts(ctx, source._state)
     })
 

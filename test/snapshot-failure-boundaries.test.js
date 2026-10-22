@@ -14,7 +14,7 @@ describe("external snapshot failure boundaries", () => {
     for (const pending of [false, true])
     for (const route of ["lookup", "export"])
     for (const action of ["prototype parent", "constructor descriptor", "constructor prototype descriptor"]) {
-        it(`recovers actual prototype reflection failure: ${action}, ${route}, pending=${pending}`, async () => {
+        it(`returns poison when category reflection fails: ${action}, ${route}, pending=${pending}`, async () => {
             const reports = [], execution = new r.Execution(error => reports.push(error))
             const ctx = { execution, errorContext: `${action} ${route} ${pending}` }
             const cause = new Error(action)
@@ -50,8 +50,8 @@ describe("external snapshot failure boundaries", () => {
             const failure = await result
             assert(inspections > 0, "The selected host reflection must run")
             assert(r.isPoisonError(failure))
-            assert.equal(failure.kind, r.ERROR_KIND.ExternalPropertyReadFailed)
             assert.equal(failure.cause, cause)
+            assert.equal(failure.kind, r.ERROR_KIND.ExternalPropertyReadFailed)
             assert.equal(failure.errorContext, ctx.errorContext)
             assert.equal(execution.fatalError, null)
             assert.deepEqual(reports, [])

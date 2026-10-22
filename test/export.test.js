@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
@@ -28,7 +29,7 @@ function expectExportErrors(outcome, expected) {
         expect(outcome === expected[0] || outcome.cause === expected[0]).to.be(true)
         return
     }
-    expect(outcome.message).to.be("Operation received multiple Errors")
+    expect(outcome.message).to.be("Multiple Errors")
     expect(outcome.errors.length).to.be(expected.length)
     for (const error of expected) {
         expect(outcome.errors.some(value => {
@@ -67,8 +68,8 @@ describe("export", () => {
 
     it("uses a non-thenable Error outcome with exact Error identities", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const repeated = new Error("repeated")
-        const distinct = new Error("distinct")
+        const repeated = poison("repeated")
+        const distinct = poison("distinct")
         const outcome = exportValue(
             new Chain([repeated, { repeated, distinct }], testContext),
             [],
@@ -270,7 +271,7 @@ describe("export", () => {
     it("detects an Error resolved behind a cycle cut", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("hidden behind Promise")
+        const error = poison("hidden behind Promise")
         const first = { pending: pending.promise }
         const second = { back: first }
         first.next = second
@@ -284,10 +285,10 @@ describe("export", () => {
         verifyRefCounts(testContext, first, second)
     })
 
-    it("lets an ordinary Error behind a cycle cut poison export", () => {
+    it("lets an poison behind a cycle cut fail export", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const left = {}
-        const right = { bad: new Error("hidden") }
+        const right = { bad: poison("hidden") }
         left.right = right
         right.left = left
         importValue(left, { ...testContext, errorContext: "hidden cycle Error" })
@@ -297,11 +298,11 @@ describe("export", () => {
         expectExportErrors(result, [right.bad])
     })
 
-    it("collects the complete raw Error frontier despite indexed fast paths", async () => {
+    it("collects the complete poison frontier despite indexed fast paths", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const known = new Error("known")
-        const hidden = new Error("hidden")
+        const known = poison("known")
+        const hidden = poison("hidden")
         const branch = { bad: known }
         const root = { branch, pending: pending.promise }
         branch.back = root
@@ -323,7 +324,7 @@ describe("export", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const reflection = new Error("reflection failed")
-        const hidden = new Error("revealed later")
+        const hidden = poison("revealed later")
         let fail = false
         const broken = new Proxy({}, {
             ownKeys(target) {
@@ -348,7 +349,7 @@ describe("export", () => {
         const outer = deferred()
         const inner = deferred()
         const reflection = new Error("delayed reflection failed")
-        const hidden = new Error("nested later")
+        const hidden = poison("nested later")
         let fail = false
         const broken = new Proxy({}, {
             ownKeys(target) {
@@ -375,7 +376,7 @@ describe("export", () => {
     it("continues the Error scan when captured Array shape fails", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const reflection = new Error("Array length failed")
-        const nested = new Error("inside Array")
+        const nested = poison("inside Array")
         let lengthReads = 0
         let fail = false
         const array = new Proxy([nested], {
@@ -398,7 +399,7 @@ describe("export", () => {
     it("continues the Error scan after a property-read failure", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const reflection = new Error("property read failed")
-        const nested = new Error("later property")
+        const nested = poison("later property")
         let reads = 0
         const branch = new Proxy({ broken: 1, nested }, {
             getOwnPropertyDescriptor(target, key) {
@@ -416,7 +417,7 @@ describe("export", () => {
     it("continues the Error scan after thenable recognition fails", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const reflection = new Error("then access failed")
-        const nested = new Error("after thenable")
+        const nested = poison("after thenable")
         const broken = Object.defineProperty({}, "then", {
             get() { throw reflection },
         })
@@ -426,8 +427,8 @@ describe("export", () => {
     it("agrees with Error queries on stable sync and promised data", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const known = new Error("known")
-        const hidden = new Error("hidden")
+        const known = poison("known")
+        const hidden = poison("hidden")
         const chain = new Chain({
             known,
             pending: pending.promise,
@@ -445,8 +446,8 @@ describe("export", () => {
         ])
         expectExportErrors(outcome, [known, hidden])
         expect(errors.errors.length).to.be(2)
-        expect(errors.errors.some(error => error.cause === known)).to.be(true)
-        expect(errors.errors.some(error => error.cause === hidden)).to.be(true)
+        expect(errors.errors.some(error => error === known)).to.be(true)
+        expect(errors.errors.some(error => error === hidden)).to.be(true)
     })
 
     it("exports a clean subpath through a cyclic import normally", () => {
@@ -704,7 +705,7 @@ describe("export", () => {
     it("returns a single Error for settled error branches without marking them", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const child = { x: 1 }
-        const branch = { error: new Error("bad"), child }
+        const branch = { error: poison("bad"), child }
         const root = { branch }
 
         const rootChain = new Chain(root, testContext)
@@ -764,8 +765,8 @@ describe("export", () => {
     it("keeps concurrent export Error state independent", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const known = new Error("known")
-        const hidden = new Error("hidden")
+        const known = poison("known")
+        const hidden = poison("hidden")
         const chain = new Chain({
             known,
             pending: pending.promise,
@@ -996,7 +997,7 @@ describe("export", () => {
     it("collapses to Error when a pending branch promise rejects", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("bad")
+        const error = poison("bad")
         const root = { branch: { pending: pending.promise } }
 
         const result = exportValue(new Chain(root, testContext), ["branch"], testContext)
@@ -1011,7 +1012,7 @@ describe("export", () => {
     it("collapses to Error when a resolved promise value contains an Error", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("bad")
+        const error = poison("bad")
         const root = { branch: { pending: pending.promise } }
 
         const result = exportValue(new Chain(root, testContext), ["branch"], testContext)
@@ -1060,7 +1061,7 @@ describe("export", () => {
         assignPath(rootChain, ["branch", "inner", "e"], "fixed", testContext)
         const result = exportValue(rootChain, ["branch"], testContext)
 
-        pending.resolve({ e: new Error("transient") })
+        pending.resolve({ e: poison("transient") })
         const value = await result
 
         expect(value).not.to.be(root.branch)
@@ -1180,7 +1181,7 @@ describe("export", () => {
 
     it("does not pin a synchronous Error found in a cyclic import", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const error = new Error("hidden")
+        const error = poison("hidden")
         const cyclic = { bad: error }
         cyclic.self = cyclic
         const branch = { cyclic }

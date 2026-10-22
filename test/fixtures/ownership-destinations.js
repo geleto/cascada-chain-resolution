@@ -6,7 +6,7 @@ const shells = []
 let definitions = 0
 globalThis.captureExportShell = value => { shells.push(new WeakRef(value)); return value }
 globalThis.countExportDefinition = () => { definitions++ }
-const exportURL = new URL("../../src/managed-capture.js", import.meta.url).href
+const exportURL = new URL("../../src/captured-graph.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     if (url !== exportURL) return result
@@ -62,11 +62,14 @@ for (const operation of ["export", "hasError", "getErrors", "lookupPath"]) {
         return { result, source: new WeakRef(source) }
     }
     const { result, source } = issue()
-    await collected(source)
+    // Export has not reached the sibling after `waiting`; the other consumers
+    // have already captured every source placement they will use.
+    if (operation !== "export") await collected(source)
     descendant.resolve(8)
     const child = shape === "record" ? { waiting: 8, other: { k: 1 } } : [8, { k: 1 }]
     assert.deepEqual(await result, operation === "export" ? { branch: child } :
         operation === "hasError" ? false : operation === "getErrors" ? null : 8)
+    await collected(source)
 }
 
 for (const before of [false, true]) for (const reject of [false, true]) {
@@ -178,7 +181,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
         return { source: new WeakRef(source), result }
     }
     const pendingResult = issue()
-    await collected(pendingResult.source)
+    if (operation !== "export") await collected(pendingResult.source)
     if (operation === "export" && poison) {
         assert.equal(shells.length, 0, "Export allocates no output shells before successful capture")
     }
@@ -190,6 +193,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
     } else if (operation === "hasError") assert.equal(result, poison)
     else if (poison) assert(result !== null)
     else assert.equal(result, null)
+    await collected(pendingResult.source)
     assert.equal(r.lookupPath(survivor, ["waiting"], ctx), 11)
 }
 // Admission copies preserve cached imported state even after the cache retires.
@@ -203,7 +207,7 @@ for (const operation of ["export", "hasError", "getErrors"]) for (const poison o
     const first = new r.Chain(r.run(api, [], "fetch", [], ctx, {}), ctx)
     const survivor = new r.Chain(r.lookupPath(first, ["child"], ctx), ctx)
     const copy = survivor._state.value
-    assert.notEqual(copy, child)
+    assert.equal(copy, child)
     assert.equal(metaOf(copy, ctx).imported, true)
     assert.equal(copy.self, copy)
     pending.resolve(7)

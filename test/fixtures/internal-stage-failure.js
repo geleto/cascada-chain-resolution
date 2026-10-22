@@ -8,7 +8,7 @@ const sites = {
     indexing: ["refcounts.js", "function buildRefIndex(value, operationContext) {"],
     publication: ["parent-placements.js", "function recordLogicalPlacement(owner, key, before, after, operationContext, wasOverlay) {"],
     copying: ["placement-structure.js", "function createEmptyContainer(source, operationContext) {"],
-    assembly: ["managed-capture.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
+    assembly: ["captured-graph.js", "function assembleCapturedGraph(capture, initializeCopy) {"],
     length: ["array-view.js", "static captureLength(array, operationContext, owner) {"],
     remap: ["array-remap.js", "function createArrayFromRemap(\n    remap,\n    operationContext,\n    refIndexSource = undefined,\n) {"],
     isolation: ["mutations.js", "function shallowCopyPathContainer(source, operationContext) {"],
@@ -26,8 +26,9 @@ const root = new URL("../../src/", import.meta.url).href
 registerHooks({ load(url, context, next) {
     const result = next(url, context)
     let source = String(result.source).replaceAll("\r\n", "\n")
-    for (const [site, [file, marker]] of Object.entries(sites)) {
+    for (const [site, [file, originalMarker]] of Object.entries(sites)) {
         if (url !== root + file) continue
+        const marker = source.includes(originalMarker) ? originalMarker : originalMarker.replace(/function (\w+)\(/, 'function $1Untraced(')
         assert(source.includes(marker), `Internal ${site} fault anchor needs updating`)
         source = source.replace(marker, marker + (site === "assembly"
             ? ` if (capture.roots.length) globalThis.internalStageFault("${site}", capture.owner.operationContext);`

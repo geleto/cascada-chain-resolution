@@ -1,7 +1,7 @@
 import { ArrayView, isArrayView, isLogicalArray, isArrayIndex } from "./array-view.js"
 import * as errorUtils from "./error.js"
 import * as metadata from "./meta.js"
-import { capturePlacementFromVersion, normalizeRawPropertyValue } from "./property-versions.js"
+import { capturePlacement } from "./property-versions.js"
 import { orderRecordKeys } from "./placement-structure.js"
 
 const ORDINARY_PROPERTY = 0
@@ -84,35 +84,40 @@ function requiresRepresentationCopyForPropertyMutation(
     operationContext,
     mode = PROPERTY_MUTATION_MODE.Assign,
 ) {
-    if (ArrayView.requiresMaterialization(parent, operationContext, key) ||
-        ArrayView.hasOtherStorageUse(parent, key, operationContext)) return true
-    key = String(key)
-    const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
+    let storage
+    try {
+        if (ArrayView.requiresMaterialization(parent, operationContext, key) ||
+            ArrayView.hasOtherStorageUse(parent, key, operationContext)) return true
+        key = String(key)
+        const descriptor = getLanguagePropertyDescriptor(parent, key, operationContext)
 
-    if (mode === PROPERTY_MUTATION_MODE.Delete) {
-        return isDataPlacement(descriptor) && !descriptor.configurable
-    }
-    if (descriptor) {
-        return !isDataPlacement(descriptor) || !descriptor.writable ||
-            mode === PROPERTY_MUTATION_MODE.AssignOrDelete && !descriptor.configurable
-    }
+        if (mode === PROPERTY_MUTATION_MODE.Delete) {
+            return isDataPlacement(descriptor) && !descriptor.configurable
+        }
+        if (descriptor) {
+            return !isDataPlacement(descriptor) || !descriptor.writable ||
+                mode === PROPERTY_MUTATION_MODE.AssignOrDelete && !descriptor.configurable
+        }
 
-    const storage = metadata.metaOf(parent, operationContext)?.arrayRange?.backing ?? parent
-    const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(storage))
-    if (!extensible) return true
-    if (!Array.isArray(parent) || !isArrayIndex(key)) {
-        return false
-    }
-    const length = getStorageDescriptor(parent, "length", operationContext)
-    return Number(key) >= ArrayView.minimumLength(parent, operationContext) &&
-        length?.writable !== true
+        storage = metadata.metaOf(parent, operationContext)?.arrayRange?.backing ?? parent
+        const extensible = errorUtils.runExternalAction(operationContext, () => Object.isExtensible(storage))
+        if (!extensible) return true
+        if (!Array.isArray(parent) || !isArrayIndex(key)) {
+            return false
+        }
+        const length = getStorageDescriptor(parent, "length", operationContext)
+        return Number(key) >= ArrayView.minimumLength(parent, operationContext) &&
+            length?.writable !== true
+    } finally { storage = undefined }
 }
 
 function getStorageDescriptor(parent, key, operationContext) {
     // A native Array may have an attached logical length projection. Storage
     // preflight needs its actual slot, without traversing pending length history.
-    return isArrayView(parent, operationContext) ? ArrayView.descriptor(parent, String(key), operationContext) :
-        errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key))
+    try {
+        return isArrayView(parent, operationContext) ? ArrayView.descriptor(parent, String(key), operationContext) :
+            errorUtils.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(parent, key))
+    } finally { parent = undefined }
 }
 
 // These assertions guard internal commits after the owning transition has
@@ -143,33 +148,35 @@ function assertCanDeleteLanguageProperty(parent, key, operationContext) {
 // Define missing language keys as own data properties so inherited setters,
 // notably Object.prototype.__proto__, never participate in a physical write.
 function writeLanguageProperty(parent, key, value, operationContext, descriptor) {
-    if (metadata.metaOf(parent, operationContext)?.arrayRange) {
-        const target = ArrayView.mutationTarget(parent, String(key), operationContext, true)
-        parent = target.parent
-        key = target.key
-    }
-    const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
-    errorUtils.runExternalAction(operationContext, () => {
-        if (descriptor) {
-            parent[key] = value
-            return
+    try {
+        if (metadata.metaOf(parent, operationContext)?.arrayRange) {
+            const target = ArrayView.mutationTarget(parent, String(key), operationContext, true)
+            parent = target.parent
+            key = target.key
         }
-        Object.defineProperty(parent, key, {
-            value,
-            enumerable: true,
-            writable: true,
-            configurable: true,
+        const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
+        errorUtils.runExternalAction(operationContext, () => {
+            if (descriptor) {
+                parent[key] = value
+                return
+            }
+            Object.defineProperty(parent, key, {
+                value,
+                enumerable: true,
+                writable: true,
+                configurable: true,
+            })
         })
-    })
-    if (isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, value, operationContext)
+        if (isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, value, operationContext)
+    } finally { parent = value = descriptor = undefined }
 }
 
 function readLanguageProperty(parent, key, operationContext) {
     return readLanguagePlacement(parent, key, operationContext).value
 }
 
-// Consume once at the current program position, then capture any version
-// installed by normalization. Baseline capture deliberately does not consume.
+// Reception owns preparation. Reading only captures the current placement;
+// consumers resolve its pending version separately.
 function readLanguagePlacement(parent, key, operationContext) {
     key = String(key)
     const propertyKind = classifyLanguageProperty(parent, key, operationContext)
@@ -179,16 +186,7 @@ function readLanguagePlacement(parent, key, operationContext) {
     }
     if (propertyKind === STRING_LENGTH) return { value: parent.length, present: true }
 
-    const meta = metadata.metaOf(parent, operationContext)
-    let version = meta?.placementVersions?.[key]
-    if (version) return capturePlacementFromVersion(version)
-    const descriptor = getLanguagePlacementDescriptor(parent, key, operationContext)
-    const value = normalizeRawPropertyValue(parent, key, descriptor?.value, operationContext, descriptor?.writable)
-    version = meta?.placementVersions?.[key]
-    return version ? capturePlacementFromVersion(version) : {
-        value, present: descriptor !== undefined,
-        position: meta?.recordOrder?.positions.get(key)?.position ?? (descriptor ? -1 : Infinity),
-    }
+    return capturePlacement(parent, key, operationContext)
 }
 
 function hasLanguageProperty(parent, key, operationContext) {
@@ -205,16 +203,18 @@ function hasLanguageProperty(parent, key, operationContext) {
 }
 
 function deleteLanguageProperty(parent, key, operationContext, descriptor) {
-    if (metadata.metaOf(parent, operationContext)?.arrayRange) {
-        const target = ArrayView.mutationTarget(parent, String(key), operationContext, false)
-        if (!target) return key !== "length"
-        parent = target.parent
-        key = target.key
-    }
-    const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
-    const removed = errorUtils.runExternalAction(operationContext, () => delete parent[key])
-    if (removed && isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, undefined, operationContext)
-    return removed
+    try {
+        if (metadata.metaOf(parent, operationContext)?.arrayRange) {
+            const target = ArrayView.mutationTarget(parent, String(key), operationContext, false)
+            if (!target) return key !== "length"
+            parent = target.parent
+            key = target.key
+        }
+        const previous = isDataPlacement(descriptor) ? descriptor.value : undefined
+        const removed = errorUtils.runExternalAction(operationContext, () => delete parent[key])
+        if (removed && isLogicalArray(parent, operationContext)) ArrayView.recordBackingPlacement(parent, key, previous, undefined, operationContext)
+        return removed
+    } finally { parent = undefined }
 }
 
 // Capture candidates at the call, before descriptor checks, so one failing

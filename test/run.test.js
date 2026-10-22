@@ -1,3 +1,5 @@
+import { poison } from "./support.js"
+import { rejected as rejectedInput } from "./ordered-thenable.js"
 import * as arrayViews from "../src/array-view.js"
 import * as languageValues from "../src/language-values.js"
 import * as propertyVersions from "../src/property-versions.js"
@@ -421,14 +423,24 @@ describe("run", () => {
         const argument = deferred()
         const fulfilledError = new Error("fulfilled Error")
         const rejectedError = new Error("rejected Error")
+        const returnedData = deferred()
+        const failed = deferred()
         const source = {}
-        const chain = new Chain(source, testContext)
         Object.defineProperty(source, "result", {
             enumerable: true,
             value() {
                 return returned.promise
             },
         })
+        Object.defineProperty(source, "data", {
+            enumerable: true,
+            value() { return returnedData.promise },
+        })
+        Object.defineProperty(source, "failure", {
+            enumerable: true,
+            value() { return failed.promise },
+        })
+        const chain = new Chain(source, testContext)
 
         const fulfilled = run(
             chain,
@@ -453,27 +465,13 @@ describe("run", () => {
         expect(ready).not.to.be(returned.promise)
         expect(errorCause(await ready)).to.be(fulfilledError)
 
-        const returnedData = deferred()
         const hostValue = {}
-        Object.defineProperty(source, "data", {
-            enumerable: true,
-            value() {
-                return returnedData.promise
-            },
-        })
         const dataResult = run(chain, [], "data", [], { ...testContext, errorContext: "test run" }, { repair: false })
         expect(dataResult).not.to.be(returnedData.promise)
         returnedData.resolve(hostValue)
         expect(await dataResult).to.be(hostValue)
         expect(metaOf(hostValue, testContext).imported).to.be(true)
 
-        const failed = deferred()
-        Object.defineProperty(source, "failure", {
-            enumerable: true,
-            value() {
-                return failed.promise
-            },
-        })
         const rejection = run(chain, [], "failure", [], { ...testContext, errorContext: "test run" }, { repair: false })
         failed.reject(rejectedError)
         const rejected = await rejection
@@ -1095,8 +1093,8 @@ describe("run", () => {
             [],
             "inspect",
             [
-                { first, nested: { second } },
-                { third },
+                { first: rejectedInput(first), nested: { second: rejectedInput(second) } },
+                { third: rejectedInput(third) },
             ],
             { ...testContext, errorContext: "test run" },
             { repair: false },
@@ -1112,7 +1110,7 @@ describe("run", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = new Error("first")
         const second = new Error("second")
-        const shared = { first, second }
+        const shared = { first: rejectedInput(first), second: rejectedInput(second) }
         let invoked = false
         const target = {}
         Object.defineProperty(target, "inspect", {
@@ -1142,7 +1140,7 @@ describe("run", () => {
 
     it("poisons only arguments consumed by an Array method", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const direct = new Error("direct")
+        const direct = poison("direct")
         const rejected = new Error("rejected")
         const pending = deferred()
         const concatItem = deferred()
@@ -1336,9 +1334,9 @@ describe("run", () => {
             [],
             "copyWithin",
             [
-                first,
-                second,
-                first,
+                rejectedInput(first),
+                rejectedInput(second),
+                rejectedInput(first),
             ],
             { ...testContext, errorContext: "test run" },
             { repair: false },
@@ -1353,9 +1351,9 @@ describe("run", () => {
             [],
             "concat",
             [
-                first,
+                rejectedInput(first),
                 concatPending.promise,
-                first,
+                rejectedInput(first),
             ],
             { ...testContext, errorContext: "test run" },
             { repair: false },
@@ -1370,7 +1368,7 @@ describe("run", () => {
 
     it("skips dynamic member lookup when argument export fails", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const failure = new Error("invalid argument")
+        const failure = poison("invalid argument")
         let reflections = 0
         const receiver = new Proxy({}, {
             get(target, key, current) {
@@ -1829,9 +1827,8 @@ describe("run", () => {
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
-        expect(errorCause(run(new Chain(source, testContext), [], "slice", [0], { ...testContext, errorContext: "test run" }, { repair: false }))).to.be(
-            failure,
-        )
+        const result = run(new Chain(source, testContext), [], "slice", [0], testContext, {})
+        expect(errorCause(lookupPath(new Chain(result, testContext), [0], testContext))).to.be(failure)
     })
 
     it("preserves imported cycles through structural mutations", () => {
@@ -2592,7 +2589,7 @@ describe("run", () => {
 
     it("exports comparator Errors only when a comparison is possible", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const failure = new Error("nested comparator input")
+        const failure = poison("nested comparator input")
         let called = false
         const comparator = () => {
             called = true
@@ -2749,6 +2746,11 @@ describe("run", () => {
     it("invokes record methods only on supported object surfaces", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const record = {}
+        const date = new Date()
+        Object.defineProperty(record, "getDate", {
+            enumerable: true,
+            value: () => date,
+        })
         Object.defineProperty(record, "size", {
             enumerable: true,
             value() {
@@ -2823,11 +2825,6 @@ describe("run", () => {
         ) instanceof Error).to.be(true)
         expect(invoked).to.be(false)
 
-        const date = new Date()
-        Object.defineProperty(record, "getDate", {
-            enumerable: true,
-            value: () => date,
-        })
         expect(run(
             new Chain(record, testContext),
             [],
@@ -2936,7 +2933,7 @@ describe("run", () => {
         expect(await result).to.be(1)
     })
 
-    it("exports aliased host arguments without leasing their source", async () => {
+    it("captures aliased host arguments before suspension", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const argument = { pending: pending.promise, value: 1 }
@@ -3465,7 +3462,7 @@ describe("run", () => {
         }
     })
 
-    it("poisons Array mutation when preparation reflection fails", () => {
+    it("moves a poisoned Array placement through a structural mutation", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const failure = new Error("Array metadata reflection failed")
         const receiver = new Proxy([1, 2], {
@@ -3477,7 +3474,8 @@ describe("run", () => {
         const chain = new Chain(receiver, testContext)
 
         const result = run(chain, [], "reverse", [], { ...testContext, errorContext: "test run" }, { repair: false, mutationScopeDepth: 0 })
-        expect(errorCause(result)).to.be(failure)
+        expect(lookupPath(chain, [0], testContext)).to.be(2)
+        expect(errorCause(lookupPath(chain, [1], testContext))).to.be(failure)
         expect(chain._state.value).to.be(result)
         expect([...receiver]).to.eql([1, 2])
     })

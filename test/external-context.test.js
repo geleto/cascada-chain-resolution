@@ -14,7 +14,7 @@ import * as externalTree from "../src/external-mutation-tree.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import { OrderedThenable } from "./ordered-thenable.js"
+import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { deferred, errorCause, expect, flushMicrotasks, readPath } from "./support.js"
 function external(value = {}) {
     expect(externalState(value)).to.be(value)
@@ -114,7 +114,7 @@ describe("context external foundations", () => {
             .sort()
         expect(boundaryPaths).to.eql(["left"])
         const left = externalTree.findBranch(chain._externalMutationTree, ["left"])
-        expect(left[TREE_NODE].entry.binding).to.be(left)
+        expect(left[TREE_NODE].entry.binding.deref()).to.be(left)
     })
 
     it("treats numeric and string property paths alike", () => {
@@ -168,7 +168,7 @@ describe("context external foundations", () => {
             .to.be(chain._execution._externalIdentities.get(service))
     })
 
-    it("commits neither tree nor execution entries after import failure", () => {
+    it("registers accessible resources beside an unreadable managed child", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const execution = testContext.execution
         const service = external()
@@ -183,9 +183,9 @@ describe("context external foundations", () => {
             { service: {} },
         )
 
-        expect(readPath(chain, [], testContext)).to.be.an(Error)
-        expect(chain._externalMutationTree).to.be(undefined)
-        expect(execution._externalIdentities.get(service)).to.be(undefined)
+        expect(readPath(chain, ["broken"], testContext)).to.be.an(Error)
+        expect(chain._externalMutationTree.service[TREE_NODE].identity).to.be(service)
+        expect(execution._externalIdentities.has(service)).to.be(true)
     })
 
     it("rolls back discovery reflection failure without invalidating a prior binding", () => {
@@ -197,17 +197,17 @@ describe("context external foundations", () => {
         const originalBinding = externalTree.findBranch(original._externalMutationTree, ["existing"])
         const service = external()
         const failure = new Error("cannot discover context tree")
-        let placementReads = 0
-        const root = new Proxy({ existing, service }, {
+        const native = external(new Proxy({ service }, {
             getOwnPropertyDescriptor(target, key) {
-                if (key === "service" && ++placementReads === 2) throw failure
+                if (key === "service") throw failure
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
-        })
+        }))
+        const root = { existing, native }
         const chain = new ContextChain(
             root,
             { execution, errorContext: "tree discovery" },
-            { existing: {}, service: {} },
+            { existing: {}, native: { service: {} } },
         )
 
         const result = readPath(chain, [], testContext)
@@ -219,7 +219,7 @@ describe("context external foundations", () => {
         expect(execution._metadata.has(root)).to.be(false)
         expect(execution._metadata.has(service)).to.be(false)
         expect(execution._externalIdentities.get(existing)).to.be(existingEntry)
-        expect(existingEntry.binding).to.be(originalBinding)
+        expect(existingEntry.binding.deref()).to.be(originalBinding)
     })
 
     it("shares entries within one execution but not between executions", () => {
@@ -489,7 +489,84 @@ function sourceFor(kind, value) {
 }
 
 describe("direct context authority discovery", () => {
+    for (const imported of [false, true])
+    for (const delivery of ["ready", "synchronous", "native", "ordered"])
+    for (const operation of ["untouched", "record-cow", "record-entry", "array-cow", "array-entry", "array-splice", "array-slice"]) {
+        it(`preserves discovery availability through ${operation}: ${delivery}, imported=${imported}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "copied availability" }
+            const resource = external({ n: 1 })
+            const signal = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+            const input = delivery === "ready" ? resource : delivery === "synchronous" ? ready(resource) : signal.promise ?? signal
+            const array = operation.startsWith("array"), key = array ? 0 : "indirect"
+            const value = array ? [input, 0] : { indirect: input, sibling: 0 }
+            const source = new Chain(imported ? importValue(value, ctx) : value, ctx)
+            if (delivery === "native" || delivery === "ordered") signal.resolve(resource)
+            assert.equal(await lookupPath(source, [key], ctx), resource)
+            let selected = source, retained
+            if (operation.endsWith("cow")) {
+                retained = new Chain(lookupPath(source, [], ctx), ctx)
+                assignPath(source, [array ? 1 : "sibling"], 1, ctx)
+                assert.equal(lookupPath(retained, [array ? 1 : "sibling"], ctx), 0)
+            }
+            if (operation.endsWith("entry")) await enter(source, [key], ctx, true, () => undefined)
+            if (operation === "array-splice") run(source, [], "splice", [0, 0], ctx, { mutationScopeDepth: 0 })
+            if (operation === "array-slice") selected = new Chain(run(source, [], "slice", [], ctx, {}), ctx)
+            const context = new ContextChain(lookupPath(selected, [], ctx), ctx, { [key]: {} })
+            assert.deepEqual(externalLocationPaths(context._externalMutationTree), delivery === "ready" ? [[String(key)]] : [])
+            if (delivery !== "ready") {
+                // A new direct write changes the placement's origin; copying it does not.
+                assignPath(selected, [key], resource, ctx)
+                const direct = new ContextChain(lookupPath(selected, [], ctx), ctx, { [key]: {} })
+                assert.deepEqual(externalLocationPaths(direct._externalMutationTree), [[String(key)]])
+                assert.equal(assignPath(direct, [key, "n"], 2, ctx), undefined)
+            } else assert.equal(assignPath(context, [key, "n"], 2, ctx), undefined)
+            assert.equal(resource.n, 2)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const operation of ["splice", "entry"])
+    for (const delivery of ["ready", "synchronous", "native", "ordered"]) {
+        it(`discovers completed internal publications: ${operation}/${delivery}`, async () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: "completed publication discovery" }
+            const service = runtime.externalState({ value: 1 })
+            const chain = new runtime.Chain({ branch: [service] }, ctx)
+            const signal = delivery === "native" ? Promise.withResolvers() : new OrderedThenable()
+            if (delivery === "synchronous") signal.resolve(0)
+            const input = delivery === "ready" ? 0 : signal.promise ?? signal
+            const result = operation === "splice"
+                ? runtime.run(chain, ["branch"], "splice", [input, 0], ctx, { mutationScopeDepth: 1 })
+                : runtime.enter(chain, ["branch"], ctx, true, () => input)
+            if (delivery === "native" || delivery === "ordered") signal.resolve(0)
+            await result
+            const context = new runtime.ContextChain(runtime.lookupPath(chain, [], ctx), ctx, { branch: { 0: {} } })
+            assert.deepEqual(externalLocationPaths(context._externalMutationTree), [["branch", "0"]])
+            assert.equal(await runtime.assignPath(context, ["branch", 0, "value"], 2, ctx), undefined)
+            assert.equal(service.value, 2)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
     for (const kind of sourceKinds) {
+        for (const imported of [false, true]) for (const refuseWriteback of [false, true]) {
+            it(`keeps original ${kind} unavailable to discovery after settlement: imported=${imported}, refuseWriteback=${refuseWriteback}`, async () => {
+                const ctx = { execution: new runtime.Execution(), errorContext: "original availability" }
+                const resource = external(), source = sourceFor(kind, resource)
+                const target = { indirect: source.value }
+                const root = new Proxy(target, {
+                    defineProperty(target, key, descriptor) {
+                        return refuseWriteback ? false : Reflect.defineProperty(target, key, descriptor)
+                    },
+                })
+                const holder = new runtime.Chain(imported ? runtime.import(root, ctx) : root, ctx)
+                source.resolve()
+                assert.equal(await runtime.lookupPath(holder, ["indirect"], ctx), resource)
+                const context = new runtime.ContextChain(runtime.lookupPath(holder, [], ctx), ctx, { indirect: {} })
+                assert.deepEqual(externalLocationPaths(context._externalMutationTree), [])
+                assert.equal(ctx.execution._externalIdentities.has(resource), false)
+                assert.equal(ctx.execution.fatalError, null)
+            })
+        }
         for (const position of ["root", "intermediate", "terminal"]) {
             it(`skips ${kind} at the ${position} without changing ordinary import`, async () => {
                 const ctx = { execution: new runtime.Execution(), errorContext: kind + position }
@@ -541,7 +618,7 @@ describe("direct context authority discovery", () => {
                     source.resolve()
                     assert.equal(await runtime.lookupPath(chain, ["indirect"], ctx), delivered)
                     assert.equal(root.indirect, source.value)
-                    assert.equal(ctx.execution._externalIdentities.get(resource).binding,
+                    assert.equal(ctx.execution._externalIdentities.get(resource).binding.deref(),
                         externalTree.findBranch(chain._externalMutationTree, ["direct", "resource"]))
                 })
             }

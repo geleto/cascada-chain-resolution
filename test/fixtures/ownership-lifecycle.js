@@ -139,6 +139,7 @@ async function inspectionCase(details) {
         // The contained command then performs its own successful inspection.
         if (route === "entry" && failureAt === 1)
             assert.equal(r.lookupPath(source, ["left", "k"], context), 2)
+        else if (route === "hasError") assert.equal(await outcome, true)
         else assert(r.isPoisonError(await outcome), "Required inspection failure must produce poison")
         assert.equal(effects, 0, "Failed preparation must not execute the method")
     }

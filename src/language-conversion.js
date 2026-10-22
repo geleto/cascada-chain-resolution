@@ -53,12 +53,12 @@ function toPrimitiveValue(value, ancestry, operation) {
 
             if (isLogicalArray(resolved, operation.operationContext)) {
                 return internalSteps.continueGraphTransition(hasArrayAncestor(ancestry, resolved, operation),
-                    operation.operationContext, cycle => cycle ? "" : joinLogicalArray(
-                    resolved,
-                    ",",
-                    { identity: captureIdentity(resolved, operation.operationContext), parent: ancestry },
-                    operation,
-                ), undefined, operation)
+                    operation.operationContext, cycle => {
+                        try {
+                            return cycle ? "" : joinLogicalArray(resolved, ",",
+                                { identity: captureIdentity(resolved, operation.operationContext), parent: ancestry }, operation)
+                        } finally { resolved = undefined }
+                    }, undefined, operation)
             }
             if (
                 resolved === null ||

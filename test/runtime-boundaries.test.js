@@ -3,19 +3,22 @@ import { spawnSync } from "node:child_process"
 import vm from "node:vm"
 import * as r from "../src/index.js"
 import { metaOf } from "../src/meta.js"
-import { OrderedThenable } from "./ordered-thenable.js"
+import { poison } from "./support.js"
+import { OrderedThenable, rejected } from "./ordered-thenable.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "boundary regression" })
 const turn = () => new Promise(setImmediate)
 
 describe("runtime boundary completion", () => {
-    it("answers Array range and length questions without scanning unrelated fork outcomes", () => {
-        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
+    it("answers Array range and length questions without scanning unrelated fork outcomes", function () {
+        this.timeout(35000)
+        const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             "test/fixtures/length-fork-work.js"], { encoding: "utf8", timeout: 30000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })
-    it("releases completed captures while returned Errors remain unformatted", () => {
-        const result = spawnSync(process.execPath, ["--expose-gc", "--unhandled-rejections=strict",
+    it("releases completed captures while returned Errors remain unformatted", function () {
+        this.timeout(35000)
+        const result = spawnSync(process.execPath, [...process.execArgv, "--expose-gc", "--unhandled-rejections=strict",
             "test/fixtures/completed-work-retention.js"], { encoding: "utf8", timeout: 30000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })
@@ -35,9 +38,11 @@ describe("runtime boundary completion", () => {
                 : mode === "fulfill" ? r.import(Promise.resolve(cause), ctx)
                 : mode === "reject" ? r.import(Promise.reject(cause), ctx)
                 : r.run(new r.Chain(api, ctx), [], "invoke", [], ctx, {}))
-            assert(r.isPoisonError(result))
-            assert.equal(result.cause, cause)
-            assert.equal(result.errorContext, ctx.errorContext)
+            if (["reject", "throw", "call reject"].includes(mode)) {
+                assert(r.isPoisonError(result))
+                assert.equal(result.cause, cause)
+                assert.equal(result.errorContext, ctx.errorContext)
+            } else assert.equal(result, cause)
             assert.equal(ctx.execution.fatalError, null)
             assert.equal(r.externalState(cause), cause)
             assert.equal(r.managedState(cause), cause)
@@ -65,7 +70,9 @@ describe("runtime boundary completion", () => {
     it("keeps failed multi-class declaration atomic and distinguishes thrown prototype Errors", () => {
         class First {}
         const cause = new Error("reflection"), second = new Proxy(function () {}, { get() { throw cause } })
-        assert.equal(r.managedStateClass(First, second), cause)
+        const failure = r.managedStateClass(First, second)
+        assert(r.isPoisonError(failure))
+        assert.equal(failure.cause, cause)
         const ctx = context(), original = new First()
         assert.equal(r.export(new r.Chain(original, ctx), [], ctx), original)
     })
@@ -76,7 +83,7 @@ describe("runtime boundary completion", () => {
             for (const input of [bound, Symbol("unused"), new Error("unused")])
                 assert.equal(r.run(chain, [], method, ["needle", input], ctx, {}), method === "includes" ? false : -1)
             assert.equal(bound.subscriptions, 0)
-            assert(r.isPoisonError(r.run(chain, [], method, [new Error("required"), bound], ctx, {})))
+            assert(r.isPoisonError(r.run(chain, [], method, [poison("required"), bound], ctx, {})))
             assert.equal(bound.subscriptions, 0)
             const pending = Promise.withResolvers(), source = new r.Chain(pending.promise, ctx)
             const result = r.run(source, [], method, ["needle", bound], ctx, {})
@@ -135,7 +142,7 @@ describe("runtime boundary completion", () => {
     it("releases a failed invocation's receiver while complete Error collection continues", async () => {
         const ctx = context(), first = new Error("first"), second = new Error("second"), pending = Promise.withResolvers()
         const root = [{ unrelated: 1 }], chain = new r.Chain(root, ctx)
-        const result = r.run(chain, [], "slice", [[first, pending.promise]], ctx, {})
+        const result = r.run(chain, [], "slice", [[rejected(first), pending.promise]], ctx, {})
         r.assignPath(chain, [], null, ctx)
         assert.equal(metaOf(root, ctx).readLeaseCount ?? 0, 0)
         pending.reject(second)
@@ -173,13 +180,17 @@ describe("runtime boundary completion", () => {
         })
     }
 
-    it("releases a converted scalar container while its captured children settle", async () => {
-        const ctx = context(), pending = Promise.withResolvers(), input = [pending.promise, 9]
+    for (const firstPending of [false, true])
+    it(`releases a scalar source after capturing its placements, firstPending=${firstPending}`, async () => {
+        const ctx = context(), pending = Promise.withResolvers()
+        const input = firstPending ? [pending.promise, 9] : [9, pending.promise]
         const result = r.run(new r.Chain([0], ctx), [], "slice", [input], ctx, {})
         assert.equal(metaOf(input, ctx).readLeaseCount ?? 0, 0)
         assert.equal(metaOf(input, ctx).relationshipsActive, false)
         pending.resolve(1)
         assert.deepEqual(await r.export(new r.Chain(result, ctx), [], ctx), [0])
         await turn()
+        assert.equal(metaOf(input, ctx).readLeaseCount ?? 0, 0)
+        assert.equal(metaOf(input, ctx).relationshipsActive, false)
     })
 })

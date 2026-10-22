@@ -196,15 +196,16 @@ Declarations neither modify nor admit values. First admission fixes an
 identity's category and prototype permanently. See
 [`data-classes.md`](data-classes.md).
 
-Structural classification is a conservative probe rather than a failure
-boundary: if user-controlled reflection cannot establish a supported managed
-shape, admission keeps the exact identity as external and creates no language
-Error. A fatal established during that execution-bound reflection still wins.
-Declaration thenability recognition is instead contextless and direct. It
-preserves Error values first, rejects callable thenables, and returns an ordinary
-validation Error if an unsupported identity cannot be inspected safely. An
-escaping `FatalError` remains fatal. The probe creates no execution state,
-thenability cache, poison, Promise, or synthetic thenable.
+Structural classification is required work. Failed host reflection produces
+poison at the consuming boundary and leaves the identity unadmitted; it cannot
+silently select the external category. Explicit external declarations bypass
+structural inspection. A fatal established during execution-bound reflection
+still wins. Declaration thenability recognition is contextless and direct: it
+preserves Error values, rejects callable thenables with `DeclarationValidation`,
+and returns `DeclarationReflectionFailed` poison when required inspection fails.
+These diagnostics initially lack a source; their receiving runtime operation
+supplies it. Internal defects throw `FatalError`. Declarations create no
+execution state, thenability cache, Promise, or synthetic thenable.
 
 Arrays without an explicit external identity declaration retain their managed
 path regardless of realm or subclass; their subclass prototypes and methods
@@ -283,9 +284,9 @@ identity.
 
 ## Managed identity revision
 
-The [Phase 3/4 contract](data-limitations.md#managed-identity) is write-based. Command identity is implemented; the approved N2 preservation of existing managed method results awaits production cutover. Every command publication separates the affected identity, even an equal-value write. Only commands that publish nothing are no-ops. Protection and representation copies inherit their captured identity; fresh results stay distinct. Entry preserves contained command publications, which cannot cancel by restoring old contents.
+The [managed identity contract](data-limitations.md#managed-identity) is write-based. Every command publication separates the affected identity, even an equal-value write. Only commands that publish nothing are no-ops. Protection and representation copies inherit their captured identity; fresh results stay distinct. Prepared managed method results preserve their existing identity and pending producers. Entry preserves contained command publications, which cannot cancel by restoring old contents.
 
-Searches and export use shared identity, immutable lineage separation, and settled publication outcomes, with no correlated evidence, evidence sharing, or cyclic proof solver. Unrelated lineages compare unequal immediately. Assembly waits only to fix the equality partition among its captured keys. A required pending publication, including its prerequisite validation, may delay identity comparison; an overwritten pending value is not awaited to compare old and new contents. Same-value writes separate aliases for searches and export. The semantic boundary determines the committed effect after restoration or fallback, independently of its returned result; shared completion settles identity before exposing readiness. Production validation copies currently receive fresh identities even when unchanged. The approved N2 cutover removes revalidation of prepared managed references and preserves their existing identity; it does not add validation-copy completion verdicts. The [runtime evolution plan](runtime-evolution-plan.md#phase-3-establish-write-based-identity-and-searches) records the joint producer/consumer integration and remaining experiments.
+Searches and export use shared identity, immutable lineage separation, and settled publication outcomes, with no correlated evidence, evidence sharing, or cyclic proof solver. Unrelated lineages compare unequal immediately. Assembly waits only to fix the equality partition among its captured keys. A required pending publication, including its prerequisite validation, may delay identity comparison; an overwritten pending value is not awaited to compare old and new contents. Same-value writes separate aliases for searches and export. The semantic boundary determines the committed effect after restoration or fallback, independently of its returned result; shared completion settles identity before exposing readiness. Method-result preparation stops at prepared managed references after its direct boundary checks, with no validation copies or completion verdicts. The [runtime evolution plan](runtime-evolution-plan.md#production-cutover) records the integration and validation.
 
 ## Cycles
 
@@ -417,16 +418,21 @@ no source Promise, parent, key, import context, or import policy.
 
 Normalized kernel results have shape `T | PoisonError | Promise<T | PoisonError>`. Ordinary Errors safely fulfill Promises. The separate immutable non-Error `PoisonedValue` stores one `.error` and supplies sync-first rejection only for expression transport. Native await rejects with that ordinary Error; returning the Error from a rejection handler can fulfill successfully. Its `then` returns itself without a callable rejection handler, otherwise directly returns the handler result and lets throws escape. `FatalError` remains non-thenable and never enters language data.
 
-The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` is the only guarded semantic registration entry. `consumeValue`, property-version advancement, and `collectInputs` are distinct semantic bodies using that entry. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact external escape can reach the fatal envelope. Export uses one visited set and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
+The causal runtime implementation uses one private exact-action escape marker between physical host reflection and its owning query/import/export/mutation boundary. Its consumer catches only that marker; native intrinsics running runtime remap logic do not turn internal defects into recoverable Errors. `continueOperation` and `continueGraphTransition` share guarded continuation registration; the latter also owns the receiving graph transition. `receiveValue`, property-version advancement, and `collectInputs` use these helpers. `prepareInputs` composes complete collection with the clean-input requirement. Each causal recovery runs inside the semantic continuation it protects, before an exact external escape can reach the fatal envelope. Export shares capture and one semantic Error accumulator across all required roots. See [trusted integration](integration.md) for composition and the single outward-result boundary.
 
-A raw failure is contextualized at its first causal boundary. `PoisonError`
-stores that boundary's opaque `errorContext` and stable `kind`; a wrapped host
-failure is retained in `cause`. An existing contextual Error propagates
-unchanged. One boundary identity walk reuses one occurrence wrapper for every
-alias to the same raw Error, preserving graph topology. Reusing that raw Error at
-another causal occurrence creates another wrapper rather than changing the
-earlier occurrence. The public `ERROR_KIND` object defines the shared Cascada
-failure-kind vocabulary.
+A raw failure is contextualized under the [Error contract](data-limitations.md#errors).
+`PoisonError` stores its opaque `errorContext` and stable `kind`; a wrapped host
+failure is retained in `cause`. An existing contextual Error propagates unchanged.
+A poison leaf with no source acquires its consuming operation's context without
+modifying the original diagnostic. Existing causes remain exact; a causeless
+diagnostic becomes the contextualized leaf's cause for deduplication. Compounds
+fill only missing leaf sources and retain the common-source summary rule.
+Separate introductions may construct distinct immutable wrappers, including within
+one preparation. Collection deduplicates matching raw cause, source context and kind;
+physical wrapper identity is not a cross-construction guarantee. Source attribution
+follows the [reporting contract](data-limitations.md#deterministic-error-reporting),
+including its first-actual-preparation exception for imports. The public `ERROR_KIND`
+object defines the shared Cascada failure-kind vocabulary.
 
 Runtime construction uses shared factories. Semantic recognition first establishes native
 Error identity with `Error.isError`, then uses ordinary `instanceof` inheritance. This avoids
@@ -441,17 +447,22 @@ expose only `name`, unformatted `message`, opaque `errorContext`, optional exact
 `cause`, poison `kind`, and compound-only `.errors`; source presentation belongs
 to a separate higher-runtime diagnostic view.
 
-The `combineErrors` factory expands direct compound inputs to their already-flat
+The `combineErrors(errors)` factory expands direct compound inputs to their already-flat
 children and shares collection-local raw-cause/source-context/kind deduplication
-with `getErrors`. An input already representing the complete union returns
-unchanged, including a compound; otherwise a sole distinct leaf returns unchanged
+with `getErrors`. An input compound representing the complete collection returns
+unchanged; otherwise a sole distinct leaf returns unchanged
 and several leaves require a new compound. Its constructor trusts and freezes the finalized
 leaf-only `.errors` array; the factory freezes the complete compound. Recursive
-flattening is unnecessary. Child order and the
-retained representative are unspecified; different contexts or kinds remain
-distinct. Existing contextualized Errors propagate by reference. No persistent
-Error cache or cross-construction wrapper identity is required. See the bounded
-[Error-handling nondeterminism](data-limitations.md#allowed-nondeterminism-in-error-handling) contract.
+flattening is unnecessary. The compound message is always `Multiple Errors`, and its
+`errorContext` is the common leaf context only when every leaf has that same opaque
+handle or value, otherwise `undefined`. Its kind is the common leaf kind or `Multiple`.
+Callers supply neither an aggregate message nor a context; leaves retain their exact
+source, kind, cause and message. Collected child order is temporarily unspecified.
+Different contexts or kinds remain distinct; the import-source exception can therefore
+affect deduplication and compound diagnostics under the
+[reporting contract](data-limitations.md#deterministic-error-reporting).
+Existing contextualized Errors propagate by reference. No persistent Error cache
+or cross-construction wrapper identity is required.
 
 Synchronous failures from supported user code and exact reflection hooks become
 language Errors at those boundaries. One narrow external-boundary helper catches
@@ -463,9 +474,9 @@ validation outcome and never constructs poison or hides execution fatality.
 A language-outcome transition preserves poison only when its contract admits a
 language Error. A poison escaping cleanup, scheduling, bookkeeping, or another
 fatal-on-escape transition is a fatal trusted-contract violation.
-A direct Error result always means its boundary failed, whether returned,
-fulfilled, thrown, or rejected. A mutating boundary applies its receiver-failure
-effect in every case; an Error cannot be a successful direct payload.
+A direct poison result, throw or rejection means its boundary failed. A mutating
+boundary applies its receiver-failure effect in those cases. Returning or
+fulfilling with an ordinary native Error succeeds as exact opaque external data.
 Supported external code must not synchronously re-enter the same execution. The
 outer transition has not yet published an ordering point, so attempted
 same-execution re-entry is a fatal host-contract violation. A separate execution
@@ -537,10 +548,11 @@ The runtime consequences are deliberately small:
   with the execution. If fatality makes a gate, phase, or aggregate unobservable,
   it may remain pending; any still-pending outward result fails independently.
 - A `FatalError` may close and report independently in another execution. Every
-  authentic instance originates through execution-bound `failExecution`.
-  Contextless configuration creates no fatal Error: validation failure is an
-  ordinary host API Error and an unexpected implementation exception escapes
-  synchronously.
+  execution failure commits through execution-bound `failExecution`.
+  Contextless declarations return source-less poison for validation or
+  inspection failure; reception supplies the consuming operation's source.
+  An internal configuration defect throws `FatalError`
+  without creating an execution; a receiving execution fails normally.
 
 ## Operations
 
@@ -602,8 +614,9 @@ Returns host-ready data for the branch captured at its issue position.
   traversal continues through every captured Promise so the result is complete.
 - Several Errors return a `CompoundPoisonError`. Direct compounds expand to their
   invariant leaf arrays and raw-cause/source-context/kind equivalence is
-  deduplicated. Different contexts
-  or kinds remain distinct; Error order is unspecified.
+  deduplicated. Different contexts or kinds remain distinct. Collection uses established
+  producer contexts under the [reporting contract](data-limitations.md#deterministic-error-reporting);
+  collected leaf order is temporarily unspecified.
 - Cycle cuts alone do not prevent successful output.
 
 The result is direct when complete synchronously and otherwise a Promise. A
@@ -614,7 +627,7 @@ Rejected data Promises retain the source boundary that introduced them.
 
 ### `hasError(chain, path, operationContext)`
 
-On success, returns whether an Error is reachable in the issue-time branch.
+Returns a Boolean indicating reachable poison or a recoverable failure to inspect the issue-time branch.
 
 - A broken required prefix or existing path Error returns `true`.
 - A missing or primitive terminal returns `false`.
@@ -629,16 +642,23 @@ The operation never marks or pins the branch.
 
 `hasError` completes as soon as one Error is proved. Promise versions already captured by its search still perform shared Promise version, publication, and ref-index settlement, but their closed query continuations do not inspect the values they reveal.
 
-If supported user-controlled reflection fails while traversing the query, the
-operation instead produces `QueryReflectionFailed`. A ready query returns that
-poison directly and a pending query fulfills with that same ordinary Error. It is not a
-positive answer and is not an Error found in the graph.
+Supported user-controlled reflection failure creates operation-local
+`QueryReflectionFailed` poison, which proves `true` just like reachable poison.
+The query completes immediately without waiting for unrelated branches and without
+poisoning the inspected graph. Ready and pending queries use the same Boolean
+contract. Internal traversal, refcounting and indexing defects remain fatal.
 
 At a mutable external scope, contextual queries consume ordered tree metadata without native reflection: collect own and descendant Errors at the selected subtree, including when its root owns poison. Strict-ancestor own poison blocks access; derived sibling summaries do not. A managed guard remains terminal and hides retained managed contents. Preserve original null/single/compound results and captured query results after recursive repair.
 
+An observation-only external root stays opaque. Selecting one of its properties
+for `hasError` or `getErrors` reads and imports that value through the same boundary
+as lookup, then queries the received graph. Root availability and required graph
+work may suspend. Release the native source after reception; getter and import
+poison retain their causal kind and source.
+
 ### `getErrors(chain, path, operationContext)`
 
-After complete collection, returns null when no Error is found, the original Error when it already represents the complete collection, or a new CompoundPoisonError for a union not represented by any input. Deduplicate by raw cause, source-context identity, and kind through the common combination factory. Each retained leaf keeps its attribution; child order is unspecified. The result is direct when ready and otherwise a Promise fulfilling with that same null or ordinary Error. Finding Errors does not reject or create a PoisonedValue.
+After complete collection, returns null when no Error is found, the original Error when it already represents the complete collection, or a new CompoundPoisonError for a union not represented by any input. Deduplicate by raw cause, source-context identity, and kind through the common combination factory. Each retained leaf keeps its attribution. Collected child order is temporarily unspecified; compound diagnostics follow the reporting rules above, including the import-source exception. The result is direct when ready and otherwise a Promise fulfilling with that same null or ordinary Error. Finding Errors does not reject or create a PoisonedValue.
 
 - A broken required prefix contributes its path-access Error.
 - Missing and healthy primitive terminals return null.

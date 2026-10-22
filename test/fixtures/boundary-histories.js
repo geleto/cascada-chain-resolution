@@ -223,9 +223,8 @@ async function runRetiredBoundaryHistory(spec) {
     verifyLiveness(ctx, [cached, firstRoot, cached.items[0]], new Set([cached.items[0]]))
     const reentered = receive()
     const receivedRoot = r.lookupPath(reentered, [], ctx)
-    // Method-result validation can materialize a pending root copy (N2). This
-    // history retains no old root identity, so it checks the published root's
-    // liveness and unchanged retained-child identity without blessing that copy.
+    // Re-entry restores the prepared root's relationships. The retained child
+    // keeps its identity while the previously retired root becomes live again.
     verifyLiveness(ctx, [receivedRoot, cached.items[0]], new Set([receivedRoot, cached.items[0]]))
     const child = r.lookupPath(retained, [], ctx), newChild = r.lookupPath(reentered, ["items", 0], ctx)
     const items = hold(r.lookupPath(reentered, ["items"], ctx))

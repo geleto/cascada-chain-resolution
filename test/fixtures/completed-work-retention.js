@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import * as r from "../../src/index.js"
 import { metaOf } from "../../src/meta.js"
-import { OrderedThenable } from "../ordered-thenable.js"
+import { rejected, OrderedThenable } from "../ordered-thenable.js"
 
 const context = name => ({ execution: new r.Execution(), errorContext: name })
 const collect = async () => {
@@ -71,20 +71,60 @@ function reflectionCase(route, descendant, descriptor, fresh) {
     }
     const fault = new Proxy({ k: 1 }, traps)
     const source = descendant ? { child: fault, healthy: { k: 2 } } : fault
-    const holder = route === "import" ? undefined : new r.Chain(source, ctx)
+    const holder = route === "import" || route === "result" ? undefined : new r.Chain(source, ctx)
     const api = r.externalState({ source, get() { return this.source }, clear() { this.source = null } })
     const native = new r.ContextChain({ api }, ctx, { api: {} })
     armed = true
-    const error = route === "import" ? r.import(source, ctx)
+    let error = route === "import" ? r.import(source, ctx)
         : route === "lookup" ? r.lookupPath(native, ["api", "source"], ctx)
         : route === "native export" ? r.export(native, ["api", "source"], ctx)
         : route === "result" ? r.run(native, ["api"], "get", [], ctx, {})
         : route === "export" ? r.export(holder, [], ctx)
         : r[route](holder, [], ctx)
-    assert(r.isPoisonError(error), route)
+    if (route === "import" || route === "result") error = r.getErrors(new r.Chain(error, ctx), [], ctx)
+    if (route === "hasError") assert.equal(error, true)
+    else assert(r.isPoisonError(error), route)
     r.run(native, ["api"], "clear", [], ctx, { mutationScopeDepth: 1 })
     if (holder) r.assignPath(holder, [], null, ctx)
     return { ctx, holder, native, error, weak: [new WeakRef(source), new WeakRef(fault)] }
+}
+
+function completedFailureHistoryCase(pending) {
+    const ctx = context("completed failure history"), weak = []
+    const unreadable = () => new Proxy({}, { ownKeys() { throw new Error("unreadable input") } })
+    const first = unreadable(), second = unreadable()
+    const chain = new r.Chain(r.import({ first, second: pending ? Promise.resolve(second) : second }, ctx), ctx)
+    const error = r.lookupPath(chain, ["first"], ctx)
+    const later = r.lookupPath(chain, ["second"], ctx)
+    if (pending) later.then(value => weak.push(new WeakRef(value)))
+    else weak.push(new WeakRef(later))
+    r.assignPath(chain, [], null, ctx)
+    // A live host key must not retain another failure through a completed history.
+    return { ctx, chain, error, second, weak, finish() { assert.equal(weak.length, 1) } }
+}
+
+function externalQuerySourceCase(query) {
+    const ctx = context("external query source"), pending = Promise.withResolvers()
+    const data = { value: pending.promise }
+    const api = r.externalState({ data })
+    const chain = new r.Chain(api, ctx)
+    const result = r[query](chain, ["data"], ctx)
+    return { ctx, result, weak: [api, chain, data].map(value => new WeakRef(value)), async finish() {
+        pending.resolve(0)
+        assert.equal(await result, query === "hasError" ? false : null)
+    } }
+}
+
+function failedPreparationHistoryCase(trap) {
+    const ctx = context("failed preparation history"), pending = Promise.withResolvers()
+    const failed = new Proxy({}, { [trap]() { throw new Error("unreadable input") } })
+    const source = { failed, later: pending.promise }
+    const chain = new r.Chain(r.import(source, ctx), ctx)
+    const error = r.lookupPath(chain, ["failed"], ctx)
+    assert(r.isPoisonError(error))
+    const result = r.lookupPath(chain, ["later"], ctx)
+    r.assignPath(chain, [], null, ctx)
+    return { ctx, chain, error, result, pending, weak: [new WeakRef(source), new WeakRef(failed)] }
 }
 
 function entryCase() {
@@ -115,17 +155,18 @@ function mutationCase(array, nested, action) {
 function invocationCase(method, pending, comparator, imported, klass) {
     const ctx = context("invocation"), signal = pending ? Promise.withResolvers() : undefined
     const first = new Error("first"), second = new Error("second"), child = { unrelated: 1 }
-    const nested = [signal?.promise ?? second]
+    const nested = [signal?.promise ?? rejected(second)]
     let calls = 0
     class Receiver { inspect() { calls++; return 1 } }
     if (klass) r.managedStateClass(Receiver)
     const receiver = method === "inspect"
-        ? Object.assign(klass ? new Receiver() : { inspect() { calls++; return 1 } }, { child, first, nested })
-        : [first, nested, child]
+        ? Object.assign(klass ? new Receiver() : { inspect() { calls++; return 1 } }, { child, first: rejected(first), nested })
+        : [rejected(first), nested, child]
     const chain = new r.Chain(imported ? r.import(receiver, ctx) : receiver, ctx)
     const result = r.run(chain, [], method, comparator ? [() => { calls++; return 0 }] : [], ctx, {})
     r.assignPath(chain, [], null, ctx)
-    return { ctx, chain, result, weak: [receiver, child, nested].map(value => new WeakRef(value)),
+    const refs = [receiver, child, nested].map(value => new WeakRef(value))
+    return { ctx, chain, result, weak: refs,
         async finish() {
             signal?.reject(second)
             const error = await result
@@ -165,7 +206,7 @@ function failedRepresentationCaptureCase(reversed) {
     const receiver = { a: pair[0], b: pair[1], pending: pending.promise,
         inspect() { throw new Error("Must not invoke") } }
     const both = new r.Chain(receiver, ctx), first = new Error("first"), second = new Error("second")
-    const result = r.run(both, [], "inspect", [first], ctx, {})
+    const result = r.run(both, [], "inspect", [rejected(first)], ctx, {})
     for (const chain of [original, copy, both]) r.assignPath(chain, [], null, ctx)
     return { ctx, original, copy, both, result, weak: [receiver, ...pair].map(value => new WeakRef(value)),
         async finish() {
@@ -200,7 +241,7 @@ function managedArgumentCase(klass, imported) {
     if (klass) r.managedStateClass(Receiver)
     const child = { unrelated: 1 }, receiver = Object.assign(klass ? new Receiver() : { inspect: Receiver.prototype.inspect }, { child })
     const chain = new r.Chain(imported ? r.import(receiver, ctx) : receiver, ctx)
-    const error = r.run(chain, [], "inspect", [[new Error("first"), new Error("second")]], ctx, {})
+    const error = r.run(chain, [], "inspect", [[rejected(new Error("first")), rejected(new Error("second"))]], ctx, {})
     assert(r.isPoisonError(error))
     r.assignPath(chain, [], null, ctx)
     return { ctx, chain, error, weak: [new WeakRef(receiver), new WeakRef(child)] }
@@ -216,7 +257,7 @@ function jointPreparationCase(nested, deferredError) {
     const ctx = context("joint preparation"), first = new Error("first"), second = new Error("second")
     const early = Promise.withResolvers(), late = Promise.withResolvers()
     let calls = 0
-    const chain = new r.Chain({ first: deferredError ? early.promise : first, late: late.promise,
+    const chain = new r.Chain({ first: deferredError ? early.promise : rejected(first), late: late.promise,
         inspect() { calls++; return 1 } }, ctx)
     const state = issueJointArgument(chain, ctx, nested)
     assert(state.result instanceof Promise)
@@ -278,6 +319,12 @@ function sourceOwnerCase(route) {
 }
 
 const cases = []
+for (const pending of [false, true])
+    cases.push([`completed failure history, pending=${pending}`, () => completedFailureHistoryCase(pending)])
+for (const query of ["hasError", "getErrors"])
+    cases.push([`external query source, ${query}`, () => externalQuerySourceCase(query)])
+for (const trap of ["getPrototypeOf", "ownKeys"])
+    cases.push([`failed preparation history, ${trap}`, () => failedPreparationHistoryCase(trap)])
 for (const route of ["lookup", "export", "hasError", "getErrors", "pop"])
     cases.push([`source owner, route=${route}`, () => sourceOwnerCase(route)])
 for (const waitAt of ["receiver", "argument", "result"])

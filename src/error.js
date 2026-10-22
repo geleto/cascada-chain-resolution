@@ -23,6 +23,8 @@ const ERROR_KIND = Object.freeze({
     ThenAccessFailed: "ThenAccessFailed",
     ThenInvocationFailed: "ThenInvocationFailed",
     ImportReflectionFailed: "ImportReflectionFailed",
+    DeclarationValidation: "DeclarationValidation",
+    DeclarationReflectionFailed: "DeclarationReflectionFailed",
     NullLookup: "NullLookup",
     ScalarLookup: "ScalarLookup",
     LookupReflectionFailed: "LookupReflectionFailed",
@@ -71,11 +73,14 @@ class PoisonError extends Error {
 }
 
 class CompoundPoisonError extends PoisonError {
-    constructor(leaves, message) {
+    constructor(leaves) {
         const kind = leaves.every(error => error.kind === leaves[0].kind)
             ? leaves[0].kind
             : ERROR_KIND.Multiple
-        super(message, leaves[0].errorContext, kind)
+        const context = leaves[0].errorContext
+        const commonContext = leaves.every(error => Object.is(error.errorContext, context))
+            ? context : undefined
+        super("Multiple Errors", commonContext, kind)
         this.name = "CompoundPoisonError"
         this.errors = Object.freeze(leaves)
     }
@@ -155,14 +160,29 @@ function runExternalAction(operationContext, action) {
     throw new ActionThrowError(failure)
 }
 
-// Host configuration has no execution to fail or synchronous activity to track.
-// Preserve a fatal unchanged; ordinary reflection failure uses the same escape.
+// Configuration uses the same host-action escape, without an execution.
 function runDeclarationAction(action) {
     try {
         return action()
     } catch (reason) {
         if (isFatalError(reason)) throw reason
         throw new ActionThrowError(reason)
+    }
+}
+
+function runDeclarationBoundary(work) {
+    try {
+        return catchExternalAction(() => work(runDeclarationAction), reason =>
+            isPoisonError(reason) ? reason : Object.freeze(new PoisonError(
+                errorMessage(reason, "Could not inspect declaration input"),
+                undefined,
+                ERROR_KIND.DeclarationReflectionFailed,
+                { cause: reason },
+            )))
+    } catch (reason) {
+        // A valid configuration call can expose a runtime defect even though
+        // there is no execution to fail or source location to attribute.
+        throw createFatalError(reason)
     }
 }
 
@@ -191,22 +211,33 @@ function catchExternalThrow(
         onFailure(createPoisonError(failure, operationContext, kind)))
 }
 
-// A complete language-result boundary also contextualizes returned native Errors.
-// Shared reflection helpers instead use the producer/consumer split above.
+// Successful native Error values are data; fatal results still fail immediately.
 function runExternalBoundary(operationContext, kind, action) {
     const value = catchExternalThrow(
         () => runExternalAction(operationContext, action),
         operationContext,
         kind,
     )
-    return Error.isError(value)
-        ? createPoisonError(value, operationContext, kind)
-        : value
+    if (isFatalError(value)) failExecution(operationContext, value)
+    return isPoisonError(value) ? createPoisonError(value, operationContext, kind) : value
 }
 
 function createPoisonError(reason, operationContext, kind) {
     if (isFatalError(reason)) failExecution(operationContext, reason)
-    if (isPoisonError(reason)) return reason
+    if (isPoisonError(reason)) {
+        if (reason.errorContext !== undefined || operationContext.errorContext === undefined) return reason
+        if (reason instanceof CompoundPoisonError) {
+            // A mixed-source group has no group context, but its sourced
+            // leaves must keep theirs. Attribute only unclaimed leaves.
+            if (reason.errors.every(error => error.errorContext !== undefined)) return reason
+            return combineErrors(reason.errors.map(error => createPoisonError(error, operationContext, error.kind)))
+        }
+        return Object.freeze(new PoisonError(reason.message, operationContext.errorContext, reason.kind, {
+            // A validation diagnostic has no raw cause. Its original identity
+            // anchors deduplication across separate receptions at this source.
+            cause: Object.hasOwn(reason, "cause") ? reason.cause : reason,
+        }))
+    }
     return Object.freeze(
         new PoisonError(
             errorMessage(reason, "External action failed with a non-Error value"),
@@ -228,7 +259,7 @@ function validationError(message, operationContext, kind) {
 }
 
 function declarationValidationError(message) {
-    return new TypeError(message)
+    return Object.freeze(new PoisonError(message, undefined, ERROR_KIND.DeclarationValidation))
 }
 
 function pathAccessError(value, operationContext) {
@@ -240,6 +271,9 @@ function pathAccessError(value, operationContext) {
             : ERROR_KIND.ScalarLookup,
     )
 }
+
+// Preserve Object.is source equality in Maps, which otherwise merge signed zeros.
+const NEGATIVE_ZERO_CONTEXT = Symbol("negative zero Error context")
 
 // Every CompoundPoisonError already contains leaves, so one-level expansion is
 // sufficient for both compound construction and Error queries.
@@ -261,15 +295,16 @@ function flattenAndDeduplicateErrors(errors) {
         const cause = Object.hasOwn(error, "cause") ? error.cause : error
         let sources = causes.get(cause)
         if (!sources) causes.set(cause, (sources = new Map()))
-        let kinds = sources.get(error.errorContext)
-        if (!kinds) sources.set(error.errorContext, (kinds = new Set()))
+        const source = Object.is(error.errorContext, -0) ? NEGATIVE_ZERO_CONTEXT : error.errorContext
+        let kinds = sources.get(source)
+        if (!kinds) sources.set(source, (kinds = new Set()))
         if (kinds.has(error.kind)) return
         kinds.add(error.kind)
         distinct.push(error)
     }
 }
 
-function combineErrors(errors, message) {
+function combineErrors(errors) {
     const inputs = Array.from(errors)
     // Forward a sole compound without walking or deduplicating its leaves.
     if (inputs.length === 1 && isPoisonError(inputs[0])) return inputs[0]
@@ -284,7 +319,7 @@ function combineErrors(errors, message) {
     if (complete) return complete
     return leaves.length === 1
         ? leaves[0]
-        : Object.freeze(new CompoundPoisonError(leaves, message))
+        : Object.freeze(new CompoundPoisonError(leaves))
 }
 
 function errorMessage(reason, objectFallback) {
@@ -317,7 +352,7 @@ export {
     isFatalError,
     isPoisonError,
     pathAccessError,
-    runDeclarationAction,
+    runDeclarationBoundary,
     runExternalAction,
     runExternalBoundary,
     runWithFatalGuard,

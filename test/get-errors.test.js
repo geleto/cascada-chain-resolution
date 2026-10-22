@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
@@ -37,7 +38,7 @@ describe("getErrors", () => {
             const ctx = testContext
             const first = runtime.createPoisonError(new Error("first"), ctx, runtime.ERROR_KIND.InvocationFailed)
             const second = runtime.createPoisonError(new Error("second"), ctx, runtime.ERROR_KIND.QueryReflectionFailed)
-            const nested = runtime.combineErrors([first, second], "nested")
+            const nested = runtime.combineErrors([first, second])
             for (const errors of [[], [first], [first, second]]) {
                 const branch = errors.length === 2 ? { first, nested } : { errors }
                 branch.self = branch
@@ -89,7 +90,7 @@ describe("getErrors", () => {
         }
     })
 
-    it("returns query-only reflection failures as poison", () => {
+    it("reports query-only reflection failures as true or diagnostic poison", () => {
         let testContext
         for (const query of [hasError, getErrors]) {
             const failure = new Error("query reflection failed")
@@ -108,7 +109,8 @@ describe("getErrors", () => {
             const chain = new Chain(value, testContext)
             fail = true
             const thrown = query(chain, [], testContext)
-            expect(errorCause(thrown)).to.be(failure)
+            if (query === hasError) expect(thrown).to.be(true)
+            else expect(errorCause(thrown)).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })
@@ -137,7 +139,8 @@ describe("getErrors", () => {
             outer.resolve(value)
 
             const failureResult = await result
-            expect(errorCause(failureResult)).to.be(failure)
+            if (query === hasError) expect(failureResult).to.be(true)
+            else expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
             expect(scans).to.be(3)
 
@@ -174,7 +177,8 @@ describe("getErrors", () => {
             pending.resolve(value)
 
             const failureResult = await result
-            expect(errorCause(failureResult)).to.be(failure)
+            if (query === hasError) expect(failureResult).to.be(true)
+            else expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })
@@ -204,7 +208,8 @@ describe("getErrors", () => {
             second.resolve(value)
 
             const failureResult = await result
-            expect(errorCause(failureResult)).to.be(failure)
+            if (query === hasError) expect(failureResult).to.be(true)
+            else expect(errorCause(failureResult)).to.be(failure)
             expect(reported).to.be(undefined)
         }
     })
@@ -213,8 +218,8 @@ describe("getErrors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const first = deferred()
         const second = deferred()
-        const firstError = new Error("first")
-        const secondError = new Error("second")
+        const firstError = poison("first")
+        const secondError = poison("second")
         const chain = new Chain({
             first: first.promise,
             second: second.promise,
@@ -238,8 +243,8 @@ describe("getErrors", () => {
 
     it("continues through cycle cuts while collecting ordinary Errors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const siblingError = new Error("sibling")
-        const hiddenError = new Error("hidden")
+        const siblingError = poison("sibling")
+        const hiddenError = poison("hidden")
         const left = { siblingError }
         const right = { hiddenError }
         left.right = right
@@ -318,9 +323,9 @@ describe("getErrors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const visible = deferred()
-        const hiddenError = new Error("hidden")
-        const promisedError = new Error("promised")
-        const visibleError = new Error("visible")
+        const hiddenError = poison("hidden")
+        const promisedError = poison("promised")
+        const visibleError = poison("visible")
         const first = {
             hiddenError,
             pending: pending.promise,
@@ -353,8 +358,8 @@ describe("getErrors", () => {
     it("answers hasError immediately but exhausts a hidden cycle Promise frontier", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const visibleError = new Error("visible")
-        const hiddenError = new Error("hidden")
+        const visibleError = poison("visible")
+        const hiddenError = poison("hidden")
         const first = { pending: pending.promise }
         const second = { visibleError, back: first }
         first.next = second
@@ -378,7 +383,7 @@ describe("getErrors", () => {
     it("collects through a Promise placement that becomes a cycle cut", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const hiddenError = new Error("outside queried branch")
+        const hiddenError = poison("outside queried branch")
         const root = {
             hiddenError,
             branch: { pending: pending.promise },
@@ -398,8 +403,8 @@ describe("getErrors", () => {
     it("walks sealed values behind a cycle cut", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const directError = new Error("frozen direct")
-        const promisedError = new Error("frozen promised")
+        const directError = poison("frozen direct")
+        const promisedError = poison("frozen promised")
         const sealed = Object.seal({
             directError,
             pending: pending.promise,
@@ -448,10 +453,10 @@ describe("getErrors", () => {
 
     it("returns immediate path results synchronously", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const nestedError = new Error("nested")
-        const pathError = new Error("path")
-        const hiddenError = new Error("hidden")
-        const rootError = new Error("root")
+        const nestedError = poison("nested")
+        const pathError = poison("path")
+        const hiddenError = poison("hidden")
+        const rootError = poison("root")
         const root = {
             branch: { nested: { bad: nestedError } },
             blocked: pathError,
@@ -500,8 +505,8 @@ describe("getErrors", () => {
 
     it("deduplicates Error identities through arrays and DAGs", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const repeated = new Error("repeated")
-        const distinct = new Error("distinct")
+        const repeated = poison("repeated")
+        const distinct = poison("distinct")
         const shared = { repeated, distinct }
         const branch = {
             repeated,
@@ -518,7 +523,7 @@ describe("getErrors", () => {
 
     it("prunes clean frozen children by their counters", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const error = new Error("bad")
+        const error = poison("bad")
         const frozen = Object.freeze({ nested: Object.freeze({ clean: true }) })
         const branch = { frozen, error }
         importValue(frozen, { ...testContext, errorContext: "frozen clean branch" })
@@ -535,7 +540,7 @@ describe("getErrors", () => {
         cyclic.self = cyclic
         importValue(cyclic, { ...testContext, errorContext: "cyclic getErrors" })
 
-        const frozenError = new Error("bad")
+        const frozenError = poison("bad")
         const frozen = Object.freeze({ bad: frozenError })
         importValue(frozen, { ...testContext, errorContext: "frozen getErrors" })
 
@@ -552,8 +557,8 @@ describe("getErrors", () => {
         const outer = deferred()
         const inner = deferred()
         const slow = deferred()
-        const synchronous = new Error("synchronous")
-        const nested = new Error("nested")
+        const synchronous = poison("synchronous")
+        const nested = poison("nested")
         const branch = {
             synchronous,
             outer: outer.promise,
@@ -577,8 +582,8 @@ describe("getErrors", () => {
         slow.resolve({ repeated: synchronous })
         const errors = await result
 
-        expect(errors.errors.some(error => error.cause === synchronous)).to.be(true)
-        expect(errors.errors.some(error => error.cause === nested)).to.be(true)
+        expect(errors.errors.some(error => error === synchronous)).to.be(true)
+        expect(errors.errors.some(error => error === nested)).to.be(true)
         expect(errors.errors.filter(error => error.message === "rejected").length).to.be(1)
         expect(errors.errors.length).to.be(3)
         verifyRefCounts(testContext, branch)
@@ -638,7 +643,7 @@ describe("getErrors", () => {
     it("waits when a known Error shares a branch with an unresolved promise", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("known")
+        const error = poison("known")
         const branch = { error, pending: pending.promise }
         let settled = false
 
@@ -673,7 +678,7 @@ describe("getErrors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const initial = deferred()
         const later = deferred()
-        const laterError = new Error("later")
+        const laterError = poison("later")
         const chain = new Chain({ branch: { initial: initial.promise } }, testContext)
 
         const collectedBefore = getErrors(chain, ["branch"], testContext)
@@ -693,7 +698,7 @@ describe("getErrors", () => {
         for (const query of [hasError, getErrors]) {
             const late = deferred()
             const bridge = deferred()
-            const error = new Error("late imported error")
+            const error = poison("late imported error")
             const shared = { late: late.promise }
             const root = importValue(
                 { shared, bridge: bridge.promise },
@@ -721,7 +726,7 @@ describe("getErrors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const bad = deferred()
         const slow = deferred()
-        const error = new Error("bad")
+        const error = poison("bad")
         const branch = { bad: bad.promise, slow: slow.promise }
         const chain = new Chain({ branch }, testContext)
         let exportSettled = false
@@ -762,7 +767,7 @@ describe("getErrors", () => {
     it("observes earlier suspended writes and ignores later ones", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const earlier = deferred()
-        const earlierError = new Error("earlier")
+        const earlierError = poison("earlier")
         const earlierChain = new Chain({ pending: earlier.promise }, testContext)
 
         assignPath(earlierChain, ["pending", "bad"], earlierError, testContext)
@@ -772,7 +777,7 @@ describe("getErrors", () => {
         expectErrors(await earlierResult, [earlierError])
 
         const later = deferred()
-        const laterError = new Error("later")
+        const laterError = poison("later")
         const laterChain = new Chain({ pending: later.promise }, testContext)
 
         const laterResult = getErrors(laterChain, [], testContext)
@@ -786,7 +791,7 @@ describe("getErrors", () => {
     it("orders suspended Error replacements around the query", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const fixedBefore = deferred()
-        const transient = new Error("transient")
+        const transient = poison("transient")
         const beforeChain = new Chain({ pending: fixedBefore.promise }, testContext)
 
         assignPath(beforeChain, ["pending", "bad"], "fixed", testContext)
@@ -797,7 +802,7 @@ describe("getErrors", () => {
         expect(beforeChain._state.value.pending).to.eql({ bad: "fixed" })
 
         const fixedAfter = deferred()
-        const current = new Error("current")
+        const current = poison("current")
         const afterChain = new Chain({ pending: fixedAfter.promise }, testContext)
 
         const beforeLaterReplacement = getErrors(afterChain, [], testContext)
@@ -811,7 +816,7 @@ describe("getErrors", () => {
     it("ignores later errors outside its captured promise frontier", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const future = new Error("future")
+        const future = poison("future")
         const chain = new Chain({ branch: { pending: pending.promise, stable: {} } }, testContext)
 
         const result = getErrors(chain, ["branch"], testContext)
@@ -827,8 +832,8 @@ describe("getErrors", () => {
         const overwritten = deferred()
         const deleted = deferred()
         const nested = deferred()
-        const overwrittenError = new Error("overwritten")
-        const nestedError = new Error("nested")
+        const overwrittenError = poison("overwritten")
+        const nestedError = poison("nested")
         const branch = {
             overwritten: overwritten.promise,
             deleted: deleted.promise,
@@ -848,10 +853,10 @@ describe("getErrors", () => {
         nested.resolve({ bad: nestedError })
 
         const errors = await result
-        expect(errors.errors.some(error => error.cause === overwrittenError)).to.be(
+        expect(errors.errors.some(error => error === overwrittenError)).to.be(
             true,
         )
-        expect(errors.errors.some(error => error.cause === nestedError)).to.be(true)
+        expect(errors.errors.some(error => error === nestedError)).to.be(true)
         expect(errors.errors.filter(error => error.message === "deleted").length).to.be(1)
         expect(errors.errors.length).to.be(3)
         expect(chain._state.value.branch).to.eql({ overwritten: "replacement" })
@@ -894,7 +899,7 @@ describe("getErrors", () => {
 
     it("indexes and collects a committed terminal cut", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const hidden = new Error("public terminal cycle error")
+        const hidden = poison("public terminal cycle error")
         const first = { hidden }
         const second = { back: first }
         first.next = second
@@ -912,8 +917,8 @@ describe("getErrors", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const parent = deferred()
         const root = deferred()
-        const parentError = new Error("parent path")
-        const rootError = new Error("root promise")
+        const parentError = poison("parent path")
+        const rootError = poison("root promise")
 
         const parentResult = getErrors(new Chain({ parent: parent.promise }, testContext), ["parent", "branch"], testContext)
         const rootResult = getErrors(new Chain(root.promise, testContext), ["branch"], testContext)
@@ -946,7 +951,7 @@ describe("getErrors", () => {
     it("continues through a root promise overwritten after capture", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("captured root")
+        const error = poison("captured root")
         const chain = new Chain(pending.promise, testContext)
 
         const result = getErrors(chain, ["branch"], testContext)
@@ -979,7 +984,7 @@ describe("getErrors", () => {
 
     it("agrees with hasError synchronously on their shared path domain", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const error = new Error("bad")
+        const error = poison("bad")
         const chain = new Chain({ bad: error, clean: {} }, testContext)
 
         expect(hasError(chain, ["bad"], testContext)).to.be(getErrors(chain, ["bad"], testContext) !== null)

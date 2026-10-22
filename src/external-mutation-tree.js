@@ -1,67 +1,79 @@
 import { isArrayIndex } from "./array-view.js"
 import * as errors from "./error.js"
-import * as properties from "./language-properties.js"
 import * as metadata from "./meta.js"
 
 // String keys belong exclusively to the compiler's property map.
 const TREE_NODE = Symbol("external scope")
 
-function prepareExternalMutationTree(root, requests, operationContext, factsOf, registrations, admitExternal) {
+function prepareExternalMutationTree(root, requests, operationContext, factsOf, registrations, classifyNative, readManagedPlacement) {
     return visit(root, requests)
 
     function visit(value, request, parent, native = false) {
-        if (value === null || typeof value !== "object" || Error.isError(value)) return undefined
-        let facts = factsOf(value)
-        // Original thenables never grant authority, even after synchronous
-        // import delivery. Discovery subscribes to nothing.
-        if (!facts) {
-            if (!native || !isDirectlyAvailable(value, operationContext)) return undefined
-            facts = admitExternal(value)
-        }
-        const external = facts.type === metadata.TYPE.External
-        if (!external && !metadata.isTraversableType(facts.type)) return undefined
-        const node = Object.create(null)
-        const record = node[TREE_NODE] = { parent, depth: parent ? parent[TREE_NODE].depth + 1 : 0 }
-        if (external) {
-            if (registrations.has(value)) return errors.validationError(
-                "External identity has multiple context locations", operationContext,
-                errors.ERROR_KIND.ExternalLocationConflict)
-            record.identity = value
-            registrations.set(value, node)
-        }
-        for (const key of Object.keys(request)) {
-            const placement = external ? errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(value, key)) :
-                properties.getLanguagePlacementDescriptor(value, key, operationContext)
-            if (!placement || !placement.enumerable || !("value" in placement)) continue
-            const child = visit(placement.value, request[key], node, external)
-            if (errors.isPoisonError(child)) return child
-            if (child) node[key] = child
-        }
-        return external || Object.keys(node).length ? node : undefined
+        try {
+            if (value === null || typeof value !== "object" || Error.isError(value)) return undefined
+            // Original thenables never grant authority, even after synchronous
+            // import delivery. Admission does not establish native availability:
+            // an ordinary read may have consumed an accessor's value.
+            if (native && !isDirectlyAvailable(value, operationContext)) return undefined
+            let facts = factsOf(value)
+            if (!facts) {
+                if (!native) return undefined
+                facts = classifyNative(value)
+                if (errors.isPoisonError(facts)) return facts
+            }
+            const external = facts.type === metadata.TYPE.External
+            // Native authority cannot cross managed storage, even if a later
+            // descendant would independently be external.
+            if (native && !external) return undefined
+            if (!external && !metadata.isTraversableType(facts.type)) return undefined
+            const node = Object.create(null)
+            const record = node[TREE_NODE] = { parent, depth: parent ? parent[TREE_NODE].depth + 1 : 0 }
+            if (external) {
+                if (registrations.has(value)) return errors.validationError(
+                    "External identity has multiple context locations", operationContext,
+                    errors.ERROR_KIND.ExternalLocationConflict)
+                record.identity = value
+                registrations.set(value, node)
+            }
+            for (const key of Object.keys(request)) {
+                const placement = external ? errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(value, key)) :
+                    readManagedPlacement(value, key)
+                if (!placement || !placement.enumerable || !("value" in placement)) continue
+                const child = visit(placement.value, request[key], node, external)
+                if (errors.isPoisonError(child)) return child
+                if (child) node[key] = child
+            }
+            return external || Object.keys(node).length ? node : undefined
+        } finally { value = undefined }
     }
 }
 
 // Discovery examines descriptors, never executes a getter or subscribes. An
 // accessor cannot establish a directly available mutable location.
 function isDirectlyAvailable(value, operationContext) {
-    for (let owner = value; owner; owner = errors.runExternalAction(operationContext, () => Object.getPrototypeOf(owner))) {
-        const descriptor = errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(owner, "then"))
-        if (descriptor) return "value" in descriptor && typeof descriptor.value !== "function"
-    }
-    return true
+    let owner = value
+    try {
+        for (; owner; owner = errors.runExternalAction(operationContext, () => Object.getPrototypeOf(owner))) {
+            const descriptor = errors.runExternalAction(operationContext, () => Object.getOwnPropertyDescriptor(owner, "then"))
+            if (descriptor) return "value" in descriptor && typeof descriptor.value !== "function"
+        }
+        return true
+    } finally { value = owner = undefined }
 }
 
 function commitExternalLocations(registrations, operationContext) {
     const identities = operationContext.execution._externalIdentities
     for (const [identity, node] of registrations) {
         let entry = identities.get(identity)
-        if (!entry) identities.set(identity, entry = { binding: node })
+        // A first binding is reachable only while its context is: a live sibling
+        // identity must not keep a dropped context's tree and resources alive.
+        if (!entry) identities.set(identity, entry = { binding: new WeakRef(node) })
         else if (!errors.isPoisonError(entry.binding)) {
-            const previous = entry.binding
+            const previous = entry.binding.deref()
             entry.binding = errors.validationError(
                 "External identity is registered in competing contexts", operationContext,
                 errors.ERROR_KIND.ExternalLocationConflict)
-            updatePoisonPresence(previous)
+            if (previous) updatePoisonPresence(previous)
         }
         node[TREE_NODE].entry = entry
         updatePoisonPresence(node)
@@ -128,7 +140,7 @@ function scopeBlocker(node, includeSelected = true) {
     }
     if (!includeSelected || !hasPoison(node)) return null
     const found = collectPoison(node)
-    return found.size ? errors.combineErrors(found, "External scope is poisoned") : null
+    return found.size ? errors.combineErrors(found) : null
 }
 
 function truncatesLocations(node, length) {

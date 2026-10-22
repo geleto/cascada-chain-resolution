@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as arrayViews from "../src/array-view.js"
 import {
     Chain,
@@ -1083,7 +1084,7 @@ describe("path assignment", () => {
 
     it("can replace an Error at the target key", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const root = { value: new Error("old") }
+        const root = { value: poison("old") }
 
         assignPath(new Chain(root, testContext), ["value"], 42, { ...testContext, errorContext: "test assignment" })
 
@@ -1153,8 +1154,8 @@ describe("path assignment", () => {
 
     it("is a no-op when assigning through an Error root or Error branch", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const errorRoot = new Error("root")
-        const root = { branch: new Error("branch") }
+        const errorRoot = poison("root")
+        const root = { branch: poison("branch") }
         const chain = new Chain(errorRoot, testContext)
 
         const rootResult = assignPath(chain, ["value"], 1, { ...testContext, errorContext: "test assignment" })
@@ -1193,8 +1194,8 @@ describe("lookupPath", () => {
 
     it("returns Error roots and Error branches", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const errorRoot = new Error("root")
-        const branchError = new Error("branch")
+        const errorRoot = poison("root")
+        const branchError = poison("branch")
         const root = { branch: branchError }
 
         expect(errorCause(lookupPath(new Chain(errorRoot, testContext), ["value"], testContext)))
@@ -1387,7 +1388,7 @@ describe("deletePath", () => {
 
     it("can delete an Error at the target key", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const root = { value: new Error("old") }
+        const root = { value: poison("old") }
 
         deletePath(new Chain(root, testContext), ["value"], { ...testContext, errorContext: "test deletion" })
 
@@ -1396,8 +1397,8 @@ describe("deletePath", () => {
 
     it("is a no-op when deleting through an Error root or Error branch", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
-        const errorRoot = new Error("root")
-        const branchError = new Error("branch")
+        const errorRoot = poison("root")
+        const branchError = poison("branch")
         const root = { branch: branchError }
         const chain = new Chain(errorRoot, testContext)
 

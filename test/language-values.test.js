@@ -2,8 +2,6 @@ import * as languageValues from "../src/language-values.js"
 import * as metadata from "../src/meta.js"
 import { ArrayView } from "../src/array-view.js"
 import { Chain, assignPath, import as importValue, lookupPath, managedStateClass, Execution } from "../src/index.js"
-import { consumeValue } from "../src/internal-step.js"
-import { ERROR_KIND } from "../src/error.js"
 import * as runtime from "../src/index.js"
 import { deferred, expect, thrownBy } from "./support.js"
 import * as errorUtils from "../src/error.js"
@@ -43,7 +41,7 @@ describe("value admission", () => {
                 languageValues.TYPE.Error,
             ],
             [[], languageValues.TYPE.Array],
-            [new ArrayView([1], testContext), languageValues.TYPE.Array],
+            [new ArrayView(importValue([1], testContext), testContext), languageValues.TYPE.Array],
             [() => {}, languageValues.TYPE.Function],
             [{ push() {} }, languageValues.TYPE.Record],
             [Object.create(null), languageValues.TYPE.Record],
@@ -51,7 +49,7 @@ describe("value admission", () => {
             [new External(), languageValues.TYPE.External],
         ]
         for (const [value, type] of cases) {
-            languageValues.admitReadyValue(value, testContext)
+            importValue(value, testContext)
             expect(languageValues.typeOf(value, testContext)).to.be(type)
         }
         for (const value of [undefined, null, true, 1, 1n, Symbol()]) {
@@ -81,7 +79,7 @@ describe("value admission", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const promise = Promise.resolve(1)
 
-        consumeValue(promise, testContext, ERROR_KIND.OperationInputFailed)
+        importValue(promise, testContext)
         expect(metadata.metaOf(promise, testContext)?.type).to.be(undefined)
         expect(languageValues.isPending(promise, testContext)).to.be(true)
     })
@@ -93,14 +91,14 @@ describe("value admission", () => {
         Object.defineProperty(error, "then", {
             get() {
                 reads++
-                return () => {}
+                return undefined
             },
         })
 
         expect(languageValues.isPending(error, testContext)).to.be(false)
-        const poison = consumeValue(error, testContext, ERROR_KIND.OperationInputFailed)
+        const poison = importValue(error, testContext)
 
-        expect(languageValues.typeOf(poison, testContext)).to.be(languageValues.TYPE.Error)
+        expect(languageValues.typeOf(poison, testContext)).to.be(languageValues.TYPE.External)
         expect(reads).to.be(0)
     })
 
@@ -114,7 +112,7 @@ describe("value admission", () => {
             },
         })
 
-        expect(consumeValue(value, testContext, ERROR_KIND.OperationInputFailed)).to.be(value)
+        expect(importValue(value, testContext)).to.be(value)
         expect(reads).to.be(1)
         expect(languageValues.typeOf(value, testContext)).to.be(
             languageValues.TYPE.Record,
@@ -174,15 +172,15 @@ describe("value admission", () => {
         const error = new Error("fixed")
         const early = new Early()
         const managed = new Managed()
-        const poison = consumeValue(error, testContext, ERROR_KIND.OperationInputFailed)
+        const poison = importValue(error, testContext)
         new Chain(early, testContext)
         new Chain(managed, testContext)
 
         managedStateClass(Early)
 
-        expect(errorUtils.isPoisonError(poison)).to.be(true)
+        expect(poison).to.be(error)
         expect(languageValues.isPending(error, testContext)).to.be(false)
-        expect(languageValues.typeOf(poison, testContext)).to.be(languageValues.TYPE.Error)
+        expect(languageValues.typeOf(poison, testContext)).to.be(languageValues.TYPE.External)
         expect(languageValues.typeOf(early, testContext)).to.be(languageValues.TYPE.External)
         expect(languageValues.isPending(early, testContext)).to.be(false)
         expect(languageValues.typeOf(managed, testContext)).to.be(
@@ -217,7 +215,7 @@ describe("value admission", () => {
         expect(prototypeReads).to.be(readsAtAdmission)
     })
 
-    it("admits a value with uninspectable type as external", () => {
+    it("returns classification poison without admitting the failed identity", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = new Proxy({}, {
             getPrototypeOf() {
@@ -227,10 +225,9 @@ describe("value admission", () => {
 
         const chain = new Chain(value, testContext)
 
-        expect(chain._state.value).to.be(value)
-        expect(languageValues.typeOf(value, testContext)).to.be(
-            languageValues.TYPE.External,
-        )
+        expect(runtime.isPoisonError(chain._state.value)).to.be(true)
+        expect(chain._state.value.kind).to.be(runtime.ERROR_KIND.ChainValueFailed)
+        expect(metadata.metaOf(value, testContext)).to.be(undefined)
     })
 
     it("returns synchronous then acquisition failure directly", async () => {
@@ -290,7 +287,7 @@ describe("value admission", () => {
         testContext = { execution: new Execution(error => {
             reported = error
         }), errorContext: "test operation" }
-        const result = consumeValue(pending.promise, testContext, ERROR_KIND.OperationInputFailed)
+        const result = importValue(pending.promise, testContext)
         pending.resolve(failure)
         const caught = await result.catch(error => error)
 
@@ -317,11 +314,7 @@ describe("value admission", () => {
         }), errorContext: "test operation" }
         const operationContext = { ...testContext, errorContext: "causal boundary" }
 
-        const result = internalSteps.consumeValue(
-            Promise.resolve(failure),
-            operationContext,
-            errorUtils.ERROR_KIND.ChainValueFailed,
-        )
+        const result = lookupPath(new Chain(Promise.resolve(failure), operationContext), [], operationContext)
 
         expect(await result.catch(error => error)).to.be(failure)
         expect(reported).to.be(failure)
@@ -368,7 +361,8 @@ describe("value admission", () => {
     it("returns invalid managed-class declaration as an Error", () => {
         const failure = managedStateClass(() => {})
 
-        expect(failure).to.be.a(TypeError)
+        expect(runtime.isPoisonError(failure)).to.be(true)
+        expect(failure.kind).to.be(runtime.ERROR_KIND.DeclarationValidation)
     })
 
     it("records external facts without traversing external state", () => {

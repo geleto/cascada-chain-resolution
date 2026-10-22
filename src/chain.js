@@ -5,20 +5,26 @@ import { initializeHolder } from "./parent-placements.js"
 
 class Chain {
     constructor(initialValue, operationContext, contextSetup) {
-        runReceivingCommand(operationContext, () => {
-            const rootState = initializeHolder({}, operationContext)
-            propertyVersions.transferPlacement(
-                contextSetup ? propertyVersions.prepareInputPlacement(initialValue, operationContext,
-                    errorUtils.ERROR_KIND.ContextValueFailed, contextSetup) : { value: initialValue, present: true },
-                rootState,
-                "value",
-                operationContext,
-                undefined,
-                errorUtils.ERROR_KIND.ChainValueFailed,
-            )
-            this._state = rootState
-            this._execution = operationContext.execution
-        })
+        // Error stacks can retain the constructor's implicit receiver. Keep it
+        // empty and initialize the returned holder, whose capture we can release.
+        let holder = Object.create(new.target.prototype)
+        try {
+            runReceivingCommand(operationContext, () => {
+                const rootState = initializeHolder({}, operationContext)
+                propertyVersions.transferPlacement(
+                    contextSetup ? propertyVersions.prepareInputPlacement(initialValue, operationContext,
+                        errorUtils.ERROR_KIND.ContextValueFailed, contextSetup) : { value: initialValue, present: true },
+                    rootState,
+                    "value",
+                    operationContext,
+                    undefined,
+                    errorUtils.ERROR_KIND.ChainValueFailed,
+                )
+                holder._state = rootState
+                holder._execution = operationContext.execution
+            })
+            return holder
+        } finally { holder = initialValue = contextSetup = undefined }
     }
 
     _assertOperationContext(operationContext) {

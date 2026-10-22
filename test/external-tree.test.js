@@ -9,6 +9,28 @@ const external = (value = {}) => runtime.externalState(value)
 const paths = chain => externalLocationPaths(chain._externalMutationTree)
 
 describe("compiler-guided context tree", () => {
+    for (const prepared of [false, true])
+    it(`keeps descriptor poison local during context discovery: prepared=${prepared}`, () => {
+        const ctx = context()
+        let reads = 0
+        const root = new Proxy({ db: external({ value: 1 }), x: 1 }, {
+            getOwnPropertyDescriptor(target, key) {
+                if (key === "x") { reads++; throw new Error("unreadable placement") }
+                return Reflect.getOwnPropertyDescriptor(target, key)
+            },
+        })
+        const importedAt = { ...ctx, errorContext: "earlier import" }
+        const prior = prepared ? new runtime.Chain(runtime.import(root, importedAt), ctx) : undefined
+        const chain = new runtime.ContextChain(root, ctx, { db: {}, x: {} })
+        assert.equal(runtime.lookupPath(chain, ["db", "value"], ctx), 1)
+        const failure = runtime.lookupPath(chain, ["x"], ctx)
+        assert.equal(failure.kind, runtime.ERROR_KIND.ImportReflectionFailed)
+        assert.equal(failure.errorContext, prepared ? importedAt.errorContext : ctx.errorContext)
+        if (prior) assert.equal(failure, runtime.lookupPath(prior, ["x"], ctx))
+        assert.equal(reads, 1)
+        assert.deepEqual(paths(chain), [["db"]])
+    })
+
     it("updates previously healthy ancestor queries when contexts compete for an identity", () => {
         const ctx = context(), identity = external()
         const create = () => new runtime.ContextChain({ parent: { identity } }, ctx, { parent: { identity: {} } })
@@ -68,7 +90,7 @@ describe("compiler-guided context tree", () => {
         assert.equal(ctx.execution._externalIdentities.has(root), false)
         const requested = new runtime.ContextChain(root, ctx, {})
         assert.deepEqual(paths(requested), [[]])
-        assert.equal(ctx.execution._externalIdentities.get(root).binding, requested._externalMutationTree)
+        assert.equal(ctx.execution._externalIdentities.get(root).binding.deref(), requested._externalMutationTree)
     })
 
     it("discovers requested native descendants and prunes managed endpoints", () => {
@@ -80,8 +102,7 @@ describe("compiler-guided context tree", () => {
             if (depth !== "managed") external(owner)
             const chain = new runtime.ContextChain(root, context(), request)
             const expected = depth === "managed" ? [] : depth === "endpoint" ? [["apis", "db"]]
-                : depth === "internal" ? [["apis"], ["apis", "db"], ["apis", "config"]]
-                    : [[], ["apis"], ["apis", "db"], ["apis", "config"], ["managed"]]
+                : depth === "internal" ? [["apis"]] : [[]]
             assert.deepEqual(paths(chain), expected)
             if (depth === "endpoint") {
                 assert.deepEqual(Object.keys(chain._externalMutationTree), ["apis"])
@@ -96,7 +117,7 @@ describe("compiler-guided context tree", () => {
     it("inspects only compiler-named native child placements", () => {
         const ctx = context()
         let reads = 0
-        const owner = external(new Proxy({ db: {}, config: {} }, {
+        const owner = external(new Proxy({ db: external(), config: external() }, {
             getOwnPropertyDescriptor(target, key) {
                 if (key === "db" || key === "config") reads++
                 return Reflect.getOwnPropertyDescriptor(target, key)
@@ -122,7 +143,7 @@ describe("compiler-guided context tree", () => {
             const branch = externalTree.findBranch(chain._externalMutationTree, [key])
             const record = externalTree.findBranch(branch, ["resource"])
             assert.equal(record[TREE_NODE].entry, ctx.execution._externalIdentities.get(root[key].resource))
-            assert.equal(record[TREE_NODE].entry.binding, record)
+            assert.equal(record[TREE_NODE].entry.binding.deref(), record)
             assert.equal(externalTree.findBranch(branch, ["resource", "context"]), undefined)
         }
     })
@@ -154,7 +175,7 @@ describe("compiler-guided context tree", () => {
         assert.equal(a[TREE_NODE].entry, b[TREE_NODE].entry)
         assert.equal(a[TREE_NODE].entry.binding.kind, runtime.ERROR_KIND.ExternalLocationConflict)
         assert.notEqual(a[TREE_NODE].entry, isolated._externalMutationTree.resource[TREE_NODE].entry)
-        assert.equal(isolated._externalMutationTree.resource[TREE_NODE].entry.binding,
+        assert.equal(isolated._externalMutationTree.resource[TREE_NODE].entry.binding.deref(),
             isolated._externalMutationTree.resource)
     })
 

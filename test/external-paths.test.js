@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import * as r from "../src/index.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
-import { metaOf } from "../src/meta.js"
+import { metaOf, TYPE } from "../src/meta.js"
+import { poison } from "./support.js"
+import { rejected } from "./ordered-thenable.js"
 import { TREE_NODE } from "../src/external-mutation-tree.js"
 
 function setup(native, parent = false) {
@@ -53,8 +55,8 @@ describe("public external paths", () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const hold = Promise.withResolvers(), calls = []
             const api = r.externalState({
-                db: {},
-                config: { wait() { return hold.promise }, read() { calls.push("read"); return 1 } },
+                db: r.externalState({}),
+                config: r.externalState({ wait() { return hold.promise }, read() { calls.push("read"); return 1 } }),
             })
             const chain = new r.ContextChain({ api }, ctx, { api: { db: {}, config: {} } })
             const check = async (owner, prefix) => {
@@ -82,7 +84,7 @@ describe("public external paths", () => {
         })
     }
 
-    it("keeps result validation after a borrowed gate is replaced, poisoned, and repaired", async () => {
+    it("preserves producer policy after a reused gate is replaced, poisoned, and repaired", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const native = r.externalState({})
         const canonical = new r.ContextChain({ api: native }, ctx, { api: {} })
@@ -103,7 +105,7 @@ describe("public external paths", () => {
         assert.equal(r.repairPath(output, ["then"], ctx), undefined)
         data.resolve(native)
         await lookup
-        assert.equal((await r.lookupPath(output, ["then"], ctx)).kind, r.ERROR_KIND.ExternalCapabilityEscape)
+        assert.equal((await r.lookupPath(output, ["then"], ctx)).kind, r.ERROR_KIND.ExternalLocationConflict)
         assert.equal((await r.lookupPath(source, ["then"], ctx)).kind, r.ERROR_KIND.ExternalLocationConflict)
         assert.equal(r.getErrors(canonical, [], ctx), null)
         verifyRefCounts(ctx, canonical._state, source._state, output._state)
@@ -111,8 +113,8 @@ describe("public external paths", () => {
 
     for (const pending of [false, true]) {
         it(`rejects native Array truncation before removing registered locations, pending=${pending}`, async () => {
-            const worker = { work() { return 42 } }
-            const api = r.externalState({ list: [0, 1, 2, worker] })
+            const worker = r.externalState({ work() { return 42 } })
+            const api = r.externalState({ list: r.externalState([0, 1, 2, worker]) })
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const chain = new r.ContextChain({ api }, ctx, { api: { list: { 3: {} } } })
             const hold = Promise.withResolvers()
@@ -304,7 +306,7 @@ describe("public external paths", () => {
 
     it("rejects extraction of registered descendants while allowing scalar reads and sibling snapshots", () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
-        const api = r.externalState({ db: { config: { timeout: 4 }, other: { value: 7 } } })
+        const api = r.externalState({ db: r.externalState({ config: r.externalState({ timeout: 4 }), other: { value: 7 } }) })
         const chain = new r.ContextChain({ api }, ctx, { api: { db: { config: {} } } })
         assert.equal(r.lookupPath(chain, ["api", "db", "config"], ctx).kind, r.ERROR_KIND.ExternalCapabilityEscape)
         assert.equal(r.lookupPath(chain, ["api", "db", "config", "timeout"], ctx), 4)
@@ -511,14 +513,16 @@ describe("public external paths", () => {
         assert.equal(await r.hasError(chain, [], ctx), false)
     })
 
-    it("collects accessible snapshot Errors after prototype reflection fails", async () => {
+    it("returns classification poison without admitting the failed snapshot identity", async () => {
         const first = new Error("first")
         const second = new Error("second")
         const reflection = new Error("prototype")
         const source = new Proxy({ first, second }, { getPrototypeOf() { throw reflection } })
         const { ctx, chain } = setup({ source })
         const failure = await r.lookupPath(chain, ["api", "source"], ctx)
-        assert.deepEqual(new Set(failure.errors.map(error => error.cause)), new Set([reflection, first, second]))
+        assert(r.isPoisonError(failure))
+        assert.equal(failure.cause, reflection)
+        assert.equal(failure.kind, r.ERROR_KIND.ExternalPropertyReadFailed)
         assert.equal(metaOf(source, ctx), undefined)
         assert.equal(await r.hasError(chain, ["api"], ctx), false)
     })
@@ -1029,8 +1033,9 @@ describe("public external paths", () => {
         const cause = new Error("result reflection")
         const bad = new Proxy({ nested: 1 }, { ownKeys() { throw cause } })
         const { ctx, chain } = setup({ value: 0, change() { this.value++; return bad } })
-        const failure = await r.run(chain, ["api"], "change", [], ctx,
+        const result = await r.run(chain, ["api"], "change", [], ctx,
             { mutationScopeDepth: 1, repair: false })
+        const failure = await r.getErrors(new r.Chain(result, ctx), [], ctx)
         assert.equal(failure.cause, cause)
         assert.equal(failure.kind, r.ERROR_KIND.ImportReflectionFailed)
         assert.equal(await r.hasError(chain, [], ctx), false)
@@ -1041,20 +1046,21 @@ describe("public external paths", () => {
         const first = new Error("first")
         const cause = new Error("descriptor")
         const last = new Error("last")
-        const data = new Proxy({ first, bad: 1, last }, {
+        const data = new Proxy({ first: rejected(first), bad: 1, last: rejected(last) }, {
             getOwnPropertyDescriptor(target, key) {
                 if (key === "bad") throw cause
                 return Reflect.getOwnPropertyDescriptor(target, key)
             },
         })
         const { ctx, chain } = setup({ value: 0, change() { this.value++; return data } })
-        const failure = await r.run(chain, ["api"], "change", [], ctx,
+        const result = await r.run(chain, ["api"], "change", [], ctx,
             { mutationScopeDepth: 1, repair: false })
+        const failure = await r.getErrors(new r.Chain(result, ctx), [], ctx)
         assert.equal(failure.kind, r.ERROR_KIND.Multiple)
         assert.equal(failure.errors.length, 3)
         for (const error of [first, cause, last]) assert(failure.errors.some(item => item.cause === error))
         assert.equal(failure.errors.find(item => item.cause === cause).kind, r.ERROR_KIND.ImportReflectionFailed)
-        assert.equal(metaOf(data, ctx), undefined)
+        assert(metaOf(data, ctx).placementsInitialized)
         assert.equal(await r.getErrors(chain, [], ctx), null)
         assert.equal(await r.lookupPath(chain, ["api", "value"], ctx), 1)
     })
@@ -1062,15 +1068,15 @@ describe("public external paths", () => {
     it("retains independent ready result Errors when capability validation also fails", async () => {
         const first = new Error("first")
         const second = new Error("second")
-        const { ctx, chain } = setup({ result() { return { first, self: this, second } } })
+        const { ctx, chain } = setup({ result() { return { first: rejected(first), self: this, second: rejected(second) } } })
         const failure = await r.run(chain, ["api"], "result", [], ctx,
             { mutationScopeDepth: 1, repair: false })
         assert.equal(failure.kind, r.ERROR_KIND.Multiple)
         assert.equal(failure.errors.length, 3)
         assert(failure.errors.some(error => error.cause === first))
         assert(failure.errors.some(error => error.cause === second))
-        assert.equal(await r.getErrors(chain, [], ctx),
-            failure.errors.find(error => error.kind === r.ERROR_KIND.ExternalCapabilityEscape))
+        assert(failure.errors.some(error => error.kind === r.ERROR_KIND.ExternalCapabilityEscape))
+        assert.equal(await r.getErrors(chain, [], ctx), null)
     })
 
     it("rejects pending outward work on fatal native re-entry without running successors", async () => {
@@ -1098,7 +1104,7 @@ describe("public external paths", () => {
 
     it("drains reserved query observations after a managed Error proves hasError", async () => {
         const { ctx, chain } = setup({ value: 0 })
-        r.assignPath(chain, ["ordinary"], new Error("managed"), ctx)
+        r.assignPath(chain, ["ordinary"], poison("managed"), ctx)
         assert.equal(await r.hasError(chain, [], ctx), true)
         r.assignPath(chain, ["api", "value"], 2, ctx)
         assert.equal(await r.lookupPath(chain, ["api", "value"], ctx), 2)
@@ -1108,7 +1114,7 @@ describe("public external paths", () => {
         it(`stops unreserved query selection after completion, deferred proof=${deferredProof}`, async () => {
             const { ctx, chain } = setup({ value: 0 })
             const proof = Promise.withResolvers()
-            r.assignPath(chain, ["ordinary"], deferredProof ? proof.promise : new Error("known"), ctx)
+            r.assignPath(chain, ["ordinary"], deferredProof ? proof.promise : poison("known"), ctx)
             const started = Promise.withResolvers()
             const release = Promise.withResolvers()
             const entry = r.enter(chain, ["api"], ctx, false, async () => {
@@ -1138,7 +1144,7 @@ describe("public external paths", () => {
         const mutation = r.run(chain, ["api"], "write", [], ctx,
             { mutationScopeDepth: 1, repair: false })
         await started.promise
-        r.assignPath(chain, ["ordinary"], new Error("known"), ctx)
+        r.assignPath(chain, ["ordinary"], poison("known"), ctx)
         assert.equal(r.hasError(chain, [], ctx), true)
         r.assignPath(chain, ["api", "value"], 2, ctx)
         release.resolve()
@@ -1170,13 +1176,13 @@ describe("public external paths", () => {
             let calls = 0
             const { ctx, chain, path } = setup({ value: 0, write() { calls++ } }, parent)
             const cause = new Error("argument")
-            const failure = await r.run(chain, path, "write", [cause], ctx,
+            const failure = await r.run(chain, path, "write", [rejected(cause)], ctx,
                 { mutationScopeDepth: path.length, repair: false })
             assert.equal(failure.cause, cause)
             assert.equal(calls, 0)
             assert.equal(await r.getErrors(chain, [], ctx), failure)
             await r.repairPath(chain, path, ctx)
-            r.assignPath(chain, [...path, "value"], cause, ctx, path.length)
+            r.assignPath(chain, [...path, "value"], rejected(cause), ctx, path.length)
             const written = await r.getErrors(chain, [], ctx)
             assert.equal(written.cause, cause)
             await r.repairPath(chain, path, ctx)
@@ -1224,7 +1230,7 @@ describe("public external paths", () => {
         assert.equal(await r.lookupPath(managedChain, ["value"], ctx), 4)
         const array = new Array(3)
         array[2] = managed
-        const host = Object.assign(new Data(), { value: 2, managed, array })
+        const host = Object.assign(r.managedState(new Data()), { value: 2, managed, array })
         host.self = host
         const native = chain._state.value.api
         native.data = host
@@ -1327,7 +1333,7 @@ describe("public external paths", () => {
         })
     }
 
-    it("rejects pending managed snapshot sources and native writes or calls through managed aliases", async () => {
+    it("rejects pending managed snapshot sources and native writes through managed aliases", async () => {
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const pending = Promise.withResolvers()
         let called = false
@@ -1340,7 +1346,7 @@ describe("public external paths", () => {
         assert.equal((await r.getErrors(chain, [], ctx)).kind, r.ERROR_KIND.UnsupportedMutation)
         await r.repairPath(chain, ["api"], ctx)
         const failure = await r.run(chain, ["api", "source"], "call", [], ctx, { repair: false })
-        assert.equal(failure.kind, r.ERROR_KIND.InvocationFailed)
+        assert.equal(failure.kind, r.ERROR_KIND.InvalidExternalSnapshot)
         assert.equal(called, false)
         assert.equal(source.value, 1)
         pending.resolve(3)
@@ -1382,7 +1388,7 @@ describe("public external paths", () => {
         let subscriptions = 0
         const first = new Error("first")
         const second = new Error("second")
-        const data = { a: first, pending: { then() { subscriptions++ } }, b: second }
+        const data = { a: r.createPoisonError(first, {}, r.ERROR_KIND.OperationInputFailed), pending: { then() { subscriptions++ } }, b: r.createPoisonError(second, {}, r.ERROR_KIND.OperationInputFailed) }
         const { ctx, chain } = setup({ data })
         const failure = await r.lookupPath(chain, ["api", "data"], ctx)
         assert.equal(failure.kind, r.ERROR_KIND.Multiple)
@@ -1407,11 +1413,11 @@ describe("public external paths", () => {
             class Base {}
             class Data extends Base {}
             const unexpected = () => assert.fail("snapshot must not invoke prototype then")
+            const data = r.managedState(new Data())
             Object.defineProperty(Base.prototype, "then", accessor ? { get: unexpected } : { value: unexpected })
-            const data = new Data()
             Object.defineProperty(data, "then", { value: 0, enumerable: true })
             const cause = new Error("other snapshot data failed")
-            const { ctx, chain } = setup({ data: { child: data, error: cause } })
+            const { ctx, chain } = setup({ data: { child: data, error: r.createPoisonError(cause, {}, r.ERROR_KIND.OperationInputFailed) } })
             const failure = await r.lookupPath(chain, ["api", "data"], ctx)
             assert.equal(failure.errors.length, 2)
             assert(failure.errors.some(error => error.kind === r.ERROR_KIND.InvalidExternalSnapshot))
@@ -1421,7 +1427,7 @@ describe("public external paths", () => {
         })
     }
 
-    it("admits observation-only properties as exact external identities and permits self-return", () => {
+    it("imports observation-only properties without copying and permits self-return", () => {
         const native = r.externalState({ child: { value: 1 }, self() { return this } })
         const ctx = { execution: new r.Execution(), errorContext: {} }
         const chain = new r.Chain(native, ctx)
@@ -1437,8 +1443,7 @@ describe("public external paths", () => {
         const failure = await r.run(chain, ["api"], "self", [], ctx,
             { mutationScopeDepth: 1, repair: false })
         assert.equal(failure.kind, r.ERROR_KIND.ExternalCapabilityEscape)
-        assert.equal(await r.getErrors(chain, [], ctx), failure)
-        await r.repairPath(chain, ["api"], ctx)
+        assert.equal(await r.getErrors(chain, [], ctx), null)
         const result = await r.run(chain, ["api"], "nested", [], ctx, { repair: false })
         const output = new r.Chain(result, ctx)
         pending.resolve(native)
@@ -1446,7 +1451,7 @@ describe("public external paths", () => {
     })
 
     for (const registered of [false, true]) {
-        it(`validates borrowed pending results without changing their source, registered=${registered}`, async () => {
+        it(`preserves prepared pending results and their source policy, registered=${registered}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const pending = Promise.withResolvers()
             const stable = { value: 3 }
@@ -1463,7 +1468,7 @@ describe("public external paths", () => {
                 { mutationScopeDepth: 1, repair: false })
             const output = new r.Chain(result, ctx)
             const copy = r.lookupPath(output, ["source"], ctx)
-            assert.notEqual(copy, source)
+            assert.equal(copy, source)
             assert.equal(r.lookupPath(output, ["alias"], ctx), copy)
             assert.equal(r.lookupPath(output, ["source", "self"], ctx), copy)
             assert.equal(r.lookupPath(output, ["source", "stable"], ctx), stable)
@@ -1472,7 +1477,9 @@ describe("public external paths", () => {
             assert.equal(await r.lookupPath(chain, [...path, "value"], ctx), 2)
             pending.resolve(receiver)
             const failure = await r.lookupPath(output, ["source", "child", "pending"], ctx)
-            assert.equal(failure.kind, r.ERROR_KIND.ExternalCapabilityEscape)
+            if (registered) assert.equal(failure.kind, r.ERROR_KIND.ExternalLocationConflict)
+            else assert.equal(failure, receiver)
+            assert.equal(r.hasError(output, [], ctx), false)
             const sourceValue = await r.lookupPath(input, ["child", "pending"], ctx)
             if (registered) assert.equal(sourceValue.kind, r.ERROR_KIND.ExternalLocationConflict)
             else assert.equal(sourceValue, receiver)
@@ -1498,7 +1505,7 @@ describe("public external paths", () => {
         pending.reject(cause)
         const failure = await r.lookupPath(output, ["pending"], calledAt)
         assert.equal(failure, await r.lookupPath(input, ["pending"], importedAt))
-        assert.equal(failure.kind, r.ERROR_KIND.ContextValueFailed)
+        assert.equal(failure.kind, r.ERROR_KIND.OperationInputFailed)
         assert.equal(failure.errorContext, importedAt.errorContext)
         assert.equal(failure.cause, cause)
         verifyRefCounts(calledAt, chain._state, input._state, output._state)
@@ -1516,14 +1523,14 @@ describe("public external paths", () => {
         const cause = new Error("source")
         pending.reject(cause)
         const failure = await r.lookupPath(input, ["pending"], ctx)
-        assert.equal(failure.kind, r.ERROR_KIND.ChainValueFailed)
+        assert.equal(failure.kind, r.ERROR_KIND.OperationInputFailed)
         assert.equal(await r.lookupPath(output, ["pending"], ctx), failure)
         assert.equal(ctx.execution.fatalError, null)
     })
 
     for (const boundary of ["import", "call"]) for (const outcome of ["value", "capability", "rejection"])
     for (const shape of ["direct", "alias-first", "alias-last"]) {
-        it(`borrows lazy descendants without publishing result validation into the source: ${boundary}, ${outcome}, ${shape}`, async () => {
+        it(`preserves lazy descendants through the original producer: ${boundary}, ${outcome}, ${shape}`, async () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }, pending = Promise.withResolvers()
             const child = shape === "alias-first" ? { parent: undefined, pending: pending.promise } : { pending: pending.promise }
             const graph = { child, alias: child, stable: { n: 1 } }
@@ -1539,7 +1546,7 @@ describe("public external paths", () => {
             assert.equal(result instanceof Promise, false)
             const resultChain = new r.Chain(result, ctx)
             const copy = r.lookupPath(resultChain, shape === "direct" ? [] : ["borrowed"], ctx)
-            assert.notEqual(copy, borrowed)
+            assert.equal(copy, borrowed)
             assert.equal(copy.child, copy.alias)
             assert.equal(copy.child.parent, copy)
             assert.equal(copy.stable, graph.stable)
@@ -1552,11 +1559,11 @@ describe("public external paths", () => {
             const resultValue = await r.lookupPath(output, ["child", "pending"], ctx)
             if (outcome === "capability") {
                 assert.equal(sourceValue.kind, r.ERROR_KIND.ExternalLocationConflict)
-                assert.equal(resultValue.kind, r.ERROR_KIND.ExternalCapabilityEscape)
+                assert.equal(resultValue.kind, r.ERROR_KIND.ExternalLocationConflict)
             } else {
                 assert.equal(resultValue, sourceValue)
                 if (outcome === "rejection") {
-                    assert.equal(sourceValue.kind, r.ERROR_KIND.ChainValueFailed)
+                    assert.equal(sourceValue.kind, r.ERROR_KIND.OperationInputFailed)
                     assert.equal(sourceValue.cause, cause)
                 } else assert.deepEqual(sourceValue, value)
             }
@@ -1606,7 +1613,9 @@ describe("public external paths", () => {
         assert.notEqual(native.value, data)
         assert.notEqual(snapshot, native.value)
         r.assignPath(chain, [...path, "value", "nested", "value"], 2, ctx)
-        assert.equal(await r.lookupPath(chain, [...path, "value", "nested", "value"], ctx), 2)
+        assert.equal(r.getErrors(chain, path, ctx).kind, r.ERROR_KIND.UnsupportedMutation)
+        r.repairPath(chain, path, ctx)
+        assert.equal(await r.lookupPath(chain, [...path, "value", "nested", "value"], ctx), 1)
         assert.equal(snapshot.nested.value, 1)
         r.deletePath(chain, [...path, "value"], ctx)
         assert.equal(await r.lookupPath(chain, [...path, "value"], ctx), undefined)

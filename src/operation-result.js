@@ -5,21 +5,30 @@ import { createPoisonedValue } from "./poisoned-value.js"
 import { markPromiseHandled } from "./thenable-subscription.js"
 import { continueGraphTransition } from "./internal-step.js"
 
-function runManagedOperation(operationContext, work) {
-    return runReceivingCommand(operationContext, () => {
-        const delivery = createLeaseLedger(operationContext)
-        let issued = false
-        delivery.capture = (value, sourceHeld = false) => sourceHeld && !issued ? value : delivery.acquire(value)
-        try {
-            const result = work(delivery)
-            work = undefined
-            issued = true
-            return returnOperationResult(operationContext, result, delivery)
-        } catch (failure) {
-            delivery.release()
-            throw failure
-        }
-    })
+// Core work owns its captures after issuance. Retained unformatted Error frames
+// must not keep obsolete inputs through the receiving callback's closure.
+function runOperation(operationContext, work, args, finish = returnOperationResult) {
+    try {
+        return runReceivingCommand(operationContext, () => finish(operationContext, work(...args)))
+    } finally { args = work = undefined }
+}
+
+function runManagedOperation(operationContext, work, args) {
+    try {
+        return runReceivingCommand(operationContext, () => {
+            const delivery = createLeaseLedger(operationContext)
+            let issued = false
+            delivery.capture = (value, sourceHeld = false) => sourceHeld && !issued ? value : delivery.acquire(value)
+            try {
+                const result = work(...args, delivery)
+                issued = true
+                return returnOperationResult(operationContext, result, delivery)
+            } catch (failure) {
+                delivery.release()
+                throw failure
+            }
+        })
+    } finally { args = work = undefined }
 }
 
 function returnOperationResult(operationContext, result, delivery) {
@@ -81,4 +90,4 @@ function returnPendingResult(operationContext, result, onFulfilled) {
     })
 }
 
-export { returnOperationResult, returnExpressionResult, runManagedOperation }
+export { returnOperationResult, returnExpressionResult, runManagedOperation, runOperation }

@@ -78,7 +78,7 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
     chain._assertOperationContext(operationContext)
     if (mutable && chain._readOnly) throw new Error("Cannot mutate through a read-only Chain")
     const route = captureRoute(chain, path, firstDynamicSegment)
-    const { key, placement, depth, node, gate } = captureReference(chain, route, mutable, operationContext)
+    let { key, placement, depth, node, gate } = captureReference(chain, route, mutable, operationContext)
     const effect = node ? new ExternalEffect(node, mutable, chain._externalReservationView, operationContext) : undefined
     const entered = new Chain(undefined, operationContext)
     entered._readOnly = !mutable
@@ -120,6 +120,7 @@ function enter(chain, path, operationContext, mutable, onEntered, firstDynamicSe
                 metadata.metaOf(entered._state, operationContext).entryGate = undefined
                 versions.releaseHolder(entered._state, operationContext)
                 effect?.complete()
+                gate = undefined
             }), operationContext)
             return result
         }

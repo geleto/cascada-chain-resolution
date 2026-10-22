@@ -4,16 +4,19 @@ import * as internalSteps from "./internal-step.js"
 import * as arrayRemaps from "./array-remap.js"
 import * as errorUtils from "./error.js"
 import { inheritIdentity, IdentityPublication } from "./captured-identity.js"
+import { assembleExternalSnapshot } from "./external-snapshot.js"
 import {
     ARRAY_METHODS,
     RETURN_RECEIVER,
     PASS_AS_PAYLOAD,
     runArrayStep,
     searchFromIndex,
+    resolveArrayLength,
+    resolveArrayInRange,
 } from "./array-methods.js"
 
 function selectArrayMethodDescription(invocationWork) {
-    const { method, mutation, receiver } = invocationWork
+    const { method, mutation } = invocationWork
     const methodDefinition = ARRAY_METHODS[method]
     if (!methodDefinition) {
         return errorUtils.validationError(
@@ -29,52 +32,79 @@ function selectArrayMethodDescription(invocationWork) {
             errorUtils.ERROR_KIND.InvalidArrayOperation,
         )
     }
+    if (invocationWork.receiverCapture)
+        invocationWork.arrayLength = invocationWork.receiverCapture.roots[0].shape.length
     return {
-        receiverToLease: mutation ? undefined : receiver,
+        receiverToLease: mutation ? undefined : invocationWork.receiver,
         leaseInputsThroughResult: !mutation &&
             methodDefinition.leaseInputsThroughResult,
         prepareArguments: () => runArrayStep(invocationWork, () => internalSteps.continueGraphTransition(
             prepareArrayMethodArguments(methodDefinition, invocationWork),
-            invocationWork.operationContext, args => errorUtils.isPoisonError(args) || !methodDefinition.intrinsic
-                ? args : runArrayStep(invocationWork, () => prepareIntrinsicArrayLength(args, invocationWork)),
+            invocationWork.operationContext, args => {
+                if (errorUtils.isPoisonError(args)) return args
+                const prepared = methodDefinition.prepare ? methodDefinition.prepare(args, invocationWork) : args
+                return internalSteps.continueGraphTransition(prepared, invocationWork.operationContext,
+                    args => errorUtils.isPoisonError(args) ? args :
+                        prepareArrayReceiver(methodDefinition, args, invocationWork),
+                    undefined, invocationWork)
+            },
             undefined, invocationWork)),
         invoke(preparedArguments) {
-            return runArrayStep(invocationWork, () => {
-                const failure = validateArrayOperation(
-                    preparedArguments,
-                    invocationWork,
-                )
-                if (failure) return failure
-                return invokeArrayMethod(methodDefinition, preparedArguments, invocationWork)
-            })
+            try {
+                return runArrayStep(invocationWork, () =>
+                    invokeArrayMethod(methodDefinition, preparedArguments, invocationWork))
+            } finally { preparedArguments = undefined }
         },
     }
 }
 
 // Intrinsics require an exact remap length. Controlled algorithms prepare
 // their own bounds or capture shape alongside their required placements.
-function prepareIntrinsicArrayLength(args, work) {
-    return ArrayView.resolveLength(work.receiver, work, length => {
-        work.arrayLength = length
-        return args
-    })
+function prepareArrayReceiver(methodDefinition, args, work) {
+    return runArrayStep(work, () => methodDefinition.intrinsic
+        ? resolveArrayLength(work, length => { work.arrayLength = length; return finish() })
+        : finish())
+
+    function finish() {
+        const failure = validateArrayOperation(args, work)
+        if (failure) return failure
+        if (!work.receiverCapture) return args
+        return internalSteps.continueGraphTransition(assembleExternalSnapshot(work.receiverCapture),
+            work.operationContext, receiver => {
+                work.receiverCapture = undefined
+                work.setReceiver(receiver, true)
+                work.leaseReceiver(receiver)
+                return args
+            }, undefined, work)
+    }
 }
 
 function prepareArrayMethodArguments(methodDefinition, invocationWork) {
-    const { args } = invocationWork
+    let { args } = invocationWork
     const inputs = methodDefinition.inputs ?? []
-    const count = inputs[1] === searchFromIndex && ArrayView.readyLength(invocationWork.receiver, invocationWork.operationContext) === 0
+    // Capture the bound's shape dependency before any converted input can
+    // discard the receiver. Its pending question retains no receiver data.
+    if (inputs[1] === searchFromIndex && args.length > 1)
+        invocationWork.searchHasElements = resolveArrayInRange(0, invocationWork, present => present)
+    const count = inputs[1] === searchFromIndex && invocationWork.searchHasElements === false
         ? 1 : methodDefinition.restInput ? args.length : inputs.length
     invocationWork.prepareArgumentFrontier(count)
     // The prepared length preserves omission and every remaining argument.
-    const prepared = new Array(methodDefinition.restInput
+    let prepared = new Array(methodDefinition.restInput
         ? args.length
         : Math.min(inputs.length, args.length))
+    const length = prepared.length
+    invocationWork.discardPreparedOutput = () => {
+        prepared = undefined
+        for (let index = 0; index < length; index++)
+            if ((inputs[index] ?? methodDefinition.restInput) === PASS_AS_PAYLOAD)
+                invocationWork.discardArgument(index)
+    }
     const readiness = []
-    for (let index = 0; index < prepared.length; index++) {
+    for (let index = 0; index < length; index++) {
         const input = inputs[index] ?? methodDefinition.restInput
         if (input === PASS_AS_PAYLOAD) {
-            prepared[index] = args[index]
+            if (prepared) prepared[index] = args[index]
             continue
         }
         const result = input(args[index], invocationWork)
@@ -87,19 +117,26 @@ function prepareArrayMethodArguments(methodDefinition, invocationWork) {
                 result,
                 invocationWork.operationContext,
                 value => {
-                    if (errorUtils.isPoisonError(value)) return value
+                    if (errorUtils.isPoisonError(value)) {
+                        invocationWork.preparationFailed()
+                        return value
+                    }
 
-                    prepared[index] = value
+                    if (prepared) prepared[index] = value
                 },
                 undefined,
                 invocationWork,
             ),
         )
     }
+    args = undefined
     return internalSteps.prepareInputs(
         readiness,
         invocationWork.operationContext,
-        () => methodDefinition.prepare ? methodDefinition.prepare(prepared, invocationWork) : prepared,
+        () => {
+            invocationWork.discardPreparedOutput = undefined
+            return prepared
+        },
         invocationWork,
     )
 }
@@ -165,7 +202,7 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
                 // Publish receiver failure now; only the independent result waits.
                 result = internalSteps.continueGraphTransition(result, operationContext,
                     value => errorUtils.isPoisonError(value)
-                        ? errorUtils.combineErrors([output, value], "Array mutation failed") : output,
+                        ? errorUtils.combineErrors([output, value]) : output,
                     undefined, invocationWork)
             }
             return createMutationOutcome(output, result, operationContext, published)

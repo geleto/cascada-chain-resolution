@@ -37,7 +37,7 @@
       - Synchronous validation, idempotence, and declaration conflicts
     - Identity admission
       - Execution-local category and admitted-prototype fixation
-      - Conservative structural classification and opaque external fallback
+      - Required structural classification failure, poison, and explicit external declarations
       - Imported-origin protection and unchanged host storage
     - Common input preparation
       - Fresh logical topology before receiver or target waits
@@ -113,6 +113,7 @@
       - Incremental maintained facts without active-graph rescans
   - Errors and recovery
     - Failure data and attribution
+      - Missing leaf sources supplied by reception without changing shared diagnostics
       - Native Error recognition and poison versus fatal classification
       - Immutable contextual wrappers and stable semantic failure kinds
       - Causal source preservation across ready and pending boundaries

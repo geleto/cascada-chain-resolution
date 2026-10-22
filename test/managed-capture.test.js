@@ -5,6 +5,61 @@ import { verifyRefCounts } from "./verify-refcounts.js"
 import { OrderedThenable } from "./ordered-thenable.js"
 
 describe("managed receiver capture", () => {
+    for (const managedClass of [false, true]) for (const mutation of [false, true])
+    for (const inReceiver of [false, true]) for (const absent of [false, true]) {
+        it(`rejects selection before output identity waits: class=${managedClass}, mutation=${mutation}, receiver=${inReceiver}, absent=${absent}`, async () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: "selection before assembly" }
+            const source = new runtime.Chain([, 7, ,], ctx)
+            const before = new runtime.Chain(runtime.lookupPath(source, [], ctx), ctx)
+            const gate = Promise.withResolvers()
+            const entry = runtime.enter(source, [0], ctx, true, () => gate.promise)
+            runtime.run(source, [], "copyWithin", [0, 2, 3], ctx, { mutationScopeDepth: 0 })
+            const pair = { a: runtime.lookupPath(before, [], ctx), b: runtime.lookupPath(source, [], ctx) }
+            class Receiver {}
+            if (managedClass) runtime.managedStateClass(Receiver)
+            const data = managedClass ? new Receiver() : {}
+            if (!absent) data.read = 17
+            if (inReceiver) Object.assign(data, pair)
+            const receiver = new runtime.Chain(data, ctx)
+            const result = runtime.run(receiver, [], "read", inReceiver ? [] : [pair],
+                ctx, mutation ? { mutationScopeDepth: 0 } : {})
+            try {
+                assert(!runtime.isPending(result, ctx), "Rejected selection needs no output alias partition")
+                assert.equal(result.kind, absent ? runtime.ERROR_KIND.MissingFunction : runtime.ERROR_KIND.NotAFunction)
+                if (mutation) assert.equal(runtime.getErrors(receiver, [], ctx), result)
+                assert.equal(ctx.execution.fatalError, null)
+            } finally {
+                gate.resolve()
+                await entry
+                await result
+            }
+            verifyRefCounts(ctx, source._state, before._state, receiver._state)
+        })
+    }
+
+    for (const array of [false, true]) {
+        it(`captures each prepared descriptor once without invoking accessors: array=${array}`, () => {
+            const ctx = { execution: new runtime.Execution(), errorContext: "single placement capture" }
+            const reads = new Map()
+            const data = array ? [1, , 3] : { first: 1, last: 3 }
+            Object.defineProperty(data, array ? "1" : "accessor", {
+                enumerable: true, get() { assert.fail("Graph capture must not invoke accessors") },
+            })
+            Object.defineProperty(data, array ? "4" : "hidden", { value: 4 })
+            const source = new runtime.Chain(new Proxy(data, {
+                getOwnPropertyDescriptor(target, key) {
+                    reads.set(key, (reads.get(key) ?? 0) + 1)
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            }), ctx)
+            reads.clear()
+            const output = runtime.export(source, [], ctx)
+            assert.deepEqual(output, array ? [1, , 3, , ,] : { first: 1, last: 3 })
+            for (const key of array ? ["0", "1", "2", "4"] : ["first", "last", "accessor", "hidden"])
+                assert.equal(reads.get(key), 1, `One descriptor read for ${key}`)
+        })
+    }
+
     for (const mutation of [false, true]) for (const lateReceiverError of [false, true]) for (const lateArgumentError of [false, true]) {
         it(`finishes failed joint preparation without argument identity: mutation=${mutation}, lateReceiverError=${lateReceiverError}, lateArgumentError=${lateArgumentError}`, async () => {
             const ctx = { execution: new runtime.Execution(), errorContext: "joint preparation" }
@@ -14,7 +69,7 @@ describe("managed receiver capture", () => {
             runtime.run(argument, [], "copyWithin", [0, 1, 2], ctx, { mutationScopeDepth: 0 })
             const first = new Error("receiver"), second = new Error("argument")
             let calls = 0
-            const receiver = new runtime.Chain({ bad: lateReceiverError ? receiverError.promise : first,
+            const receiver = new runtime.Chain({ bad: lateReceiverError ? receiverError.promise : runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.OperationInputFailed),
                 read() { calls++; return 1 } }, ctx)
             const args = [runtime.lookupPath(argument, [], ctx)]
             if (lateArgumentError) args.push(argumentError.promise)
@@ -28,7 +83,7 @@ describe("managed receiver capture", () => {
                     await new Promise(setImmediate)
                     assert.equal(settled, false, "Required Error collection must finish")
                 }
-                receiverError.resolve(first)
+                if (lateReceiverError) receiverError.reject(first)
                 if (lateArgumentError) argumentError.reject(second)
                 // Only the Error-bearing inputs settle; the argument's identity
                 // stays undecided until the independent entry is released.
@@ -65,7 +120,7 @@ describe("managed receiver capture", () => {
     })
 
     it("allocates one capture per logical node across multiple representations", () => {
-        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
+        const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             "test/fixtures/managed-capture-work.js"], { encoding: "utf8", timeout: 30000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)
     })

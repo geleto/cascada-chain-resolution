@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import { publishPromiseVersion, getPromiseVersion } from "../src/property-versions.js"
 import {
     Chain,
@@ -10,8 +11,8 @@ import {
     import as importValue,
     Execution,
 } from "../src/index.js"
-import { failExecution as submitFatal, ERROR_KIND } from "../src/error.js"
-import { consumeValue, continueOperation, runInternalStep } from "../src/internal-step.js"
+import { failExecution as submitFatal } from "../src/error.js"
+import { continueGraphTransition, continueOperation, runInternalStep } from "../src/internal-step.js"
 import { buildRefIndex, getRefCounter } from "../src/refcounts.js"
 import { hasCycleCut } from "./support.js"
 import { metaOf } from "../src/meta.js"
@@ -46,9 +47,9 @@ describe("promise helpers", () => {
         const pending = deferred()
         const order = []
 
-        consumeValue(pending.promise, testContext, ERROR_KIND.OperationInputFailed, () => order.push("value 1"))
+        continueGraphTransition(pending.promise, testContext, () => order.push("value 1"))
         continueOperation(pending.promise, testContext, () => order.push("later"), () => order.push("later"))
-        consumeValue(pending.promise, testContext, ERROR_KIND.OperationInputFailed, () => order.push("value 2"))
+        continueGraphTransition(pending.promise, testContext, () => order.push("value 2"))
 
         pending.resolve("done")
         await flushMicrotasks()
@@ -84,11 +85,9 @@ describe("promise helpers", () => {
     })
 
     it("passes rejected data promises to continuations as Error values", async () => {
-        const value = await consumeValue(
+        const value = await importValue(
             Promise.reject("data boom"),
             { execution: new Execution(), errorContext: "test operation" },
-            ERROR_KIND.OperationInputFailed,
-            value => value,
         )
 
         expect(value instanceof Error).to.be(true)
@@ -111,7 +110,7 @@ describe("promise helpers", () => {
             reported = error
         }), errorContext: "test operation" }
         try {
-            await consumeValue(Promise.resolve("ok"), testContext, ERROR_KIND.OperationInputFailed, () => {
+            await continueGraphTransition(Promise.resolve("ok"), testContext, () => {
                 throw fatal
             })
         } catch (error) {
@@ -133,7 +132,7 @@ describe("promise helpers", () => {
         }), errorContext: "test operation" }
         try {
             await continueOperation(
-                consumeValue(Promise.resolve("ok"), testContext, ERROR_KIND.OperationInputFailed, () => submitFatal(testContext, fatal)),
+                continueGraphTransition(Promise.resolve("ok"), testContext, () => submitFatal(testContext, fatal)),
                 testContext,
                 value => value,
             )
@@ -288,7 +287,7 @@ describe("Promise versions and lookupPath", () => {
         expect(detachedRoot.value).to.be("replacement")
     })
 
-    it("publishes uninspectable settled values as external", async () => {
+    it("publishes classification poison for uninspectable settled values", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("settled value reflection failed")
@@ -299,7 +298,8 @@ describe("Promise versions and lookupPath", () => {
         pending.resolve(settled)
         await flushMicrotasks()
 
-        expect(readPath(chain, ["0"], testContext)).to.be(settled)
+        expect(errorCause(readPath(chain, ["0"], testContext))).to.be(failure)
+        expect(metaOf(settled, testContext)).to.be(undefined)
         verifyRefCounts(testContext, chain._state.value)
     })
 
@@ -371,7 +371,7 @@ describe("Promise versions and lookupPath", () => {
         verifyRefCounts(testContext, root)
     })
 
-    it("keeps uninspectable settled values on detached versions", async () => {
+    it("keeps classification poison on detached versions", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
         const failure = new Error("detached value reflection failed")
@@ -383,7 +383,8 @@ describe("Promise versions and lookupPath", () => {
         assignPath(chain, ["value"], "replacement", testContext)
         pending.resolve(settled)
 
-        expect(await observed).to.be(settled)
+        expect(errorCause(await observed)).to.be(failure)
+        expect(metaOf(settled, testContext)).to.be(undefined)
         expect(root.value).to.be("replacement")
         verifyRefCounts(testContext, root)
     })
@@ -391,7 +392,7 @@ describe("Promise versions and lookupPath", () => {
     it("writes through existing writable properties on sealed holders", async () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const pending = deferred()
-        const error = new Error("settled")
+        const error = poison("settled")
         const value = { error }
         const root = {}
 
@@ -422,7 +423,7 @@ describe("Promise versions and lookupPath", () => {
         assignPath(new Chain(root, testContext), ["value"], pending.promise, testContext)
         continueOperation(pending.promise, testContext, () => buildRefIndex(root, testContext), () => buildRefIndex(root, testContext))
 
-        pending.resolve({ bad: new Error("bad"), nested: nested.promise })
+        pending.resolve({ bad: poison("bad"), nested: nested.promise })
         await flushMicrotasks()
 
         expectCounts(testContext, root, 1, 1)

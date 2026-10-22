@@ -127,8 +127,11 @@ describe("native observation representation identity", () => {
                 same() { return this.a === this.b } }, ctx)
             fail = true
             const error = consume === "native" ? r.run(both, [], "same", [], ctx, {}) : r[consume](both, [], ctx)
-            assert(r.isPoisonError(error))
-            assert.equal(error.cause, cause)
+            if (consume === "hasError") assert.equal(error, true)
+            else {
+                assert(r.isPoisonError(error))
+                assert.equal(error.cause, cause)
+            }
             assert.equal(ctx.execution.fatalError, null)
         })
     }

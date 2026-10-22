@@ -3,10 +3,63 @@ import { Chain, assignPath, import as importValue, lookupPath, managedStateClass
 import { buildRefIndex } from "../src/refcounts.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 import { runInNewContext } from "node:vm"
+import assert from "node:assert/strict"
 
 import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
 
 describe("managed class copy-on-write", () => {
+    for (const declaration of ["default", "identity", "class", "external override"])
+    for (const foreign of [false, true]) {
+        it(`recognizes null-rooted classes: ${declaration}, foreign=${foreign}`, () => {
+            const ctx = { execution: new Execution(), errorContext: "null-rooted class" }
+            const Rootless = foreign ? runInNewContext(`(class Rootless extends null {
+                constructor() { return Object.assign(Object.create(new.target.prototype), { value: 7 }) }
+                read() { return this.value }
+            })`) : class Rootless extends null {
+                constructor() { return Object.assign(Object.create(new.target.prototype), { value: 7 }) }
+                read() { return this.value }
+            }
+            const source = new Rootless()
+            if (declaration === "class" || declaration === "external override")
+                assert.equal(managedStateClass(Rootless), undefined)
+            if (declaration === "identity") assert.equal(runtime.managedState(source), source)
+            if (declaration === "external override") runtime.externalState(source)
+            const managed = declaration === "identity" || declaration === "class"
+            if (!managed) Object.defineProperty(source, "value", { value: 7, enumerable: false })
+            const chain = new Chain(importValue(source, ctx), ctx)
+            assert.equal(runtime.run(chain, [], "read", [], ctx, {}), 7)
+            const exported = runtime.export(chain, [], ctx)
+            assert.equal(Object.getPrototypeOf(exported), Rootless.prototype)
+            assert.equal(exported === source, !managed)
+            if (managed) {
+                assignPath(chain, ["value"], 8, ctx)
+                assert.equal(runtime.run(chain, [], "read", [], ctx, {}), 8)
+                assert.equal(source.value, 7)
+                assert.equal(exported.value, 7)
+                const context = new runtime.ContextChain({ api: runtime.externalState({ source }) }, ctx, { api: {} })
+                assert.equal(runtime.run(context, ["api", "source"], "read", [], ctx, {}), 7)
+                const snapshot = runtime.export(context, ["api", "source"], ctx)
+                assert.notEqual(snapshot, source)
+                assert.equal(Object.getPrototypeOf(snapshot), Rootless.prototype)
+                assert.equal(snapshot.value, 7)
+            }
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const accessor of [false, true]) for (const foreign of [false, true]) {
+        it(`validates then on null-rooted managed prototypes: accessor=${accessor}, foreign=${foreign}`, () => {
+            const Rootless = foreign ? runInNewContext("(class extends null {})") : class extends null {}
+            let reads = 0
+            Object.defineProperty(Rootless.prototype, "then", accessor
+                ? { get() { reads++; return undefined } } : { value() {} })
+            const result = managedStateClass(Rootless)
+            assert(runtime.isPoisonError(result))
+            assert.equal(result.kind, runtime.ERROR_KIND.DeclarationValidation)
+            assert.equal(reads, 0)
+        })
+    }
+
     it("declares only the exact prototype without modifying it", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         class Base {
@@ -520,7 +573,7 @@ describe("managed class copy-on-write", () => {
         expect(source.value).to.be(1)
     })
 
-    it("imports a value with uninspectable type as external", () => {
+    it("returns poison for a value with uninspectable type", () => {
         const source = new Proxy({ value: 1 }, {
             getPrototypeOf() {
                 throw new Error("reflection trap")
@@ -528,7 +581,8 @@ describe("managed class copy-on-write", () => {
         })
         const result = importValue(source, { execution: new Execution(), errorContext: "proxy prototype" })
 
-        expect(result).to.be(source)
+        expect(runtime.isPoisonError(result)).to.be(true)
+        expect(result.kind).to.be(runtime.ERROR_KIND.ImportReflectionFailed)
         expect(source.value).to.be(1)
     })
 })

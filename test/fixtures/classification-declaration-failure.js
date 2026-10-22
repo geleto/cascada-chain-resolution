@@ -1,6 +1,7 @@
 // Inject implementation defects without changing supported input or primordials.
 import assert from "node:assert/strict"
 import { registerHooks } from "node:module"
+import { OrderedThenable, ready } from "../ordered-thenable.js"
 
 let armed
 globalThis.injectClassificationDeclarationFailure = site => {
@@ -44,16 +45,51 @@ registerHooks({ load(url, context, next) {
 const r = await import("../../src/index.js")
 const metadata = await import("../../src/meta.js")
 
-// A structural fallback must consume the host-failure marker without constructing
-// graph poison. Contextualization remains a separate owning-boundary decision.
+// Supplying an absent source is runtime work, including on deferred reception.
+// A defect there must fail the execution before any failure effect or result.
+for (const mode of ["ready", "synchronous", "native", "ordered"]) {
+    const reports = [], ctx = {
+        execution: new r.Execution(error => reports.push(error)),
+        errorContext: { mode, operation: "poison reception" },
+    }
+    const diagnostic = r.externalState(1)
+    const signal = mode === "native" ? Promise.withResolvers()
+        : mode === "ordered" ? new OrderedThenable() : undefined
+    const input = mode === "ready" ? diagnostic : mode === "synchronous"
+        ? ready(diagnostic) : signal.promise ?? signal
+    const sibling = r.import(new Promise(() => {}), ctx).then(
+        () => assert.fail("Sibling succeeded"), error => error)
+    const cause = new Error("Poison reception defect")
+    let failed
+    if (signal) {
+        const outcome = r.import(input, ctx).then(
+            () => assert.fail("Import succeeded"), error => error)
+        armed = { site: "poison contextualization", cause }
+        signal.resolve(diagnostic)
+        failed = await outcome
+    } else {
+        armed = { site: "poison contextualization", cause }
+        try { r.import(input, ctx) }
+        catch (error) { failed = error }
+    }
+    assert.equal(armed, undefined, mode)
+    assert(r.isFatalError(failed), mode)
+    assert.equal(failed.cause, cause)
+    assert.equal(failed.errorContext, ctx.errorContext)
+    assert.equal(ctx.execution.fatalError, failed)
+    assert.equal(await sibling, failed)
+    assert.deepEqual(reports, [failed])
+}
+
+// A defect while constructing classification poison is still fatal.
 {
     const source = new Proxy({}, { getPrototypeOf() { throw new Error("opaque host") } })
     const ctx = { execution: new r.Execution(), errorContext: "opaque admission" }
-    const poisonFault = armed = { site: "poison contextualization", cause: new Error("unexpected poison construction") }
-    assert.equal(r.import(source, ctx), source)
-    assert.equal(armed, poisonFault)
-    assert.equal(ctx.execution.fatalError, null)
-    armed = undefined
+    const cause = new Error("poison construction defect")
+    armed = { site: "poison contextualization", cause }
+    assert.throws(() => r.import(source, ctx), error => r.isFatalError(error) && error.cause === cause)
+    assert.equal(armed, undefined)
+    assert.equal(ctx.execution.fatalError.cause, cause)
 }
 
 for (const site of ["classification", "plain prototype"]) {
@@ -93,7 +129,7 @@ for (const site of ["poison contextualization", "snapshot failure effect"]) {
         const ctx = { execution: new r.Execution(error => reports.push(error)), errorContext: source }
         const hostCause = new Error("supported host failure")
         const signal = pending ? Promise.withResolvers() : undefined
-        const snapshotSource = new Proxy({}, { getPrototypeOf() { throw hostCause } })
+        const snapshotSource = new Proxy({}, { ownKeys() { throw hostCause } })
         const chain = site === "poison contextualization"
             ? new r.Chain(r.externalState({ read() { throw hostCause } }), ctx)
             : new r.ContextChain({ api: r.externalState({ source: signal?.promise ?? snapshotSource }) }, ctx, { api: {} })
@@ -141,11 +177,18 @@ for (const [api, site] of [
     const input = api === "managedStateClass" ? Candidate : instance
     const cause = new Error(`Internal ${api} ${site} defect`)
     armed = { site, cause }
-    assert.throws(() => r[api](input), error => error === cause, `${api}: ${site}`)
+    let fatal
+    assert.throws(() => r[api](input), error => {
+        fatal = error
+        return r.isFatalError(error) && error.cause === cause &&
+            error.errorContext === undefined && Object.isFrozen(error)
+    }, `${api}: ${site}`)
     assert.equal(armed, undefined, `${api}: injection was unused`)
     const ctx = { execution: new r.Execution(), errorContext: "after failed declaration" }
     r.import(instance, ctx)
     assert.equal(metadata.metaOf(instance, ctx).type, metadata.TYPE.External)
     assert.equal(metadata.identityDeclarationOf(instance), undefined)
     assert.equal(ctx.execution.fatalError, null)
+    assert.throws(() => r.import(fatal, ctx), error => error === fatal)
+    assert.equal(ctx.execution.fatalError, fatal)
 }

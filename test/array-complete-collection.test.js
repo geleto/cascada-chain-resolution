@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import * as runtime from "cascada-chain-resolution"
-import { ready } from "./ordered-thenable.js"
+import { ready, OrderedThenable } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 const context = (execution = new runtime.Execution()) => ({ execution, errorContext: {} })
@@ -17,6 +17,51 @@ function assertCauses(error, expected) {
 }
 
 describe("complete Array preparation", () => {
+    for (const method of ["includes", "indexOf", "lastIndexOf"])
+    for (const delivery of ["ready", "synchronous", "native", "ordered"])
+    for (const empty of [false, true]) {
+        it(`${method} preserves required search failures: ${delivery}, empty=${empty}`, async () => {
+            const ctx = context(), causes = [new Error("needle"), new Error("bound")]
+            const poison = runtime.createPoisonError(causes[0], ctx, runtime.ERROR_KIND.OperationInputFailed)
+            const signal = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+            const needle = delivery === "ready" ? poison : delivery === "synchronous" ? ready(poison) : signal.promise ?? signal
+            const bound = Promise.withResolvers()
+            const chain = new runtime.Chain(empty ? [] : [1], ctx)
+            const result = runtime.run(chain, [], method, [needle, bound.promise], ctx, {})
+            if (delivery === "native" || delivery === "ordered") signal.resolve(poison)
+            let settled = false
+            Promise.resolve(result).then(() => { settled = true })
+            await new Promise(setImmediate)
+            assert.equal(settled, empty, "Only an empty receiver can omit the bound")
+            if (empty) bound.resolve(0)
+            else bound.reject(causes[1])
+            assertCauses(await result, empty ? [causes[0]] : causes)
+            verifyRefCounts(ctx, chain._state)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const method of ["includes", "indexOf", "lastIndexOf"])
+    for (const created of [false, true]) {
+        it(`${method} captures an unsettled length before discarding its receiver: created=${created}`, async () => {
+            const ctx = context(), causes = [new Error("needle"), new Error("bound")]
+            const gate = Promise.withResolvers(), bound = Promise.withResolvers()
+            const chain = new runtime.Chain([], ctx)
+            const entry = runtime.enter(chain, [0], ctx, true, entered => {
+                if (created) runtime.assignPath(entered, [], 1, ctx)
+                return gate.promise
+            })
+            const poison = runtime.createPoisonError(causes[0], ctx, runtime.ERROR_KIND.OperationInputFailed)
+            const result = runtime.run(chain, [], method, [poison, bound.promise], ctx, {})
+            gate.resolve()
+            await entry
+            if (created) bound.reject(causes[1])
+            else bound.resolve(0)
+            assertCauses(await result, created ? causes : [causes[0]])
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
     for (const route of ["sort observation", "sort mutation", "toSorted"]) {
         for (const comparator of [false, true]) {
             for (const delivery of ["ready", "synchronous", "pending"]) {
@@ -27,11 +72,11 @@ describe("complete Array preparation", () => {
                     const last = new Error("last required input")
                     const reflection = new Error("middle descriptor")
                     const later = Promise.withResolvers()
-                    const delivered = delivery === "ready" ? last
-                        : delivery === "synchronous" ? ready(last) : later.promise
+                    const delivered = delivery === "ready" ? runtime.createPoisonError(last, introduced, runtime.ERROR_KIND.OperationInputFailed)
+                        : delivery === "synchronous" ? ready(runtime.createPoisonError(last, introduced, runtime.ERROR_KIND.OperationInputFailed)) : later.promise
                     let fail = false
                     let calls = 0
-                    const source = new Proxy([first, 0, delivered], {
+                    const source = new Proxy([runtime.createPoisonError(first, introduced, runtime.ERROR_KIND.OperationInputFailed), 0, delivered], {
                         getOwnPropertyDescriptor(target, key) {
                             if (fail && key === "1") throw reflection
                             return Reflect.getOwnPropertyDescriptor(target, key)
@@ -60,7 +105,7 @@ describe("complete Array preparation", () => {
                             ? ctx.errorContext : introduced.errorContext)
                         assert.equal(error.kind, error.cause === reflection
                             ? route === "sort mutation" ? runtime.ERROR_KIND.PropertyMutationFailed : runtime.ERROR_KIND.InvocationFailed
-                            : runtime.ERROR_KIND.ContextValueFailed)
+                            : runtime.ERROR_KIND.OperationInputFailed)
                     }
                     assert.equal(calls, 0)
                     assert.equal(ctx.execution.fatalError, null)
@@ -82,7 +127,7 @@ describe("complete Array preparation", () => {
             const later = Promise.withResolvers()
             let reads = 0
             let fail = false
-            const source = new Proxy([[first], 0, later.promise], {
+            const source = new Proxy([[runtime.createPoisonError(first, ctx, runtime.ERROR_KIND.OperationInputFailed)], 0, later.promise], {
                 getOwnPropertyDescriptor(target, key) {
                     if (fail && key === "1" && ++reads === 2) throw reflection
                     return Reflect.getOwnPropertyDescriptor(target, key)
@@ -93,7 +138,7 @@ describe("complete Array preparation", () => {
             fail = true
             const work = runtime.run(chain, [], method, [], ctx, {})
             assert(work instanceof Promise)
-            later.resolve([last])
+            later.resolve([runtime.createPoisonError(last, ctx, runtime.ERROR_KIND.OperationInputFailed)])
             assertCauses(await work, [first, reflection, last])
             assert.equal(ctx.execution.fatalError, null)
             fail = false
@@ -156,7 +201,7 @@ describe("complete Array preparation", () => {
             const reflection = new Error("middle descriptor")
             let fail = false
             const nested = cause => method === "flat"
-                ? new Proxy([1], { ownKeys(target) { if (fail) throw cause; return Reflect.ownKeys(target) } }) : cause
+                ? new Proxy([1], { ownKeys(target) { if (fail) throw cause; return Reflect.ownKeys(target) } }) : runtime.createPoisonError(cause, ctx, runtime.ERROR_KIND.OperationInputFailed)
             const source = new Proxy([0, nested(first), , 0, nested(last), 0], {
                 ownKeys(target) {
                     assert.equal(fail, false, "must not scan the entire backing")

@@ -10,7 +10,7 @@ const publication = new Set([
     // A resumed no-op writer can discard an absent overlay after publication.
     // The physical slot is already absent, so this cleanup changes no edge.
     "detachAbsentVersion",
-    "prepareInput", "commitPreparedInput", "normalizeRawPropertyValue",
+    "prepareInput", "commitPreparedInput",
 ])
 const construction = new Set([
     "prepareInput", "assembleCapturedGraph", "snapshotExternalValue",
@@ -35,16 +35,10 @@ function fixture(write, ...args) {
     enter("fixture", args)
     try { return write(...args) } finally { leave() }
 }
-function admission(value, context) {
-    const index = stack.findLastIndex(frame => frame.name === "normalizeRawPropertyValue")
-    if (index < 0 || stack.slice(0, index).some(frame => construction.has(frame.name) || publication.has(frame.name))) return
-    if (context.execution._metadata.get(stack[index].args[0])?.placementsInitialized)
-        throw new Error("Ordinary read first admitted a managed child of a prepared owner")
-}
 function enable() { enabled = true }
 function reset() { counters.clear() }
 function counts() { return Object.fromEntries(counters) }
 function trackCopies() { return copies = [] }
 function allocated(value) { copies?.push(new WeakRef(value)) }
 
-export { enter, leave, fixture, count, admission, enable, enabled, reset, counts, trackCopies, allocated }
+export { enter, leave, fixture, count, enable, enabled, reset, counts, trackCopies, allocated }

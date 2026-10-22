@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import assert from "node:assert/strict"
 import * as runtime from "../src/index.js"
 import * as refcounts from "../src/refcounts.js"
@@ -99,7 +100,7 @@ describe("index preparation", () => {
     for (const indexedFirst of [false, true]) {
         it("counts captured versions delivered after later subscription" + (indexedFirst ? " in an existing index" : ""), async () => {
             const ctx = context()
-            const bad = new Error("revealed failure")
+            const bad = poison("revealed failure")
             class DeliveredOnSecondSubscription extends OrderedThenable {
                 then(onFulfilled, onRejected) {
                     if (this.subscriptions === 1) {
@@ -149,11 +150,11 @@ describe("index preparation", () => {
                     const failure = pending
                         ? await result
                         : result
-                    assert.equal(failure.cause, cause)
-                    assert.equal(
-                        failure.kind,
-                        runtime.ERROR_KIND.QueryReflectionFailed,
-                    )
+                    if (query === runtime.hasError) assert.equal(failure, true)
+                    else {
+                        assert.equal(failure.cause, cause)
+                        assert.equal(failure.kind, runtime.ERROR_KIND.QueryReflectionFailed)
+                    }
                     assert.equal(ctx.execution.fatalError, null)
                     assert.equal(refcounts.getRefCounter(a, ctx), undefined)
                     assert.equal(refcounts.getRefCounter(b, ctx), undefined)

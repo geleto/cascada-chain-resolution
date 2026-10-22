@@ -1,3 +1,4 @@
+import { rejected, ready } from "./ordered-thenable.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
@@ -18,12 +19,120 @@ import { runInNewContext } from "node:vm"
 import assert from "node:assert/strict"
 
 import { deferred, errorCause, expect, flushMicrotasks, readPath, thrownBy } from "./support.js"
+import { OrderedThenable } from "./ordered-thenable.js"
 
 describe("managed invocation", () => {
+    for (const delivery of ["ready", "synchronous", "native", "ordered"])
+    for (const failed of [false, true]) {
+        it(`admits stored Functions atomically without result import: ${delivery}, failed=${failed}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "stored Function" }
+            let installed
+            const signal = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+            const cause = new Error("invalid receiver")
+            const c = new Chain({ install() {
+                installed = () => 42
+                this.items = [installed]
+                this.invoke = installed
+                if (failed) this.bad = runtime.createPoisonError(cause, ctx, runtime.ERROR_KIND.OperationInputFailed)
+                return delivery === "ready" ? 0 : delivery === "synchronous" ? ready(0) : signal.promise ?? signal
+            } }, ctx)
+            const result = run(c, [], "install", [], ctx, { mutationScopeDepth: 0 })
+            if (delivery === "native" || delivery === "ordered") signal.resolve(0)
+            if (failed) {
+                assert(runtime.isPoisonError(await result))
+                assert.equal(metaOf(installed, ctx), undefined, "Failed receiver validation admits no fresh Function")
+            } else {
+                assert.equal(await result, 0)
+                // No intervening lookup or result import may admit the Function.
+                assert.equal(run(c, ["items"], "includes", [null], ctx, {}), false)
+                assert.equal(run(c, ["items"], "indexOf", [null], ctx, {}), -1)
+                assert.equal(run(c, [], "invoke", [], ctx, {}), 42)
+                const output = exportValue(c, [], ctx)
+                assert.equal(output.items[0], installed)
+                assert.equal(output.invoke, installed)
+                verifyRefCounts(ctx, c._state)
+            }
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const pending of [false, true])
+    it(`does not admit retained argument storage after failed receiver validation: pending=${pending}`, async () => {
+        const ctx = { execution: new Execution(), errorContext: "failed adoption" }
+        const retained = Promise.withResolvers()
+        const receiver = new Chain({ stash(copy, deliver) {
+            this.copy = copy
+            this.invalid = { then() {} }
+            deliver(copy)
+            return pending ? Promise.resolve() : undefined
+        } }, ctx)
+        const failure = await run(receiver, [], "stash", [{ child: { k: 1 }, array: [1] }, retained.resolve], ctx,
+            { mutationScopeDepth: 0 })
+        assert.equal(failure.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
+        const hostCopy = await retained.promise
+        const api = new Chain(runtime.import(runtime.externalState({ give() { return hostCopy } }), ctx), ctx)
+        const received = new Chain(run(api, [], "give", [], ctx, {}), ctx)
+        assignPath(received, ["child", "k"], 2, ctx)
+        assignPath(received, ["array", 0], 2, ctx)
+        assert.deepEqual(hostCopy, { child: { k: 1 }, array: [1] })
+        assert.deepEqual(await exportValue(received, [], ctx), { child: { k: 2 }, array: [2] })
+    })
+
+    it("validates newly stored data with one descriptor capture per property", () => {
+        const ctx = { execution: new Execution(), errorContext: "receiver placement capture" }
+        const reads = []
+        const receiver = new Chain({ change() {
+            this.child = new Proxy({ first: 1, second: 2 }, {
+                getOwnPropertyDescriptor(target, key) {
+                    reads.push(key)
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+        } }, ctx)
+        assert.equal(run(receiver, [], "change", [], ctx, { mutationScopeDepth: 0 }), undefined)
+        assert.deepEqual(reads, ["first", "second"])
+        assert.deepEqual(exportValue(receiver, ["child"], ctx), { first: 1, second: 2 })
+        verifyRefCounts(ctx, receiver._state)
+    })
+
+    for (const ordered of [false, true]) for (const settled of [false, true]) for (const store of [false, true]) {
+        it(`distinguishes prepared result reuse from receiver readiness: ordered=${ordered}, settled=${settled}, store=${store}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "prepared receiver state" }
+            const delivery = ordered ? new OrderedThenable() : Promise.withResolvers()
+            const raw = { value: delivery.promise ?? delivery }
+            const source = new Chain(importValue(raw, ctx), ctx)
+            if (settled) {
+                delivery.resolve(7)
+                await new Promise(setImmediate)
+            }
+            const receiver = new Chain({ get(supply) {
+                const value = supply()
+                if (store) this.saved = value
+                return value
+            } }, ctx)
+            const result = new Chain(run(receiver, [], "get", [() => raw], ctx, { mutationScopeDepth: 0 }), ctx)
+            const value = lookupPath(result, [], ctx)
+            assert.equal(value instanceof Promise, false, "Finalization does not wait for nested data")
+            if (store && !settled) {
+                assert.equal(value.kind, runtime.ERROR_KIND.InvalidManagedReceiver)
+                assert.equal(runtime.getErrors(receiver, [], ctx), value)
+                assert.equal(runtime.repairPath(receiver, [], ctx), undefined)
+                assert.equal(lookupPath(receiver, ["saved"], ctx), undefined)
+            } else {
+                assert.equal(value, raw)
+                assert.equal(runtime.hasError(receiver, [], ctx), false)
+            }
+            delivery.resolve(7)
+            assert.equal(await lookupPath(source, ["value"], ctx), 7)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
     it("does not certify fresh descendants after failed receiver finalization", async () => {
         const execution = new Execution()
         const ctx = { execution, errorContext: "failed receiver preparation" }
         const resultCtx = { execution, errorContext: "later fresh method result" }
+        const readCtx = { execution, errorContext: "later consumer" }
         const pending = Promise.withResolvers()
         const cached = { later: pending.promise }
         const receiver = new Chain({ store(supply) { this.cached = supply() } }, ctx)
@@ -34,15 +143,14 @@ describe("managed invocation", () => {
 
         // Failed validation admitted cached's category, but established no
         // preparation or producer for its raw pending property.
-        const resource = runtime.externalState({})
-        const authority = new runtime.ContextChain({ resource }, ctx, { resource: {} })
         const returned = new Chain(runtime.importMethodResult(cached, resultCtx), resultCtx)
-        pending.resolve(resource)
-        const error = await lookupPath(returned, ["later"], resultCtx)
-        assert.equal(error.kind, runtime.ERROR_KIND.ExternalCapabilityEscape)
+        const cause = new Error("new producer")
+        pending.reject(cause)
+        const error = await lookupPath(returned, ["later"], readCtx)
+        assert.equal(error.kind, runtime.ERROR_KIND.OperationInputFailed)
         assert.equal(error.errorContext, resultCtx.errorContext)
+        assert.equal(error.cause, cause)
         assert.equal(await runtime.hasError(returned, [], resultCtx), true)
-        assert.equal(runtime.getErrors(authority, [], ctx), null)
         assert.equal(runtime.repairPath(receiver, [], ctx), undefined)
         assert.equal(lookupPath(receiver, ["cached"], ctx), undefined)
     })
@@ -157,7 +265,7 @@ describe("managed invocation", () => {
         fail = true
         const result = run(receiver, [], "read", [], ctx, {})
         assert.equal(result instanceof Promise, true)
-        late.resolve(lateFailure)
+        late.reject(lateFailure)
         const failure = await result
         assert.equal(failure.kind, runtime.ERROR_KIND.Multiple)
         assert.deepEqual(new Set(failure.errors.map(error => error.cause)), new Set([reflectionFailure, lateFailure]))
@@ -171,8 +279,8 @@ describe("managed invocation", () => {
             const never = new Promise(() => {})
             const chain = new runtime.Chain(runtime.import({ n: 1, change() {
                 const complete = () => {
-                    this.n = receiverError
-                    return { first, nested: [first, second], independent: never }
+                    this.n = runtime.createPoisonError(receiverError, ctx, runtime.ERROR_KIND.InvalidManagedReceiver)
+                    return { first: rejected(first), nested: [rejected(first), rejected(second)], independent: never }
                 }
                 return pending ? hold.promise.then(complete) : complete()
             } }, ctx), ctx)
@@ -523,7 +631,7 @@ describe("managed invocation", () => {
             failed,
             [],
             "change",
-            [failure],
+            [rejected(failure)],
             { ...testContext, errorContext: "test run" },
             { repair: false, mutationScopeDepth: 0 },
         )
@@ -532,7 +640,7 @@ describe("managed invocation", () => {
 
         const receiverFailure = new Error("invalid receiver")
         const invalid = new Value()
-        invalid.failure = receiverFailure
+        invalid.failure = rejected(receiverFailure)
         const invalidChain = new Chain(invalid, { ...testContext, errorContext: "test Chain initialization" })
         reflections.length = 0
         expect(errorCause(run(
@@ -654,7 +762,7 @@ describe("managed invocation", () => {
         }
         managedStateClass(Value)
         const value = new Value()
-        value.nested = { failure }
+        value.nested = { failure: rejected(failure) }
 
         expect(errorCause(run(
             new Chain(value, { ...testContext, errorContext: "test Chain initialization" }),
@@ -910,7 +1018,7 @@ describe("managed invocation", () => {
         managedStateClass(Value)
         const failure = new Error("nested failure")
         const source = new Value()
-        source.child = { failure }
+        source.child = { failure: rejected(failure) }
 
         expect(errorCause(run(
             new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
@@ -951,14 +1059,14 @@ describe("managed invocation", () => {
         ]
         const argumentError = new Error("argument")
         const source = new Value()
-        source.first = receiverErrors[0]
-        source.second = receiverErrors[1]
+        source.first = rejected(receiverErrors[0])
+        source.second = rejected(receiverErrors[1])
 
         const result = run(
             new Chain(source, { ...testContext, errorContext: "test Chain initialization" }),
             [],
             "read",
-            [{ error: argumentError }],
+            [{ error: rejected(argumentError) }],
             { ...testContext, errorContext: "test run" },
             { repair: false },
         )
@@ -971,7 +1079,7 @@ describe("managed invocation", () => {
         for (const error of result.errors) {
             const argument = errorCause(error) === argumentError
             assert.equal(error.errorContext, argument ? "test run" : "test Chain initialization")
-            assert.equal(error.kind, argument ? runtime.ERROR_KIND.OperationInputFailed : runtime.ERROR_KIND.ChainValueFailed)
+            assert.equal(error.kind, runtime.ERROR_KIND.OperationInputFailed)
         }
     })
 
@@ -994,8 +1102,8 @@ describe("managed invocation", () => {
             { repair: false },
         )
 
-        argumentValue.resolve(argumentFailure)
-        receiverValue.resolve(receiverFailure)
+        argumentValue.reject(argumentFailure)
+        receiverValue.reject(receiverFailure)
 
         const errors = (await result).errors
         expect(errors).to.have.length(2)
@@ -1006,7 +1114,7 @@ describe("managed invocation", () => {
         for (const error of errors) {
             const argument = errorCause(error) === argumentFailure
             assert.equal(error.errorContext, argument ? "test run" : "test Chain initialization")
-            assert.equal(error.kind, argument ? runtime.ERROR_KIND.OperationInputFailed : runtime.ERROR_KIND.ChainValueFailed)
+            assert.equal(error.kind, runtime.ERROR_KIND.OperationInputFailed)
         }
     })
 
@@ -1054,7 +1162,7 @@ describe("managed invocation", () => {
         expect(validChain._state.value.value).to.be(2)
     })
 
-    it("poisons a mutation receiver when its method returns an Error", () => {
+    it("publishes a successful mutation returning ordinary Error data", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const resultError = new Error("method result")
         class Value {
@@ -1076,11 +1184,42 @@ describe("managed invocation", () => {
             { ...testContext, errorContext: "test run" },
             { repair: false, mutationScopeDepth: 0 },
         ))).to.be(resultError)
-        expect(chain._state.value.cause).to.be(resultError)
+        expect(chain._state.value.value).to.be(2)
         expect(value.value).to.be(1)
     })
 
-    it("attributes an Error added inside an admitted mutation result", () => {
+    for (const prepared of [false, true]) for (const pending of [false, true]) {
+        it(`preserves stored native Error precedence: prepared=${prepared}, pending=${pending}`, async () => {
+            const ctx = { execution: new Execution(), errorContext: "stored Error data" }
+            let reads = 0, stored
+            const makeError = () => {
+                stored = new Error("healthy data")
+                Object.defineProperty(stored, "then", { get() { reads++; return undefined } })
+                return stored
+            }
+            const input = prepared ? importValue(makeError(), ctx) : undefined
+            const source = { value: 0, store(input) {
+                this.error = input ?? makeError()
+                this.value = 1
+                return pending ? Promise.resolve(7) : 7
+            } }
+            const chain = new Chain(importValue(source, ctx), ctx)
+            const result = run(chain, [], "store", [input], ctx, { mutationScopeDepth: 0 })
+            assert.equal(result instanceof Promise, pending)
+            assert.equal(await result, 7)
+            assert.equal(lookupPath(chain, ["value"], ctx), 1)
+            assert.equal(lookupPath(chain, ["error"], ctx), stored)
+            assert.equal(runtime.hasError(chain, [], ctx), false)
+            assert.equal(runtime.getErrors(chain, [], ctx), null)
+            assert.equal(exportValue(chain, [], ctx).error, stored)
+            assert.equal(reads, 0, "Native Error data must bypass thenability inspection")
+            assert.equal(source.value, 0)
+            assert.equal(Object.hasOwn(source, "error"), false)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    it("preserves ordinary Error data added inside a detached mutation result", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const cause = new Error("detached result failure")
         class Value {
@@ -1109,9 +1248,8 @@ describe("managed invocation", () => {
         )
         const failure = lookupPath(new Chain(result, { ...testContext, errorContext: "test Chain initialization" }), ["failure"], testContext)
 
-        expect(failure.cause).to.be(cause)
-        expect(failure.errorContext).to.be("test run")
-        expect(failure.kind).to.be(runtime.ERROR_KIND.InvocationFailed)
+        expect(failure).to.be(cause)
+        expect(runtime.getErrors(new Chain(result, testContext), [], testContext)).to.be(null)
         expect(chain._state.value).not.to.be(value)
         expect(Object.hasOwn(chain._state.value, "result")).to.be(false)
     })
@@ -1141,7 +1279,7 @@ describe("managed invocation", () => {
         completion.resolve(resultError)
 
         expect(errorCause(await result)).to.be(resultError)
-        expect(chain._state.value.cause).to.be(resultError)
+        expect(chain._state.value.count).to.be(2)
         expect(value.count).to.be(1)
     })
 
@@ -1312,7 +1450,7 @@ describe("managed invocation", () => {
         const value = {
             change() {
                 this.then = resolve => resolve(1)
-                this.bad = cause
+                this.bad = runtime.createPoisonError(cause, testContext, runtime.ERROR_KIND.InvalidManagedReceiver)
             },
         }
         const chain = new Chain(value, { ...testContext, errorContext: "test Chain initialization" })
@@ -1895,7 +2033,8 @@ describe("managed invocation", () => {
                 return []
             },
         })
-        importValue(broken, { ...testContext, errorContext: "prepared fatal argument" })
+        // Fresh argument reception still runs while receiver capture waits.
+        // Prepared argument export instead waits for its ordered capture turn.
         fail = true
         const receiver = new Value()
         receiver.child = receiverValue.promise

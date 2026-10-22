@@ -7,8 +7,13 @@ import { readLanguageProperty } from "../src/language-properties.js"
 import { OperationOwner } from "../src/operation-lifecycle.js"
 import { walkObservationPath } from "../src/path-operation.js"
 import { TREE_NODE, findBranch } from "../src/external-mutation-tree.js"
+import { validationError, ERROR_KIND } from "../src/error.js"
 
 export { expect }
+// Graph-failure fixtures use explicit poison; ordinary native Errors are data.
+export function poison(message) {
+    return validationError(message, { errorContext: "test poison" }, ERROR_KIND.OperationInputFailed)
+}
 export { readLanguageProperty as logicalProperty, enumerableLanguageKeys as logicalKeys } from "../src/language-properties.js"
 
 export function* logicalArrayValues(array, operationContext) {

@@ -393,7 +393,7 @@ describe("bounded external ordering sequences", () => {
                     const ctx = { execution: new r.Execution(), errorContext: {} }
                     const holds = sequence.map(() => Promise.withResolvers())
                     const starts = new Set(), ends = new Set(), released = new Set()
-                    const make = () => ({ work(index) {
+                    const make = () => r.externalState({ work(index) {
                         starts.add(index)
                         return holds[index].promise.then(() => { ends.add(index); return index })
                     } })
@@ -813,7 +813,7 @@ describe("structural Array command sequences", function () {
             await r.enter(inner, [], ctx, false, observed => {
                 assert.deepStrictEqual(r.export(observed, [], ctx), { n: 8 })
             })
-            r.assignPath(inner, [], new Error("ordinary Error data"), ctx)
+            r.assignPath(inner, [], r.validationError("poison", ctx, r.ERROR_KIND.OperationInputFailed), ctx)
             assert.equal(r.hasError(inner, [], ctx), true)
             assert(r.isPoisonError(r.getErrors(inner, [], ctx)))
         }, 0)
@@ -886,7 +886,8 @@ describe("scope boundary regressions", () => {
         for (const position of [0, 1, 2]) it(`collects accessible snapshot Errors around failed descriptor ${position} through ${action}`, () => {
             const ctx = { execution: new r.Execution(), errorContext: {} }
             const first = new Error("first"), reflection = new Error("descriptor"), last = new Error("last")
-            const properties = [["first", first], ["last", last]]
+            const properties = [["first", r.createPoisonError(first, ctx, r.ERROR_KIND.ExternalPropertyReadFailed)],
+                ["last", r.createPoisonError(last, ctx, r.ERROR_KIND.ExternalPropertyReadFailed)]]
             properties.splice(position, 0, ["inaccessible", 0])
             const data = new Proxy(Object.fromEntries(properties), {
                 getOwnPropertyDescriptor(target, key) {

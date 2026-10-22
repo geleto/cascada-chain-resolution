@@ -1,3 +1,4 @@
+import { isPoisonError } from "./error.js"
 import * as metadata from "./meta.js"
 import { releaseOnClose } from "./operation-lifecycle.js"
 import { collectInputs, continueGraphTransition } from "./internal-step.js"
@@ -6,15 +7,14 @@ import { markPromiseHandled } from "./thenable-subscription.js"
 const PENDING = 0, SETTLED = 1, FORWARD = 2
 const createIdentity = () => {
     const cell = { state: SETTLED }
-    cell.lineage = cell
-    return cell
+    return { domain: cell, cell }
 }
 
 // All object identities use source-free keys, including exact opaque leaves.
 // Comparison therefore never reflects on a host object to recognize a token.
 function captureIdentity(value, operationContext) {
     if (!metadata.isObjectLike(value)) return value
-    const meta = Error.isError(value)
+    const meta = isPoisonError(value)
         ? metadata.getOrCreateMeta(value, operationContext, metadata.TYPE.Error)
         : metadata.requireMeta(value, operationContext)
     return meta.generation ??= createIdentity()
@@ -22,6 +22,15 @@ function captureIdentity(value, operationContext) {
 
 function inheritIdentity(source, copy, operationContext) {
     metadata.requireMeta(copy, operationContext).generation = captureIdentity(source, operationContext)
+}
+
+// Snapshot freshness is independent of the captured mutation decision. Renew
+// each incoming domain once, preserving distinctions between older snapshots
+// which can share cells. The boundary discards this map after adopting its copies.
+function copyIdentity(identity, domains) {
+    let domain = domains.get(identity.domain)
+    if (!domain) domains.set(identity.domain, domain = {})
+    return { domain, cell: identity.cell }
 }
 
 function identityRoot(identity) {
@@ -85,8 +94,9 @@ class IdentityPublication {
     }
     reserve(meta) {
         const before = meta.generation ??= createIdentity()
-        const after = meta.generation = { state: PENDING, size: 1, lineage: before.lineage }
-        this.captures.push({ before, after })
+        const after = { state: PENDING, size: 1 }
+        meta.generation = { domain: before.domain, cell: after }
+        this.captures.push({ before: before.cell, after })
     }
     suspend() {
         if (this.pending) return
@@ -155,41 +165,48 @@ class IdentityPublication {
 }
 
 function compareIdentities(left, right, owner, sameValueZero = false) {
-    left = identityRoot(left)
-    right = identityRoot(right)
     if (left === right || (sameValueZero && Object.is(left, right))) return true
     if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false
-    // A no-op can only forward to its predecessor. Unrelated lineages cannot
-    // merge, regardless of how their unfinished publications settle.
-    if (left.lineage !== right.lineage) return false
-    if (left?.state !== PENDING && right?.state !== PENDING) return false
+    // Copies can share mutation cells without sharing identity. Only cells in
+    // the same domain need a comparison or completion subscription.
+    if (left.domain !== right.domain) return false
+    left = identityRoot(left.cell)
+    right = identityRoot(right.cell)
+    if (left === right) return true
+    if (left.state !== PENDING && right.state !== PENDING) return false
     return waitIdentities(left, right, owner)
 }
 
+// Group the currently proved aliases. Managed snapshots can use this partition
+// immediately; native assembly calls it after all relevant comparisons finish.
+function groupCapturedIdentities(nodes) {
+    const domains = new Map(), canonical = new Map()
+    for (const node of nodes) {
+        const { domain, cell } = node.identity
+        let group = domains.get(domain)
+        if (!group) domains.set(domain, group = new Map())
+        const root = identityRoot(cell)
+        const first = group.get(root)
+        if (first) node.identity = first.identity
+        else { group.set(root, node); canonical.set(node.identity, node) }
+    }
+    return canonical
+}
+
 // Assembly needs a fixed equality partition, not every publication outcome.
-// A lineage represented by just one key already has its final partition.
+// A domain represented by just one cell already has its final partition.
 // Group only the completed capture; no source walk or history search is needed.
 function resolveCapturedIdentities(nodes, owner) {
-    const anchors = new Map(), representatives = new Set(), waits = []
-    for (const node of nodes) {
-        node.identity = identityRoot(node.identity)
-        if (representatives.has(node.identity)) continue
-        representatives.add(node.identity)
-        const first = anchors.get(node.identity.lineage)
-        if (!first) anchors.set(node.identity.lineage, node.identity)
-        else if (node.identity !== first) waits.push(compareIdentities(first, node.identity, owner))
+    const anchors = new Map(), waits = []
+    for (const node of groupCapturedIdentities(nodes).values()) {
+        const first = anchors.get(node.identity.domain)
+        if (!first) anchors.set(node.identity.domain, node.identity)
+        else waits.push(compareIdentities(first, node.identity, owner))
     }
     // Equal comparisons can finish by merging while their common predecessor
-    // is still pending. A false same-lineage comparison settles both endpoints.
-    // Thus one anchor per lineage suffices to fix the whole partition.
-    return collectInputs(waits, owner.operationContext, () => {
-        const canonical = new Map()
-        for (const node of nodes) {
-            node.identity = identityRoot(node.identity)
-            if (!canonical.has(node.identity)) canonical.set(node.identity, node)
-        }
-        return canonical
-    }, owner)
+    // is still pending. A false same-domain comparison settles both endpoints.
+    // Thus one anchor per domain suffices to fix the whole partition.
+    return collectInputs(waits, owner.operationContext, () => groupCapturedIdentities(nodes), owner)
 }
 
 function waitIdentities(left, right, owner) {
@@ -235,5 +252,6 @@ function visitRepresentation(value, identity, visited) {
     return true
 }
 
-export { createIdentity, captureIdentity, inheritIdentity, compareIdentities, resolveCapturedIdentities,
+export { createIdentity, captureIdentity, inheritIdentity, copyIdentity, compareIdentities,
+    groupCapturedIdentities, resolveCapturedIdentities,
     IdentityPublication, visitRepresentation }

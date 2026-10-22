@@ -77,8 +77,19 @@ function verifyParents(context, ...roots) {
             if (!descriptor?.enumerable || !("value" in descriptor)) continue
             const child = descriptor.value
             if (!metadata.isTraversableType(metadata.metaOf(child, context)?.type)) continue
-            if (!record || !hasBackingOccurrence(child, record, index)) fail("Missing physical backing occurrence")
-            walk(child)
+            const captured = record && hasBackingOccurrence(child, record, index)
+            // A failed initial descriptor is masked by a fixed poison version.
+            // Its physical value was never available for indexing. Require a
+            // backing occurrence whenever any logical owner can expose it.
+            const exposed = [...record?.owners ?? [owner]].some(registered => {
+                const state = metadata.metaOf(registered, context)
+                const range = state.arrayRange
+                const logical = index - (range?.start ?? 0)
+                const length = range ? range.lengthState.minimum ?? range.lengthState : array.length
+                return logical >= 0 && logical < length && !state.placementVersions?.[logical]
+            })
+            if (!captured && exposed) fail("Missing exposed backing occurrence")
+            if (captured) walk(child)
         }
     }
 

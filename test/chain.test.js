@@ -1,3 +1,4 @@
+import { poison } from "./support.js"
 import * as runtime from "../src/index.js"
 import { requiresCopyOnWrite, metaOf } from "../src/meta.js"
 import {
@@ -74,7 +75,7 @@ describe("Chain root state", () => {
         }
     })
 
-    it("treats an uninspectable mutation receiver as external", () => {
+    it("preserves classification poison when later selecting a mutation receiver", () => {
         const testContext = { execution: new Execution(), errorContext: "test operation" }
         const value = new Proxy({}, {
             getPrototypeOf() {
@@ -83,10 +84,11 @@ describe("Chain root state", () => {
         })
         const chain = new Chain(value, testContext)
 
-        expect(chain._state.value).to.be(value)
+        const failure = chain._state.value
+        expect(runtime.isPoisonError(failure)).to.be(true)
         const outcome = assignPath(chain, ["key"], 1, testContext)
-        expect(outcome).to.be.a(Error)
-        expect(outcome.kind).to.be(runtime.ERROR_KIND.ExternalLocationConflict)
+        expect(outcome).to.be(failure)
+        expect(outcome.kind).to.be(runtime.ERROR_KIND.ChainValueFailed)
         expect(chain._state.value).to.be(outcome)
     })
 
@@ -245,7 +247,7 @@ describe("Chain root state", () => {
         const errorSegments = ["before"]
         const foundError = hasError(new Chain(errorRoot.promise, testContext), errorSegments, testContext)
         errorSegments[0] = "after"
-        errorRoot.resolve({ before: new Error("selected"), after: { clean: true } })
+        errorRoot.resolve({ before: poison("selected"), after: { clean: true } })
 
         expect(await read).to.be(1)
         expect(await exported).to.eql({ selected: true })

@@ -4,7 +4,7 @@ import { prepareInput, receiveValue } from "./input-preparations.js"
 const IMPORT_POLICY = {
     Context: { kind: errorUtils.ERROR_KIND.ContextValueFailed, imported: true },
     MethodResult: { kind: errorUtils.ERROR_KIND.InvocationFailed, methodResult: true, imported: true },
-    ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, externalRoot: true, imported: true },
+    ExternalProperty: { kind: errorUtils.ERROR_KIND.ExternalPropertyReadFailed, imported: true },
 }
 
 function importValue(value, operationContext, delivery) {
@@ -24,7 +24,10 @@ function importReadyMethodResult(value, operationContext, failures, receiver) {
     // to call completion; independently pending descendants have their own lifetime.
     return prepareInput(value, operationContext, {
         ...IMPORT_POLICY.MethodResult,
-        receiver,
+        // Identity-only: later independent deliveries must not retain the receiver.
+        receiverIdentity: receiver !== null &&
+            (typeof receiver === "object" || typeof receiver === "function")
+            ? new WeakSet([receiver]) : undefined,
     }, undefined, failures)
 }
 

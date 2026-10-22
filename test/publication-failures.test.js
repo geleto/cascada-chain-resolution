@@ -92,7 +92,7 @@ describe("complete publication failures", () => {
     for (const delayed of [false, true]) {
         it(`keeps an assigned Error and failed entry write-through together, delayed=${delayed}`, async () => {
             const ctx = context(), inputContext = context(ctx.execution)
-            const original = runtime.import(new Error("assigned failure"), inputContext)
+            const original = runtime.createPoisonError(new Error("assigned failure"), inputContext, runtime.ERROR_KIND.OperationInputFailed)
             const publication = new Error("refused entry write")
             const physical = { value: 1 }, hold = Promise.withResolvers()
             let refuses = true
@@ -210,7 +210,7 @@ describe("complete publication failures", () => {
                     n: 0,
                     change() {
                         this.n = 1
-                        const result = succeeds ? 7 : hostFailure
+                        const result = succeeds ? 7 : runtime.createPoisonError(hostFailure, ctx, runtime.ERROR_KIND.InvocationFailed)
                         return delivery === "ready" ? result
                             : delivery === "synchronous" ? ready(result) : pending.promise
                     },
@@ -255,7 +255,7 @@ describe("complete publication failures", () => {
             const expected = ["host", "target publication", "ancestor publication"].map(message => new Error(message))
             const pending = Promise.withResolvers()
             let targetFailed = false
-            const parent = new Proxy({ receiver: { fail() { return expected[0] } } }, {
+            const parent = new Proxy({ receiver: { fail() { throw expected[0] } } }, {
                 set(target, key, value, receiver) {
                     if (runtime.isPoisonError(value)) {
                         targetFailed = true
@@ -292,7 +292,7 @@ describe("complete publication failures", () => {
         const ctx = context()
         const expected = ["host", "publication", "copy"].map(message => new Error(message))
         let copying = false
-        const source = new Proxy({ receiver: { fail() { return expected[0] } } }, {
+        const source = new Proxy({ receiver: { fail() { throw expected[0] } } }, {
             set(target, key, value, receiver) {
                 if (runtime.isPoisonError(value)) {
                     copying = true
@@ -341,7 +341,7 @@ describe("complete publication failures", () => {
         it(`${method} retains a pending removed Error after parent publication fails without delaying repair`, async () => {
             const ctx = context()
             const introduced = context(ctx.execution)
-            const original = runtime.import(new Error("removed value"), introduced)
+            const original = runtime.createPoisonError(new Error("removed value"), introduced, runtime.ERROR_KIND.OperationInputFailed)
             const publicationFailure = new Error("parent publication")
             const pending = Promise.withResolvers()
             const items = [pending.promise]
@@ -372,7 +372,7 @@ describe("complete publication failures", () => {
                     const ctx = context()
                     const introduced = context(ctx.execution)
                     const cause = new Error("input rejection")
-                    const original = runtime.import(cause, introduced)
+                    const original = runtime.createPoisonError(cause, introduced, runtime.ERROR_KIND.OperationInputFailed)
                     const publication = repeated ? original : new Error("publication failure")
                     const later = Promise.withResolvers()
                     let fail = false
@@ -444,7 +444,7 @@ describe("complete publication failures", () => {
             it(`${method} publishes receiver failure while retaining its ${pending ? "pending" : "ready"} result Error`, async () => {
                 const ctx = context()
                 const introduced = context(ctx.execution)
-                const original = runtime.import(new Error("removed value"), introduced)
+                const original = runtime.createPoisonError(new Error("removed value"), introduced, runtime.ERROR_KIND.OperationInputFailed)
                 const publication = new Error("Array replay")
                 const later = Promise.withResolvers()
                 const removed = pending ? later.promise : original

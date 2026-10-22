@@ -24,7 +24,7 @@ registerHooks({ load(url, context, next) {
             assert(source.includes(marker), "Owner finalization fault anchor needs updating")
             source = source.replace(marker, replacement)
         }
-    } else if (url === root + "managed-capture.js") {
+    } else if (url === root + "captured-graph.js") {
         const marker = "    discard() {"
         assert(source.includes(marker), "Export output cleanup fault anchor needs updating")
         source = source.replace(marker, marker + '\n        globalThis.ownerFinalizationFault("export-discard", this.owner.operationContext)')

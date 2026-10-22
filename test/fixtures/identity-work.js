@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 import { registerHooks } from "node:module"
 
 let counts
-const reset = () => { counts = { links: 0, moves: 0, deliveries: 0, captures: 0, waits: 0 } }
+const reset = () => { counts = { roots: 0, links: 0, moves: 0, deliveries: 0, captures: 0, waits: 0 } }
 globalThis.countIdentityWork = key => { counts[key]++ }
 const identityURL = new URL("../../src/captured-identity.js", import.meta.url).href
 registerHooks({ load(url, context, next) {
@@ -12,6 +12,8 @@ registerHooks({ load(url, context, next) {
     if (url !== identityURL) return result
     let source = String(result.source)
     for (const [marker, replacement] of [
+        ["function identityRoot(identity) {",
+            "function identityRoot(identity) { globalThis.countIdentityWork('roots');"],
         ["function captureIdentity(value, operationContext) {",
             "function captureIdentity(value, operationContext) { globalThis.countIdentityWork('captures');"],
         ["function waitIdentities(left, right, owner) {",
@@ -36,6 +38,7 @@ const context = () => ({ execution: new r.Execution(), errorContext: "identity w
 const turn = () => new Promise(setImmediate)
 const samples = []
 const partitions = []
+const snapshots = []
 
 // Representation-only remaps need placements, not search identity keys.
 {
@@ -139,7 +142,7 @@ for (const published of [false, true]) {
     const keys = [left, right].map(chain => captureIdentity(chain._state.value, ctx))
     for (let index = 0; index < 1024; index++) compareIdentities(keys[0], keys[1], owner)
     owner.close()
-    assert.deepEqual(keys.map(key => key.queries?.size ?? 0), [0, 0], "Both pending endpoints detach")
+    assert.deepEqual(keys.map(key => key.cell.queries?.size ?? 0), [0, 0], "Both pending endpoints detach")
     reset()
     publications.forEach(publication => publication.finish(false))
     assert.equal(counts.deliveries, 0)
@@ -242,5 +245,33 @@ for (const published of [false, true]) {
     assert.equal(destination.outcome(), true)
 }
 
-console.log(JSON.stringify({ samples, partitions, closedComparisons: 1024, sourceCollected: true,
+// Alternate snapshotting with unfinished mutation around a small graph. A
+// snapshot must replace domains, not build a projection chain through history.
+for (const size of [64, 128, 256]) {
+    const ctx = context(), source = new r.Chain([, 7, ,], ctx)
+    const before = new r.Chain(r.lookupPath(source, [], ctx), ctx), gate = Promise.withResolvers()
+    const entries = [r.enter(source, [0], ctx, true, () => gate.promise)]
+    r.run(source, [], "copyWithin", [0, 2, 3], ctx, { mutationScopeDepth: 0 })
+    const current = new r.Chain([r.lookupPath(before, [], ctx), r.lookupPath(source, [], ctx)], ctx)
+    reset()
+    for (let i = 0; i < size; i++) {
+        entries.push(r.enter(current, [1, 0], ctx, true, () => gate.promise))
+        r.run(current, [1], "copyWithin", [0, 2, 3], ctx, { mutationScopeDepth: 1 })
+        const host = new r.ContextChain({ api: r.externalState({ value: r.lookupPath(current, [], ctx) }) }, ctx, { api: {} })
+        const value = r.lookupPath(host, ["api", "value"], ctx)
+        assert(!r.isPending(value, ctx))
+        r.assignPath(current, [], value, ctx)
+        r.assignPath(host, [], undefined, ctx)
+    }
+    assert.equal(counts.waits, 0, "Copying creates no completion subscriptions")
+    const output = r.export(current, [], ctx)
+    gate.resolve()
+    await Promise.all(entries)
+    const value = await output
+    assert.equal(value[0], value[1])
+    assert(counts.roots + counts.links <= 20 * size + 64, JSON.stringify({ size, ...counts }))
+    snapshots.push({ size, ...counts })
+}
+
+console.log(JSON.stringify({ samples, partitions, snapshots, closedComparisons: 1024, sourceCollected: true,
     nestedCompletion: 8192, completedSiblingsCollected: 1024, adoptedSiblingsCollected: 1024 }))

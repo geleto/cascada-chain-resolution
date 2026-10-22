@@ -2,10 +2,18 @@ import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import * as r from "../src/index.js"
+import { OrderedThenable, ready } from "./ordered-thenable.js"
 import { verifyRefCounts } from "./verify-refcounts.js"
 
 const context = () => ({ execution: new r.Execution(), errorContext: "snapshot identity" })
 const select = (route, chain, ctx) => (route === "lookup" ? r.lookupPath : r.export)(chain, ["api", "pair"], ctx)
+function snapshot(value, ctx) {
+    const host = new r.ContextChain({ api: r.externalState({ pair: value }) }, ctx, { api: {} })
+    const result = select("lookup", host, ctx)
+    assert(!r.isPending(result, ctx))
+    r.assignPath(host, [], undefined, ctx)
+    return result
+}
 
 // copyWithin removes the pending destination using a known hole. Contents and
 // length become ready; only whether the earlier entry wrote remains undecided.
@@ -56,15 +64,20 @@ describe("snapshot canonical identity", () => {
                 assert.equal(r.assignPath(chain, ["api", "marker"], 2, ctx), undefined,
                     "Earlier managed completion must not wait behind the snapshot's old reservation")
             })
-            const api = r.externalState({ marker: 0, pair: work.pair })
-            Object.defineProperty(work.pair, "captured", { enumerable: true, get() { reads++; return 9 } })
+            const pair = new Proxy({ ...work.pair, captured: 9 }, {
+                getOwnPropertyDescriptor(target, key) {
+                    if (key === "captured") reads++
+                    return Reflect.getOwnPropertyDescriptor(target, key)
+                },
+            })
+            const api = r.externalState({ marker: 0, pair })
             chain = new r.ContextChain({ api }, ctx, { api: {} })
             const result = select(route, chain, ctx)
-            assert(r.isPending(result, ctx))
+            assert.equal(r.isPending(result, ctx), route === "export")
             assert.equal(reads, 1)
             assert.equal(r.assignPath(chain, ["api", "pair"], null, ctx), undefined)
             assert.equal(api.pair, null)
-            // Receive the eventual managed output through the ordinary holder.
+            // Managed output is usable before its aliases are decided.
             const held = route === "lookup" ? new r.Chain(result, ctx) : undefined
             work.gate.resolve()
             await work.entry
@@ -94,7 +107,7 @@ describe("snapshot canonical identity", () => {
         it(`reports data failure without waiting for unrelated identity: ${route}`, async () => {
             const ctx = context(), work = pendingPair(ctx)
             const cause = new Error("snapshot data failure")
-            const pair = { ...work.pair, failure: cause }
+            const pair = { ...work.pair, failure: r.createPoisonError(cause, ctx, r.ERROR_KIND.ExternalPropertyReadFailed) }
             const chain = new r.ContextChain({ api: r.externalState({ pair }) }, ctx, { api: {} })
             const result = select(route, chain, ctx)
             assert(!r.isPending(result, ctx))
@@ -122,6 +135,128 @@ describe("snapshot canonical identity", () => {
             assert.equal(result.kind, r.ERROR_KIND.ExternalPropertyReadFailed)
         })
     }
+
+    const completionCases = [
+        ["at", [0], 7],
+        ["includes", [7], true],
+        ["indexOf", [7], 0],
+        ["lastIndexOf", [7], 2, true],
+        ["at", [3], undefined],
+        ["includes", [7, 3], false],
+        ["indexOf", [7, 3], -1],
+        ["lastIndexOf", [7, -4], -1, true],
+        ["slice", [0, 0], []],
+    ]
+    for (const identityReady of [true, false])
+    for (const [method, args, expected, reverse] of completionCases) {
+        it(`finishes determined Array results before unrelated aliases: ${method}(${args}), ready=${identityReady}`, async () => {
+            const ctx = context(), work = pendingPair(ctx)
+            if (identityReady) { work.gate.resolve(); await work.entry; await new Promise(setImmediate) }
+            const aliases = [work.pair.a, work.pair.b]
+            const pair = reverse ? [...aliases, 7] : [7, ...aliases]
+            const api = r.externalState({ pair, marker: 0 })
+            const chain = new r.ContextChain({ api }, ctx, { api: {} })
+            const result = r.run(chain, ["api", "pair"], method, args, ctx, {})
+            assert(!r.isPending(result, ctx))
+            const held = method === "slice" ? new r.Chain(result, ctx) : undefined
+            assert.deepEqual(held ? r.export(held, [], ctx) : result, expected)
+            assert.equal(r.assignPath(chain, ["api", "marker"], 1, ctx), undefined)
+            assert.equal(api.marker, 1)
+            work.gate.resolve()
+            await work.entry
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const delivery of ["ready", "synchronous", "native", "ordered"]) {
+        it(`keeps snapshot identities fresh regardless of source admission: ${delivery}`, async () => {
+            const ctx = context(), shared = { n: 1 }
+            const gate = delivery === "ordered" ? new OrderedThenable() : Promise.withResolvers()
+            const input = delivery === "ready" ? shared : delivery === "synchronous" ? ready(shared) : gate.promise ?? gate
+            const source = new r.Chain(input, ctx)
+            const chain = new r.ContextChain({ api: r.externalState({ items: [shared] }) }, ctx, { api: {} })
+            const result = r.run(chain, ["api", "items"], "includes", [r.lookupPath(source, [], ctx)], ctx, {})
+            if (delivery === "native" || delivery === "ordered") gate.resolve(shared)
+            assert.equal(await result, false)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+    }
+
+    for (const identityReady of [true, false]) for (const write of [false, true]) {
+        it(`selects managed objects before native alias assembly: ready=${identityReady}, write=${write}`, async () => {
+            const ctx = context(), work = pendingPair(ctx, write)
+            if (identityReady) { work.gate.resolve(); await work.entry; await new Promise(setImmediate) }
+            const selected = { left: work.pair.a, right: work.pair.b }
+            selected.self = selected
+            const chain = new r.ContextChain({ api: r.externalState({ items: [0, selected] }) }, ctx, { api: {} })
+            const result = r.run(chain, ["api", "items"], "at", [1], ctx, {})
+            assert(!r.isPending(result, ctx))
+            const held = new r.Chain(result, ctx)
+            assert.equal(r.lookupPath(held, ["left", 1], ctx), 7)
+            const exported = r.export(held, [], ctx)
+            assert.equal(r.isPending(exported, ctx), !identityReady)
+            work.gate.resolve()
+            await work.entry
+            const output = await exported
+            assert.equal(output.left === output.right, !write)
+            assert.equal(output.self, output)
+            const originals = new r.Chain([r.lookupPath(work.before, [], ctx)], ctx)
+            assert.equal(r.run(originals, [], "includes", [r.lookupPath(held, ["left"], ctx)], ctx, {}), false)
+            verifyRefCounts(ctx, work.source._state, work.before._state, chain._state, held._state, originals._state)
+        })
+    }
+
+    for (const write of [false, true]) {
+        it(`preserves independent snapshot identities through repeated recapture: write=${write}`, async () => {
+            const ctx = context(), work = pendingPair(ctx, write)
+            const first = new r.Chain(snapshot([work.pair.a, work.pair.b], ctx), ctx)
+            const second = new r.Chain(snapshot([work.pair.a, work.pair.b], ctx), ctx)
+            const held = new r.Chain(snapshot([work.pair.a, work.pair.b,
+                r.lookupPath(first, [0], ctx), r.lookupPath(first, [1], ctx),
+                r.lookupPath(second, [0], ctx), r.lookupPath(second, [1], ctx)], ctx), ctx)
+            for (let round = 0; round < 8; round++)
+                r.assignPath(held, [], snapshot(r.lookupPath(held, [], ctx), ctx), ctx)
+            const output = r.export(held, [], ctx)
+            assert(r.isPending(output, ctx))
+            work.gate.resolve()
+            await work.entry
+            const values = await output
+            for (let i = 0; i < values.length; i++) for (let j = 0; j < values.length; j++)
+                assert.equal(values[i] === values[j], i === j || (!write && Math.floor(i / 2) === Math.floor(j / 2)))
+            verifyRefCounts(ctx, work.source._state, work.before._state, first._state, second._state, held._state)
+        })
+
+        it(`isolates mutation of a snapshot before source identity completion: write=${write}`, async () => {
+            const ctx = context(), work = pendingPair(ctx, write)
+            const held = new r.Chain(snapshot(work.pair, ctx), ctx)
+            const retained = new r.Chain(r.lookupPath(held, [], ctx), ctx)
+            assert.equal(r.assignPath(held, ["a", 1], 9, ctx), undefined)
+            const updated = r.export(held, [], ctx)
+            assert(!r.isPending(updated, ctx), "A write establishes distinct snapshot identity immediately")
+            assert.notEqual(updated.a, updated.b)
+            assert.deepEqual(updated.a, [, 9, ,])
+            assert.deepEqual(updated.b, [, 7, ,])
+            work.gate.resolve()
+            await work.entry
+            const original = await r.export(retained, [], ctx)
+            assert.equal(original.a === original.b, !write)
+            assert.deepEqual(original.a, [, 7, ,])
+            assert.deepEqual(await r.export(work.before, [], ctx), [, 7, ,])
+            assert.deepEqual(await r.export(work.source, [], ctx), [, 7, ,])
+            verifyRefCounts(ctx, work.source._state, work.before._state, held._state, retained._state)
+        })
+    }
+
+    it("selects an ordinary managed object before its child data settles", async () => {
+        const ctx = context(), gate = Promise.withResolvers()
+        const source = new r.Chain([{ value: gate.promise }], ctx)
+        const result = r.run(source, [], "at", [0], ctx, {})
+        assert(!r.isPending(result, ctx))
+        const held = new r.Chain(result, ctx), exported = r.export(held, [], ctx)
+        assert(r.isPending(exported, ctx))
+        gate.resolve(7)
+        assert.deepEqual(await exported, { value: 7 })
+    })
 
     it("releases snapshot sources while identity grouping is pending", () => {
         const result = spawnSync(process.execPath, [...process.execArgv, "--expose-gc",

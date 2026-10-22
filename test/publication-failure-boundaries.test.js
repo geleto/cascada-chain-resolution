@@ -6,7 +6,7 @@ import { OrderedThenable, ChainedThenable } from "./ordered-thenable.js"
 
 describe("captured publication failure boundaries", () => {
     it("fails execution when normalized publication readiness rejects", () => {
-        const result = spawnSync(process.execPath, ["--unhandled-rejections=strict",
+        const result = spawnSync(process.execPath, [...process.execArgv, "--unhandled-rejections=strict",
             fileURLToPath(new URL("./fixtures/publication-rejection-audit.js", import.meta.url))],
         { encoding: "utf8", timeout: 10000 })
         assert.equal(result.status, 0, result.stdout + result.stderr)
@@ -34,7 +34,7 @@ describe("captured publication failure boundaries", () => {
             else {
                 assert.equal(actual.cause, raw)
                 assert.equal(actual.errorContext, initialization.errorContext)
-                assert.equal(actual.kind, r.ERROR_KIND.ContextValueFailed)
+                assert.equal(actual.kind, root ? r.ERROR_KIND.ContextValueFailed : r.ERROR_KIND.OperationInputFailed)
             }
             assert.equal(execution.fatalError, null)
             assert.deepEqual(reports, [])

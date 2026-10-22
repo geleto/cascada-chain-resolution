@@ -16,16 +16,13 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
     path = operation.route.path
     args = undefined
     const mutation = operation.mutation
-    let externalAccess
     const result = invocation.invokeMethod(
         operation,
-        context => selectMethodDescription(context, externalAccess),
+        selectMethodDescription,
         (invokeWithReceiver, beforeWait) => {
             operation.beforeWait = beforeWait
-            const native = access => {
-                externalAccess = access
-                return invokeWithReceiver(access.identity, true)
-            }
+            const native = access => access.selectReceiver(access.path.length,
+                errorUtils.ERROR_KIND.InvocationFailed, invokeWithReceiver)
             if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
             return operation.mutate((scope, state, privateChain, suffix) => {
                 if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
@@ -86,14 +83,15 @@ function selectMethodDescription(invocationWork, externalAccess) {
         )
     }
 
-    if (externalAccess) {
+    const type = invocationWork.receiverCapture?.roots[0].type ??
+        languageValues.typeOf(receiver, invocationWork.operationContext)
+    if (externalAccess && (type === languageValues.TYPE.External || type === languageValues.TYPE.Function)) {
         return {
             prepareArguments: () => invocationWork.exportArguments(),
-            invoke: args => externalAccess.call(method, args, invocationWork.retainOutput),
+            invoke: args => externalAccess.call(invocationWork.receiver, method, args, invocationWork.retainOutput),
         }
     }
 
-    const type = languageValues.typeOf(receiver, invocationWork.operationContext)
     if (type === languageValues.TYPE.Array) {
         return arrayInvocation.selectArrayMethodDescription(invocationWork)
     }

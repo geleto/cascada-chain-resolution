@@ -74,13 +74,14 @@ function transformProperty(target, operationContext, transform, { replace = fals
             baseline = baseline.recovery
             current = baseline.value
         }
-        if (!Error.isError(current) && !languageValues.isPending(current, operationContext)) {
+        if (!errorUtils.isPoisonError(current) && !languageValues.isPending(current, operationContext)) {
             languageValues.admitReadyValue(current, operationContext)
             leased = metadata.incrementReadLease(current, operationContext)
         }
-        return internalSteps.continueGraphTransition(errorUtils.catchExternalThrow(
-            () => transform(current, { present: baseline.present, baseline }), operationContext,
-            errorUtils.ERROR_KIND.PropertyMutationFailed), operationContext, normalize)
+        try { return internalSteps.continueGraphTransition(errorUtils.catchExternalThrow(
+            () => transform(current, { present: baseline.present, baseline, originalPlacement }), operationContext,
+            errorUtils.ERROR_KIND.PropertyMutationFailed), operationContext, normalize) }
+        finally { current = undefined }
     }
     if (!languageValues.isPending(readiness, operationContext)) return publish(readiness)
     const failure = errorUtils.catchExternalThrow(() => {
@@ -108,38 +109,45 @@ function transformProperty(target, operationContext, transform, { replace = fals
         return outcome
     }
     function publish(outcome) {
-        const placement = outcome.published === false ? baseline :
-            outcome.placement ?? { value: outcome.mutatedValue, present: true }
-        let published = baseline !== originalPlacement ? true : outcome.published ?? placement !== originalPlacement
-        // Result holders and assigned inputs are different placements. Only
-        // this destination's preceding presence determines its insertion order.
-        const publication = { ...placement, position: originalPlacement.present ? originalPlacement.position : Infinity }
-        const destinationVersion = gate?.version ?? target.sourceVersion
-        const structure = gate?.structure ?? target.structure
-        const failure = errorUtils.catchExternalThrow(() => {
-            if (gate || placement !== originalPlacement) {
-                const failure = propertyVersions.transferPlacement(publication, parent, key, operationContext, destinationVersion,
-                    errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure)
-                return failure
+        let placement, publication, destinationVersion, structure
+        try {
+            // A blocked repair can select the original poison and recovery intact;
+            // a successful repair selects the unwrapped baseline instead.
+            placement = outcome.published === false ? baseline :
+                outcome.placement ?? { value: outcome.mutatedValue, present: true }
+            let published = baseline !== originalPlacement && placement !== originalPlacement
+                ? true : outcome.published ?? placement !== originalPlacement
+            // Result holders and assigned inputs are different placements. Only
+            // this destination's preceding presence determines its insertion order.
+            publication = { ...placement, position: originalPlacement.present ? originalPlacement.position : Infinity }
+            destinationVersion = gate?.version ?? target.sourceVersion
+            structure = gate?.structure ?? target.structure
+            const failure = errorUtils.catchExternalThrow(() => {
+                if (gate || placement !== originalPlacement) {
+                    const failure = propertyVersions.transferPlacement(publication, parent, key, operationContext, destinationVersion,
+                        errorUtils.ERROR_KIND.AssignmentValueFailed, true, structure)
+                    return failure
+                }
+            }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
+            if (errorUtils.isPoisonError(failure)) {
+                const poison = propertyVersions.combinePublicationErrors(placement.value, failure)
+                const restoring = repair && (placement === baseline || placement === originalPlacement)
+                outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
+                if (restoring) {
+                    published = false
+                    // A failed repair leaves the original poison and recovery intact.
+                    if (destinationVersion) propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
+                        originalPlacement, operationContext, false, structure)
+                } else if (destinationVersion) propertyVersions.publishPlacementFailure(parent, key, destinationVersion,
+                    poison, baseline, operationContext, structure)
+                else target.publishFailure(poison, baseline, outcome)
+                if (!restoring) published = true
             }
-        }, operationContext, errorUtils.ERROR_KIND.PropertyMutationFailed)
-        if (errorUtils.isPoisonError(failure)) {
-            const poison = propertyVersions.combinePublicationErrors(placement.value, failure)
-            const restoring = repair && placement === baseline
-            outcome = { mutatedValue: poison, result: includePublicationFailure(outcome.result, poison, operationContext) }
-            if (restoring) {
-                published = false
-                // A failed repair leaves the original poison and recovery intact.
-                if (destinationVersion) propertyVersions.commitPlacementVersion(parent, key, destinationVersion,
-                    originalPlacement, operationContext, false, structure)
-            } else if (destinationVersion) propertyVersions.publishPlacementFailure(parent, key, destinationVersion,
-                poison, baseline, operationContext, structure)
-            else target.publishFailure(poison, baseline, outcome)
-            if (!restoring) published = true
-        }
-        target.publication.record(published)
-        return finish(outcome)
+            target.publication.record(published)
+            return finish(outcome)
+        } finally { placement = publication = destinationVersion = structure = undefined }
     }
+
     function finish(outcome) {
         if (gate) {
             target.publication.finish()
@@ -187,7 +195,7 @@ function walkMutationPath(
         preserveOnFailure = false,
     } = {},
 ) {
-    const rootState = chain._state
+    let rootState = chain._state
     const publication = new IdentityPublication(operationContext,
         chain._publication ?? metadata.metaOf(rootState, operationContext)?.entryGate?.publication)
     const targetPath = ["value", ...path]
@@ -200,8 +208,13 @@ function walkMutationPath(
     const outcome = walk(rootState, 0, () => {})
     if (languageValues.isPending(outcome, operationContext)) publication.suspend()
     return internalSteps.continueGraphTransition(outcome, operationContext, result => {
-        publication.finish()
-        return result
+        try {
+            publication.finish()
+            return result
+        } finally {
+            // A returned Error may keep this walk's frames: drop its spent graph roots.
+            operationResult = publicationValue = attachmentRoot = rootState = chain = onTarget = onExternalFailure = beforeWait = undefined
+        }
     })
 
     // Target callbacks return a mutation outcome, poison, or no result. Keep
@@ -359,7 +372,7 @@ function walkMutationPath(
         const preserveParent = mustPreserveValue(value, attachmentRoot, operationContext)
         if (observeTarget && preserveParent) attachmentRoot ??= value
         if (!observeTarget) {
-            prepareParent()
+            parent = prepareParent(value, key, atTarget, preserveParent)
             if (index > 0) publication.capture(parent)
         }
         if (atTarget) {
@@ -437,7 +450,7 @@ function walkMutationPath(
                 }
                 publicationValue = next
                 if (observeTarget) {
-                    prepareParent()
+                    parent = prepareParent(value, key, atTarget, preserveParent)
                     if (index > 0) publication.capture(parent)
                 }
                 if (recovery) propertyVersions.transferPlacement({ value: next, present: true, recovery }, parent, key, operationContext)
@@ -447,28 +460,32 @@ function walkMutationPath(
             { parent, key, present },
         )
 
-        function prepareParent() {
-            if (atTarget && !deletesTarget && !preserveOnFailure &&
-                metadata.metaOf(value, operationContext)?.arrayRange && isArrayIndex(key)) {
-                const growth = Number(key) + 1 - ArrayView.minimumLength(value, operationContext)
-                const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth, operationContext)
-                if (extended) {
-                    inheritIdentity(value, extended, operationContext)
-                    parent = extended
-                    attachmentRoot ??= parent
-                    refcounts.indexValueIfSourceIndexed(value, parent, operationContext)
-                    return
-                }
-            }
-            if (preserveParent || languageProperties.requiresRepresentationCopyForPropertyMutation(
-                value, key, operationContext,
-                atTarget && deletesTarget
-                    ? languageProperties.PROPERTY_MUTATION_MODE.Delete
-                    : languageProperties.PROPERTY_MUTATION_MODE.Assign)) {
-                parent = shallowCopyPathContainer(parent, operationContext)
-                attachmentRoot ??= parent
+    }
+
+    // Shared across path frames: a failed preflight need not retain that frame's
+    // value, placement or reconstruction closures through its diagnostic stack.
+    function prepareParent(value, key, atTarget, preserveParent) {
+        if (atTarget && !deletesTarget && !preserveOnFailure &&
+            metadata.metaOf(value, operationContext)?.arrayRange && isArrayIndex(key)) {
+            const growth = Number(key) + 1 - ArrayView.minimumLength(value, operationContext)
+            const extended = growth > 0 && ArrayView.tryExtendEnd(value, growth, operationContext)
+            if (extended) {
+                inheritIdentity(value, extended, operationContext)
+                attachmentRoot ??= extended
+                refcounts.indexValueIfSourceIndexed(value, extended, operationContext)
+                return extended
             }
         }
+        if (preserveParent || languageProperties.requiresRepresentationCopyForPropertyMutation(
+            value, key, operationContext,
+            atTarget && deletesTarget
+                ? languageProperties.PROPERTY_MUTATION_MODE.Delete
+                : languageProperties.PROPERTY_MUTATION_MODE.Assign)) {
+            const parent = shallowCopyPathContainer(value, operationContext)
+            attachmentRoot ??= parent
+            return parent
+        }
+        return value
     }
 }
 

@@ -65,6 +65,8 @@ class InvocationWork extends PathOperation {
         this.releaseReceiverLeases = () => {
             this.#receiverLeases.release()
             this.receiver = undefined
+            this.receiverCapture?.discard()
+            this.receiverCapture = undefined
         }
     }
 
@@ -147,13 +149,13 @@ function invokeFunction(
     operationContext,
     kind = errorUtils.ERROR_KIND.InvocationFailed,
 ) {
-    return errorUtils.runExternalBoundary(operationContext, kind, () => Reflect.apply(callable, thisValue, args),
-    )
+    try {
+        return errorUtils.runExternalBoundary(operationContext, kind, () => Reflect.apply(callable, thisValue, args))
+    } finally { callable = thisValue = args = undefined }
 }
 
 function selectFunctionMethodDescription(callable, invocationWork) {
     return {
-        leaseInputsThroughResult: true,
         invoke: args => imports.importMethodResult(
             invokeFunction(callable, invocationWork.receiver, args, invocationWork.operationContext),
             invocationWork.operationContext,
@@ -214,9 +216,10 @@ function invokeMethod(
         return value
     }
 
-    function invokeWithReceiver(receiver, present) {
+    function invokeWithReceiver(receiver, present, externalAccess, capture) {
         invocationWork.setReceiver(receiver, present)
-        const methodDescription = selectMethodDescription(invocationWork)
+        invocationWork.receiverCapture = capture
+        const methodDescription = selectMethodDescription(invocationWork, externalAccess)
         if (errorUtils.isPoisonError(methodDescription)) {
             return methodDescription
         }
