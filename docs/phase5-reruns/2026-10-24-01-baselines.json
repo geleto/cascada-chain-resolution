@@ -1,0 +1,3424 @@
+{
+  "status": "newly executed clean normal/traced baselines",
+  "runs": [
+    {
+      "name": "normal",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "./node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--timeout",
+        "30000",
+        "--reporter",
+        "dot"
+      ],
+      "env": {
+        "NODE_OPTIONS": null,
+        "CASCADA_SEQUENCE_SEEDS": null,
+        "CASCADA_SEQUENCE_START": null,
+        "CASCADA_SEQUENCE_CONTINUE": null,
+        "CASCADA_CONFLICT_MATRIX": null,
+        "CASCADA_CONFLICT_PART": null,
+        "CASCADA_TRACE_RECEIPT_FILE": null,
+        "CASCADA_SAFEGUARD_FAULT": null
+      },
+      "deadlineSeconds": 1800,
+      "exitCode": 0,
+      "seconds": 175.05,
+      "manifestDigest": "bb57d772e6ca9eb76dac5ff96ddeba3b79502b4a041a546e10f9bc838f538ca8",
+      "changedInputs": [],
+      "log": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-phase5-rerun-2026-10-24-01\\normal.log",
+      "logSHA256": "380bf4d8ea9e7b9462e2ec5445fecd9fe6f2c1f682bb57bc49fe6f66a7181c2c",
+      "runnerSHA256": "c81e393efbb39ff9557f0f393b2ed90f5a81b042a506f66b7cfc9163aeb2e841",
+      "passingTests": 5299,
+      "resultText": ".....................\n  ........................................................\n  ........................................................\n  ...................................\n\n  5299 passing (3m)\n\n",
+      "runDate": "2026-10-24",
+      "failedTests": 0,
+      "pendingTests": 0
+    },
+    {
+      "name": "traced",
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "./node_modules/mocha/bin/mocha.js",
+        "test/**/*.test.js",
+        "--timeout",
+        "30000",
+        "--reporter",
+        "dot"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--import=file:///C:/Projects/cascada-chain-resolution/test/trace-runtime.js",
+        "CASCADA_SEQUENCE_SEEDS": null,
+        "CASCADA_SEQUENCE_START": null,
+        "CASCADA_SEQUENCE_CONTINUE": null,
+        "CASCADA_CONFLICT_MATRIX": null,
+        "CASCADA_CONFLICT_PART": null,
+        "CASCADA_TRACE_RECEIPT_FILE": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-phase5-rerun-2026-10-24-01\\traced.receipts.jsonl",
+        "CASCADA_SAFEGUARD_FAULT": null
+      },
+      "deadlineSeconds": 1800,
+      "exitCode": 0,
+      "seconds": 186.71,
+      "manifestDigest": "bb57d772e6ca9eb76dac5ff96ddeba3b79502b4a041a546e10f9bc838f538ca8",
+      "changedInputs": [],
+      "log": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-phase5-rerun-2026-10-24-01\\traced.log",
+      "logSHA256": "380bf4d8ea9e7b9462e2ec5445fecd9fe6f2c1f682bb57bc49fe6f66a7181c2c",
+      "runnerSHA256": "c81e393efbb39ff9557f0f393b2ed90f5a81b042a506f66b7cfc9163aeb2e841",
+      "passingTests": 5299,
+      "resultText": ".....................\n  ........................................................\n  ........................................................\n  ...................................\n\n  5299 passing (3m)\n\n",
+      "runDate": "2026-10-24",
+      "failedTests": 0,
+      "pendingTests": 0
+    }
+  ],
+  "trace": {
+    "loadedInstances": 220,
+    "executedInstances": 205,
+    "receiptSHA256": "145e52e5c1312303f124f95b2d00a195140b0ef596d7011f3d667f68ecb19b4a",
+    "startupOnly": [
+      {
+        "event": "loaded",
+        "pid": 9640,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 53,
+        "parentInstance": 0,
+        "loadedLine": 107,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 33188,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 87,
+        "parentInstance": 0,
+        "loadedLine": 174,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 37360,
+        "parent": 12760,
+        "instance": 121,
+        "parentInstance": 0,
+        "loadedLine": 241,
+        "events": [
+          "loaded"
+        ],
+        "classification": "raw SourceTextModule portability lane (association inferred from serialized suite and unchanged harness)",
+        "executedChildInstances": []
+      },
+      {
+        "event": "loaded",
+        "pid": 7776,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 128,
+        "parentInstance": 0,
+        "loadedLine": 254,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          129,
+          130,
+          131
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 17968,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 132,
+        "parentInstance": 0,
+        "loadedLine": 261,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          133
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 32640,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 134,
+        "parentInstance": 0,
+        "loadedLine": 264,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          135,
+          136
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 33948,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 137,
+        "parentInstance": 0,
+        "loadedLine": 269,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          138,
+          139
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 10060,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 141,
+        "parentInstance": 0,
+        "loadedLine": 276,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          142
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 7196,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+        "instance": 143,
+        "parentInstance": 0,
+        "loadedLine": 279,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          144
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 8292,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+        "instance": 145,
+        "parentInstance": 0,
+        "loadedLine": 282,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          146
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 32424,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+        "instance": 147,
+        "parentInstance": 0,
+        "loadedLine": 285,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          148
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 28596,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+        "instance": 149,
+        "parentInstance": 0,
+        "loadedLine": 288,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          150
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 25596,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+        "instance": 151,
+        "parentInstance": 0,
+        "loadedLine": 291,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          152
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 19376,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+        "instance": 153,
+        "parentInstance": 0,
+        "loadedLine": 294,
+        "events": [
+          "loaded"
+        ],
+        "classification": "coordinator",
+        "executedChildInstances": [
+          154
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 29648,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+        "instance": 188,
+        "parentInstance": 0,
+        "loadedLine": 363,
+        "events": [
+          "loaded"
+        ],
+        "classification": "deliberate disabled counter-loader control",
+        "executedChildInstances": []
+      }
+    ],
+    "sessions": [
+      {
+        "event": "loaded",
+        "pid": 12760,
+        "parent": 16612,
+        "script": "C:\\Projects\\cascada-chain-resolution\\node_modules\\mocha\\bin\\mocha.js",
+        "instance": 0,
+        "parentInstance": null,
+        "loadedLine": 1,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 2
+      },
+      {
+        "event": "loaded",
+        "pid": 41860,
+        "parent": 12760,
+        "instance": 1,
+        "parentInstance": 0,
+        "loadedLine": 3,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 4
+      },
+      {
+        "event": "loaded",
+        "pid": 4348,
+        "parent": 12760,
+        "instance": 2,
+        "parentInstance": 0,
+        "loadedLine": 5,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 6
+      },
+      {
+        "event": "loaded",
+        "pid": 1372,
+        "parent": 12760,
+        "instance": 3,
+        "parentInstance": 0,
+        "loadedLine": 7,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 8
+      },
+      {
+        "event": "loaded",
+        "pid": 15076,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+        "instance": 4,
+        "parentInstance": 0,
+        "loadedLine": 9,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 10
+      },
+      {
+        "event": "loaded",
+        "pid": 19940,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-failure-release.mjs",
+        "instance": 5,
+        "parentInstance": 0,
+        "loadedLine": 11,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 12
+      },
+      {
+        "event": "loaded",
+        "pid": 32988,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-failure-release.mjs",
+        "instance": 6,
+        "parentInstance": 0,
+        "loadedLine": 13,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 14
+      },
+      {
+        "event": "loaded",
+        "pid": 35936,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-reflection-release.mjs",
+        "instance": 7,
+        "parentInstance": 0,
+        "loadedLine": 15,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 16
+      },
+      {
+        "event": "loaded",
+        "pid": 17172,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-reflection-release.mjs",
+        "instance": 8,
+        "parentInstance": 0,
+        "loadedLine": 17,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 18
+      },
+      {
+        "event": "loaded",
+        "pid": 19244,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-surface.mjs",
+        "instance": 9,
+        "parentInstance": 0,
+        "loadedLine": 19,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 20
+      },
+      {
+        "event": "loaded",
+        "pid": 31716,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-surface.mjs",
+        "instance": 10,
+        "parentInstance": 0,
+        "loadedLine": 21,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 22
+      },
+      {
+        "event": "loaded",
+        "pid": 19292,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+        "instance": 11,
+        "parentInstance": 0,
+        "loadedLine": 23,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 24
+      },
+      {
+        "event": "loaded",
+        "pid": 23492,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+        "instance": 12,
+        "parentInstance": 0,
+        "loadedLine": 25,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 26
+      },
+      {
+        "event": "loaded",
+        "pid": 35620,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-view-failure-retention.mjs",
+        "instance": 13,
+        "parentInstance": 0,
+        "loadedLine": 27,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 28
+      },
+      {
+        "event": "loaded",
+        "pid": 29384,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-release.mjs",
+        "instance": 14,
+        "parentInstance": 0,
+        "loadedLine": 29,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 30
+      },
+      {
+        "event": "loaded",
+        "pid": 5112,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-release.mjs",
+        "instance": 15,
+        "parentInstance": 0,
+        "loadedLine": 31,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 32
+      },
+      {
+        "event": "loaded",
+        "pid": 6508,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\call-selection-release.mjs",
+        "instance": 16,
+        "parentInstance": 0,
+        "loadedLine": 33,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 34
+      },
+      {
+        "event": "loaded",
+        "pid": 6868,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\call-selection-release.mjs",
+        "instance": 17,
+        "parentInstance": 0,
+        "loadedLine": 35,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 36
+      },
+      {
+        "event": "loaded",
+        "pid": 6132,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\capture-fatal.mjs",
+        "instance": 18,
+        "parentInstance": 0,
+        "loadedLine": 37,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 38
+      },
+      {
+        "event": "loaded",
+        "pid": 3308,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\capture-fatal.mjs",
+        "instance": 19,
+        "parentInstance": 0,
+        "loadedLine": 39,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 40
+      },
+      {
+        "event": "loaded",
+        "pid": 21864,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\discarded-argument-leaves.mjs",
+        "instance": 20,
+        "parentInstance": 0,
+        "loadedLine": 41,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 42
+      },
+      {
+        "event": "loaded",
+        "pid": 21720,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\discarded-argument-leaves.mjs",
+        "instance": 21,
+        "parentInstance": 0,
+        "loadedLine": 43,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 44
+      },
+      {
+        "event": "loaded",
+        "pid": 39664,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-owner-release.mjs",
+        "instance": 22,
+        "parentInstance": 0,
+        "loadedLine": 45,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 46
+      },
+      {
+        "event": "loaded",
+        "pid": 9588,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-owner-release.mjs",
+        "instance": 23,
+        "parentInstance": 0,
+        "loadedLine": 47,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 48
+      },
+      {
+        "event": "loaded",
+        "pid": 29892,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\flat-completion.mjs",
+        "instance": 24,
+        "parentInstance": 0,
+        "loadedLine": 49,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 50
+      },
+      {
+        "event": "loaded",
+        "pid": 27568,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\flat-completion.mjs",
+        "instance": 25,
+        "parentInstance": 0,
+        "loadedLine": 51,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 52
+      },
+      {
+        "event": "loaded",
+        "pid": 25052,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\inspection-failure-retention.mjs",
+        "instance": 26,
+        "parentInstance": 0,
+        "loadedLine": 53,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 54
+      },
+      {
+        "event": "loaded",
+        "pid": 24584,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\inspection-failure-retention.mjs",
+        "instance": 27,
+        "parentInstance": 0,
+        "loadedLine": 55,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 56
+      },
+      {
+        "event": "loaded",
+        "pid": 38840,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\mutation-failure-retention.mjs",
+        "instance": 28,
+        "parentInstance": 0,
+        "loadedLine": 57,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 58
+      },
+      {
+        "event": "loaded",
+        "pid": 1392,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\mutation-failure-retention.mjs",
+        "instance": 29,
+        "parentInstance": 0,
+        "loadedLine": 59,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 60
+      },
+      {
+        "event": "loaded",
+        "pid": 40364,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\path-release.mjs",
+        "instance": 30,
+        "parentInstance": 0,
+        "loadedLine": 61,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 62
+      },
+      {
+        "event": "loaded",
+        "pid": 32516,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\path-release.mjs",
+        "instance": 31,
+        "parentInstance": 0,
+        "loadedLine": 63,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 64
+      },
+      {
+        "event": "loaded",
+        "pid": 27144,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-authority.mjs",
+        "instance": 32,
+        "parentInstance": 0,
+        "loadedLine": 65,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 66
+      },
+      {
+        "event": "loaded",
+        "pid": 19964,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-authority.mjs",
+        "instance": 33,
+        "parentInstance": 0,
+        "loadedLine": 67,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 68
+      },
+      {
+        "event": "loaded",
+        "pid": 18108,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+        "instance": 34,
+        "parentInstance": 0,
+        "loadedLine": 69,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 70
+      },
+      {
+        "event": "loaded",
+        "pid": 24388,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+        "instance": 35,
+        "parentInstance": 0,
+        "loadedLine": 71,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 72
+      },
+      {
+        "event": "loaded",
+        "pid": 9168,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-output-release.mjs",
+        "instance": 36,
+        "parentInstance": 0,
+        "loadedLine": 73,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 74
+      },
+      {
+        "event": "loaded",
+        "pid": 14388,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\prepared-boundaries.mjs",
+        "instance": 37,
+        "parentInstance": 0,
+        "loadedLine": 75,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 76
+      },
+      {
+        "event": "loaded",
+        "pid": 7916,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\prepared-boundaries.mjs",
+        "instance": 38,
+        "parentInstance": 0,
+        "loadedLine": 77,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 78
+      },
+      {
+        "event": "loaded",
+        "pid": 8316,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\public-surface-release.mjs",
+        "instance": 39,
+        "parentInstance": 0,
+        "loadedLine": 79,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 80
+      },
+      {
+        "event": "loaded",
+        "pid": 23600,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\public-surface-release.mjs",
+        "instance": 40,
+        "parentInstance": 0,
+        "loadedLine": 81,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 82
+      },
+      {
+        "event": "loaded",
+        "pid": 5432,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiver-identity.mjs",
+        "instance": 41,
+        "parentInstance": 0,
+        "loadedLine": 83,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 84
+      },
+      {
+        "event": "loaded",
+        "pid": 40016,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiver-identity.mjs",
+        "instance": 42,
+        "parentInstance": 0,
+        "loadedLine": 85,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 86
+      },
+      {
+        "event": "loaded",
+        "pid": 32372,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\registration-release.mjs",
+        "instance": 43,
+        "parentInstance": 0,
+        "loadedLine": 87,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 88
+      },
+      {
+        "event": "loaded",
+        "pid": 18900,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\registration-release.mjs",
+        "instance": 44,
+        "parentInstance": 0,
+        "loadedLine": 89,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 90
+      },
+      {
+        "event": "loaded",
+        "pid": 14948,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\result-contract.mjs",
+        "instance": 45,
+        "parentInstance": 0,
+        "loadedLine": 91,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 92
+      },
+      {
+        "event": "loaded",
+        "pid": 41448,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\result-contract.mjs",
+        "instance": 46,
+        "parentInstance": 0,
+        "loadedLine": 93,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 94
+      },
+      {
+        "event": "loaded",
+        "pid": 22784,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\terminal-release.mjs",
+        "instance": 47,
+        "parentInstance": 0,
+        "loadedLine": 95,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 96
+      },
+      {
+        "event": "loaded",
+        "pid": 35444,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\terminal-release.mjs",
+        "instance": 48,
+        "parentInstance": 0,
+        "loadedLine": 97,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 98
+      },
+      {
+        "event": "loaded",
+        "pid": 39192,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-registration-release.mjs",
+        "instance": 49,
+        "parentInstance": 0,
+        "loadedLine": 99,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 100
+      },
+      {
+        "event": "loaded",
+        "pid": 23956,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-registration-release.mjs",
+        "instance": 50,
+        "parentInstance": 0,
+        "loadedLine": 101,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 102
+      },
+      {
+        "event": "loaded",
+        "pid": 5928,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+        "instance": 51,
+        "parentInstance": 0,
+        "loadedLine": 103,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 104
+      },
+      {
+        "event": "loaded",
+        "pid": 35380,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+        "instance": 52,
+        "parentInstance": 0,
+        "loadedLine": 105,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 106
+      },
+      {
+        "event": "loaded",
+        "pid": 9640,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 53,
+        "parentInstance": 0,
+        "loadedLine": 107,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 26520,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 54,
+        "parentInstance": 53,
+        "loadedLine": 108,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 109
+      },
+      {
+        "event": "loaded",
+        "pid": 25524,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 55,
+        "parentInstance": 53,
+        "loadedLine": 110,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 111
+      },
+      {
+        "event": "loaded",
+        "pid": 37388,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 56,
+        "parentInstance": 53,
+        "loadedLine": 112,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 113
+      },
+      {
+        "event": "loaded",
+        "pid": 27812,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 57,
+        "parentInstance": 53,
+        "loadedLine": 114,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 115
+      },
+      {
+        "event": "loaded",
+        "pid": 17448,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 58,
+        "parentInstance": 53,
+        "loadedLine": 116,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 117
+      },
+      {
+        "event": "loaded",
+        "pid": 17748,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 59,
+        "parentInstance": 53,
+        "loadedLine": 118,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 119
+      },
+      {
+        "event": "loaded",
+        "pid": 31020,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 60,
+        "parentInstance": 53,
+        "loadedLine": 120,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 121
+      },
+      {
+        "event": "loaded",
+        "pid": 13704,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 61,
+        "parentInstance": 53,
+        "loadedLine": 122,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 123
+      },
+      {
+        "event": "loaded",
+        "pid": 26252,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 62,
+        "parentInstance": 53,
+        "loadedLine": 124,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 125
+      },
+      {
+        "event": "loaded",
+        "pid": 15892,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 63,
+        "parentInstance": 53,
+        "loadedLine": 126,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 127
+      },
+      {
+        "event": "loaded",
+        "pid": 33476,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 64,
+        "parentInstance": 53,
+        "loadedLine": 128,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 129
+      },
+      {
+        "event": "loaded",
+        "pid": 40876,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 65,
+        "parentInstance": 53,
+        "loadedLine": 130,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 131
+      },
+      {
+        "event": "loaded",
+        "pid": 17740,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 66,
+        "parentInstance": 53,
+        "loadedLine": 132,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 133
+      },
+      {
+        "event": "loaded",
+        "pid": 19904,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 67,
+        "parentInstance": 53,
+        "loadedLine": 134,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 135
+      },
+      {
+        "event": "loaded",
+        "pid": 21932,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 68,
+        "parentInstance": 53,
+        "loadedLine": 136,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 137
+      },
+      {
+        "event": "loaded",
+        "pid": 18920,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 69,
+        "parentInstance": 53,
+        "loadedLine": 138,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 139
+      },
+      {
+        "event": "loaded",
+        "pid": 22344,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 70,
+        "parentInstance": 53,
+        "loadedLine": 140,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 141
+      },
+      {
+        "event": "loaded",
+        "pid": 38412,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 71,
+        "parentInstance": 53,
+        "loadedLine": 142,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 143
+      },
+      {
+        "event": "loaded",
+        "pid": 41212,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 72,
+        "parentInstance": 53,
+        "loadedLine": 144,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 145
+      },
+      {
+        "event": "loaded",
+        "pid": 33500,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 73,
+        "parentInstance": 53,
+        "loadedLine": 146,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 147
+      },
+      {
+        "event": "loaded",
+        "pid": 29548,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 74,
+        "parentInstance": 53,
+        "loadedLine": 148,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 149
+      },
+      {
+        "event": "loaded",
+        "pid": 1844,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 75,
+        "parentInstance": 53,
+        "loadedLine": 150,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 151
+      },
+      {
+        "event": "loaded",
+        "pid": 30816,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 76,
+        "parentInstance": 53,
+        "loadedLine": 152,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 153
+      },
+      {
+        "event": "loaded",
+        "pid": 25820,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 77,
+        "parentInstance": 53,
+        "loadedLine": 154,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 155
+      },
+      {
+        "event": "loaded",
+        "pid": 8932,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 78,
+        "parentInstance": 53,
+        "loadedLine": 156,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 157
+      },
+      {
+        "event": "loaded",
+        "pid": 35592,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 79,
+        "parentInstance": 53,
+        "loadedLine": 158,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 159
+      },
+      {
+        "event": "loaded",
+        "pid": 16896,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 80,
+        "parentInstance": 53,
+        "loadedLine": 160,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 161
+      },
+      {
+        "event": "loaded",
+        "pid": 6640,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 81,
+        "parentInstance": 53,
+        "loadedLine": 162,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 163
+      },
+      {
+        "event": "loaded",
+        "pid": 40216,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 82,
+        "parentInstance": 53,
+        "loadedLine": 164,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 165
+      },
+      {
+        "event": "loaded",
+        "pid": 28632,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 83,
+        "parentInstance": 53,
+        "loadedLine": 166,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 167
+      },
+      {
+        "event": "loaded",
+        "pid": 16592,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 84,
+        "parentInstance": 53,
+        "loadedLine": 168,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 169
+      },
+      {
+        "event": "loaded",
+        "pid": 38712,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 85,
+        "parentInstance": 53,
+        "loadedLine": 170,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 171
+      },
+      {
+        "event": "loaded",
+        "pid": 39452,
+        "parent": 9640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 86,
+        "parentInstance": 53,
+        "loadedLine": 172,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 173
+      },
+      {
+        "event": "loaded",
+        "pid": 33188,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 87,
+        "parentInstance": 0,
+        "loadedLine": 174,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 7356,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 88,
+        "parentInstance": 87,
+        "loadedLine": 175,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 176
+      },
+      {
+        "event": "loaded",
+        "pid": 38012,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 89,
+        "parentInstance": 87,
+        "loadedLine": 177,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 178
+      },
+      {
+        "event": "loaded",
+        "pid": 30192,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 90,
+        "parentInstance": 87,
+        "loadedLine": 179,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 180
+      },
+      {
+        "event": "loaded",
+        "pid": 38580,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 91,
+        "parentInstance": 87,
+        "loadedLine": 181,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 182
+      },
+      {
+        "event": "loaded",
+        "pid": 6544,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 92,
+        "parentInstance": 87,
+        "loadedLine": 183,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 184
+      },
+      {
+        "event": "loaded",
+        "pid": 27388,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 93,
+        "parentInstance": 87,
+        "loadedLine": 185,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 186
+      },
+      {
+        "event": "loaded",
+        "pid": 38224,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 94,
+        "parentInstance": 87,
+        "loadedLine": 187,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 188
+      },
+      {
+        "event": "loaded",
+        "pid": 33616,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 95,
+        "parentInstance": 87,
+        "loadedLine": 189,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 190
+      },
+      {
+        "event": "loaded",
+        "pid": 20488,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 96,
+        "parentInstance": 87,
+        "loadedLine": 191,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 192
+      },
+      {
+        "event": "loaded",
+        "pid": 24136,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 97,
+        "parentInstance": 87,
+        "loadedLine": 193,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 194
+      },
+      {
+        "event": "loaded",
+        "pid": 39832,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 98,
+        "parentInstance": 87,
+        "loadedLine": 195,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 196
+      },
+      {
+        "event": "loaded",
+        "pid": 14196,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 99,
+        "parentInstance": 87,
+        "loadedLine": 197,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 198
+      },
+      {
+        "event": "loaded",
+        "pid": 41524,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 100,
+        "parentInstance": 87,
+        "loadedLine": 199,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 200
+      },
+      {
+        "event": "loaded",
+        "pid": 27644,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 101,
+        "parentInstance": 87,
+        "loadedLine": 201,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 202
+      },
+      {
+        "event": "loaded",
+        "pid": 27884,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 102,
+        "parentInstance": 87,
+        "loadedLine": 203,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 204
+      },
+      {
+        "event": "loaded",
+        "pid": 26412,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 103,
+        "parentInstance": 87,
+        "loadedLine": 205,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 206
+      },
+      {
+        "event": "loaded",
+        "pid": 2964,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 104,
+        "parentInstance": 87,
+        "loadedLine": 207,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 208
+      },
+      {
+        "event": "loaded",
+        "pid": 17588,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 105,
+        "parentInstance": 87,
+        "loadedLine": 209,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 210
+      },
+      {
+        "event": "loaded",
+        "pid": 29408,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 106,
+        "parentInstance": 87,
+        "loadedLine": 211,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 212
+      },
+      {
+        "event": "loaded",
+        "pid": 41592,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 107,
+        "parentInstance": 87,
+        "loadedLine": 213,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 214
+      },
+      {
+        "event": "loaded",
+        "pid": 26216,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 108,
+        "parentInstance": 87,
+        "loadedLine": 215,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 216
+      },
+      {
+        "event": "loaded",
+        "pid": 38088,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 109,
+        "parentInstance": 87,
+        "loadedLine": 217,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 218
+      },
+      {
+        "event": "loaded",
+        "pid": 3292,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 110,
+        "parentInstance": 87,
+        "loadedLine": 219,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 220
+      },
+      {
+        "event": "loaded",
+        "pid": 36260,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 111,
+        "parentInstance": 87,
+        "loadedLine": 221,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 222
+      },
+      {
+        "event": "loaded",
+        "pid": 41408,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 112,
+        "parentInstance": 87,
+        "loadedLine": 223,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 224
+      },
+      {
+        "event": "loaded",
+        "pid": 16224,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 113,
+        "parentInstance": 87,
+        "loadedLine": 225,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 226
+      },
+      {
+        "event": "loaded",
+        "pid": 29112,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 114,
+        "parentInstance": 87,
+        "loadedLine": 227,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 228
+      },
+      {
+        "event": "loaded",
+        "pid": 29188,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 115,
+        "parentInstance": 87,
+        "loadedLine": 229,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 230
+      },
+      {
+        "event": "loaded",
+        "pid": 3508,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 116,
+        "parentInstance": 87,
+        "loadedLine": 231,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 232
+      },
+      {
+        "event": "loaded",
+        "pid": 39056,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 117,
+        "parentInstance": 87,
+        "loadedLine": 233,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 234
+      },
+      {
+        "event": "loaded",
+        "pid": 2492,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 118,
+        "parentInstance": 87,
+        "loadedLine": 235,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 236
+      },
+      {
+        "event": "loaded",
+        "pid": 24792,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 119,
+        "parentInstance": 87,
+        "loadedLine": 237,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 238
+      },
+      {
+        "event": "loaded",
+        "pid": 7916,
+        "parent": 33188,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-back-references.mjs",
+        "instance": 120,
+        "parentInstance": 87,
+        "loadedLine": 239,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 240
+      },
+      {
+        "event": "loaded",
+        "pid": 37360,
+        "parent": 12760,
+        "instance": 121,
+        "parentInstance": 0,
+        "loadedLine": 241,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 34400,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\classification-declaration-failure.js",
+        "instance": 122,
+        "parentInstance": 0,
+        "loadedLine": 242,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 243
+      },
+      {
+        "event": "loaded",
+        "pid": 13020,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\detached-cleanup-failure.js",
+        "instance": 123,
+        "parentInstance": 0,
+        "loadedLine": 244,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 245
+      },
+      {
+        "event": "loaded",
+        "pid": 35012,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\owner-finalization-failure.js",
+        "instance": 124,
+        "parentInstance": 0,
+        "loadedLine": 246,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 247
+      },
+      {
+        "event": "loaded",
+        "pid": 18404,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\enter-direct-import.js",
+        "instance": 125,
+        "parentInstance": 0,
+        "loadedLine": 248,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 249
+      },
+      {
+        "event": "loaded",
+        "pid": 20400,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\continuation-failure.js",
+        "instance": 126,
+        "parentInstance": 0,
+        "loadedLine": 250,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 251
+      },
+      {
+        "event": "loaded",
+        "pid": 34948,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\outward-completion-failure.js",
+        "instance": 127,
+        "parentInstance": 0,
+        "loadedLine": 252,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 253
+      },
+      {
+        "event": "loaded",
+        "pid": 7776,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 128,
+        "parentInstance": 0,
+        "loadedLine": 254,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 38676,
+        "parent": 7776,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 129,
+        "parentInstance": 128,
+        "loadedLine": 255,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 256
+      },
+      {
+        "event": "loaded",
+        "pid": 2068,
+        "parent": 7776,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 130,
+        "parentInstance": 128,
+        "loadedLine": 257,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 258
+      },
+      {
+        "event": "loaded",
+        "pid": 36712,
+        "parent": 7776,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 131,
+        "parentInstance": 128,
+        "loadedLine": 259,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 260
+      },
+      {
+        "event": "loaded",
+        "pid": 17968,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 132,
+        "parentInstance": 0,
+        "loadedLine": 261,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 4168,
+        "parent": 17968,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 133,
+        "parentInstance": 132,
+        "loadedLine": 262,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 263
+      },
+      {
+        "event": "loaded",
+        "pid": 32640,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 134,
+        "parentInstance": 0,
+        "loadedLine": 264,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 38728,
+        "parent": 32640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 135,
+        "parentInstance": 134,
+        "loadedLine": 265,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 266
+      },
+      {
+        "event": "loaded",
+        "pid": 6728,
+        "parent": 32640,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 136,
+        "parentInstance": 134,
+        "loadedLine": 267,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 268
+      },
+      {
+        "event": "loaded",
+        "pid": 33948,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 137,
+        "parentInstance": 0,
+        "loadedLine": 269,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 36688,
+        "parent": 33948,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 138,
+        "parentInstance": 137,
+        "loadedLine": 270,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 271
+      },
+      {
+        "event": "loaded",
+        "pid": 28128,
+        "parent": 33948,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 139,
+        "parentInstance": 137,
+        "loadedLine": 272,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 273
+      },
+      {
+        "event": "loaded",
+        "pid": 11504,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 140,
+        "parentInstance": 0,
+        "loadedLine": 274,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 275
+      },
+      {
+        "event": "loaded",
+        "pid": 10060,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 141,
+        "parentInstance": 0,
+        "loadedLine": 276,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 31660,
+        "parent": 10060,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\generated-runner-control.mjs",
+        "instance": 142,
+        "parentInstance": 141,
+        "loadedLine": 277,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 278
+      },
+      {
+        "event": "loaded",
+        "pid": 7196,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+        "instance": 143,
+        "parentInstance": 0,
+        "loadedLine": 279,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 28100,
+        "parent": 7196,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+        "instance": 144,
+        "parentInstance": 143,
+        "loadedLine": 280,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 281
+      },
+      {
+        "event": "loaded",
+        "pid": 8292,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+        "instance": 145,
+        "parentInstance": 0,
+        "loadedLine": 282,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 37640,
+        "parent": 8292,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+        "instance": 146,
+        "parentInstance": 145,
+        "loadedLine": 283,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 284
+      },
+      {
+        "event": "loaded",
+        "pid": 32424,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+        "instance": 147,
+        "parentInstance": 0,
+        "loadedLine": 285,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 14308,
+        "parent": 32424,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+        "instance": 148,
+        "parentInstance": 147,
+        "loadedLine": 286,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 287
+      },
+      {
+        "event": "loaded",
+        "pid": 28596,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+        "instance": 149,
+        "parentInstance": 0,
+        "loadedLine": 288,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 19732,
+        "parent": 28596,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+        "instance": 150,
+        "parentInstance": 149,
+        "loadedLine": 289,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 290
+      },
+      {
+        "event": "loaded",
+        "pid": 25596,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+        "instance": 151,
+        "parentInstance": 0,
+        "loadedLine": 291,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 38944,
+        "parent": 25596,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+        "instance": 152,
+        "parentInstance": 151,
+        "loadedLine": 292,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 293
+      },
+      {
+        "event": "loaded",
+        "pid": 19376,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+        "instance": 153,
+        "parentInstance": 0,
+        "loadedLine": 294,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 23736,
+        "parent": 19376,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\boundary-histories.js",
+        "instance": 154,
+        "parentInstance": 153,
+        "loadedLine": 295,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 296
+      },
+      {
+        "event": "loaded",
+        "pid": 18704,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\publication-pairs.js",
+        "instance": 155,
+        "parentInstance": 0,
+        "loadedLine": 297,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 298
+      },
+      {
+        "event": "loaded",
+        "pid": 14288,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-sequences.js",
+        "instance": 156,
+        "parentInstance": 0,
+        "loadedLine": 299,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 300
+      },
+      {
+        "event": "loaded",
+        "pid": 11684,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\conflict-matrix.js",
+        "instance": 157,
+        "parentInstance": 0,
+        "loadedLine": 301,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 302
+      },
+      {
+        "event": "loaded",
+        "pid": 25232,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-sequences.js",
+        "instance": 158,
+        "parentInstance": 0,
+        "loadedLine": 303,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 304
+      },
+      {
+        "event": "loaded",
+        "pid": 33044,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\nested-sequences.js",
+        "instance": 159,
+        "parentInstance": 0,
+        "loadedLine": 305,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 306
+      },
+      {
+        "event": "loaded",
+        "pid": 38044,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\external-sequences.js",
+        "instance": 160,
+        "parentInstance": 0,
+        "loadedLine": 307,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 308
+      },
+      {
+        "event": "loaded",
+        "pid": 3256,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\import-retention.js",
+        "instance": 161,
+        "parentInstance": 0,
+        "loadedLine": 309,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 310
+      },
+      {
+        "event": "loaded",
+        "pid": 26216,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\entry-failure.js",
+        "instance": 162,
+        "parentInstance": 0,
+        "loadedLine": 311,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 312
+      },
+      {
+        "event": "loaded",
+        "pid": 34476,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 163,
+        "parentInstance": 0,
+        "loadedLine": 313,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 314
+      },
+      {
+        "event": "loaded",
+        "pid": 33260,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 164,
+        "parentInstance": 0,
+        "loadedLine": 315,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 316
+      },
+      {
+        "event": "loaded",
+        "pid": 32344,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 165,
+        "parentInstance": 0,
+        "loadedLine": 317,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 318
+      },
+      {
+        "event": "loaded",
+        "pid": 8604,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 166,
+        "parentInstance": 0,
+        "loadedLine": 319,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 320
+      },
+      {
+        "event": "loaded",
+        "pid": 5636,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 167,
+        "parentInstance": 0,
+        "loadedLine": 321,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 322
+      },
+      {
+        "event": "loaded",
+        "pid": 12656,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 168,
+        "parentInstance": 0,
+        "loadedLine": 323,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 324
+      },
+      {
+        "event": "loaded",
+        "pid": 38564,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 169,
+        "parentInstance": 0,
+        "loadedLine": 325,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 326
+      },
+      {
+        "event": "loaded",
+        "pid": 27012,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 170,
+        "parentInstance": 0,
+        "loadedLine": 327,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 328
+      },
+      {
+        "event": "loaded",
+        "pid": 27804,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 171,
+        "parentInstance": 0,
+        "loadedLine": 329,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 330
+      },
+      {
+        "event": "loaded",
+        "pid": 37348,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\internal-stage-failure.js",
+        "instance": 172,
+        "parentInstance": 0,
+        "loadedLine": 331,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 332
+      },
+      {
+        "event": "loaded",
+        "pid": 19768,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\invocation-completion-failure.js",
+        "instance": 173,
+        "parentInstance": 0,
+        "loadedLine": 333,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 334
+      },
+      {
+        "event": "loaded",
+        "pid": 41316,
+        "parent": 12760,
+        "instance": 174,
+        "parentInstance": 0,
+        "loadedLine": 335,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 336
+      },
+      {
+        "event": "loaded",
+        "pid": 41840,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\join-internal-failure.js",
+        "instance": 175,
+        "parentInstance": 0,
+        "loadedLine": 337,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 338
+      },
+      {
+        "event": "loaded",
+        "pid": 4344,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\managed-capture-work.js",
+        "instance": 176,
+        "parentInstance": 0,
+        "loadedLine": 339,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 340
+      },
+      {
+        "event": "loaded",
+        "pid": 496,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\placement-sequences.js",
+        "instance": 177,
+        "parentInstance": 0,
+        "loadedLine": 341,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 342
+      },
+      {
+        "event": "loaded",
+        "pid": 23876,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-structural-publication.js",
+        "instance": 178,
+        "parentInstance": 0,
+        "loadedLine": 343,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 344
+      },
+      {
+        "event": "loaded",
+        "pid": 21052,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-interactions.js",
+        "instance": 179,
+        "parentInstance": 0,
+        "loadedLine": 345,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 346
+      },
+      {
+        "event": "loaded",
+        "pid": 2904,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-destinations.js",
+        "instance": 180,
+        "parentInstance": 0,
+        "loadedLine": 347,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 348
+      },
+      {
+        "event": "loaded",
+        "pid": 33064,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-point-work.js",
+        "instance": 181,
+        "parentInstance": 0,
+        "loadedLine": 349,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 350
+      },
+      {
+        "event": "loaded",
+        "pid": 36232,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\array-enumeration-work.js",
+        "instance": 182,
+        "parentInstance": 0,
+        "loadedLine": 351,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 352
+      },
+      {
+        "event": "loaded",
+        "pid": 16832,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\identity-work.js",
+        "instance": 183,
+        "parentInstance": 0,
+        "loadedLine": 353,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 354
+      },
+      {
+        "event": "loaded",
+        "pid": 23436,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\entry-history-work.js",
+        "instance": 184,
+        "parentInstance": 0,
+        "loadedLine": 355,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 356
+      },
+      {
+        "event": "loaded",
+        "pid": 35056,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-work.js",
+        "instance": 185,
+        "parentInstance": 0,
+        "loadedLine": 357,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 358
+      },
+      {
+        "event": "loaded",
+        "pid": 41112,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\ownership-lifecycle.js",
+        "instance": 186,
+        "parentInstance": 0,
+        "loadedLine": 359,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 360
+      },
+      {
+        "event": "loaded",
+        "pid": 23484,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+        "instance": 187,
+        "parentInstance": 0,
+        "loadedLine": 361,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 362
+      },
+      {
+        "event": "loaded",
+        "pid": 29648,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+        "instance": 188,
+        "parentInstance": 0,
+        "loadedLine": 363,
+        "events": [
+          "loaded"
+        ]
+      },
+      {
+        "event": "loaded",
+        "pid": 17632,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\pending-push-work.js",
+        "instance": 189,
+        "parentInstance": 0,
+        "loadedLine": 364,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 365
+      },
+      {
+        "event": "loaded",
+        "pid": 39732,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\argument-preparation-failure.js",
+        "instance": 190,
+        "parentInstance": 0,
+        "loadedLine": 366,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 367
+      },
+      {
+        "event": "loaded",
+        "pid": 27380,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\suspended-mutator-fatal.js",
+        "instance": 191,
+        "parentInstance": 0,
+        "loadedLine": 368,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 369
+      },
+      {
+        "event": "loaded",
+        "pid": 10436,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\publication-rejection-audit.js",
+        "instance": 192,
+        "parentInstance": 0,
+        "loadedLine": 370,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 371
+      },
+      {
+        "event": "loaded",
+        "pid": 39796,
+        "parent": 12760,
+        "instance": 193,
+        "parentInstance": 0,
+        "loadedLine": 372,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 373
+      },
+      {
+        "event": "loaded",
+        "pid": 40136,
+        "parent": 12760,
+        "instance": 194,
+        "parentInstance": 0,
+        "loadedLine": 374,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 375
+      },
+      {
+        "event": "loaded",
+        "pid": 14284,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\construction-retention.js",
+        "instance": 195,
+        "parentInstance": 0,
+        "loadedLine": 376,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 377
+      },
+      {
+        "event": "loaded",
+        "pid": 11144,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\preparation-work.js",
+        "instance": 196,
+        "parentInstance": 0,
+        "loadedLine": 378,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 379
+      },
+      {
+        "event": "loaded",
+        "pid": 35060,
+        "parent": 12760,
+        "instance": 197,
+        "parentInstance": 0,
+        "loadedLine": 380,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 381
+      },
+      {
+        "event": "loaded",
+        "pid": 16964,
+        "parent": 12760,
+        "instance": 198,
+        "parentInstance": 0,
+        "loadedLine": 382,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 383
+      },
+      {
+        "event": "loaded",
+        "pid": 41588,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\native-error-data.mjs",
+        "instance": 199,
+        "parentInstance": 0,
+        "loadedLine": 384,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 385
+      },
+      {
+        "event": "loaded",
+        "pid": 28000,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-branch-poison.mjs",
+        "instance": 200,
+        "parentInstance": 0,
+        "loadedLine": 386,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 387
+      },
+      {
+        "event": "loaded",
+        "pid": 22272,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\stable-receiving-categories.mjs",
+        "instance": 201,
+        "parentInstance": 0,
+        "loadedLine": 388,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 389
+      },
+      {
+        "event": "loaded",
+        "pid": 38692,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 202,
+        "parentInstance": 0,
+        "loadedLine": 390,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 391
+      },
+      {
+        "event": "loaded",
+        "pid": 13524,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 203,
+        "parentInstance": 0,
+        "loadedLine": 392,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 393
+      },
+      {
+        "event": "loaded",
+        "pid": 16300,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 204,
+        "parentInstance": 0,
+        "loadedLine": 394,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 395
+      },
+      {
+        "event": "loaded",
+        "pid": 40040,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 205,
+        "parentInstance": 0,
+        "loadedLine": 396,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 397
+      },
+      {
+        "event": "loaded",
+        "pid": 25180,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 206,
+        "parentInstance": 0,
+        "loadedLine": 398,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 399
+      },
+      {
+        "event": "loaded",
+        "pid": 39980,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 207,
+        "parentInstance": 0,
+        "loadedLine": 400,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 401
+      },
+      {
+        "event": "loaded",
+        "pid": 33812,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\receiving-invocation-differential.mjs",
+        "instance": 208,
+        "parentInstance": 0,
+        "loadedLine": 402,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 403
+      },
+      {
+        "event": "loaded",
+        "pid": 20336,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\length-fork-work.js",
+        "instance": 209,
+        "parentInstance": 0,
+        "loadedLine": 404,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 405
+      },
+      {
+        "event": "loaded",
+        "pid": 25720,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\completed-work-retention.js",
+        "instance": 210,
+        "parentInstance": 0,
+        "loadedLine": 406,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 407
+      },
+      {
+        "event": "loaded",
+        "pid": 25480,
+        "parent": 12760,
+        "instance": 211,
+        "parentInstance": 0,
+        "loadedLine": 408,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 409
+      },
+      {
+        "event": "loaded",
+        "pid": 1840,
+        "parent": 12760,
+        "instance": 212,
+        "parentInstance": 0,
+        "loadedLine": 410,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 411
+      },
+      {
+        "event": "loaded",
+        "pid": 31280,
+        "parent": 12760,
+        "instance": 213,
+        "parentInstance": 0,
+        "loadedLine": 412,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 413
+      },
+      {
+        "event": "loaded",
+        "pid": 25968,
+        "parent": 12760,
+        "instance": 214,
+        "parentInstance": 0,
+        "loadedLine": 414,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 415
+      },
+      {
+        "event": "loaded",
+        "pid": 14288,
+        "parent": 12760,
+        "instance": 215,
+        "parentInstance": 0,
+        "loadedLine": 416,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 417
+      },
+      {
+        "event": "loaded",
+        "pid": 6784,
+        "parent": 12760,
+        "instance": 216,
+        "parentInstance": 0,
+        "loadedLine": 418,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 419
+      },
+      {
+        "event": "loaded",
+        "pid": 28936,
+        "parent": 12760,
+        "instance": 217,
+        "parentInstance": 0,
+        "loadedLine": 420,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 421
+      },
+      {
+        "event": "loaded",
+        "pid": 21536,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\snapshot-internal-failure.js",
+        "instance": 218,
+        "parentInstance": 0,
+        "loadedLine": 422,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 423
+      },
+      {
+        "event": "loaded",
+        "pid": 12936,
+        "parent": 12760,
+        "script": "C:\\Projects\\cascada-chain-resolution\\test\\fixtures\\snapshot-identity-lifetime.js",
+        "instance": 219,
+        "parentInstance": 0,
+        "loadedLine": 424,
+        "events": [
+          "loaded",
+          "executed"
+        ],
+        "executedLine": 425
+      }
+    ],
+    "qualification": "Receipts prove actual runtime execution, not exhaustive branch coverage. Process instances distinguish Windows PID reuse; raw VM execution receives no tracer credit."
+  }
+}

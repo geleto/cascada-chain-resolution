@@ -1,0 +1,138 @@
+{
+  "candidateDigest": "de3913311dd3f6718609adf5fcc2bb762d510b37fc7d106fb0d54603bc63bcc9",
+  "candidateManifest": "2026-10-25-02-acceptance.json:manifest",
+  "node": "v24.14.1",
+  "date": "2026-10-25",
+  "scope": "Review-only supported range failure and selected-value lifetime; production and test bytes unchanged.",
+  "script": "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs",
+  "scriptSHA256": "acb587a5f10394f039a9b73255428053b6c4374a741af64bafecc90a842dde62",
+  "runs": [
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "--expose-gc",
+        "--stack-trace-limit=10",
+        "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs"
+      ],
+      "exitCode": 1,
+      "cases": 12,
+      "failingCases": 8,
+      "retainedSelectedValues": 12,
+      "sourceAndHealthyControls": "passed",
+      "observer": "author-session complementary review"
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs"
+      ],
+      "exitCode": 1,
+      "cases": 12,
+      "failingCases": 8,
+      "retainedSelectedValues": 12,
+      "sourceAndHealthyControls": "passed",
+      "observer": "author-session complementary review"
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs"
+      ],
+      "exitCode": 1,
+      "cases": 12,
+      "failingCases": 8,
+      "retainedSelectedValues": 12,
+      "sourceAndHealthyControls": "passed",
+      "observer": "independent reviewer correction_independent_review"
+    }
+  ],
+  "diagnosticControl": {
+    "command": [
+      "node",
+      "--unhandled-rejections=strict",
+      "--expose-gc",
+      "--stack-trace-limit=1000",
+      "docs/phase5-reruns/2026-10-25-02-range-selected-retention.mjs",
+      "--diagnostic-format-stacks"
+    ],
+    "exitCode": 0,
+    "cases": 12,
+    "failingCases": 0,
+    "retainedSelectedValues": 0,
+    "qualification": "Formatting stacks isolates diagnostic retention; it is not a proposed runtime remedy."
+  },
+  "strongRetainingPaths": [
+    "PoisonError -> lazy stack CallSiteInfo -> callback closure -> context.remap -> ArrayRangeRemap.entries -> selected payload",
+    "PoisonError.cause (fresh Error) -> lazy stack CallSiteInfo receiver -> ArrayRangeRemap.entries -> selected payload"
+  ],
+  "pathEvidence": "V8 heap snapshot from the extended diagnostic probe; paths inspected without weak edges. Portable script supplies independently repeatable failure evidence without requiring that temporary snapshot.",
+  "findingBoundary": "A storage set trap refuses its requested element write before changing storage; earlier successful range writes are permitted. After the Chain root is cleared no retained holder needs selected values.",
+  "testGap": "The existing range-failure fixture uses primitive fill(7) and weakly checks only raw receiver, source Proxy, root and untouched tail, omitting fill payloads and selected copyWithin children.",
+  "limits": [
+    "This demonstrates a present supported lifetime defect, not a proof about equivalent failure behavior on the pre-change representation.",
+    "The focused probe is untraced and is review evidence, not yet a normal-suite regression or a production fix."
+  ],
+  "independentProbePortableCopies": [
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-02-review-copied-delivery-extra.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.75,
+      "output": "{\"cases\":648,\"failures\":0,\"scenarios\":[\"record_pending_writers_cycles_retired_export\",\"array_copyWithin_pending_alias_reverse\"],\"modes\":[\"native\",\"ordered\",\"chained\"],\"schedules\":6,\"microtaskSplits\":[0,1,3],\"indexed\":[false,true],\"observed\":[false,true]}\n",
+      "scriptSHA256": "a4eb7f392159351ede155cf2441c9194561ac6824de0137f8b57affb1ccb71a7",
+      "originalIndependentScriptSHA256": "6613e76403d8e13babc2650508ff170eeb163da16ecca699959c08a04915e846",
+      "transformation": "Absolute checkout import prefix replaced with ../../; no logic changed."
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-02-review-copied-delivery-recovery.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.21,
+      "output": "{\"cases\":60,\"failures\":0,\"rejectionCases\":48,\"recoveryCases\":12,\"modes\":[\"native\",\"ordered\",\"chained\"]}\n",
+      "scriptSHA256": "5a750eb4aec6ba9dc07e9692464f3af91f0b547f854edbf6341f124b5639d6ea",
+      "originalIndependentScriptSHA256": "f34710130dde9bf68eb68ddc1623ac0cace65bdc54c009ef5991138fdb4b15fe",
+      "transformation": "Absolute checkout import prefix replaced with ../../; no logic changed."
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-02-review-ready-controls.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 0.18,
+      "output": "{\"cases\":16,\"failures\":0,\"controls\":[\"all-ready\",\"synchronous-thenable\"]}\n",
+      "scriptSHA256": "f2f315209098161a8abbe285069bc889e10122badf7c84e784ee75d59c11d4e8",
+      "originalIndependentScriptSHA256": "4bbf15f5f9e9aa9ffc23633a9a566b1b5239b6c0a2becf36b41fd60115dc43a0",
+      "transformation": "Absolute checkout import prefix replaced with ../../; no logic changed."
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-02-review-deep-copy-history.mjs"
+      ],
+      "exitCode": 0,
+      "seconds": 2.89,
+      "output": "{\"cases\":4,\"history\":10000,\"historySteps\":40000,\"failures\":0}\n",
+      "scriptSHA256": "17ca2623faff6b50e2be16d5578f464d20705beabc1add111820a1828eb9d546",
+      "originalIndependentScriptSHA256": "3faacb62661956a925a3e514ecb4f113e5997e9a7f041c9701fb4c5691aab220",
+      "transformation": "Absolute checkout import prefix replaced with ../../; no logic changed."
+    }
+  ],
+  "portableCopyQualification": "The independent reviewer authored and executed the original probes. The coordinator executed these retained copies after replacing only checkout-specific import paths. These are the same 728 cases, not additional independent coverage."
+}

@@ -20,13 +20,17 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
         operation,
         selectMethodDescription,
         (invokeWithReceiver, beforeWait) => {
+            const invokeMutation = (receiver, state) => {
+                operation.preserveReceiverBaseline = state.preserveBaseline
+                return invokeWithReceiver(receiver, state.present)
+            }
             operation.beforeWait = beforeWait
             const native = access => access.selectReceiver(access.path.length,
                 errorUtils.ERROR_KIND.InvocationFailed, invokeWithReceiver)
             if (!mutation || operation.route.externalScope) return operation.observe(invokeWithReceiver, native)
             return operation.mutate((scope, state, privateChain, suffix) => {
-                if (suffix.length === 0) return invokeWithReceiver(scope, state.present)
-                const outcome = runMutation(privateChain, suffix, operationContext, invokeWithReceiver)
+                if (suffix.length === 0) return invokeMutation(scope, state)
+                const outcome = runMutation(privateChain, suffix, operationContext, invokeMutation)
                 return internalSteps.continueGraphTransition(outcome, operationContext, outcome =>
                     errorUtils.isPoisonError(outcome) || errorUtils.isPoisonError(outcome.mutatedValue)
                         ? outcome : captureMutationResult(privateChain, outcome.result, operationContext))
@@ -37,7 +41,7 @@ function run(chain, path, method, args, operationContext, facts, delivery) {
     return mutation ? operation.finishMutation(result) : operation.finish(result)
 }
 
-function runMutation(chain, path, operationContext, invokeWithReceiver) {
+function runMutation(chain, path, operationContext, invokeMutation) {
     return walkMutationPath(
         chain,
         path,
@@ -55,8 +59,7 @@ function runMutation(chain, path, operationContext, invokeWithReceiver) {
                 target.replaceReceiver(error)
                 return error
             }
-            return transformProperty(target, operationContext, (receiver, state) =>
-                invokeWithReceiver(receiver, state.present))
+            return transformProperty(target, operationContext, invokeMutation)
         },
     )
 }

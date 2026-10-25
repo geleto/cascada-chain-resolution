@@ -79,7 +79,7 @@ function transformProperty(target, operationContext, transform, { replace = fals
             leased = metadata.incrementReadLease(current, operationContext)
         }
         try { return internalSteps.continueGraphTransition(errorUtils.catchExternalThrow(
-            () => transform(current, { present: baseline.present, baseline, originalPlacement }), operationContext,
+            () => transform(current, { present: baseline.present, baseline, originalPlacement, preserveBaseline }), operationContext,
             errorUtils.ERROR_KIND.PropertyMutationFailed), operationContext, normalize) }
         finally { current = undefined }
     }
@@ -98,6 +98,27 @@ function transformProperty(target, operationContext, transform, { replace = fals
     // Publication finishes this transition. A restored or assigned Promise is
     // ordinary property availability and does not extend the operation result.
     return internalSteps.continueGraphTransition(readiness, operationContext, publish)
+
+    // A controlled write can preserve the same logical baseline in another
+    // representation. Select ordinary COW without this operation's own lease,
+    // restore it before capture, then transfer it before any write can occur.
+    function preserveBaseline(selectCapture) {
+        // Once a gate displaced the receiver, its remaining incoming edges may
+        // all belong to other uses. The operation's lease is then its only
+        // receiver authority; ordinary private materialization preserves it.
+        if (gate) return false
+        let capture
+        if (leased) metadata.decrementReadLease(baseline.value, operationContext)
+        try { capture = selectCapture(baseline.value) }
+        finally { if (leased) metadata.incrementReadLease(baseline.value, operationContext) }
+        if (!capture) return false
+        const value = capture()
+        metadata.incrementReadLease(value, operationContext)
+        if (leased) metadata.decrementReadLease(baseline.value, operationContext)
+        leased = true
+        baseline = { ...baseline, value }
+        return true
+    }
 
     function normalize(outcome) {
         releasePublication = outcome.releasePublication

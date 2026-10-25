@@ -36,6 +36,9 @@ function thenValue(value, onFulfilled, onRejected, operationContext) {
         if (continuationStarted) throw reason
         return onRejected(errorUtils.createPoisonError(
             reason, operationContext, errorUtils.ERROR_KIND.ThenInvocationFailed))
+    } finally {
+        // Delivery uses its own result; saved callback frames need no source.
+        value = undefined
     }
 }
 

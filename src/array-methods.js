@@ -163,8 +163,12 @@ function prepareAtIndex([index = 0], work) {
 
 function prepareWithArguments([index = 0, replacement], work) {
     return runArrayStep(work, () => {
-        const finish = valid => valid ? [index, replacement] : errorUtils.validationError(
-            "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
+        const finish = valid => {
+            try {
+                return valid ? [index, replacement] : errorUtils.validationError(
+                    "Array index is out of range", work.operationContext, errorUtils.ERROR_KIND.InvalidArrayOperation)
+            } finally { replacement = undefined }
+        }
         return resolveArrayInRange(index < 0 ? -index - 1 : index, work, finish)
     })
 }
@@ -310,10 +314,12 @@ function concatInput(value, invocationWork) {
         value,
         invocationWork.operationContext,
         value => runArrayStep(invocationWork, () => {
-            if (errorUtils.isPoisonError(value)) return value
-            return isLogicalArray(value, invocationWork.operationContext)
-                ? captureRemap(value, invocationWork)
-                : [value]
+            try {
+                if (errorUtils.isPoisonError(value)) return value
+                return isLogicalArray(value, invocationWork.operationContext)
+                    ? captureRemap(value, invocationWork)
+                    : [value]
+            } finally { value = undefined }
         }),
         undefined,
         invocationWork,
@@ -337,8 +343,10 @@ function prepareConcatArguments(parts, work) {
             work.operationContext, remap => finish(remap.length, remap), undefined, work)
 
         function finish(length, receiverRemap) {
-            for (const part of parts) length += part.length
-            return length > 0xffffffff ? invalidArrayLength(work) : { parts, receiverRemap }
+            try {
+                for (const part of parts) length += part.length
+                return length > 0xffffffff ? invalidArrayLength(work) : { parts, receiverRemap }
+            } finally { parts = undefined }
         }
     })
 }
@@ -502,15 +510,16 @@ function comparatorInput(value, invocationWork) {
 
 function fill(args, work, reportWrites) {
     const length = work.arrayLength
-    const writes = toRelativeIndex(args[1], length, 0) < toRelativeIndex(args[2], length, length)
+    const start = toRelativeIndex(args[1], length, 0), end = toRelativeIndex(args[2], length, length)
+    const writes = start < end
     // An empty range cannot receive this payload, even in observation mode.
     if (!writes) work.discardArgument(0)
     if (work.mutation) {
         reportWrites(writes)
         if (!writes) return
     }
-    const remap = arrayRemaps.createRemap(work.receiver, work.operationContext, 0, length)
-    return Reflect.apply(ARRAY_METHODS.fill.intrinsic, remap, args)
+    const entries = new Array(Math.max(0, end - start)).fill(args[0])
+    return new arrayRemaps.ArrayRangeRemap(start, entries, length)
 }
 
 function reverse(args, work, reportWrites) {
@@ -528,18 +537,35 @@ function copyWithin(args, work, reportWrites) {
         reportWrites(false)
         return
     }
-    return remapSparseMutation(ARRAY_METHODS.copyWithin.intrinsic, args, work, reportWrites,
-        index => index >= start && index < start + count || index >= target && index < target + count)
+    const writes = captureArrayWrites(work)
+    const entries = arrayRemaps.createRemap(work.receiver, work.operationContext, start, start + Math.max(0, count), undefined, writes.observe)
+    if (work.mutation && writes.outcome !== true) {
+        for (let index = target; index < target + count && writes.outcome !== true; index++) {
+            const placement = propertyVersions.getPropertyPlacement(work.receiver, String(index), work.operationContext)
+            if (placement) writes.observe(placement)
+        }
+    }
+    if (work.mutation) reportWrites(writes.outcome)
+    return new arrayRemaps.ArrayRangeRemap(target, entries, length)
 }
 
 // Capture presence during the existing remap walk. Holes do not write, and a
 // known write makes the remaining presence questions irrelevant to identity.
 function remapSparseMutation(intrinsic, args, work, reportWrites, touches) {
-    const operationContext = work.operationContext
+    const writes = captureArrayWrites(work)
+    const remap = arrayRemaps.createRemap(work.receiver, work.operationContext, 0, work.arrayLength, undefined,
+        (placement, index) => { if (touches(index)) writes.observe(placement) })
+    if (work.mutation) reportWrites(writes.outcome)
+    return Reflect.apply(intrinsic, remap, args)
+}
+
+function captureArrayWrites(work) {
+    const { operationContext } = work
     let published = false
-    const remap = arrayRemaps.createRemap(work.receiver, operationContext, 0, work.arrayLength, undefined,
-        work.mutation ? (placement, index) => {
-            if (published === true || !touches(index)) return
+    return {
+        get outcome() { return published },
+        observe(placement) {
+            if (!work.mutation || published === true) return
             const wait = internalSteps.continueGraphTransition(placement.resolvePresence(), operationContext,
                 () => placement.present !== false)
             if (languageValues.isPending(wait, operationContext)) {
@@ -549,9 +575,8 @@ function remapSparseMutation(intrinsic, args, work, reportWrites, touches) {
                 if (published !== false) published.finish(true)
                 published = true
             }
-        } : undefined)
-    if (work.mutation) reportWrites(published)
-    return Reflect.apply(intrinsic, remap, args)
+        },
+    }
 }
 
 function prepareToSortedRemap(args, invocationWork) {

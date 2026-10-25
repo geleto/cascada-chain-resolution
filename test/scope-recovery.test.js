@@ -401,12 +401,13 @@ describe("hierarchical scopes and placement recovery", () => {
         source[1] = 2
         source[99_999] = 3
         const chain = new r.Chain(source, ctx)
+        const retained = new r.Chain(r.lookupPath(chain, [], ctx), ctx)
         mutate(chain, [], "copyWithin", ctx, [0, 1, 2])
         const result = r.export(chain, [], ctx)
         assert.deepEqual(Object.keys(result), ["0", "1", "99999"])
         assert.equal(result.length, source.length)
         assert.equal(result[0], 2)
-        assert.equal(Object.hasOwn(source, 0), false)
+        assert.equal(Object.hasOwn(r.export(retained, [], ctx), 0), false)
     })
 
     it("does no native storage work when repairing healthy or absent managed placements", () => {

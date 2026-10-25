@@ -1,0 +1,106 @@
+{
+  "candidateDigest": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "manifestUnchanged": true,
+  "node": "v24.14.1",
+  "runs": [
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-delivery-presence.mjs"
+      ],
+      "env": {
+        "NODE_OPTIONS": null,
+        "CASCADA_*": "unset"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.419,
+      "stdout": "{\"cases\":384,\"failures\":0,\"retired\":192,\"modes\":[\"ready\",\"native\",\"ordered\",\"chained\"],\"shapes\":[\"record\",\"array-hole\",\"array-growth\"],\"actions\":[\"absent\",\"undefined\",\"object\",\"recover\"],\"indexed\":[false,true],\"discardedCaptureOwner\":[false,true]}\n",
+      "stderr": "",
+      "scriptSHA256": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+      "receipts": []
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-delivery-presence.mjs"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--import=file:///C:/Projects/cascada-chain-resolution/test/trace-runtime.js",
+        "CASCADA_*": "unset",
+        "CASCADA_TRACE_RECEIPT_FILE": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-phase5-delivery-04-final-bxzlw88q\\2026-10-25-04-delivery-presence-True.jsonl"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.465,
+      "stdout": "{\"cases\":384,\"failures\":0,\"retired\":192,\"modes\":[\"ready\",\"native\",\"ordered\",\"chained\"],\"shapes\":[\"record\",\"array-hole\",\"array-growth\"],\"actions\":[\"absent\",\"undefined\",\"object\",\"recover\"],\"indexed\":[false,true],\"discardedCaptureOwner\":[false,true]}\n",
+      "stderr": "",
+      "scriptSHA256": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+      "receipts": [
+        {
+          "event": "loaded",
+          "pid": 31960,
+          "parent": 41396,
+          "script": "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-25-04-delivery-presence.mjs"
+        },
+        {
+          "event": "executed",
+          "name": "thenValue",
+          "pid": 31960,
+          "parent": 41396,
+          "script": "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-25-04-delivery-presence.mjs"
+        }
+      ]
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-delivery-recovery.mjs"
+      ],
+      "env": {
+        "NODE_OPTIONS": null,
+        "CASCADA_*": "unset"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.358,
+      "stdout": "{\"cases\":76,\"failures\":0,\"earlyCompletions\":24,\"modes\":[\"ready\",\"native\",\"ordered\",\"chained\"],\"indexed\":[false,true],\"orders\":[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]],\"outcomes\":[\"fulfillment\",\"rejection\"],\"scenario\":\"copied pending entry poison; queued repair; overwritten pending recovery child; independent original recovery\"}\n",
+      "stderr": "",
+      "scriptSHA256": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+      "receipts": []
+    },
+    {
+      "command": [
+        "node",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-delivery-recovery.mjs"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--import=file:///C:/Projects/cascada-chain-resolution/test/trace-runtime.js",
+        "CASCADA_*": "unset",
+        "CASCADA_TRACE_RECEIPT_FILE": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-phase5-delivery-recovery-4qjnx59m\\recovery-True.jsonl"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.389,
+      "stdout": "{\"cases\":76,\"failures\":0,\"earlyCompletions\":24,\"modes\":[\"ready\",\"native\",\"ordered\",\"chained\"],\"indexed\":[false,true],\"orders\":[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]],\"outcomes\":[\"fulfillment\",\"rejection\"],\"scenario\":\"copied pending entry poison; queued repair; overwritten pending recovery child; independent original recovery\"}\n",
+      "stderr": "",
+      "scriptSHA256": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+      "receipts": [
+        {
+          "event": "loaded",
+          "pid": 11480,
+          "parent": 31632,
+          "script": "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-25-04-delivery-recovery.mjs"
+        },
+        {
+          "event": "executed",
+          "name": "thenValue",
+          "pid": 11480,
+          "parent": 31632,
+          "script": "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-25-04-delivery-recovery.mjs"
+        }
+      ]
+    }
+  ],
+  "limits": "Focused semantic probes only; normal/traced repetitions are not distinct scenarios. No fault sensitivity or broad acceptance credit."
+}

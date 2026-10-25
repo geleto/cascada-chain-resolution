@@ -62,6 +62,7 @@ function capturePlacement(owner, key, operationContext, capturedVersion, storage
 }
 
 function capturePlacementFromVersion(version) {
+    refreshCopiedDelivery(version)
     return {
         value: version.value, present: version.present !== false,
         sourceVersion: version.promiseBacked ? version : undefined,
@@ -128,6 +129,7 @@ function observePlacementCapture(placement, accept) {
             if (subscribed.has(version)) return
             subscribed.add(version)
             ;(version.captures ??= new Set()).add(visit)
+            retainCopiedDelivery(version)
             placement = version
         }
         accept(placement.value)
@@ -138,6 +140,7 @@ function observePlacementCapture(placement, accept) {
         for (const version of subscribed) {
             version.captures.delete(visit)
             if (!version.captures.size) delete version.captures
+            releaseCopiedDelivery(version)
         }
         subscribed.clear()
     }
@@ -153,12 +156,68 @@ function retainPlacement(placement, operationContext) {
 // structural effect to publish; the container copier transfers their shape.
 // Shared backing copies only overlays. Pending copies keep ordinary publication.
 function copyPlacement(placement, owner, key, operationContext, writeBack = true) {
-    if (languageValues.isPending(placement.value, operationContext))
-        return transferPlacement(placement, owner, key, operationContext, undefined,
-            errorUtils.ERROR_KIND.AssignmentValueFailed, writeBack)
+    if (languageValues.isPending(placement.value, operationContext)) {
+        if (writeBack) {
+            const destination = ArrayView.placementDestination(owner, key, operationContext)
+            if (destination) { owner = destination.owner; key = destination.key }
+        }
+        const source = placement.sourceVersion
+        const delivery = source.copiedDelivery?.delivery ?? (source.copyDelivery ??=
+            createCopyDelivery(placement, operationContext))
+        if (delivery.placement) return copyPlacement(delivery.placement, owner, key, operationContext, writeBack)
+        const version = createVersionFromPlacement(placement)
+        version.promiseBacked = true
+        version.publication = delivery.publication
+        version.copiedDelivery = { delivery, version, key, operationContext, active: false,
+            destination: destinationOf(owner, operationContext) }
+        replacePlacement(owner, key, version, operationContext, writeBack && !version.pendingPresence)
+        return
+    }
     if (writeBack && placement.present) defineCopyProperty(owner, key, placement.value)
     if (!writeBack || placement.recovery || placement.discoveryBlocked)
         installPlacementVersion(owner, key, createVersionFromPlacement(placement), operationContext)
+}
+
+// Representation copies share one captured delivery, not mutable placement
+// authority. Reads and writers still subscribe at their own program positions.
+// Only live destinations and independently captured versions receive publication;
+// retired forward state can adopt the same completed delivery on re-entry.
+function createCopyDelivery(placement, operationContext) {
+    const delivery = { uses: new Set() }
+    delivery.publication = resolvePlacement(placement, operationContext, (ready, releaseCapture) => {
+        try {
+            delivery.placement = ready
+            for (const use of delivery.uses) refreshCopiedDelivery(use.version)
+            delivery.uses.clear()
+        } finally { releaseCapture?.() }
+    })
+    if (languageValues.isPending(delivery.publication, operationContext))
+        markPromiseHandled(delivery.publication, operationContext)
+    return delivery
+}
+
+function refreshCopiedDelivery(version) {
+    const use = version.copiedDelivery
+    if (!use?.delivery.placement) return
+    delete version.copiedDelivery
+    use.delivery.uses.delete(use)
+    publishPromiseVersion(use.active ? use.destination.owner : undefined, use.key, version,
+        use.delivery.placement, use.operationContext)
+}
+
+function retainCopiedDelivery(version, active = false) {
+    const use = version.copiedDelivery
+    if (!use) return
+    use.active ||= active
+    if (use.delivery.placement) refreshCopiedDelivery(version)
+    else use.delivery.uses.add(use)
+}
+
+function releaseCopiedDelivery(version, inactive = false) {
+    const use = version.copiedDelivery
+    if (!use) return
+    if (inactive) use.active = false
+    if (!use.active && !version.captures) use.delivery.uses.delete(use)
 }
 
 function transferPlacement(placement, owner, key, operationContext, destinationVersion,
@@ -295,6 +354,10 @@ function preparePlacementCommit(owner, key, version, placement, operationContext
     // Captured consumers may resume after publication makes this placement
     // ready. Preserve their value before a later synchronous writer can use it.
     const commit = () => {
+        const copied = version.copiedDelivery
+        if (copied) copied.delivery.uses.delete(copied)
+        delete version.copiedDelivery
+        delete version.copyDelivery
         version.value = placement.value
         version.present = placement.present
         version.recovery = placement.recovery
@@ -343,12 +406,16 @@ function getPromiseVersion(owner, key, operationContext) {
 function installPlacementVersion(owner, key, version, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     meta.placementVersions ??= Object.create(null)
+    if (meta.placementVersions[key]) releaseCopiedDelivery(meta.placementVersions[key], true)
     meta.placementVersions[key] = version
 }
 
 function detachPlacementVersion(owner, key, operationContext) {
     const versions = metadata.metaOf(owner, operationContext)?.placementVersions
-    if (versions) delete versions[key]
+    if (versions?.[key]) {
+        releaseCopiedDelivery(versions[key], true)
+        delete versions[key]
+    }
 }
 
 function isLivePlacementVersion(owner, key, version, operationContext) {
@@ -632,10 +699,13 @@ function preparePropertyCommit(owner, key, placement, operationContext, structur
             try {
                 // A refused optional cache write leaves the prepared logical transition
                 // intact. Required storage failure still precedes all logical publication.
+                // Invoke without the preparation record as `this`: lazy Error
+                // stacks must not retain its captured baseline descriptor.
+                const commitStorage = storage?.commit
                 const absent = optionalStorage && storage
-                    ? errorUtils.catchExternalThrow(storage.commit, operationContext,
+                    ? errorUtils.catchExternalThrow(commitStorage, operationContext,
                         errorUtils.ERROR_KIND.PropertyMutationFailed, () => undefined)
-                    : storage?.commit()
+                    : commitStorage?.()
                 updateProperty(absent)
                 commitStructure(absent !== undefined)
             } finally { storage = updateProperty = commitStructure = undefined }
@@ -675,6 +745,9 @@ function copyArrayOverlays(
 }
 
 export {
+    refreshCopiedDelivery,
+    retainCopiedDelivery,
+    releaseCopiedDelivery,
     observePlacementCapture,
     resolvePropertyIdentityAtKey,
     installPlacementGate,

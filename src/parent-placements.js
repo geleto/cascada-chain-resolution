@@ -1,4 +1,4 @@
-import { observePlacementCapture } from "./property-versions.js"
+import { observePlacementCapture, refreshCopiedDelivery, retainCopiedDelivery, releaseCopiedDelivery } from "./property-versions.js"
 import { reconsider } from "./ownership.js"
 import * as metadata from "./meta.js"
 import { ArrayView, isArrayView, isArrayIndex } from "./array-view.js"
@@ -178,6 +178,7 @@ function destinationOf(owner, operationContext) {
 function recordVersion(owner, key, version, operationContext) {
     const meta = metadata.requireMeta(owner, operationContext)
     ;(meta.outgoingPlacements ??= new Map()).set(key, version)
+    if (meta.relationshipsActive) retainCopiedDelivery(version, true)
     clearRecovery(owner, key, operationContext)
     if (meta.relationshipsActive && version.recovery) preserveRecovery(owner, key, version.recovery, operationContext)
     if (meta.relationshipsActive && version.present !== false) {
@@ -189,6 +190,7 @@ function recordVersion(owner, key, version, operationContext) {
 function activateRelationships(owner, operationContext) {
     const meta = metadata.metaOf(owner, operationContext)
     if (!meta?.placementsInitialized || meta.relationshipsActive) return
+    for (const placement of meta.outgoingPlacements?.values() ?? []) refreshCopiedDelivery(placement)
     meta.relationshipsActive = true
     meta.arrayRange?.lengthState?.retain?.()
     reconsider(owner, operationContext)
@@ -200,6 +202,7 @@ function activateRelationships(owner, operationContext) {
         activateRelationships(record.producers, operationContext)
     }
     for (const [key, placement] of meta.outgoingPlacements ?? []) {
+        retainCopiedDelivery(placement, true)
         if (placement.recovery) preserveRecovery(owner, key, placement.recovery, operationContext)
         if (placement.present === false) continue
         activateRelationships(placement.value, operationContext)
@@ -219,8 +222,10 @@ function retireRelationships(owner, operationContext) {
         reconsider(meta.backingRecord, operationContext)
         if (meta.backingRecord.producers) reconsider(meta.backingRecord.producers, operationContext)
     }
-    for (const [key, placement] of meta.outgoingPlacements ?? [])
+    for (const [key, placement] of meta.outgoingPlacements ?? []) {
+        releaseCopiedDelivery(placement, true)
         if (placement.present !== false) unlinkParent(placement.value, owner, key, operationContext)
+    }
     for (const parents of meta.counterChildren ?? []) parents.delete(owner)
     for (const version of meta.backingCounterVersions ?? []) {
         version.counterProjections.delete(owner)

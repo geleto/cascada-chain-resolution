@@ -1,0 +1,2065 @@
+{
+  "reviewer": "/root/missed_failure_lifetimes",
+  "candidateDigest": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "executionInputs": 256,
+  "node": "v24.14.1",
+  "os": "Windows-11-10.0.26200-SP0",
+  "scope": "Focused supported Array failure lifetime review; no source/test edits; R1/R2/R3 remain open",
+  "probes": {
+    "overflow": {
+      "path": "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs",
+      "sha256": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b"
+    },
+    "remaps": {
+      "path": "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs",
+      "sha256": "b2897dad743c94ffa2f7c9a2b10c87f2b4a8b6a9d986d0acc8a443735ce06333"
+    },
+    "preparation-controls": {
+      "path": "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs",
+      "sha256": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066"
+    }
+  },
+  "runs": [
+    {
+      "probe": "overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=10",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.21,
+      "stdoutSha256": "e2c3ba573676a3a1b49c30f8dc45be1d1312ad979006140071bf3c914da763dc",
+      "stderrSha256": "84dcc1d4d0f27617f6fe0c45bcdf237b3d57df45e226428b6a49f4db91d879a3",
+      "result": {
+        "cases": 36,
+        "retained": [
+          {
+            "label": "concat/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/native/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/ordered/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.216,
+      "stdoutSha256": "e2c3ba573676a3a1b49c30f8dc45be1d1312ad979006140071bf3c914da763dc",
+      "stderrSha256": "84dcc1d4d0f27617f6fe0c45bcdf237b3d57df45e226428b6a49f4db91d879a3",
+      "result": {
+        "cases": 36,
+        "retained": [
+          {
+            "label": "concat/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/native/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/ordered/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.215,
+      "stdoutSha256": "e2c3ba573676a3a1b49c30f8dc45be1d1312ad979006140071bf3c914da763dc",
+      "stderrSha256": "84dcc1d4d0f27617f6fe0c45bcdf237b3d57df45e226428b6a49f4db91d879a3",
+      "result": {
+        "cases": 36,
+        "retained": [
+          {
+            "label": "concat/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/native/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/ordered/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {
+        "FORMAT_STACKS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "format",
+      "exitCode": 0,
+      "durationSeconds": 0.221,
+      "stdoutSha256": "cfed93a6b49df775a6697d71eb2a4029fbe43dbf95fde5834a6d8a2456324a3c",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 36,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    },
+    {
+      "probe": "overflow",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {
+        "DROP_POISONS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "drop",
+      "exitCode": 0,
+      "durationSeconds": 0.202,
+      "stdoutSha256": "cfed93a6b49df775a6697d71eb2a4029fbe43dbf95fde5834a6d8a2456324a3c",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 36,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    },
+    {
+      "probe": "remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=10",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.22,
+      "stdoutSha256": "fc47f54b944c2239bbb0c2d036f1ed06d07c75dad60de61ae93acbd8e487d7ea",
+      "stderrSha256": "eb06de358b388b796989508ca2ee3ab8d5912069d194d9280c1ca65c4d4f00a6",
+      "result": {
+        "cases": 54,
+        "retained": [
+          {
+            "label": "concat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/0/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.224,
+      "stdoutSha256": "fc47f54b944c2239bbb0c2d036f1ed06d07c75dad60de61ae93acbd8e487d7ea",
+      "stderrSha256": "eb06de358b388b796989508ca2ee3ab8d5912069d194d9280c1ca65c4d4f00a6",
+      "result": {
+        "cases": 54,
+        "retained": [
+          {
+            "label": "concat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/0/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.224,
+      "stdoutSha256": "fc47f54b944c2239bbb0c2d036f1ed06d07c75dad60de61ae93acbd8e487d7ea",
+      "stderrSha256": "eb06de358b388b796989508ca2ee3ab8d5912069d194d9280c1ca65c4d4f00a6",
+      "result": {
+        "cases": 54,
+        "retained": [
+          {
+            "label": "concat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/0/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {
+        "FORMAT_STACKS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "format",
+      "exitCode": 0,
+      "durationSeconds": 0.218,
+      "stdoutSha256": "485bc97040ceb31fa000fd88c5b2a2bbccc8a69a513c2f5cc12637d2e7b46871",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 54,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    },
+    {
+      "probe": "remaps",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {
+        "DROP_POISONS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "drop",
+      "exitCode": 0,
+      "durationSeconds": 0.216,
+      "stdoutSha256": "485bc97040ceb31fa000fd88c5b2a2bbccc8a69a513c2f5cc12637d2e7b46871",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 54,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    },
+    {
+      "probe": "preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=10",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.192,
+      "stdoutSha256": "582d593b027c92488d42c2b429e720030a9aac93e224e4b675531e1129e3b2fd",
+      "stderrSha256": "b85662faa0829a7172381110fd51c554e33bc530ee41afdc22213d715b75a881",
+      "result": {
+        "cases": 12,
+        "retained": [
+          {
+            "label": "comparator/native",
+            "live": [
+              true,
+              false
+            ]
+          },
+          {
+            "label": "comparator/ordered",
+            "live": [
+              true,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.196,
+      "stdoutSha256": "582d593b027c92488d42c2b429e720030a9aac93e224e4b675531e1129e3b2fd",
+      "stderrSha256": "b85662faa0829a7172381110fd51c554e33bc530ee41afdc22213d715b75a881",
+      "result": {
+        "cases": 12,
+        "retained": [
+          {
+            "label": "comparator/native",
+            "live": [
+              true,
+              false
+            ]
+          },
+          {
+            "label": "comparator/ordered",
+            "live": [
+              true,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {},
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "plain",
+      "exitCode": 1,
+      "durationSeconds": 0.189,
+      "stdoutSha256": "582d593b027c92488d42c2b429e720030a9aac93e224e4b675531e1129e3b2fd",
+      "stderrSha256": "b85662faa0829a7172381110fd51c554e33bc530ee41afdc22213d715b75a881",
+      "result": {
+        "cases": 12,
+        "retained": [
+          {
+            "label": "comparator/native",
+            "live": [
+              true,
+              false
+            ]
+          },
+          {
+            "label": "comparator/ordered",
+            "live": [
+              true,
+              false
+            ]
+          }
+        ]
+      },
+      "expectedFailure": true,
+      "diagnostic": "AssertionError: Expected values to be strictly deep-equal"
+    },
+    {
+      "probe": "preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {
+        "FORMAT_STACKS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "format",
+      "exitCode": 0,
+      "durationSeconds": 0.187,
+      "stdoutSha256": "f1ec31396dad5f105a21b662d637f14a6a9ad695cc168de6e321307292174c6b",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 12,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    },
+    {
+      "probe": "preparation-controls",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {
+        "DROP_POISONS": "1"
+      },
+      "envUnset": [
+        "NODE_OPTIONS",
+        "CASCADA_*",
+        "FORMAT_STACKS",
+        "DROP_POISONS",
+        "SNAPSHOT",
+        "METHOD"
+      ],
+      "mode": "drop",
+      "exitCode": 0,
+      "durationSeconds": 0.186,
+      "stdoutSha256": "f1ec31396dad5f105a21b662d637f14a6a9ad695cc168de6e321307292174c6b",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "result": {
+        "cases": 12,
+        "retained": []
+      },
+      "expectedFailure": false,
+      "diagnostic": null
+    }
+  ],
+  "heapPaths": [
+    {
+      "probe": "overflow",
+      "probeSha256": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-push.heapsnapshot",
+        "METHOD": "push"
+      },
+      "exitCode": 1,
+      "result": {
+        "cases": 6,
+        "retained": [
+          {
+            "label": "push/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "snapshotPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-push.heapsnapshot",
+      "snapshotBytes": 6422683,
+      "snapshotSha256": "283d680ed6756459f7c5867528ce5fe09e3ce29a500444e08b416691d8d0dd20",
+      "parserPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-heap-paths.py",
+      "parserSha256": "81446b11ff55e007145629251308374ae479f327cf68ab1173becabf12d4709b",
+      "edgePolicy": "BFS from the retained row poison to selected object or source Proxy; weak edges excluded",
+      "path": [
+        {
+          "from": {
+            "type": "object",
+            "name": "PoisonError",
+            "id": 128999
+          },
+          "edge": "property:<symbol>",
+          "to": {
+            "type": "array",
+            "name": "",
+            "id": 129147
+          }
+        },
+        {
+          "from": {
+            "type": "array",
+            "name": "",
+            "id": 129147
+          },
+          "edge": "internal:2",
+          "to": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 129161
+          }
+        },
+        {
+          "from": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 129161
+          },
+          "edge": "hidden:2",
+          "to": {
+            "type": "closure",
+            "name": "finish",
+            "id": 129925
+          }
+        },
+        {
+          "from": {
+            "type": "closure",
+            "name": "finish",
+            "id": 129925
+          },
+          "edge": "internal:context",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 130317
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 130317
+          },
+          "edge": "context:args",
+          "to": {
+            "type": "object",
+            "name": "Array",
+            "id": 128947
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "Array",
+            "id": 128947
+          },
+          "edge": "element:0",
+          "to": {
+            "type": "object",
+            "name": "Object",
+            "id": 128319
+          }
+        }
+      ],
+      "closureScriptAttribution": "CLOSURE {'type': 'closure', 'name': 'finish', 'id': 129925}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/array-invocation.js'), ('trusted_function_data', 'system / BytecodeArray'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]"
+    },
+    {
+      "probe": "overflow",
+      "probeSha256": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-concat.heapsnapshot",
+        "METHOD": "concat"
+      },
+      "exitCode": 1,
+      "result": {
+        "cases": 6,
+        "retained": [
+          {
+            "label": "concat/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/native/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/ordered/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "snapshotPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-concat.heapsnapshot",
+      "snapshotBytes": 6365110,
+      "snapshotSha256": "326b299e5b53ba81e1370641a9a856b4c89bd08fef2e529b9d5aa2b48f28d14c",
+      "parserPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-heap-paths.py",
+      "parserSha256": "81446b11ff55e007145629251308374ae479f327cf68ab1173becabf12d4709b",
+      "edgePolicy": "BFS from the retained row poison to selected object or source Proxy; weak edges excluded",
+      "path": [
+        {
+          "from": {
+            "type": "object",
+            "name": "PoisonError",
+            "id": 66705
+          },
+          "edge": "property:<symbol>",
+          "to": {
+            "type": "array",
+            "name": "",
+            "id": 67053
+          }
+        },
+        {
+          "from": {
+            "type": "array",
+            "name": "",
+            "id": 67053
+          },
+          "edge": "internal:3",
+          "to": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 68361
+          }
+        },
+        {
+          "from": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 68361
+          },
+          "edge": "hidden:2",
+          "to": {
+            "type": "closure",
+            "name": "",
+            "id": 68793
+          }
+        },
+        {
+          "from": {
+            "type": "closure",
+            "name": "",
+            "id": 68793
+          },
+          "edge": "internal:context",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 68907
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 68907
+          },
+          "edge": "context:parts",
+          "to": {
+            "type": "object",
+            "name": "Array",
+            "id": 67151
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "Array",
+            "id": 67151
+          },
+          "edge": "element:0",
+          "to": {
+            "type": "object",
+            "name": "Array",
+            "id": 67153
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "Array",
+            "id": 67153
+          },
+          "edge": "element:0",
+          "to": {
+            "type": "object",
+            "name": "Object",
+            "id": 67307
+          }
+        }
+      ],
+      "closureScriptAttribution": "CLOSURE {'type': 'closure', 'name': '', 'id': 68793}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/array-methods.js'), ('trusted_function_data', 'system / BytecodeArray'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]"
+    },
+    {
+      "probe": "overflow",
+      "probeSha256": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "envOverrides": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-with.heapsnapshot",
+        "METHOD": "with"
+      },
+      "exitCode": 1,
+      "result": {
+        "cases": 6,
+        "retained": [
+          {
+            "label": "with/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "snapshotPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-with.heapsnapshot",
+      "snapshotBytes": 6374637,
+      "snapshotSha256": "7d5c500ba3b7828f60e889094a3d6aa2fa05b9fc89dac72776b08cf580047815",
+      "parserPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-heap-paths.py",
+      "parserSha256": "81446b11ff55e007145629251308374ae479f327cf68ab1173becabf12d4709b",
+      "edgePolicy": "BFS from the retained row poison to selected object or source Proxy; weak edges excluded",
+      "path": [
+        {
+          "from": {
+            "type": "object",
+            "name": "PoisonError",
+            "id": 94827
+          },
+          "edge": "property:<symbol>",
+          "to": {
+            "type": "array",
+            "name": "",
+            "id": 94829
+          }
+        },
+        {
+          "from": {
+            "type": "array",
+            "name": "",
+            "id": 94829
+          },
+          "edge": "internal:1",
+          "to": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 96523
+          }
+        },
+        {
+          "from": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 96523
+          },
+          "edge": "hidden:2",
+          "to": {
+            "type": "closure",
+            "name": "finish",
+            "id": 95625
+          }
+        },
+        {
+          "from": {
+            "type": "closure",
+            "name": "finish",
+            "id": 95625
+          },
+          "edge": "internal:context",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 95059
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 95059
+          },
+          "edge": "context:replacement",
+          "to": {
+            "type": "object",
+            "name": "Object",
+            "id": 52977
+          }
+        }
+      ],
+      "closureScriptAttribution": "CLOSURE {'type': 'closure', 'name': 'finish', 'id': 95625}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/array-methods.js'), ('trusted_function_data', 'system / BytecodeArray'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]"
+    },
+    {
+      "probe": "remaps",
+      "probeSha256": "b2897dad743c94ffa2f7c9a2b10c87f2b4a8b6a9d986d0acc8a443735ce06333",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "envOverrides": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-reverse.heapsnapshot",
+        "METHOD": "reverse"
+      },
+      "exitCode": 1,
+      "result": {
+        "cases": 6,
+        "retained": [
+          {
+            "label": "reverse/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      },
+      "snapshotPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-reverse.heapsnapshot",
+      "snapshotBytes": 6387541,
+      "snapshotSha256": "88cb1f854a8e7ba0309415477f6743315d4bee502a4e1a6281d9111bf3304128",
+      "parserPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-heap-paths.py",
+      "parserSha256": "81446b11ff55e007145629251308374ae479f327cf68ab1173becabf12d4709b",
+      "edgePolicy": "BFS from the retained row poison to selected object or source Proxy; weak edges excluded",
+      "path": [
+        {
+          "from": {
+            "type": "object",
+            "name": "PoisonError",
+            "id": 109635
+          },
+          "edge": "property:cause",
+          "to": {
+            "type": "object",
+            "name": "Error",
+            "id": 109769
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "Error",
+            "id": 109769
+          },
+          "edge": "property:<symbol>",
+          "to": {
+            "type": "array",
+            "name": "",
+            "id": 110313
+          }
+        },
+        {
+          "from": {
+            "type": "array",
+            "name": "",
+            "id": 110313
+          },
+          "edge": "internal:9",
+          "to": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 110507
+          }
+        },
+        {
+          "from": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 110507
+          },
+          "edge": "hidden:2",
+          "to": {
+            "type": "closure",
+            "name": "inspect",
+            "id": 96459
+          }
+        },
+        {
+          "from": {
+            "type": "closure",
+            "name": "inspect",
+            "id": 96459
+          },
+          "edge": "internal:context",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 96465
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 96465
+          },
+          "edge": "context:array",
+          "to": {
+            "type": "hidden",
+            "name": "system / JSProxy",
+            "id": 95755
+          }
+        }
+      ],
+      "closureScriptAttribution": "CLOSURE {'type': 'closure', 'name': 'inspect', 'id': 96459}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/array-remap.js'), ('trusted_function_data', '(code for inspect)'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]"
+    },
+    {
+      "probe": "preparation-controls",
+      "probeSha256": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=1000",
+        "--max-old-space-size=192",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-preparation-controls.mjs"
+      ],
+      "envOverrides": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-preparation-controls.heapsnapshot"
+      },
+      "exitCode": 1,
+      "result": {
+        "cases": 12,
+        "retained": [
+          {
+            "label": "comparator/native",
+            "live": [
+              true,
+              false
+            ]
+          },
+          {
+            "label": "comparator/ordered",
+            "live": [
+              true,
+              false
+            ]
+          }
+        ]
+      },
+      "snapshotPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-final-preparation-controls.heapsnapshot",
+      "snapshotBytes": 6476699,
+      "snapshotSha256": "577a74672cfdcb479aa2b74d234f6e9ab084af781038f0680239dbefe69da69d",
+      "parserPath": "C:\\Users\\Gele\\AppData\\Local\\Temp\\phase5-04-heap-paths.py",
+      "parserSha256": "81446b11ff55e007145629251308374ae479f327cf68ab1173becabf12d4709b",
+      "edgePolicy": "BFS from the retained row poison to selected object or source Proxy; weak edges excluded",
+      "path": [
+        {
+          "from": {
+            "type": "object",
+            "name": "PoisonError",
+            "id": 131371
+          },
+          "edge": "property:<symbol>",
+          "to": {
+            "type": "array",
+            "name": "",
+            "id": 131373
+          }
+        },
+        {
+          "from": {
+            "type": "array",
+            "name": "",
+            "id": 131373
+          },
+          "edge": "internal:6",
+          "to": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 108967
+          }
+        },
+        {
+          "from": {
+            "type": "hidden",
+            "name": "system / CallSiteInfo",
+            "id": 108967
+          },
+          "edge": "hidden:2",
+          "to": {
+            "type": "closure",
+            "name": "",
+            "id": 108969
+          }
+        },
+        {
+          "from": {
+            "type": "closure",
+            "name": "",
+            "id": 108969
+          },
+          "edge": "internal:context",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 109195
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 109195
+          },
+          "edge": "internal:previous",
+          "to": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 109197
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "system / Context",
+            "id": 109197
+          },
+          "edge": "context:value",
+          "to": {
+            "type": "object",
+            "name": "Promise",
+            "id": 109475
+          }
+        },
+        {
+          "from": {
+            "type": "object",
+            "name": "Promise",
+            "id": 109475
+          },
+          "edge": "internal:reactions_or_result",
+          "to": {
+            "type": "object",
+            "name": "Object",
+            "id": 108975
+          }
+        }
+      ],
+      "closureScriptAttribution": "CLOSURE {'type': 'closure', 'name': '', 'id': 108969}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/language-values.js'), ('trusted_function_data', '(BASELINE code)'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]"
+    }
+  ]
+}

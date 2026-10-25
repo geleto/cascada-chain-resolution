@@ -126,6 +126,7 @@ class InvocationWork extends PathOperation {
     }
 
     releaseInvocation() {
+        this.preserveReceiverBaseline = undefined
         this.discardPreparedOutput?.()
         this.discardPreparedOutput = undefined
         for (const input of this.#inputs ?? []) input.close()
@@ -239,7 +240,8 @@ function invokeMethod(
         function invokePrepared(readyArguments) {
             let result = readyArguments
             if (!errorUtils.isPoisonError(readyArguments)) {
-                result = methodDescription.invoke(readyArguments)
+                try { result = methodDescription.invoke(readyArguments) }
+                finally { invocationWork.preserveReceiverBaseline = undefined }
             }
             const pendingInputUse = methodDescription.leaseInputsThroughResult &&
                 languageValues.isPending(result, operationContext)

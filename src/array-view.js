@@ -284,6 +284,10 @@ class ArrayView {
             if (metadata.isImported(source, operationContext) ||
                 metadata.isImported(backing, operationContext)) return
             if (ArrayView.readyLength(source, operationContext) === undefined) return
+            // Repeated end growth on a moving window must not retain its whole
+            // discarded prefix. Materialize the live range through the ordinary
+            // fallback; other owners keep their existing backing unchanged.
+            if (count > 0 && range?.start > ArrayView.minimumLength(source, operationContext)) return
             // Check tail availability before attaching a new logical owner.
             // An empty extension needs no physical write.
             let nextPhysicalLength

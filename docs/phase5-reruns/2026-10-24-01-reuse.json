@@ -1,0 +1,314 @@
+{
+  "status": "verified and reused for the 52 unchanged non-baseline jobs; fresh normal/traced baselines replace two historical baseline gates",
+  "sourceCandidateDigest": "bb57d772e6ca9eb76dac5ff96ddeba3b79502b4a041a546e10f9bc838f538ca8",
+  "originalDate": "2026-10-22",
+  "verifiedOn": "2026-10-24",
+  "portableAcceptanceSHA256": "28025cea7b1ff0c55c120a0b8f6e2e469622913e4aaa8cdcb240c642ffe0ca14",
+  "portableSensitivitySHA256": "fc639a3c70e37b076be15b1f3f9cc25c210785d9ac55ae8b690c685a7cfa6961",
+  "logs": [
+    {
+      "label": "candidate-5-normal",
+      "sha256": "d35179fe248c69afac9dfb603280d588ff81e1471076f4deae924d174b6fa978",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-traced",
+      "sha256": "fad284eb5ccad8c97b755181ca048aaaafaa77f88d9d2c87094f54b671ca5dc9",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-safeguards",
+      "sha256": "dfa205ae8f1ff770df07ed388a31923c0a4bbd466efa56b0ad835905e75da0ca",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-preparation-sequences",
+      "sha256": "8c7908fd25831d91253e0ea94e5482ef51a9e50fe2d01e00d6bc7161c1b09e1e",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-placement-sequences",
+      "sha256": "fe1ed29ef5a97b233cc2ce78e97551f87733df96bd756bc0eb9759baf0b34c84",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-array-sequences",
+      "sha256": "d7090f710816128f4efc640cb215fd7a4d7dd5b7a0a6729c635c41772c51b8ce",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-nested-sequences",
+      "sha256": "53af880203afbfc41ab81e91588d5c73e4cd6add1972fac753335980f90edc3e",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-external-sequences",
+      "sha256": "77561288e803e79d15266a54c08f2a5f0aba66282c09071d649b209c6c05b3b1",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-boundary-histories",
+      "sha256": "174e4aa4aefd8ee2131ddd4f297f0dd66dc1927198690bddee239375ce809c2a",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-pending-histories",
+      "sha256": "c8c45f4ab7ab15b9c835c83553dc9f250bb9a037b1d98f35cc1fcf899da663b8",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-scale-receiving",
+      "sha256": "1b60b6a3268380248b480814d7bb2d74f8b1b5b503a914ca89006e3682fa95a8",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-0",
+      "sha256": "8e902c74e65d02f811455519ecb4d8f1f0c8b946f37e8f50927ef46dc973d396",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-1",
+      "sha256": "fd3253e1b72857aa396483ceed9f54e4b0179859287f099b909ac32a46ff0ef4",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-2",
+      "sha256": "8e902c74e65d02f811455519ecb4d8f1f0c8b946f37e8f50927ef46dc973d396",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-3",
+      "sha256": "fd3253e1b72857aa396483ceed9f54e4b0179859287f099b909ac32a46ff0ef4",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-4",
+      "sha256": "c4277da0c65c54cd28c4f267a58215a91cae03c37c6b0a9c6faebda0b870924c",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-5",
+      "sha256": "79ed87e38ad7f711acbd6eab46c2429507dc9f7f9561fbac1692ed4d2d678291",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-6",
+      "sha256": "c4277da0c65c54cd28c4f267a58215a91cae03c37c6b0a9c6faebda0b870924c",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-matrix-7",
+      "sha256": "79ed87e38ad7f711acbd6eab46c2429507dc9f7f9561fbac1692ed4d2d678291",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-0",
+      "sha256": "4946f893e809165657f6dfeca63db65e5d156c14dbf35b51d937118582e20e17",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-1",
+      "sha256": "9d8c2591726b3325e89fb20ef01cccbfdc444e5e8cd76e780ddc82f801b07e8e",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-2",
+      "sha256": "08aba268cbb69cbccc85e373f57f4aab101bd41d3070ab2f4878572446306dde",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-3",
+      "sha256": "67fd3f06be8f66948ba5d6821f1c0276a75451d2acd931f977f1479b09049b69",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-4",
+      "sha256": "f5775f85944d56da35b59b8da0452307ebe2e8a8359d8e64434582d96b70094c",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-5",
+      "sha256": "af23c7edcbae153d1a8d8d9db34c26745a45b57a4a1fca180288900437227708",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-6",
+      "sha256": "8ad0098c7fc627d406b542ea245fd91ffef3b6e490458252ebfbc101e0fb1b4a",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-pairs-7",
+      "sha256": "4946f893e809165657f6dfeca63db65e5d156c14dbf35b51d937118582e20e17",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-array-failure-release-50",
+      "sha256": "50c3c43b5d43b209f71be45d847d87b743318254f25110688a00dbb0cd55a70a",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-array-reflection-release-50",
+      "sha256": "a7db7cb39f053f31c1c98ace5ee9cee67d33f99ec52424cf9a5f89836c2bf0bc",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-array-surface-50",
+      "sha256": "211e5714bcefe971c2985e603878dde7c81ea85d707f71add7ea069ace4df547",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-boundary-release-50",
+      "sha256": "3c3710ce47a9a7b5c4722b7e684ffa9a9759fc0a47b07c1e8dbfe08113a22275",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-call-selection-release-50",
+      "sha256": "31f84afe1c7aa2f72ce6047822303402260e99a7d145b0ce7fbac5dc8d2265d5",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-capture-fatal-50",
+      "sha256": "d66f0aeb2feacfecf02236fe6193f93c7860a6afb8143761b71dc83422723281",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-discarded-argument-leaves-50",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-external-owner-release-50",
+      "sha256": "0513a0ac25c09015580561871802c6f826234ab5f1220a59fa7a075bb13a2322",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-flat-completion-50",
+      "sha256": "32a358bfb404d3e78871ddb356da63150d9d7f9d6ba69bb9e4b12a36b361897f",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-inspection-failure-retention-50",
+      "sha256": "31c2ee6872845d0f2226faea4a7251bfd024a1d63cacccaef10ee77c5927635d",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-mutation-failure-retention-50",
+      "sha256": "97fe4d0bb732a00fa9d291622e751b77c1940af89d4928b8a950d605e4296716",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-path-release-50",
+      "sha256": "b96615c0c29b544c3b8bf798108182eef55e07a96e29172386297aab18aaf73f",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-preparation-authority-50",
+      "sha256": "9f9819c8562799c800073d5dca62c556798f6171263a6aeb526efe5af120de1e",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-outward-registration-release-50",
+      "sha256": "7d0b0c40ea793941ee2d206b116c939716cf1860ce48767424d8e47ed2d842b2",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-prepared-boundaries-50",
+      "sha256": "2dc1bd2f3ad42abf7cc6129f027fef041e3dea167d08afa8a44e2def7f605713",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-public-surface-release-50",
+      "sha256": "7eb7238cd66072f78136eadcfb31d1bcf4d98e1b860a1e6a52f9a5a89e001d99",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-receiver-identity-50",
+      "sha256": "2d971cb2b7b2790587a25c68aa01bc3f150471a6279ea556705a6302ae4109c7",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-registration-release-50",
+      "sha256": "b82eef43edcce06ad1a53162c2eb0de4b298395292359b489fbd6e0f72b4ccbc",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-result-contract-50",
+      "sha256": "777aea69936bcd2f284fe4bd5f6b5289007108a6c318c45dd6fa4adb2ea42233",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-terminal-release-50",
+      "sha256": "8b4ddb2aa166d61391855be06ee7c4b247c23e3572b683f3d376e62ff54b8192",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-completed-work-retention-10",
+      "sha256": "532754f510dc7ac0de16f9ced8c92823727ad98aa05ebdd6d61ceaae8fa9ad1c",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-snapshot-identity-lifetime-10",
+      "sha256": "f557a252c7954cfffab0a3dd68b3aa800562664000dae8749c16d17d50ed2faa",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-snapshot-identity-lifetime-50",
+      "sha256": "f557a252c7954cfffab0a3dd68b3aa800562664000dae8749c16d17d50ed2faa",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-snapshot-identity-lifetime-1000",
+      "sha256": "f557a252c7954cfffab0a3dd68b3aa800562664000dae8749c16d17d50ed2faa",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-b22-direct",
+      "sha256": "3a64b079917aeea1afb0878942a510eb1e78f6bfd091306e58bd023b6458e3da",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-construction-retention-50",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reconciled": true
+    },
+    {
+      "label": "candidate-5-lifetime-construction-retention-1000",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reconciled": true
+    }
+  ],
+  "registry": {
+    "entries": 217,
+    "anchors": 232,
+    "allCurrent": true,
+    "repeatedAnchors": [
+      {
+        "id": "declaration-releases-inspection-inputs",
+        "index": 0,
+        "matches": 3,
+        "selection": "first exact match, as fault-hook.mjs specifies"
+      },
+      {
+        "id": "path-writes-advance-generation",
+        "index": 0,
+        "matches": 2,
+        "selection": "first exact match, as fault-hook.mjs specifies"
+      }
+    ]
+  },
+  "registryCheckSource": "import fs from 'node:fs';\nimport { SAFEGUARDS } from 'file:///C:/Projects/cascada-chain-resolution/test/safeguards/registry.mjs';\nconst saved=JSON.parse(fs.readFileSync('docs/phase5-sensitivity.json','utf8')).safeguardCatalog;\nlet anchors=0; const repeatedAnchors=[];\nfor(const entry of SAFEGUARDS){\n const prior=saved[entry.id];\n if(!prior || JSON.stringify(entry.faults)!==JSON.stringify(prior.faultEdits) || JSON.stringify(entry.witnesses)!==JSON.stringify(prior.declaredWitnessSelectors))throw Error(entry.id+' registry differs');\n const sources=new Map();\n for(const [index,fault] of entry.faults.entries()){\n  let text=sources.get(fault.file)??fs.readFileSync(fault.file,'utf8').replace(/\\r\\n/g,'\\n');\n  const matches=text.split(fault.find).length-1;\n  if(!matches)throw Error(entry.id+' missing fault '+index);\n  if(matches>1)repeatedAnchors.push({id:entry.id,index,matches,selection:'first exact match, as fault-hook.mjs specifies'});\n  sources.set(fault.file,text.replace(fault.find,fault.replace));anchors++;\n }\n}\nconsole.log(JSON.stringify({entries:SAFEGUARDS.length,anchors,allCurrent:true,repeatedAnchors}));\n",
+  "registryCheckQualification": "Initial scratch checker required unique text; loader actually replaces first exact match. Corrected checker models that existing behavior and reports two repeated anchors. No source or test defect was established by that diagnostic.",
+  "faultReportSHA256": "4d23c7cab7baa874d8583cc19afaa222323c571431e7555d614b87b8a550e843",
+  "entriesReconciled": 217,
+  "diagnosticExcerptsReconciled": 239,
+  "scopeQualification": "These are reused witnessed outcomes, not new fault executions. Current fresh source reviews reconcile actual callers and limitations.",
+  "finalScope": "Full B01-B22 review found no changed production, existing test, generator, verifier, loader, fault witness, contract or environment input requiring invalidation. Current source/caller reviews preserve the original evidence qualifications.",
+  "independentVerification": {
+    "artifact": "2026-10-24-01-independent-check.json",
+    "historicalLogs": 54,
+    "historicalReceiptFiles": 52,
+    "requiredSeedFamilies": 8,
+    "conflictParts": 8,
+    "publicationPairParts": 8
+  }
+}

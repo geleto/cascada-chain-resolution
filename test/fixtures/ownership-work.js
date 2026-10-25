@@ -175,7 +175,9 @@ for (const iterations of [200, 400, 800]) for (const offset of [0, 5]) {
         r.run(array, [], "push", [index], context, { mutationScopeDepth: 0 })
         retained.push(new r.Chain(r.run(array, [], "slice", [], context, {}), context))
     }
-    assert.equal(counts.copies, 0)
+    // An oversized initial offset is compacted once, copying its one live
+    // placement. Subsequent retained-view extensions still copy no prefix.
+    assert.equal(counts.copies, Number(offset > 0))
     assert(counts.owners <= 2 * iterations, JSON.stringify({ iterations, offset, ...counts }))
     samples.push({ case: "retained view extension", iterations, offset, ...counts })
     for (const [index, holder] of retained.entries()) {

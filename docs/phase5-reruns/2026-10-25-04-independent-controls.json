@@ -1,0 +1,413 @@
+{
+  "candidate": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "environmentCleared": [
+    "CASCADA_*",
+    "NODE_OPTIONS",
+    "METHOD",
+    "FORMAT_STACKS",
+    "DROP_POISONS",
+    "SNAPSHOT"
+  ],
+  "runs": [
+    {
+      "name": "overflow-bare",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "stackTraceLimit": 50,
+      "envOverride": {},
+      "exit": 1,
+      "durationSeconds": 0.197,
+      "cases": 36,
+      "result": {
+        "cases": 36,
+        "retained": [
+          {
+            "label": "concat/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/native/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "concat/ordered/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "push/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "unshift/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "splice/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "toSpliced/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/ready/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          },
+          {
+            "label": "with/sync/failure",
+            "live": [
+              true,
+              false,
+              false
+            ]
+          }
+        ]
+      },
+      "stdoutSHA256": "e2c3ba573676a3a1b49c30f8dc45be1d1312ad979006140071bf3c914da763dc",
+      "stderrDiagnostic": [
+        "node:internal/modules/run_main:107",
+        "    triggerUncaughtException(",
+        "    ^",
+        "",
+        "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+        "+ actual - expected",
+        "",
+        "+ ["
+      ]
+    },
+    {
+      "name": "overflow-drop",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-overflow.mjs"
+      ],
+      "stackTraceLimit": 50,
+      "envOverride": {
+        "DROP_POISONS": "1"
+      },
+      "exit": 0,
+      "durationSeconds": 0.198,
+      "cases": 36,
+      "result": {
+        "cases": 36,
+        "retained": []
+      },
+      "stdoutSHA256": "cfed93a6b49df775a6697d71eb2a4029fbe43dbf95fde5834a6d8a2456324a3c",
+      "stderrDiagnostic": []
+    },
+    {
+      "name": "remaps-bare",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "stackTraceLimit": 50,
+      "envOverride": {},
+      "exit": 1,
+      "durationSeconds": 0.216,
+      "cases": 54,
+      "result": {
+        "cases": 54,
+        "retained": [
+          {
+            "label": "concat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/0/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "concat/true/2/false/argument",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "reverse/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "splice/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toReversed/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSpliced/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "sort/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "toSorted/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/0/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          },
+          {
+            "label": "flat/true/2/false/receiver",
+            "live": [
+              true,
+              true,
+              true,
+              true,
+              true
+            ]
+          }
+        ]
+      },
+      "stdoutSHA256": "fc47f54b944c2239bbb0c2d036f1ed06d07c75dad60de61ae93acbd8e487d7ea",
+      "stderrDiagnostic": [
+        "node:internal/modules/run_main:107",
+        "    triggerUncaughtException(",
+        "    ^",
+        "",
+        "AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:",
+        "+ actual - expected",
+        "",
+        "+ ["
+      ]
+    },
+    {
+      "name": "remaps-drop",
+      "command": [
+        "node",
+        "--expose-gc",
+        "--stack-trace-limit=50",
+        "--unhandled-rejections=strict",
+        "docs/phase5-reruns/2026-10-25-04-lifetime-remaps.mjs"
+      ],
+      "stackTraceLimit": 50,
+      "envOverride": {
+        "DROP_POISONS": "1"
+      },
+      "exit": 0,
+      "durationSeconds": 0.297,
+      "cases": 54,
+      "result": {
+        "cases": 54,
+        "retained": []
+      },
+      "stdoutSHA256": "485bc97040ceb31fa000fd88c5b2a2bbccc8a69a513c2f5cc12637d2e7b46871",
+      "stderrDiagnostic": []
+    }
+  ]
+}

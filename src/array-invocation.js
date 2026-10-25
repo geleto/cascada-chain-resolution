@@ -67,14 +67,18 @@ function prepareArrayReceiver(methodDefinition, args, work) {
 
     function finish() {
         const failure = validateArrayOperation(args, work)
-        if (failure) return failure
-        if (!work.receiverCapture) return args
+        if (failure || !work.receiverCapture) {
+            try { return failure ?? args }
+            finally { args = undefined }
+        }
         return internalSteps.continueGraphTransition(assembleExternalSnapshot(work.receiverCapture),
             work.operationContext, receiver => {
-                work.receiverCapture = undefined
-                work.setReceiver(receiver, true)
-                work.leaseReceiver(receiver)
-                return args
+                try {
+                    work.receiverCapture = undefined
+                    work.setReceiver(receiver, true)
+                    work.leaseReceiver(receiver)
+                    return args
+                } finally { args = undefined }
             }, undefined, work)
     }
 }
@@ -186,8 +190,15 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
             let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
                 ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
             const output = runArrayStep(invocationWork, () =>
-                arrayRemaps.createArrayFromRemap(remap, operationContext))
+                remap instanceof arrayRemaps.ArrayRangeRemap ? remap.createOutput(invocationWork) :
+                    arrayRemaps.createArrayFromRemap(remap, operationContext))
             if (!mutation) return invocationWork.retainOutput(output)
+            // A range write may reuse its receiver. Its captured old identity
+            // still belongs to earlier searches and the recovery snapshot.
+            if (output === invocationWork.receiver && published === true) {
+                published = new IdentityPublication(operationContext)
+                published.record(true)
+            }
             if (published instanceof IdentityPublication) {
                 if (errorUtils.isPoisonError(output)) published.finish(true)
                 else {

@@ -1,0 +1,80 @@
+{
+  "status": "Focused review finished; R1-R3 open; no acceptance closure",
+  "candidateInitial": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "candidateFinal": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "executionInputs": 256,
+  "executionInputsChanged": [],
+  "head": "a343e41cb023d385f8bc1980ec201764c2612b84",
+  "productionOrTestChangesMade": false,
+  "findings": {
+    "R1": {
+      "status": "open",
+      "primaryCases": 36,
+      "retainingCases": 14
+    },
+    "R2": {
+      "status": "open",
+      "primaryCases": 54,
+      "retainingCases": 18
+    },
+    "R3": {
+      "status": "open",
+      "primaryCases": 12,
+      "retainingCases": 2,
+      "independentCases": 24,
+      "independentRetainingCases": 6,
+      "note": "Independent cases overlap primary route and are not added as distinct findings."
+    }
+  },
+  "newPassingCoverage": {
+    "constantWidthWorkCases": 144,
+    "healthyObjectReleaseCases": 24,
+    "copiedPresenceRecoveryCases": 460,
+    "priorRangeRegressionControls": 40
+  },
+  "broaderGates": "Full normal/traced suites, safeguard registry and large generated partitions not rerun; no closure inferred from historical matching-candidate results.",
+  "reviewers": {
+    "coordinator": "Codex /root",
+    "lifetimeAuthor": "/root/missed_failure_lifetimes",
+    "R1R2Independent": "/root/missed_history_costs",
+    "R3Independent": "/root/missed_delivery_semantics",
+    "exactModelBuild": "unknown"
+  },
+  "evidenceChecks": [
+    "Full current execution-input file set and raw hashes match initial manifest",
+    "Work artifact hashes verified",
+    "Delivery probe hashes verified",
+    "Coordinator probe/log/receipt hashes verified",
+    "Independent R3 probe hash verified",
+    "Local links in new reports resolve",
+    "Lifetime-author probe hashes verified"
+  ],
+  "artifacts": {
+    "2026-10-25-04-coverage.md": "20e5c45a56f7b4a4659999ac528750f3b52967559f1ae4086da0d0e77c24d651",
+    "2026-10-25-04-delivery-evidence.json": "1a369a078ed813fb89b3aec732c5ac6dbbe567b228a3e9a149bb953181501581",
+    "2026-10-25-04-delivery-lifetime-evidence.json": "89be643d4538f6af6bb6d53b71b4097bb98fadb40fb62583211788943cb67ed1",
+    "2026-10-25-04-delivery-lifetime-probe.mjs": "91dba26b5e1d85b42c2083e1032893f031280de954e809251464dd4d6d38d84d",
+    "2026-10-25-04-delivery-lifetime-review.md": "173b021fc685f707fb8dff1f622fffbf17e932987c82343821fa4f0bec67c63c",
+    "2026-10-25-04-delivery-presence.mjs": "d3bb72748a0d2ba7370b71285afca15fafe0f718f6c75e10cc0f593579174c28",
+    "2026-10-25-04-delivery-recovery.mjs": "7fdd52d45422ed4b546ae489f0f5897229194fb7fc36d0e5f339772a19ef297f",
+    "2026-10-25-04-delivery-review.md": "c6dc11a96497a701041743f36c455f292e7130c65e4e0f4d178d1f86fc39162a",
+    "2026-10-25-04-independent-controls.json": "2be2f4f3b71ad17ac2ef2fa0ffc9513ac804f4ecb2a393e70e515170023e84fd",
+    "2026-10-25-04-independent-execution.json": "699392f1fc63b5aa55926055fb47da40a334864132b26e7f123b2d14025582fb",
+    "2026-10-25-04-independent-review.md": "8de23d367c8213dd172423b4746d1cb8cacf193fa7dca01a4588c17132ca9fa7",
+    "2026-10-25-04-initial.json": "9f94a1add8d924e567cc20976373f8a63480e06f7f63665bf25a003a7241efb7",
+    "2026-10-25-04-lifetime-evidence.json": "38a51b6e25ca3243eb0bc47afe89b8f0f22e7ad1f5c4b7e5a256afb87eebb3d5",
+    "2026-10-25-04-lifetime-overflow.mjs": "af35c0097f925ee4c7a4f06b5233fe35067f30528c791b8563bcc576e058e42b",
+    "2026-10-25-04-lifetime-preparation-controls.mjs": "2fcddef351837ee5c241b087bbb1dec0ffa6e7dbcdae36ede24e77cd0e7f4066",
+    "2026-10-25-04-lifetime-remaps.mjs": "b2897dad743c94ffa2f7c9a2b10c87f2b4a8b6a9d986d0acc8a443735ce06333",
+    "2026-10-25-04-lifetime-review.md": "f7a2a04f05b4afef5c75e29333b76fa8197b6bbe0d861adf3c427d11320cb263",
+    "2026-10-25-04-work-evidence.json": "cb9812ceb61d6f9e24f38deda822ada2cb2bbd5bd405aa664e0e6aaf4e30944f",
+    "2026-10-25-04-work-histories.json": "9449c657f3b712cc6db3af79516879f4ce6dc0551302a770247ace074e583f75",
+    "2026-10-25-04-work-histories.mjs": "91978cb575e524d012ebfcee3ac3b4e37971e4a71d140db6bcdadfc92f3856f7",
+    "2026-10-25-04-work-release-trace.jsonl": "ca9fecbbd0bb08a86c217b63185dcb8e123387847af18d3b4aedd2e7f8845540",
+    "2026-10-25-04-work-release-traced.json": "6ca204754cec483b1b46d27b9cc889bb3a022986b2872137c34158bab90fd191",
+    "2026-10-25-04-work-release.json": "6ca204754cec483b1b46d27b9cc889bb3a022986b2872137c34158bab90fd191",
+    "2026-10-25-04-work-release.mjs": "d997fb5411a7a57e4756fdb29d6fe2f5725fbc925167be0d9d738dff321d7082",
+    "2026-10-25-04-work-review.md": "ba40ceff7affabac690f475d43bd08928a39334f808ffe39c0be943f81a0cc85",
+    "2026-10-25-04.md": "9fff39f74f7b07e3434732a7aafc915cc34e1f18e9d67a8eaca022bbdca31879"
+  }
+}

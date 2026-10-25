@@ -1,0 +1,315 @@
+{
+    "note":  "Only imports changed from the initial scratch bytes: removed the checkout-specific root and used relative imports. Both controls were rechecked on final retained script bytes.",
+    "priorScratch":  {
+                         "bareExitCode":  0,
+                         "traced":  {
+                                        "command":  "node --unhandled-rejections=strict --import ./test/trace-runtime.js docs/phase5-reruns/2026-10-24-01-surface-probe.mjs",
+                                        "exitCode":  0,
+                                        "durationMs":  164,
+                                        "traceReceipt":  "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-24-01-surface-trace.jsonl",
+                                        "result":  {
+                                                       "cases":  12,
+                                                       "rows":  [
+                                                                    {
+                                                                        "method":  "includes",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "includes",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "includes",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    },
+                                                                    {
+                                                                        "method":  "includes",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    },
+                                                                    {
+                                                                        "method":  "indexOf",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "indexOf",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "indexOf",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    },
+                                                                    {
+                                                                        "method":  "indexOf",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    },
+                                                                    {
+                                                                        "method":  "lastIndexOf",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "lastIndexOf",
+                                                                        "initialNonempty":  false,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  1
+                                                                    },
+                                                                    {
+                                                                        "method":  "lastIndexOf",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "native",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    },
+                                                                    {
+                                                                        "method":  "lastIndexOf",
+                                                                        "initialNonempty":  true,
+                                                                        "delivery":  "ordered",
+                                                                        "asserted":  true,
+                                                                        "causes":  2
+                                                                    }
+                                                                ],
+                                                       "sourceHash":  "f6a27666fa0af9c56619ce488ed11a9beb9dcad794ff23a3ce6385e9555f2375",
+                                                       "node":  "v24.14.1"
+                                                   }
+                                    },
+                         "receipt":  [
+                                         {
+                                             "event":  "loaded",
+                                             "pid":  37388,
+                                             "parent":  41412,
+                                             "script":  "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-24-01-surface-probe.mjs"
+                                         },
+                                         {
+                                             "event":  "executed",
+                                             "name":  "thenValue",
+                                             "pid":  37388,
+                                             "parent":  41412,
+                                             "script":  "C:\\Projects\\cascada-chain-resolution\\docs\\phase5-reruns\\2026-10-24-01-surface-probe.mjs"
+                                         }
+                                     ]
+                     },
+    "runs":  [
+                 {
+                     "command":  "node --unhandled-rejections=strict docs/phase5-reruns/2026-10-24-01-surface-probe.mjs",
+                     "exitCode":  0,
+                     "durationMs":  140,
+                     "result":  {
+                                    "cases":  12,
+                                    "rows":  [
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 }
+                                             ],
+                                    "sourceHash":  "6b545b6375c1f7cc97876a0f4a8512a57500625f24494ed2946842dfe3ec711e",
+                                    "node":  "v24.14.1"
+                                }
+                 },
+                 {
+                     "command":  "node --unhandled-rejections=strict --import ./test/trace-runtime.js docs/phase5-reruns/2026-10-24-01-surface-probe.mjs",
+                     "exitCode":  0,
+                     "durationMs":  164,
+                     "environment":  {
+                                         "CASCADA_TRACE_RECEIPT_FILE":  "docs/phase5-reruns/2026-10-24-01-surface-trace.jsonl"
+                                     },
+                     "result":  {
+                                    "cases":  12,
+                                    "rows":  [
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "includes",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "indexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  false,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  1
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "native",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 },
+                                                 {
+                                                     "method":  "lastIndexOf",
+                                                     "initialNonempty":  true,
+                                                     "delivery":  "ordered",
+                                                     "asserted":  true,
+                                                     "causes":  2
+                                                 }
+                                             ],
+                                    "sourceHash":  "6b545b6375c1f7cc97876a0f4a8512a57500625f24494ed2946842dfe3ec711e",
+                                    "node":  "v24.14.1"
+                                }
+                 }
+             ]
+}

@@ -1,0 +1,353 @@
+{
+  "script": "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs",
+  "scriptSHA256": "91dba26b5e1d85b42c2083e1032893f031280de954e809251464dd4d6d38d84d",
+  "candidateDigest": "57f37a8ce537797856fcbae1346f27e3b43fec8f5d4ae58f413fe6876e52f88e",
+  "node": "v24.14.1",
+  "runs": [
+    {
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "--stack-trace-limit=10",
+        "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+      ],
+      "env": {},
+      "exitCode": 1,
+      "durationSeconds": 0.204,
+      "result": {
+        "cases": 24,
+        "retained": [
+          {
+            "label": "sort/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          }
+        ]
+      },
+      "stderr": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   {\n+     label: 'sort/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   }\n+ ]\n- []\n\n    at file:///C:/Projects/cascada-chain-resolution/docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs:51:8 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: [\n    {\n      label: 'sort/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    }\n  ],\n  expected: [],\n  operator: 'deepStrictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.14.1\n"
+    },
+    {
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "--stack-trace-limit=50",
+        "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+      ],
+      "env": {},
+      "exitCode": 1,
+      "durationSeconds": 0.205,
+      "result": {
+        "cases": 24,
+        "retained": [
+          {
+            "label": "sort/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          }
+        ]
+      },
+      "stderr": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   {\n+     label: 'sort/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   }\n+ ]\n- []\n\n    at file:///C:/Projects/cascada-chain-resolution/docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs:51:8 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: [\n    {\n      label: 'sort/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    }\n  ],\n  expected: [],\n  operator: 'deepStrictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.14.1\n"
+    },
+    {
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "--stack-trace-limit=1000",
+        "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+      ],
+      "env": {
+        "SNAPSHOT": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-independent-r3-anzfw9jn\\independent-r3.heapsnapshot"
+      },
+      "exitCode": 1,
+      "durationSeconds": 0.447,
+      "result": {
+        "cases": 24,
+        "retained": [
+          {
+            "label": "sort/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "sort/true/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/native",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          },
+          {
+            "label": "toSorted/false/false/ordered",
+            "live": {
+              "payload": true,
+              "receiver": false,
+              "input": false
+            }
+          }
+        ]
+      },
+      "stderr": "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nAssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:\n+ actual - expected\n\n+ [\n+   {\n+     label: 'sort/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'sort/true/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/native',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   },\n+   {\n+     label: 'toSorted/false/false/ordered',\n+     live: {\n+       input: false,\n+       payload: true,\n+       receiver: false\n+     }\n+   }\n+ ]\n- []\n\n    at file:///C:/Projects/cascada-chain-resolution/docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs:51:8 {\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: [\n    {\n      label: 'sort/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'sort/true/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/native',\n      live: { payload: true, receiver: false, input: false }\n    },\n    {\n      label: 'toSorted/false/false/ordered',\n      live: { payload: true, receiver: false, input: false }\n    }\n  ],\n  expected: [],\n  operator: 'deepStrictEqual',\n  diff: 'simple'\n}\n\nNode.js v24.14.1\n"
+    },
+    {
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "--stack-trace-limit=1000",
+        "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+      ],
+      "env": {
+        "FORMAT_STACKS": "1"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.255,
+      "result": {
+        "cases": 24,
+        "retained": []
+      },
+      "stderr": ""
+    },
+    {
+      "command": [
+        "node",
+        "--expose-gc",
+        "--unhandled-rejections=strict",
+        "--stack-trace-limit=1000",
+        "docs/phase5-reruns/2026-10-25-04-delivery-lifetime-probe.mjs"
+      ],
+      "env": {
+        "DROP_POISONS": "1"
+      },
+      "exitCode": 0,
+      "durationSeconds": 0.267,
+      "result": {
+        "cases": 24,
+        "retained": []
+      },
+      "stderr": ""
+    }
+  ],
+  "snapshot": "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-independent-r3-anzfw9jn\\independent-r3.heapsnapshot",
+  "manifestVerifiedAtFinalization": true,
+  "independentHeapPath": {
+    "command": [
+      "python",
+      "C:/Users/Gele/AppData/Local/Temp/phase5-04-heap-paths.py",
+      "C:\\Users\\Gele\\AppData\\Local\\Temp\\cascada-independent-r3-anzfw9jn\\independent-r3.heapsnapshot",
+      "sort/false/false/native",
+      "selected",
+      "script"
+    ],
+    "path": [
+      {
+        "from": {
+          "type": "object",
+          "name": "PoisonError",
+          "id": 102367
+        },
+        "edge": "property:<symbol>",
+        "to": {
+          "type": "array",
+          "name": "",
+          "id": 102421
+        }
+      },
+      {
+        "from": {
+          "type": "array",
+          "name": "",
+          "id": 102421
+        },
+        "edge": "internal:6",
+        "to": {
+          "type": "hidden",
+          "name": "system / CallSiteInfo",
+          "id": 102631
+        }
+      },
+      {
+        "from": {
+          "type": "hidden",
+          "name": "system / CallSiteInfo",
+          "id": 102631
+        },
+        "edge": "hidden:2",
+        "to": {
+          "type": "closure",
+          "name": "",
+          "id": 102665
+        }
+      },
+      {
+        "from": {
+          "type": "closure",
+          "name": "",
+          "id": 102665
+        },
+        "edge": "internal:context",
+        "to": {
+          "type": "object",
+          "name": "system / Context",
+          "id": 102747
+        }
+      },
+      {
+        "from": {
+          "type": "object",
+          "name": "system / Context",
+          "id": 102747
+        },
+        "edge": "internal:previous",
+        "to": {
+          "type": "object",
+          "name": "system / Context",
+          "id": 89923
+        }
+      },
+      {
+        "from": {
+          "type": "object",
+          "name": "system / Context",
+          "id": 89923
+        },
+        "edge": "context:value",
+        "to": {
+          "type": "object",
+          "name": "Promise",
+          "id": 89927
+        }
+      },
+      {
+        "from": {
+          "type": "object",
+          "name": "Promise",
+          "id": 89927
+        },
+        "edge": "internal:reactions_or_result",
+        "to": {
+          "type": "object",
+          "name": "Object",
+          "id": 89941
+        }
+      }
+    ],
+    "closureDetails": "CLOSURE {'type': 'closure', 'name': '', 'id': 102665}\nSHARED [('name_or_scope_info', 'system / ScopeInfo'), ('script', 'file:///C:/Projects/cascada-chain-resolution/src/language-values.js'), ('trusted_function_data', '(BASELINE code)'), ('raw_outer_scope_info_or_feedback_metadata', 'system / FeedbackMetadata')]\n",
+    "interpretation": "Poison retains a language-values.js delivery closure whose parent context retains the settled intermediate preparation Promise. The original host input Promise/thenable WeakRef is dead in this independent harness."
+  }
+}
