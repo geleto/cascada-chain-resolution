@@ -88,7 +88,7 @@ function selectMethodDescription(invocationWork, externalAccess) {
 
     const type = invocationWork.receiverCapture?.roots[0].type ??
         languageValues.typeOf(receiver, invocationWork.operationContext)
-    if (externalAccess && (type === languageValues.TYPE.External || type === languageValues.TYPE.Function)) {
+    if (externalAccess && type === languageValues.TYPE.External) {
         return {
             prepareArguments: () => invocationWork.exportArguments(),
             invoke: args => externalAccess.call(invocationWork.receiver, method, args, invocationWork.retainOutput),

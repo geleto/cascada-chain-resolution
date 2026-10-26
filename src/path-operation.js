@@ -331,7 +331,10 @@ function walkObservationValue(
         if (!languageValues.isPending(value, operationContext)) return walkValue(value, index, present)
         return versions.observePromiseVersion(
             value, version, operationContext,
-            propertyValue => runTraversal(() => walkValue(propertyValue, index, version.present !== false)), owner,
+            (propertyValue, captured) => {
+                try { return runTraversal(() => walkValue(propertyValue, index, captured.present !== false)) }
+                finally { propertyValue = captured = undefined }
+            }, owner,
         )
     }
 

@@ -143,9 +143,10 @@ class ExternalAccess {
                 if (errors.isPoisonError(ready)) return onSelected(ready, present)
                 const facts = this.boundary && this.factsOf(ready)
                 if (errors.isPoisonError(facts)) return onSelected(facts, present)
+                if (this.operation.mutation && facts?.type !== metadata.TYPE.External)
+                    return onSelected(this.mutationReceiverError(kind), present)
                 let prepared
                 if (metadata.isTraversableType(facts?.type)) {
-                    if (this.operation.mutation) return onSelected(this.managedMutationError(kind), present)
                     const capture = captureExternalValue(ready, this.operation)
                     return errors.isPoisonError(capture) ? onSelected(capture, present) :
                         onSelected(undefined, present, undefined, capture)
@@ -154,8 +155,7 @@ class ExternalAccess {
                     // borrowed managed values use the same receiving boundary.
                     prepared = imports.importExternalProperty(ready, this.operationContext)
                 }
-                if (!metadata.isObjectLike(ready) ||
-                    metadata.isTraversableType(metadata.metaOf(prepared, this.operationContext)?.type)) access = undefined
+                if (metadata.metaOf(prepared, this.operationContext)?.type !== metadata.TYPE.External) access = undefined
                 // A captured language receiver no longer reads native state.
                 // Release that reservation before its arguments can suspend.
                 if (!access && !this.operation.mutation) this.operation.completeExternalEffect()
@@ -183,13 +183,13 @@ class ExternalAccess {
                     }
                     const facts = this.boundary ? this.factsOf(value) : metadata.metaOf(value, this.operationContext)
                     if (errors.isPoisonError(facts)) return facts
-                    const managed = metadata.isTraversableType(facts?.type)
-                    if (managed && this.operation.mutation) return this.managedMutationError(receiverErrorKind)
-                    if (managed) {
+                    const languageValue = facts?.type !== metadata.TYPE.External
+                    if (languageValue && this.operation.mutation) return this.mutationReceiverError(receiverErrorKind)
+                    if (languageValue) {
                         return walkObservationValue(value, this.path.slice(index, depth),
                             this.operationContext, onResolved, undefined, errors.ERROR_KIND.ExternalPropertyReadFailed, {
                                 owner: this.operation,
-                                snapshot: Boolean(this.boundary), type: facts.type,
+                                snapshot: Boolean(this.boundary), type: facts?.type,
                                 onExternal: (value, suffix) => walk(value, depth - suffix.length, undefined),
                             })
                     }
@@ -214,8 +214,8 @@ class ExternalAccess {
         } finally { value = undefined }
     }
 
-    managedMutationError(kind) {
-        return errors.validationError("External mutation cannot cross managed storage", this.operationContext, kind)
+    mutationReceiverError(kind) {
+        return errors.validationError("External mutation requires an external receiver", this.operationContext, kind)
     }
 
     validateIdentity(value, node) {

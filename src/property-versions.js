@@ -23,8 +23,10 @@ class PropertyPlacement {
     ensureCaptured() {
         if (Object.hasOwn(this, "value")) return this
         const { owner, key, operationContext } = this
-        Object.assign(this, languageProperties.readLanguagePlacement(owner, key, operationContext))
-        this.owner = undefined
+        // A failed capture also consumes this lazy placement. Saved diagnostic
+        // frames must not retain its source through the method receiver.
+        try { Object.assign(this, languageProperties.readLanguagePlacement(owner, key, operationContext)) }
+        finally { this.owner = undefined }
         return this
     }
 
@@ -89,10 +91,13 @@ function createVersionFromPlacement(placement) {
 // Delivery fixes presence and recovery together with the logical value.
 function resolvePlacement(placement, operationContext, onReady) {
     if (!languageValues.isPending(placement.value, operationContext)) return onReady(placement)
-    const version = placement.sourceVersion
-    return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) =>
-        onReady({ value, present: version.present !== false, recovery: version.recovery, position: version.position,
-            discoveryBlocked: version.discoveryBlocked, sourceVersion: undefined }, releaseCapture))
+    let version = placement.sourceVersion
+    return continueCapturedPromiseVersion(placement.value, version, operationContext, (value, releaseCapture) => {
+        try {
+            return onReady({ value, present: version.present !== false, recovery: version.recovery, position: version.position,
+                discoveryBlocked: version.discoveryBlocked, sourceVersion: undefined }, releaseCapture)
+        } finally { version = onReady = undefined }
+    })
 }
 
 // Call after subscription: synchronous delivery may already have advanced the

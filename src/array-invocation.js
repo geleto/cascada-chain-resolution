@@ -182,42 +182,44 @@ function invokeArrayMethod(methodDefinition, preparedArguments, invocationWork) 
             remap = arrayRemaps.resolveDenseRemapPresence(nativeResult, invocationWork)
     }
     return internalSteps.continueGraphTransition(remap, operationContext,
-        remap => runArrayStep(invocationWork, () => {
-            if (errorUtils.isPoisonError(remap)) return remap
-            if (mutation && !published) return unchanged()
-            // Only intrinsic mutators have a separate native result. Capture
-            // removed placements before materializing the new receiver.
-            let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
-                ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
-            const output = runArrayStep(invocationWork, () =>
-                remap instanceof arrayRemaps.ArrayRangeRemap ? remap.createOutput(invocationWork) :
-                    arrayRemaps.createArrayFromRemap(remap, operationContext))
-            if (!mutation) return invocationWork.retainOutput(output)
-            // A range write may reuse its receiver. Its captured old identity
-            // still belongs to earlier searches and the recovery snapshot.
-            if (output === invocationWork.receiver && published === true) {
-                published = new IdentityPublication(operationContext)
-                published.record(true)
-            }
-            if (published instanceof IdentityPublication) {
-                if (errorUtils.isPoisonError(output)) published.finish(true)
-                else {
-                    inheritIdentity(invocationWork.receiver, output, operationContext)
-                    published.capture(output)
-                    published.finish()
+        remap => {
+            try { return runArrayStep(invocationWork, () => {
+                if (errorUtils.isPoisonError(remap)) return remap
+                if (mutation && !published) return unchanged()
+                // Only intrinsic mutators have a separate native result. Capture
+                // removed placements before materializing the new receiver.
+                let result = mutation && methodDefinition.methodResult !== RETURN_RECEIVER
+                    ? methodDefinition.methodResult(nativeResult, invocationWork) : undefined
+                const output = runArrayStep(invocationWork, () =>
+                    remap instanceof arrayRemaps.ArrayRangeRemap ? remap.createOutput(invocationWork) :
+                        arrayRemaps.createArrayFromRemap(remap, operationContext))
+                if (!mutation) return invocationWork.retainOutput(output)
+                // A range write may reuse its receiver. Its captured old identity
+                // still belongs to earlier searches and the recovery snapshot.
+                if (output === invocationWork.receiver && published === true) {
+                    published = new IdentityPublication(operationContext)
+                    published.record(true)
                 }
-                published = published.outcome()
-            }
-            if (methodDefinition.methodResult === RETURN_RECEIVER) result = invocationWork.retainOutput(output)
-            else if (errorUtils.isPoisonError(output)) {
-                // Publish receiver failure now; only the independent result waits.
-                result = internalSteps.continueGraphTransition(result, operationContext,
-                    value => errorUtils.isPoisonError(value)
-                        ? errorUtils.combineErrors([output, value]) : output,
-                    undefined, invocationWork)
-            }
-            return createMutationOutcome(output, result, operationContext, published)
-        }), undefined, invocationWork)
+                if (published instanceof IdentityPublication) {
+                    if (errorUtils.isPoisonError(output)) published.finish(true)
+                    else {
+                        inheritIdentity(invocationWork.receiver, output, operationContext)
+                        published.capture(output)
+                        published.finish()
+                    }
+                    published = published.outcome()
+                }
+                if (methodDefinition.methodResult === RETURN_RECEIVER) result = invocationWork.retainOutput(output)
+                else if (errorUtils.isPoisonError(output)) {
+                    // Publish receiver failure now; only the independent result waits.
+                    result = internalSteps.continueGraphTransition(result, operationContext,
+                        value => errorUtils.isPoisonError(value)
+                            ? errorUtils.combineErrors([output, value]) : output,
+                        undefined, invocationWork)
+                }
+                return createMutationOutcome(output, result, operationContext, published)
+            }) } finally { remap = nativeResult = undefined }
+        }, undefined, invocationWork)
 
     function unchanged() {
         return createMutationOutcome(invocationWork.receiver,

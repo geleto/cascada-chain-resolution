@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process"
 
 describe("boundary contract and lifetime regressions", () => {
     for (const fixture of ["array-failure-release", "array-reflection-release", "array-surface", "array-view-failure-retention", "array-range-failure-retention",
-        "array-validation-retention", "array-remap-failure-retention", "deferred-validation-retention",
+        "array-validation-retention", "array-remap-failure-retention", "deferred-validation-retention", "placement-capture-failure-retention",
         "boundary-release", "call-selection-release", "capture-fatal", "discarded-argument-leaves", "external-owner-release",
         "flat-completion", "inspection-failure-retention", "mutation-failure-retention", "path-release", "preparation-authority", "preparation-output-release", "prepared-boundaries",
         "public-surface-release", "receiver-identity", "registration-release", "result-contract", "terminal-release", "outward-registration-release"])
     for (const stackLimit of ["array-view-failure-retention", "array-range-failure-retention", "preparation-output-release",
-        "array-validation-retention", "array-remap-failure-retention", "deferred-validation-retention"].includes(fixture) ? [10, 50, 1000] : [10, 1000]) {
+        "array-validation-retention", "array-remap-failure-retention", "deferred-validation-retention", "placement-capture-failure-retention"].includes(fixture) ? [10, 50, 1000] : [10, 1000]) {
         it(`checks ${fixture} at stack limit ${stackLimit}`, function () {
             this.timeout(70000)
             const result = spawnSync(process.execPath, [...process.execArgv,

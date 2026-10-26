@@ -12,6 +12,36 @@ const edit = (file, find, replace = "") => ({ file, find, replace })
 
 export const SAFEGUARDS = [
     {
+        id: "failed-placement-capture-releases-owner",
+        guards: "A terminal failed lazy capture releases its source even while its runtime method receiver survives in diagnostic frames.",
+        faults: [edit("src/property-versions.js", "        finally { this.owner = undefined }", "        finally {}")],
+        witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
+    },
+    {
+        id: "placement-delivery-releases-version",
+        guards: "Completed root placement delivery releases its source version and consumer after handing off the captured value.",
+        faults: [edit("src/property-versions.js", "        } finally { version = onReady = undefined }", "        } finally {}")],
+        witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
+    },
+    {
+        id: "array-construction-releases-remap",
+        guards: "Completed or failed output construction does not retain consumed remap placements through its initialization callback.",
+        faults: [edit("src/array-remap.js", "    } finally { remap = undefined }", "    } finally {}")],
+        witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
+    },
+    {
+        id: "array-invocation-releases-consumed-remaps",
+        guards: "Completed remap invocation releases its remap and intrinsic result independently of retained poison diagnostics.",
+        faults: [edit("src/array-invocation.js", "            }) } finally { remap = nativeResult = undefined }", "            }) } finally {}")],
+        witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
+    },
+    {
+        id: "path-delivery-releases-captured-value",
+        guards: "A resumed observation path releases its completed property value and version after traversal transfers their required use.",
+        faults: [edit("src/path-operation.js", "                finally { propertyValue = captured = undefined }", "                finally {}")],
+        witnesses: ["checks placement-capture-failure-retention at stack limit 1000"],
+    },
+    {
         id: "array-validation-releases-prepared-arguments",
         guards: "Completed Array growth validation does not retain prepared payloads through saved finish frames.",
         faults: [edit("src/array-invocation.js", "            try { return failure ?? args }\n            finally { args = undefined }", "            return failure ?? args")],
@@ -57,7 +87,7 @@ export const SAFEGUARDS = [
         id: "array-range-publishes-write-identity",
         guards: "An in-place range write advances the receiver identity already captured by pending searches, even for an equal-value write.",
         faults: [edit("src/array-invocation.js",
-            "            if (output === invocationWork.receiver && published === true) {\n                published = new IdentityPublication(operationContext)\n                published.record(true)\n            }\n")],
+            "                if (output === invocationWork.receiver && published === true) {\n                    published = new IdentityPublication(operationContext)\n                    published.record(true)\n                }\n")],
         witnesses: ["publishes fill(9,0,1) identity to a pending includes", "publishes copyWithin(0,0,1) identity to a pending includes"],
     },
     {
@@ -477,12 +507,30 @@ export const SAFEGUARDS = [
         witnesses: ["keeps managed leaf capabilities and presence across external paths"],
     },
     {
-        id: "receiver-selection-keeps-managed-boundary",
-        guards: "A Function selected from managed storage cannot inherit an earlier native receiver position.",
+        id: "external-prefix-preserves-language-capabilities",
+        guards: "Direct native prefixes hand scalar, String and Function values to ordinary language property semantics.",
         faults: [edit("src/external-access.js",
-            "this.operationContext, onResolved, undefined, errors.ERROR_KIND.ExternalPropertyReadFailed, {",
-            "this.operationContext, (value, present) => onResolved(value, present, this), undefined, errors.ERROR_KIND.ExternalPropertyReadFailed, {")],
-        witnesses: ["keeps managed leaf capabilities and presence across external paths"],
+            "const languageValue = facts?.type !== metadata.TYPE.External",
+            "const languageValue = metadata.isTraversableType(facts?.type)")],
+        witnesses: ["keeps direct external leaf capabilities"],
+    },
+    {
+        id: "external-function-selection-keeps-language-category",
+        guards: "A Function selected directly from an external property cannot become a native method receiver.",
+        faults: [edit("src/external-access.js",
+            "if (metadata.metaOf(prepared, this.operationContext)?.type !== metadata.TYPE.External) access = undefined",
+            "if (!metadata.isObjectLike(ready) || metadata.isTraversableType(metadata.metaOf(prepared, this.operationContext)?.type)) access = undefined"),
+        edit("src/run.js", "if (externalAccess && type === languageValues.TYPE.External)",
+            "if (externalAccess && (type === languageValues.TYPE.External || type === languageValues.TYPE.Function))")],
+        witnesses: ["rejects direct external Function member selection"],
+    },
+    {
+        id: "external-mutation-requires-external-receiver",
+        guards: "Native writes, deletion and calls cannot mutate scalar or Function properties under an external ancestor.",
+        faults: [edit("src/external-access.js",
+            "if (this.operation.mutation && facts?.type !== metadata.TYPE.External)",
+            "if (this.operation.mutation && metadata.isTraversableType(facts?.type))")],
+        witnesses: ["rejects direct external leaf mutation and repairs its scope"],
     },
     {
         id: "receiver-selection-keeps-presence",

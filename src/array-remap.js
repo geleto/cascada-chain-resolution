@@ -106,7 +106,9 @@ function createArrayFromRemap(
         operationContext,
         languageValues.TYPE.Array,
     )
-    PlacementConstruction.initializeAndPublish(output, operationContext, output => placeRemap(output, remap, operationContext))
+    try {
+        PlacementConstruction.initializeAndPublish(output, operationContext, output => placeRemap(output, remap, operationContext))
+    } finally { remap = undefined }
     if (refIndexSource !== undefined) {
         refcounts.indexValueIfSourceIndexed(
             refIndexSource,

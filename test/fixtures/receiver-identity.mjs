@@ -83,9 +83,9 @@ for (const form of ["direct","wrapper","pending"]) {
     behavior++;
 }
 {
-    const ctx = context("function receiver");
-    const child = function () {};
-    child.result = function () {return {value:Promise.resolve(this)};};
+    const ctx = context("default external class receiver");
+    class Receiver { result() {return {value:Promise.resolve(this)};} }
+    const child = new Receiver();
     const chain = new r.ContextChain({service:r.externalState({child})},ctx,{service:{}});
     const held = new r.Chain(r.run(chain,["service","child"],"result",[],ctx,{}),ctx);
     assert.equal((await r.lookupPath(held,["value"],ctx)).kind,r.ERROR_KIND.ExternalCapabilityEscape);

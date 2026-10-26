@@ -238,6 +238,117 @@ describe("stable categories along external paths", () => {
         })
     }
 
+    for (const mutable of [false, true]) {
+        for (const [name, value] of [["number", 3], ["boolean", true], ["bigint", 3n],
+            ["symbol", Symbol("leaf")], ["null", null], ["undefined", undefined],
+            ["Function", () => 7], ["String", "abc"]]) {
+            it(`keeps direct external leaf capabilities: mutable=${mutable}, ${name}`, () => {
+                const ctx = context()
+                const api = r.externalState({ value })
+                const source = mutable ? new r.ContextChain({ api }, ctx, { api: {} }) :
+                    new r.Chain(r.import({ api }, ctx), ctx)
+                const captured = new r.Chain(r.lookupPath(source, ["api", "value"], ctx), ctx)
+                const kind = value == null ? r.ERROR_KIND.NullLookup : r.ERROR_KIND.ScalarLookup
+                const path = ["api", "value", "toString"]
+                assert.equal(r.lookupPath(source, path, ctx).kind, kind)
+                assert.equal(r.lookupPath(captured, ["toString"], ctx).kind, kind)
+                assert.equal(r.export(source, path, ctx).kind, kind)
+                const expression = r.lookupPathForExpression(source, path, ctx)
+                assert(r.isPoisonedValue(expression))
+                assert.equal(expression.error.kind, kind)
+                if (!mutable) {
+                    assert.equal(r.hasError(source, path, ctx), true)
+                    assert.equal(r.getErrors(source, path, ctx).kind, kind)
+                } else {
+                    // Registered-resource queries consume scope metadata, not native data.
+                    assert.equal(r.hasError(source, path, ctx), false)
+                    assert.equal(r.getErrors(source, path, ctx), null)
+                }
+                if (typeof value === "string") {
+                    assert.equal(r.lookupPath(source, ["api", "value", "length"], ctx), 3)
+                    assert.equal(r.lookupPath(source, ["api", "value", 1], ctx), "b")
+                    assert.equal(r.run(source, ["api", "value"], "toUpperCase", [], ctx, {}), "ABC")
+                } else {
+                    assert.equal(r.run(source, ["api", "value"], "toString", [], ctx, {}).kind,
+                        r.ERROR_KIND.NotAFunction)
+                    assert.equal(r.run(captured, [], "toString", [], ctx, {}).kind,
+                        r.ERROR_KIND.NotAFunction)
+                }
+                assert.equal(ctx.execution.fatalError, null)
+            })
+        }
+
+        it(`rejects direct external Function member selection: mutable=${mutable}`, () => {
+            const ctx = context()
+            let reads = 0, calls = 0, inputs = 0
+            const fn = () => 1
+            Object.defineProperty(fn, "read", { get() { reads++; return () => { calls++; return 7 } } })
+            const api = r.externalState({ fn })
+            const source = mutable ? new r.ContextChain({ api }, ctx, { api: {} }) :
+                new r.Chain(r.import({ api }, ctx), ctx)
+            const unused = { then(resolve) { inputs++; return Promise.resolve(2).then(resolve) } }
+            const result = r.run(source, ["api", "fn"], "read", [unused], ctx, {})
+            assert.equal(result.kind, r.ERROR_KIND.NotAFunction)
+            assert.equal(reads, 0)
+            assert.equal(calls, 0)
+            assert.equal(inputs, 0)
+        })
+
+        for (const timing of ["ready", "synchronous", "native", "ordered"])
+        it(`receives final external leaf values before applying capabilities: mutable=${mutable}, ${timing}`, async () => {
+            const ctx = context(), fn = () => 7
+            const pending = timing === "native" ? Promise.withResolvers() : timing === "ordered" ? new OrderedThenable() : undefined
+            const input = timing === "ready" ? fn : timing === "synchronous" ? ready(fn) : pending.promise ?? pending
+            const api = r.externalState({ value: input })
+            const source = mutable ? new r.ContextChain({ api }, ctx, { api: {} }) :
+                new r.Chain(r.import({ api }, ctx), ctx)
+            const captured = new r.Chain(r.lookupPath(source, ["api", "value"], ctx), ctx)
+            const lookup = r.lookupPath(captured, ["name"], ctx)
+            const call = r.run(captured, [], "toString", [], ctx, {})
+            pending?.resolve(fn)
+            assert.equal((await lookup).kind, r.ERROR_KIND.ScalarLookup)
+            assert.equal((await call).kind, r.ERROR_KIND.NotAFunction)
+            assert.equal(ctx.execution.fatalError, null)
+        })
+
+        it(`preserves inherited native properties and selected external methods: mutable=${mutable}`, () => {
+            const ctx = context()
+            const child = r.externalState(Object.create({ value: 9, read() { return this.value } }))
+            const api = r.externalState(Object.create({ child }))
+            const source = mutable ? new r.ContextChain({ api }, ctx, { api: {} }) :
+                new r.Chain(r.import({ api }, ctx), ctx)
+            assert.equal(r.lookupPath(source, ["api", "child", "value"], ctx), 9)
+            assert.equal(r.run(source, ["api", "child"], "read", [], ctx, {}), 9)
+        })
+    }
+
+    for (const action of ["assign", "delete", "call"]) for (const leaf of ["fn", "number", "text"])
+    it(`rejects direct external leaf mutation and repairs its scope: ${action}, ${leaf}`, () => {
+        const ctx = context()
+        let reads = 0, calls = 0
+        const fn = () => 1
+        fn.value = 3
+        Object.defineProperty(fn, "change", { get() { reads++; return () => { calls++; return 7 } } })
+        const api = r.externalState({ fn, number: 3, text: "abc", read() { return 11 } })
+        const source = new r.ContextChain({ api }, ctx, { api: {} })
+        const path = ["api", leaf]
+        const result = action === "assign" ? r.assignPath(source, [...path, "value"], 9, ctx) :
+            action === "delete" ? r.deletePath(source, [...path, "value"], ctx) :
+                r.run(source, path, "change", [], ctx, { mutationScopeDepth: 1 })
+        const failure = r.getErrors(source, ["api"], ctx)
+        assert(r.isPoisonError(failure), "Rejected leaf mutation must poison its selected scope")
+        assert.equal(failure.kind, action === "call" ? r.ERROR_KIND.InvocationFailed : r.ERROR_KIND.UnsupportedMutation)
+        if (action === "call") assert.equal(result, failure)
+        assert.equal(fn.value, 3)
+        assert.equal(api.number, 3)
+        assert.equal(api.text, "abc")
+        assert.equal(reads, 0)
+        assert.equal(calls, 0)
+        assert.equal(r.repairPath(source, ["api"], ctx), undefined)
+        assert.equal(r.run(source, ["api"], "read", [], ctx, {}), 11)
+        assert.equal(ctx.execution.fatalError, null)
+    })
+
     for (const timing of ["ready", "synchronous", "pending"]) {
         it(`preserves managed receiver selection through ${timing} delivery`, async () => {
             const ctx = context(), signal = Promise.withResolvers()
