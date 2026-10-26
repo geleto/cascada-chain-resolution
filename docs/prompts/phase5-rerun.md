@@ -1,21 +1,21 @@
 # Manually repeat the Phase 5 review
 
-Phase 5 is complete on its [2026-10-22 candidate](../phase5-review.md). Start another run only when the user requests it. Available tokens, a new model or subsequent code changes can motivate a manual request; they do not initiate work automatically.
+The latest accepted Phase 5 candidate and concise history are in the [current review](../phase5-review.md). Start another run only when the user requests it. Available tokens, a new model or subsequent code changes can motivate a manual request; they do not initiate work automatically.
 
 ## Invocation
 
 The user can start a fresh full review with:
 
-> Re-run Phase 5 using docs/prompts/phase5-rerun.md. Review the current implementation from the contracts, investigate and fix supported defects, and record this run separately from the original closure.
+> Re-run Phase 5 using docs/prompts/phase5-rerun.md. Review the current implementation from the contracts, investigate and fix supported defects, and refresh the consolidated review and evidence.
 
 A request may instead name a narrower question, such as pending publication after retirement, or explicitly request review without implementation. Honor that scope. With no narrower scope, review all Phase 5 obligations, including unchanged code. A focused pass must identify the obligations it did not revisit.
 
 ## Establish this run
 
-1. Create a separate report at `docs/phase5-reruns/YYYY-MM-DD-NN.md`, using a new sequence number for another run on the same date. Record the requested scope, reason for the run, reviewer/model/version when known, any requested resource limit, repository revision and working-tree changes. Unknown model details remain unknown.
+1. Assign a run ID `YYYY-MM-DD-NN`. Record scope, reason, reviewer/model/version when known, resource limits, revision and working-tree changes. Unknown model details remain unknown. Mark the active review in `docs/phase5-review.md`; keep the prior accepted evidence intact until its replacement is verified. Store working manifests, logs, receipts, drafts and orchestration outside the repository. Do not create a permanent directory of per-agent or per-attempt reports.
 2. Read the current [AGENTS.md](../../AGENTS.md), [data contract](../data-limitations.md), [Phase 5 specification](../phase5-stabilization.md) and [systematic audit method](audit.md). Derive the sequential behavior, state transitions, ownership and last-use obligations from those contracts and the current source before adopting conclusions from earlier reviews.
-3. Capture hashes of production sources, tests, fixtures, loaders, configuration and other execution inputs, including untracked files. Record relevant contract revisions and the Node, test-runner and host environment. A commit ID alone does not identify a dirty candidate. Keep an initial manifest and a final manifest if fixes change the candidate.
-4. Then reconcile the previous [review and route/resource inventories](../phase5-review.md), [acceptance evidence](../phase5-acceptance.json) and [sensitivity mapping](../phase5-sensitivity.json). Treat them as evidence with stated limits. Preserve the original closure and JSON artifacts; save new evidence beside this run's report, for example `YYYY-MM-DD-NN-acceptance.json` and `YYYY-MM-DD-NN-sensitivity.json`.
+3. Capture hashes of production sources, tests, fixtures, loaders, configuration and other execution inputs, including untracked files and auxiliary probes. Record relevant contract revisions and the Node, test-runner and host environment. A commit ID alone does not identify a dirty candidate. Keep initial/final working manifests when fixes change the candidate; retain one complete manifest per candidate still supporting reusable evidence, with references from its jobs. Do not repeat manifests in component reports or each job.
+4. Then reconcile the [current review and route/resource inventories](../phase5-review.md), [acceptance evidence](../phase5-acceptance.json) and [sensitivity mapping](../phase5-sensitivity.json). These three files are the maintained baseline. Historical ledger entries retain their original date, scope and outcome; they do not substitute for retained, applicable execution evidence. Older artifacts removed during consolidation are not dependencies of a subsequent run.
 
 ## Perform a fresh review
 
@@ -44,17 +44,17 @@ Classify every required gate as **newly executed**, **reused with justification*
 | Changed contract | Obtain the required architecture decision, revise affected oracles and documentation, and validate the changed obligations. |
 | Missing raw investigation artifacts | Use retained, reproducible evidence only for claims it supports. Reconstruct or rerun a required claim that cannot be checked; a temporary path or hash alone does not establish its result. |
 
-The specification remains authoritative for full acceptance. The original closure's 54 jobs are a reproducible inventory, not a permanent job-count target. Reconcile it with the current wrappers and fixtures, especially stack limits 10, 50 and 1,000 for relevant failure-retention cases. Retain the strict B22 work/sensitivity controls, all eight required 1,600-seed families, complete conflict/publication-pair partitions, and per-obligation sensitivity. Derive expected counts from the current generators and checked joint combinations; old test totals are historical results.
+The specification remains authoritative for full acceptance. The current acceptance record's `runs` and `supplementalRuns` are a starting command inventory, not a permanent job-count target. Reconcile them with the current wrappers and fixtures, especially stack limits 10, 50 and 1,000 for relevant failure-retention cases. Retain the strict B22 work/sensitivity controls, all eight required 1,600-seed families, complete conflict/publication-pair partitions, and per-obligation sensitivity. Derive expected counts from the current generators and checked joint combinations; old test totals are historical results.
 
 ## Execute and record required validation
 
-Use the repository's [test guide](../../test/README.md#scaling-generated-runs) and the saved acceptance record's `runs[].command` and `runs[].env` to reconstruct commands. The original temporary orchestration scripts are not required inputs. Adapt checkout-specific loader URLs and report/receipt paths to this run; use fresh filenames and preserve structured arguments and actual newlines. A recorded null environment value means unset that variable. Clear inherited seed/start/partition/fault settings that could silently narrow a run, and supply the intended tracer explicitly.
+Use the repository's [test guide](../../test/README.md#scaling-generated-runs) and each saved job's `command` and `env` to reconstruct commands. The original temporary orchestration scripts are not required inputs. Expand `${TRACE_RUNTIME_URL}` to this checkout's absolute tracer file URL and `${OUTPUT}` to a fresh output directory. Commands run from the repository root with structured arguments and actual newlines. A null environment value means unset that variable. First clear all inherited `CASCADA_*` variables and `NODE_OPTIONS`, then apply the recorded overrides. Auxiliary probes live in `docs/phase5-probes`; use their current paths and hashes, not historical `executedPath` labels.
 
 Run clean baseline checks before counting safeguard faults. Use `--skip-baseline` only when a clean matching baseline has been verified and cited. The complete registry's normal mode uses named witnesses and fallback; it does not claim the separate `--full` whole-suite-per-fault mode. Check current anchors and the exact assertion each removal reaches. Record non-detecting selectors, counter-only evidence, incomplete attempts and infrastructure failures honestly.
 
 Keep source/test inputs stable during each acceptance batch. Check hashes before and after, attribute partitions to their exact inputs, and invalidate affected results after edits. Use bounded process concurrency and deadlines with startup margin. Assert actual runtime execution in child processes; loader startup is insufficient. Preserve explicit untraced VM or negative-control qualifications, and distinguish reused process IDs by ordered process instances.
 
-Record commands, environment overrides, exit status, counts, failures/skips, duration, manifests and receipt/report hashes. Retain enough portable diagnostics, fault edits and provenance to assess the outcome after temporary logs disappear. A timeout under load needs investigation or a suitable rerun, not pass credit. Do not repeatedly rerun already adequate checks without a new change, failure or unresolved concern.
+Record commands, environment overrides, exit status, counts, failures/skips, duration, input references and receipt/report hashes. Verify raw logs and ordered execution receipts while available, then retain sufficient self-contained results and diagnostics in the consolidated records. A hash of an unavailable log is provenance, not the result itself. A timeout under load needs investigation or a suitable rerun, not pass credit. Do not repeatedly rerun already adequate checks without a new change, failure or unresolved concern.
 
 ## Close this run
 
@@ -74,9 +74,24 @@ Validation: gate, new/reused/pending/outside-scope, candidate, evidence, reuse r
 Sensitivity: obligation, actual fault/witness/diagnostic/receipt, limits:
 Independent review and correction re-review:
 Remaining issues, exclusions and confidence limits:
-New evidence files and links to earlier runs:
+Current evidence references and concise historical ledger entry:
 ```
 
 Completion means the declared obligations have current evidence and no known actionable present-contract defect or unexplained required evidence gap remains. If work stops earlier, report precisely what is unfinished; a resource limit does not turn an incomplete review into a clean verdict. A newly found supported defect reopens its family and affected validation, even when the original Phase 5 milestone was complete.
 
-Keep the original closure historical. Link the new report from the Phase 5 execution record and update any current status affected by its findings; do not rewrite earlier results as though they ran on the new candidate. An unchanged clean rerun records what was newly examined and what evidence was reused. Phase 5 stays complete between manually initiated runs, subject to any explicitly recorded unresolved finding.
+Update current status without relabeling earlier results as newly executed evidence. An unchanged clean rerun records what was newly examined and what was reused. Phase 5 stays complete between manually initiated runs, subject to explicitly recorded unresolved findings.
+
+## Consolidate at closure
+
+Maintain these artifacts rather than adding another permanent report tree:
+
+- `docs/phase5-review.md`: current candidate/scope, B01–B22 dispositions, useful source and resource traces, findings and causal fixes, independent reviewer/decision, limitations, and a short dated history of earlier outcomes and lasting design decisions. Merge component reviews; remove duplicate narratives and obsolete investigations.
+- `docs/phase5-acceptance.json`: one manifest per still-used candidate, compatible environment and semantic-contract fingerprints, structured command/environment inventory, results and work measurements, shared joint-coverage sets, ordered instrumentation summaries, qualifications, and independent approval provenance. Keep supplemental jobs explicit. Never silently repin earlier results after changing inputs.
+- `docs/phase5-sensitivity.json`: current obligation mapping, exact fault edits, selectors, failed-test titles, intended assertion diagnostics and matching child receipts. Keep at least one actual diagnostic for each detecting declared selector and any additional evidence needed by distinct mapped obligations. Deduplicate repeated diagnostics; retain non-detecting selectors and incomplete/crashed-attempt limitations. Titles, anchor matches and startup receipts alone are insufficient.
+- `docs/phase5-probes/`: only executable probes still used by the current acceptance inventory or needed for an unresolved finding. Prefer a retained regression in the normal test harness when practical. Use descriptive stable names for genuinely reusable probes; keep one-off orchestration and report-generation scripts outside the repository.
+
+Before replacement, reconcile the consolidated artifacts against the source records: every required job and obligation remains represented; commands, environments, candidate hashes, coverage sets, faults, diagnostics and actual instrumentation agree. Check all links and executable paths. For probe relocation, preserve bytes and relative imports where possible, record the old-to-current path and hash, and validate execution at the new location. Relocation verification is separate from prior runtime acceptance.
+
+After verification, remove superseded acceptance/sensitivity snapshots, duplicate manifests, raw logs already represented by adequate retained evidence, per-agent results, failed draft/startup records, obsolete runners and abandoned probes. Summarize a resolved infrastructure failure only where it explains accepted provenance. Keep raw diagnostics that cannot be represented adequately by the retained evidence; do not manufacture a clean summary. Never prune an unresolved reproducer, or older evidence still actively reused by a focused run. Such reused evidence retains its own candidate/environment reference until replaced.
+
+This retention policy preserves the next run's baseline and the reasons behind current mechanisms. It does not require indefinitely archiving every intermediate file, prior candidate or transcript. Documentation-only consolidation is not a new runtime acceptance or independent review; identify any changed documentation hashes separately and preserve the reviewed candidate identity.
